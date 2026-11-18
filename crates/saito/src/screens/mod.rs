@@ -1,0 +1,224 @@
+//! The screens (docs/app.md §2): each is one Slint file (`crates/saito-ui/ui/screens/<name>.slint`: what is
+//! drawn, and the screen's view, the global its data is set in) and one module here (what it does).
+//!
+//! A screen never handles keys or wires callbacks. Its controls have names; the shell finds which one a key,
+//! a pad or a click means (`crate::nav`) and calls the screen's [`Screen`] with the name: `activate("ready",
+//! 0)`, `step("rounds", 0, 1)`. The screen changes its state, sets its view's properties, and asks the
+//! [`Shell`] for what is not its own: another screen, the selected game, a dialog, a battle.
+
+use crate::battle::BattleEvent;
+use crate::input::{Action, KeyPress, Scroll};
+use crate::shell::Shell;
+use web_time::Instant;
+
+pub mod builds;
+pub mod menu;
+pub mod play;
+pub mod replays;
+pub mod settings;
+pub mod practice;
+
+/// The screens a player goes between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScreenId {
+    Menu,
+    Play,
+    Practice,
+    Builds,
+    Replays,
+    Settings,
+}
+
+impl ScreenId {
+    pub const ALL: [ScreenId; 6] = [ScreenId::Menu, ScreenId::Play, ScreenId::Practice, ScreenId::Builds, ScreenId::Replays, ScreenId::Settings];
+
+    /// The UI's name for it.
+    pub fn view(self) -> saito_ui::Screen {
+        match self {
+            ScreenId::Menu => saito_ui::Screen::Menu,
+            ScreenId::Play => saito_ui::Screen::Play,
+            ScreenId::Practice => saito_ui::Screen::Practice,
+            ScreenId::Builds => saito_ui::Screen::Builds,
+            ScreenId::Replays => saito_ui::Screen::Replays,
+            ScreenId::Settings => saito_ui::Screen::Settings,
+        }
+    }
+
+    /// Its name in the screenshot pass's files and in the focus's memory.
+    pub fn name(self) -> &'static str {
+        match self {
+            ScreenId::Menu => "menu",
+            ScreenId::Play => "play",
+            ScreenId::Practice => "practice",
+            ScreenId::Builds => "builds",
+            ScreenId::Replays => "replays",
+            ScreenId::Settings => "settings",
+        }
+    }
+}
+
+/// What a screen that opens another for something tells it by (`Shell::tell`): this, and its own name
+/// (`ScreenId::name`). Builds' editor is opened so by Play's EDIT and Practice's (`builds::open`), and its Back goes
+/// back to the screen that opened it.
+const OPENED_BY: &str = "opened-by.";
+
+/// The tag screen `from` opens another by.
+pub fn opened_tag(from: ScreenId) -> String {
+    format!("{OPENED_BY}{}", from.name())
+}
+
+/// The screen a tag of [`opened_tag`]'s names, if it is one.
+pub fn opened_by(tag: &str) -> Option<ScreenId> {
+    let name = tag.strip_prefix(OPENED_BY)?;
+    ScreenId::ALL.into_iter().find(|s| s.name() == name)
+}
+
+/// Every screen's module, in [`ScreenId::ALL`]'s order.
+pub fn all() -> Vec<Box<dyn Screen>> {
+    vec![
+        Box::new(menu::Menu::default()),
+        Box::new(play::Play::default()),
+        Box::new(practice::Practice::default()),
+        Box::new(builds::Builds::default()),
+        Box::new(replays::Replays::default()),
+        Box::new(settings::Settings::default()),
+    ]
+}
+
+/// What a screen does. Every method but [`Screen::show`] has a default that does nothing, so a screen writes
+/// only what it has.
+///
+/// `id` and `index` are a control's name and index as its Slint gives them (`nav: "build"; nav-index: i`); a
+/// `ListView`'s row is the list's name and the row's index.
+pub trait Screen {
+    /// The control the focus starts on, the first time the screen is shown (after that it is where it was).
+    fn main(&self) -> &'static str {
+        "back"
+    }
+
+    /// The screen is shown, or something it shows changed under it (the selected game, the language, the
+    /// window turned upright): set the view from the state.
+    fn show(&mut self, shell: &mut Shell);
+
+    /// Another screen is shown in its place.
+    fn hide(&mut self, _shell: &mut Shell) {}
+
+    /// Enter, a click or a tap on a control.
+    fn activate(&mut self, _shell: &mut Shell, _id: &str, _index: i32) {}
+
+    /// Left or Right on a stepper, a select or a two-way switch (`by` -1 or 1), or a click on its arrow.
+    fn step(&mut self, _shell: &mut Shell, _id: &str, _index: i32, _by: i32) {}
+
+    /// A choice made outright: a click on one side of a two-way switch (0 or 1), a slider set to a level, a
+    /// row of a select's list.
+    fn choose(&mut self, _shell: &mut Shell, _id: &str, _index: i32, _choice: i32) {}
+
+    /// A field's text: each change as it is typed (`done` false), then the text it is left with (confirmed,
+    /// or the old one restored by Esc). The screen keeps what it wants of it and sets its view's property,
+    /// which the field then shows (a name cut to its length, a code in capitals).
+    fn edit(&mut self, _shell: &mut Shell, _id: &str, _index: i32, _text: &str, _done: bool) {}
+
+    /// Enter in a field, after its text is confirmed (`edit`, done): what the field is for, done at once (Play's
+    /// code joins, the direct connection's address connects).
+    fn submitted(&mut self, _shell: &mut Shell, _id: &str, _index: i32) {}
+
+    /// The focus moved to a control (a list's row: the overview beside a list follows it).
+    fn focused(&mut self, _shell: &mut Shell, _id: &str, _index: i32) {}
+
+    /// The pointer came onto a row that describes what it holds (`on`), or left it: what the screen shows of the
+    /// focused row it shows of that one while the pointer is on it (the build editor's strip).
+    fn hovered(&mut self, _shell: &mut Shell, _id: &str, _index: i32, _on: bool) {}
+
+    /// A key pressed that the screen may want for itself, before the menus' keys are read from it (a letter
+    /// that acts on the focused row, a key being bound). True if it was the screen's.
+    fn key(&mut self, _shell: &mut Shell, _key: &KeyPress) -> bool {
+        false
+    }
+
+    /// A pad's button pressed, as [`Screen::key`].
+    fn button(&mut self, _shell: &mut Shell, _button: saito_gamepad::Button) -> bool {
+        false
+    }
+
+    /// An action the shell has no use of its own for here: previous and next (the shoulders, the keys bound to
+    /// L and R: the shell changes the game with them unless the screen takes them), delete, the pad's north
+    /// button. True if the screen took it.
+    fn action(&mut self, _shell: &mut Shell, _action: Action) -> bool {
+        false
+    }
+
+    /// Any of the menus' actions, before the shell does anything with it (after a field's edit or a setting taken
+    /// is left, and never while a dialog or a list of choices is over the screen): for a view whose keys are its own,
+    /// with no focus to move (a replay's viewer: the arrows seek, Enter plays). True if the screen took it.
+    fn claim(&mut self, _shell: &mut Shell, _action: Action) -> bool {
+        false
+    }
+
+    /// An arrow or Tab (Shift+Tab), before the nav finds where it goes by the controls' places (docs/app.md
+    /// §11): true if the screen moved the focus itself, where those places don't say it (Play's: Right from its
+    /// list goes past the overview, which takes no focus, to EDIT; Tab goes through its zones in their order).
+    fn route(&mut self, _shell: &mut Shell, _action: Action) -> bool {
+        false
+    }
+
+    /// Up, Down, Page Up, Page Down, Home or End (the keys, the pad's D-pad and stick), before the focus
+    /// moves by it: for a page of the screen's own that scrolls with no control in it to move to (a build's
+    /// sheet in the match's menu). True if the screen took it.
+    fn scroll(&mut self, _shell: &mut Shell, _action: Action) -> bool {
+        false
+    }
+
+    /// A scroll that leaves the focus where it is (the pad's right stick; Shift with Page Up, Page Down, Home or
+    /// End), before the nav's page or list takes it: for a view of the screen's own that the nav doesn't know of
+    /// (the builds Tab shows over the match, the chosen build's overview, a license). Some(whether it moved) if the
+    /// screen took it.
+    fn scroll_view(&mut self, _shell: &mut Shell, _by: Scroll) -> Option<bool> {
+        None
+    }
+
+    /// Esc or Back. True if the screen went back within itself (from a lobby to its first view); false, and
+    /// the shell goes back to the menu.
+    fn back(&mut self, _shell: &mut Shell) -> bool {
+        false
+    }
+
+    /// A dialog this screen asked (`Shell::ask`, by its `tag`) was answered with its button `choice`.
+    fn answered(&mut self, _shell: &mut Shell, _tag: &str, _choice: usize) {}
+
+    /// A file was dropped on the window while this screen showed.
+    fn dropped(&mut self, _shell: &mut Shell, _path: &std::path::Path) {}
+
+    /// Files the player chose for `purpose` in the dialog this screen opened (`Shell::choose_files`), which is
+    /// heard after the call that opened it.
+    fn chosen(&mut self, _shell: &mut Shell, _purpose: &str, _paths: &[std::path::PathBuf]) {}
+
+    /// A battle this screen started: it began, it ended; or the replay it asked for is ready to watch.
+    fn battle(&mut self, _shell: &mut Shell, _event: BattleEvent) {}
+
+    /// Every frame, shown or not, before the battle's ticks (a link's datagrams are fed to its lobby here,
+    /// whatever is on screen).
+    fn frame(&mut self, _shell: &mut Shell, _now: Instant, _shown: bool) {}
+
+    /// Every frame, after the battle's ticks: what they made to send goes out (a lobby polled, its outgoing
+    /// datagrams sent). With `frame` this is the netplay library's one loop: feed, advance, poll, send.
+    fn frame_end(&mut self, _shell: &mut Shell, _now: Instant) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A screen that opens another is heard by its own name, and Back goes back to it; the screens' own dialogs'
+    /// tags are none of these.
+    #[test]
+    fn the_screen_that_opened_another_is_heard_by_its_name() {
+        for screen in ScreenId::ALL {
+            assert_eq!(opened_by(&opened_tag(screen)), Some(screen));
+        }
+        assert_eq!(opened_by("opened-by.practice"), Some(ScreenId::Practice));
+        assert_eq!(opened_by("opened-by.play"), Some(ScreenId::Play));
+        assert_eq!(opened_by("play.delete"), None);
+        assert_eq!(opened_by("practice"), None);
+        assert_eq!(opened_by("opened-by.nowhere"), None);
+    }
+}

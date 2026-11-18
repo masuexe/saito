@@ -1,0 +1,343 @@
+//! A running battle: its driver, the engine state, and why it stopped.
+
+use crate::driver::{Driver, Ran, Stop, StopReason, result_text};
+use crate::replay::Recorder;
+use saito_battle::cues::CueAction;
+use saito_battle::{Battle, BattleResult};
+use saito_match::After;
+
+pub struct Session {
+    pub driver: Box<dyn Driver>,
+    pub battle: Battle,
+    /// Why the battle stopped (engine panic, end of the trace), in words
+    /// for a log: what a player is told is `stop_reason`.
+    pub stopped: Option<String>,
+    /// Why the battle stopped, as a host can say it to its player; some
+    /// whenever `stopped` is.
+    pub stop_reason: Option<StopReason>,
+    /// The driver ran out of input (a trace's round is over) or the set
+    /// was played to its end, as opposed to the engine stopping.
+    pub finished: bool,
+    /// The set's result for the local player, once it is over (a set
+    /// played to its end).
+    pub result: Option<BattleResult>,
+    /// The first difference from the trace, once seen.
+    pub diverged: Option<String>,
+    /// Trace frame of the latest tick, if the driver has frame numbers.
+    pub frame: Option<u32>,
+    pub ticks: u64,
+    /// The last step showed a new frame (a netplay frame can wait).
+    pub fresh: bool,
+    /// The last step started a new round (the presentation starts over).
+    pub new_round: bool,
+    /// The last step's sound as cue actions, from a driver that runs the
+    /// battle itself (netplay), and of a step that ended a round (the
+    /// ended round's last cues: `battle` is the next round's by then);
+    /// none: the battle's own cues, as the console shown hears them
+    /// ([`heard`]).
+    pub sound: Option<Vec<CueAction>>,
+    /// The round the last step ended, as its last tick left it (`battle`
+    /// is the next round's by then): for whoever wants more of that tick
+    /// than `sound` (the other console's cues).
+    pub ended: Option<Box<Battle>>,
+    /// The players who asked for the pause since the host last took the
+    /// requests, by side (`Battle::pause_requests`, of a round whose host
+    /// answers the pause; `Player::take_pause_requests`).
+    pub pause_requests: [bool; 2],
+    /// The replay being written of what is played, if one is.
+    pub recorder: Option<Recorder>,
+}
+
+impl Session {
+    pub fn new(mut driver: Box<dyn Driver>) -> Session {
+        let battle = driver.start();
+        Session {
+            driver,
+            battle,
+            stopped: None,
+            stop_reason: None,
+            finished: false,
+            result: None,
+            diverged: None,
+            frame: None,
+            ticks: 0,
+            fresh: false,
+            new_round: false,
+            sound: None,
+            ended: None,
+            pause_requests: [false; 2],
+            recorder: None,
+        }
+    }
+
+    /// Record what is played from here as a replay: refused once a tick
+    /// has run, or for a driver whose ticks can't be (`Driver::record`).
+    pub fn record(&mut self, recorder: Recorder) -> Result<(), String> {
+        if self.ticks > 0 || !self.driver.record() {
+            return Err("only a set played on buttons alone is recorded, from its start".into());
+        }
+        self.recorder = Some(recorder);
+        Ok(())
+    }
+
+    /// Start over (a recording stops: the replay holds what was played
+    /// before).
+    pub fn restart(&mut self) {
+        self.recorder = None;
+        self.battle = self.driver.start();
+        self.stopped = None;
+        self.stop_reason = None;
+        self.finished = false;
+        self.result = None;
+        self.diverged = None;
+        self.frame = None;
+        self.ticks = 0;
+        self.pause_requests = [false; 2];
+    }
+
+    /// Go on from another place in what the driver plays: `battle` as it
+    /// stood after `ticks` ticks, and how the session stood there (why it
+    /// had stopped, if it had, and with what result). The driver is told
+    /// where it is by its own `go_to`; a difference from the recording seen
+    /// before stays seen. For a viewer that keeps such states to come back
+    /// to (`crate::viewer`).
+    pub(crate) fn resume(&mut self, battle: &Battle, ticks: u64, stopped: Option<String>, finished: bool, result: Option<BattleResult>) {
+        self.battle.clone_from(battle);
+        self.ticks = ticks;
+        self.frame = (ticks > 0).then_some(ticks as u32);
+        (self.stopped, self.finished, self.result) = (stopped, finished, result);
+        (self.fresh, self.new_round) = (false, false);
+        self.sound = None;
+        self.ended = None;
+        self.pause_requests = [false; 2];
+    }
+
+    /// Run one tick (one wall-clock frame of a driver that runs the battle
+    /// itself) with the local player's input (`input`: their buttons, a
+    /// switch asked, a custom screen choice of their own; their keys reach
+    /// their custom screen through their layer, the driver's). Returns false
+    /// (and records why) when the battle can't go on. (The tick that ends a
+    /// set runs and is shown as any other; it is the step after it that
+    /// returns false.)
+    pub fn step(&mut self, input: saito_battle::PlayerTick) -> bool {
+        if self.stopped.is_some() {
+            return false;
+        }
+        self.ended = None;
+        IN_ENGINE.with(|f| f.set(true));
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.run_frame(input, &mut self.battle)));
+        IN_ENGINE.with(|f| f.set(false));
+        if let Some(r) = &mut self.recorder {
+            let mut settled = Vec::new();
+            self.driver.take_recorded(&mut settled);
+            for t in &settled {
+                r.tick(t);
+            }
+        }
+        match ran {
+            Ok(None) => {}
+            Ok(Some(Ok(Ran { advanced, new_round, sound, pause_requests }))) => {
+                self.fresh = advanced;
+                self.new_round = new_round;
+                self.sound = Some(sound);
+                self.ask_pause(pause_requests);
+                if advanced {
+                    self.ticks += 1;
+                }
+                return true;
+            }
+            Ok(Some(Err(Stop { reason, detail }))) => {
+                self.stop(reason, detail);
+                return false;
+            }
+            Err(e) => {
+                self.stop(StopReason::Internal, format!("engine stopped at {}: {}", self.driver.position(), panic_message(e.as_ref())));
+                return false;
+            }
+        }
+        self.fresh = true;
+        self.new_round = false;
+        self.sound = None;
+        // (A training session's options, on the battle the last tick left: nothing from a driver without any.)
+        self.driver.prepare(&mut self.battle);
+        let Some(step) = self.driver.next(&self.battle, input) else {
+            self.stop(StopReason::Finished, format!("end of input at {}", self.driver.position()));
+            self.finished = true;
+            return false;
+        };
+        let battle = &mut self.battle;
+        IN_ENGINE.with(|f| f.set(true));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| battle.tick(&step.input, step.events)));
+        IN_ENGINE.with(|f| f.set(false));
+        self.frame = step.frame;
+        self.ticks += 1;
+        if let Err(e) = result {
+            self.stop(StopReason::Internal, format!("engine stopped at {}: {}", self.driver.position(), panic_message(e.as_ref())));
+            return false;
+        }
+        // (The players' layers draw what the tick did, on the round it was of.)
+        self.driver.follow(&self.battle);
+        self.ask_pause(self.battle.pause_requests());
+        if self.diverged.is_none() {
+            let diffs = self.driver.check(&self.battle);
+            if !diffs.is_empty() {
+                self.diverged = Some(format!("differs from the trace at {}:\n  {}", self.driver.position(), diffs.join("\n  ")));
+            }
+        }
+        // A set's round ended on this tick: on with the next one, or the
+        // set is over.
+        let after = self.driver.round_ended(&self.battle);
+        if let Some(r) = &mut self.recorder {
+            let (round_ended, set_ended) = match &after {
+                Some(After::Round(_)) => (true, false),
+                Some(After::Over(_)) => (true, true),
+                _ => (false, false),
+            };
+            let digest = (round_ended || r.digest_due()).then(|| self.battle.digest());
+            r.tick(&saito_replay::Tick { inputs: step.input.map(|p| p.word()), delays: self.driver.delays(), digest, round_ended, set_ended });
+        }
+        match after {
+            None => {}
+            Some(After::Round(next)) => {
+                // (The ended round's last tick is still heard; what is
+                // shown is the next round, at its start, as a netplay
+                // peer shows it.)
+                self.sound = Some(heard(&self.battle, self.driver.layers()).into_iter().map(CueAction::Play).collect());
+                self.ended = Some(Box::new(std::mem::replace(&mut self.battle, *next)));
+                self.new_round = true;
+            }
+            Some(After::Over(result)) => {
+                self.result = Some(result);
+                self.stop(StopReason::Finished, format!("the match is over: {}", result_text(result)));
+                self.finished = true;
+            }
+            Some(After::Stopped(why)) => {
+                self.stop(StopReason::Internal, format!("engine stopped at {}: {why}", self.driver.position()));
+            }
+        }
+        true
+    }
+
+    /// The battle stops: why, for the player and for a log.
+    fn stop(&mut self, reason: StopReason, detail: String) {
+        self.stop_reason = Some(reason);
+        self.stopped = Some(detail);
+    }
+}
+
+impl Session {
+    /// Keep a tick's pause requests until the host takes them.
+    fn ask_pause(&mut self, asked: [bool; 2]) {
+        for (kept, asked) in self.pause_requests.iter_mut().zip(asked) {
+            *kept |= asked;
+        }
+    }
+}
+
+/// The last tick's sound cues as the console `b` is shown from hears
+/// them: the viewer's (`setup.local_side`, which a replay shown from the
+/// other side sets), not the simulation's own side's; with that side's
+/// layer's (its cursor's, its sub-screens', the dark chip hover's) where its
+/// screen's own end (`Battle::screen_cues_at`).
+pub fn heard(b: &Battle, layers: [Option<&saito_battle::custom::Layer>; 2]) -> Vec<saito_battle::sound::SoundCue> {
+    let side = b.setup.local_side;
+    match layers[side as usize & 1] {
+        Some(layer) => layer.heard(b),
+        None => b.sound_cues_for(side).to_vec(),
+    }
+}
+
+/// What a panic said (an engine's stop: [`in_engine`]).
+pub fn panic_message(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "unknown panic".into())
+}
+
+thread_local! {
+    static IN_ENGINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f`, which may stop as the engine does (a panic), as the session
+/// runs a tick: the stop is the result, and the host's quiet hook
+/// ([`quiet_engine_panics`]) keeps it off stderr. (For whoever steps a
+/// battle of their own besides the session's: an AI trying plans in
+/// copies of it.)
+pub fn in_engine<R>(f: impl FnOnce() -> R) -> std::thread::Result<R> {
+    IN_ENGINE.with(|flag| flag.set(true));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    IN_ENGINE.with(|flag| flag.set(false));
+    result
+}
+
+/// Keep engine panics off stderr (the session reports them); other panics
+/// print as usual.
+pub fn quiet_engine_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !IN_ENGINE.with(|f| f.get()) {
+            default(info);
+        }
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::driver::{LivePlayer, short_set};
+    use saito_match::Set;
+
+    /// What a session of a short set showed, played by the shooter to its
+    /// end: the session, and at each new round's start its frame number,
+    /// the score it starts with (rounds played, wins, losses), its stage and
+    /// whether the ended round's last tick was still heard.
+    fn played(game: &str) -> (Session, Vec<(u32, (u8, u8, u8), saito_content_api::StageHandle, bool)>, saito_match::Match) {
+        let content = if game == "exe5" { saito_match::testing::exe5_content() } else { saito_match::testing::exe6_content() };
+        let m = short_set::of(&content, game, 7);
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, 7))));
+        let mut rounds = Vec::new();
+        while s.step(short_set::shooter(&s.battle, 0, s.ticks as u32)) {
+            assert!(s.ticks < 30_000, "{game}: the set doesn't end ({})", s.driver.position());
+            if s.new_round {
+                let r = &s.battle.round;
+                assert_eq!(r.ticks, 0, "{game}: the next round is shown at its start");
+                rounds.push((s.frame.unwrap(), (r.round, r.wins, r.losses), s.battle.setup.settings.stage, s.sound.is_some()));
+            }
+        }
+        (s, rounds, m)
+    }
+
+    /// Offline play goes on after a round: the next one starts with the
+    /// score carried, on the match's next round's stage, the presentation told to
+    /// start over (`new_round`), and the frames numbered on from the round
+    /// before. Both games.
+    #[test]
+    fn a_live_set_goes_on_to_its_next_round() {
+        for game in ["exe6", "exe5"] {
+            let (s, rounds, m) = played(game);
+            let (frame, score, stage, heard) = rounds[0];
+            assert_eq!(score, (1, 1, 0), "{game}: one round played, won");
+            assert_eq!(Some(stage), m.rounds[1].stage, "{game}");
+            assert!(heard && frame > 100, "{game}: frame {frame}");
+            assert!(s.driver.position().starts_with("live round 2 tick "), "{game}: {}", s.driver.position());
+        }
+    }
+
+    /// And to the set's end: two rounds won decide it, and the session is
+    /// finished with the result; no tick runs after it. Starting over
+    /// plays the set again from its first round.
+    #[test]
+    fn a_live_set_ends_with_its_result() {
+        for game in ["exe6", "exe5"] {
+            let (mut s, rounds, _) = played(game);
+            assert_eq!(rounds.len(), 1, "{game}: two rounds decide a set won 2-0");
+            assert_eq!((s.finished, s.result), (true, Some(BattleResult::Won)), "{game}");
+            assert_eq!(s.stopped.as_deref(), Some("the match is over: you won"), "{game}");
+            let ticks = s.ticks;
+            assert!(!s.step(saito_battle::PlayerTick::default()) && s.ticks == ticks, "{game}");
+            s.restart();
+            assert_eq!((s.finished, s.result, s.stopped.as_deref()), (false, None, None), "{game}");
+            assert_eq!(s.driver.position(), "live round 1 tick 0", "{game}");
+            assert_eq!((s.battle.round.round, s.battle.round.wins), (0, 0), "{game}");
+            assert!(s.step(saito_battle::PlayerTick::default()), "{game}");
+        }
+    }
+}

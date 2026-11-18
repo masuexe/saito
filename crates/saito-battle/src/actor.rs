@@ -1,0 +1,495 @@
+//! Per-actor data for navis: input state, action requests, charge state
+//! and the state of the attack in progress. Eight slots, allocated lowest-free first.
+//!
+//! This is the game's AIData block (0x100 bytes per slot). Only the fields
+//! ported code reads are modeled; each names its AIData offset once. The
+//! full old-name mapping is in docs/engine/field-names.md.
+
+use crate::object::ObjectRef;
+use saito_content_api::{ChipHandle, WeaponHandle};
+
+pub const SLOTS: usize = 8;
+
+/// A handle to an actor-data slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ActorId(pub u8);
+
+/// What kind of actor this is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorType {
+    #[default]
+    Virus = 0,
+    Navi = 1,
+    Player = 2,
+}
+
+/// Action-request bits (`requests`). (EXE5's 0x10000000 and 0x20000000 are
+/// GyroMan's own, his take-off and landing, which content keeps in his
+/// navi's state; EXE6's are the mode-9 A press and the takeover.)
+pub mod request {
+    pub const BUSTER: u32 = 0x1;
+    pub const CHARGED_SHOT: u32 = 0x2;
+    pub const CHIP: u32 = 0x4;
+    pub const CHARGED_CHIP: u32 = 0x8;
+    pub const BACK_SPECIAL: u32 = 0x10;
+    /// Forces the charged-shot action (setter unknown).
+    pub const FORCED_CHARGED_SHOT: u32 = 0x20;
+    /// Revert to base form while paused (`sub_8015994`: the turn-start
+    /// check found the Beast Out used up; the mid-battle custom screen
+    /// asks too): pause-time action 0x1C with `status::REVERTING_FORM`.
+    pub const REVERT_FORM: u32 = 0x40;
+    /// A full B charge released while the rules' B charge is armed
+    /// (`ActorData::b_charge_time`; EXE5's Chaos Unison releases, its
+    /// requests 0x8000 and 0x10000 by the cycle's window): the side's rules
+    /// heard of it (`charge_released`) and take it from idle
+    /// (`release_taken`). EXE6 has none.
+    pub const RULES_RELEASE: u32 = 0x80;
+    /// The rules hold a navi whose HP reached 0 for an action of theirs
+    /// that brings it back (the role `revival`, with `status::REVIVING`):
+    /// the live request handler starts it first of all its requests. While
+    /// it is asked or runs, the navi isn't deleted at 0 HP. (The DS's
+    /// request 0x100, its ToadMan rescue, action 0x5A: 0x020048E8,
+    /// 0x02062174.)
+    pub const REVIVAL: u32 = 0x100;
+    /// AntiDmg (chip 0xBB) caught a hit: its counterattack runs next.
+    pub const ANTI_DAMAGE_TRIGGERED: u32 = 0x200;
+    /// AntiSwrd (chip 0xBC) caught a sword hit.
+    pub const ANTI_SWORD_TRIGGERED: u32 = 0x400;
+    /// Dimming counter chip.
+    pub const CUT_IN: u32 = 0x800;
+    pub const TURN_L: u32 = 0x1000;
+    pub const TURN_R: u32 = 0x2000;
+    /// Pause-time request: form change (action 0x1C, state bit 0x80).
+    pub const FORM_CHANGE: u32 = 0x4000;
+    /// BodyGrd (program advance 0x157) caught a hit.
+    pub const BODY_GUARD_TRIGGERED: u32 = 0x8000;
+    pub const ALT_CHIP: u32 = 0x10000;
+    pub const A_HELD: u32 = 0x20000;
+    pub const B_HELD: u32 = 0x40000;
+    /// Starts action 0x49 from idle (`sub_80EEB4C`): a slash at every
+    /// opposing navi that is paralyzed (variant 0) or stands on a panel
+    /// with flags 0x1C00 (variant 1). No setter was found; the form
+    /// changes set the *state* bit 0x80000 (`status::FORM_CHANGE_SPRITE_HELD`),
+    /// not this request.
+    pub const STUN_STRIKE: u32 = 0x80000;
+    /// The rules caught a hit for their guard (their `hit_guard`): the role
+    /// `guard`'s action starts from idle as a trap's counter does (the
+    /// DS's request 0x100000, KnightMan's guard, action 0x5B: 0x02063BBC,
+    /// 0x020989E6).
+    pub const GUARD: u32 = 0x0010_0000;
+    /// The rules ask for an action of theirs to follow, which the live
+    /// request handler starts after a navi switch's and before the volley
+    /// (the role `follow_up`, with `status::FOLLOWING_UP`). (The DS's
+    /// request 0x02000000, which its paused swap's settle raises for a
+    /// Double Attack, action 0x5C: 0x02042E74, 0x02062174. Its number is
+    /// the engine's `SELECT_SPECIAL` here.)
+    pub const FOLLOW_UP: u32 = 0x0040_0000;
+    pub const SELECT_SPECIAL: u32 = 0x0200_0000;
+    /// Change Cross while paused (`sub_802DCDE`, from the transformation
+    /// sequencer): pause-time action 0x1C with `status::SWITCHING_NAVI`.
+    pub const NAVI_SWITCH: u32 = 0x0400_0000;
+    /// Cross death (action 0x4C) outside the pause; pause-time request for
+    /// action 0x1C inside it. Both set `status::SWITCH_KNOCKOUT`.
+    pub const SWITCH_KNOCKOUT: u32 = 0x0800_0000;
+    /// Battle mode 9 A press.
+    pub const MODE9_A: u32 = 0x1000_0000;
+    /// The rules' takeover of the side's navi is asked for (EXE6's Cross
+    /// special, which DarkInvs asks for): idle's `sub_802E4E4` hands it to
+    /// the side's rules (`takeover_requested`).
+    pub const TAKEOVER: u32 = 0x2000_0000;
+    /// Starts action 0x30 (the roles' `volley`, with `status::VOLLEY`). No
+    /// EXE6 setter was found; EXE5's loss of HP sets it for a dark MegaMan's
+    /// last stand (0x0802C16C).
+    pub const VOLLEY: u32 = 0x4000_0000;
+    /// Hit by an element this navi is weak to (ends crosses).
+    pub const WEAKNESS_HIT: u32 = 0x8000_0000;
+    /// Every attack request.
+    pub const ATTACKS: u32 = 0x3F;
+    /// The charge holds.
+    pub const HOLDS: u32 = A_HELD | B_HELD;
+}
+
+/// Actor state bits (`status`).
+pub mod status {
+    /// Direction bits of the last move (right, left, down, up).
+    pub const MOVE_DIRECTIONS: u32 = 0xF;
+    pub const CONTROLLABLE: u32 = 0x10;
+    /// It dives: a panel that submerges (EXE5's sea) submerges it and
+    /// doesn't hold it at a move's end (`sub_801032C`'s 0x20: EXE5's
+    /// 0x08017030, 0x0801715E).
+    pub const DIVES: u32 = 0x20;
+    pub const CHIP_IN_PROGRESS: u32 = 0x40;
+    /// Pause handler: form change in progress (`sub_8014A38`).
+    pub const FORM_CHANGE: u32 = 0x80;
+    /// Pause handler: reverting to base form (`sub_8015614`).
+    pub const REVERTING_FORM: u32 = 0x100;
+    pub const NO_CHARGE: u32 = 0x200;
+    pub const CAN_TURN: u32 = 0x400;
+    /// Anti-damage trap armed (acts like chip 0xBB).
+    pub const TRAP_ARMED: u32 = 0x800;
+    /// Pause handler: changing Cross (`sub_802D714`).
+    pub const SWITCHING_NAVI: u32 = 0x1000;
+    /// Knocked out of a Cross instead of deleted (action 0x4C, or the
+    /// pause handler's `sub_802D926`). Takes over the action dispatch.
+    pub const SWITCH_KNOCKOUT: u32 = 0x2000;
+    /// A navi switch took effect (set when `sub_802D714` ends). A link
+    /// navi with it falls back instead of being deleted (`sub_802DD2A`).
+    pub const SWITCHED: u32 = 0x4000;
+    /// In the air (EXE5's 0x8000): GyroMan's tick sets it over a panel
+    /// that isn't solid (0x080F0A10) and his landing clears it
+    /// (0x080F0C9C); nothing else does. A step taken with it sets no
+    /// animation (`movement::animates`).
+    pub const HOVERING: u32 = 0x8000;
+    /// Action 0x30 runs (the roles' `volley`: EXE5's last stand). Takes
+    /// over the action dispatch.
+    pub const VOLLEY: u32 = 0x1_0000;
+    /// Takes over the action dispatch like the two above; no setter was
+    /// found.
+    pub const UNINTERRUPTIBLE: u32 = 0x2_0000;
+    /// A weakness hit is breaking the form (`sub_8015766` runs instead
+    /// of the action).
+    pub const FORM_BREAKING: u32 = 0x4_0000;
+    /// A form change holds the navi's sprite still (it is off the field).
+    pub const FORM_CHANGE_SPRITE_HELD: u32 = 0x8_0000;
+    /// Gone from the field while its navi chip's navi acts (`sub_80E1352`
+    /// sets it, `sub_80E13DC` clears it).
+    pub const VANISHED: u32 = 0x10_0000;
+    /// RskyHny's trap (action 0x39): a hit with no fire damage is
+    /// swallowed and, if it did other damage, sends another bee
+    /// (`sub_802CEF4`).
+    pub const HEAT_TRAP: u32 = 0x20_0000;
+    // (EXE5 DS's 0x400000 and 0x01000000, KnightMan's guard and ToadMan's
+    // dive, are content's, in the navi's state.)
+    /// The rules' revival runs (`request::REVIVAL`'s action; the DS's
+    /// 0x200000, its ToadMan rescue). Takes over the action dispatch; the
+    /// navi isn't deleted at 0 HP while it runs.
+    pub const REVIVING: u32 = 0x0200_0000;
+    /// The rules' follow-up runs (`request::FOLLOW_UP`'s action; the DS's
+    /// 0x800000, a Double Attack after a paused swap). Takes over the action
+    /// dispatch.
+    pub const FOLLOWING_UP: u32 = 0x0400_0000;
+}
+
+/// State of the attack action in progress, shared by whatever action is
+/// running (AIData+0xA0, the game's AIAttackVars). Action-specific state
+/// gets named fields as actions are ported.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AttackVars {
+    /// Step within the action (0, 4, 8...), and whether its entry ran.
+    pub step: u8,
+    pub step_init: u8,
+    /// Attack element byte (primary | secondary bits).
+    pub element: u8,
+    /// +3: the attack's variant, as the anti-damage counters read it (the
+    /// shuriken's target, `sub_80EE996`): what a stance's weapon sets
+    /// (EXE6's AntiDmg program 0, EXE5's ShadowSoul 1) and a trap's catch
+    /// (`sub_801056A`: 0). The chips' variants are their definitions'.
+    pub variant: u8,
+    /// +4: the attack is charged (`sub_80127C0`'s argument).
+    pub charged: u8,
+    /// Input lockout to apply when the attack ends.
+    pub lockout: u8,
+    /// +0x0F, the attack parameters' fourth byte, which a dimming chip's
+    /// controller takes with them: its telop is hidden from its user too
+    /// (`sub_800BBA8`, `TelopHidden::FromBoth`). Loading a chip clears it
+    /// (no dimming chip's record sets it); EXE4's weapon routine 0x31 sets
+    /// it after loading its Anti chip.
+    pub telop_hidden: bool,
+    pub extra: u16,
+    pub damage: u16,
+    /// Counter/stagger strength for the attack's hitbox.
+    pub hit_param: u16,
+    /// The attack's chip; none for no chip (the game's 0, whose record
+    /// reads as the zeroed chip: see [`crate::content::Content::chip_field`]).
+    pub chip: Option<ChipHandle>,
+    pub special_source: u8,
+    /// Which `set_attack` slot started the action.
+    pub kind: u8,
+    /// 1 while the action runs inside the side's wrapper (`sub_801B9E6`
+    /// runs the role `actions.wrapper` instead): EXE6's Beast Out lock-on
+    /// byte, which rules/beast sets as a chip's use starts
+    /// (`chip_used`) and the rush as it chains the next.
+    pub wrapped: u8,
+    /// +0x2C: an object a step or the Beast Out rush turns to face in the
+    /// panel patterns 0x23, 0x31 and 0x33 (`sub_800F2FC`). Players' steps
+    /// clear it (`sub_80116AE`); only the unused `sub_80116F6` sets one.
+    pub face_target: Option<ObjectRef>,
+    /// +0x30: a marker: the move's "direction changed", or a heat trap
+    /// swallowing a hit. (As a throw of an absorbed obstacle keeps it,
+    /// DustCross's, the obstacle's look and animation are content's, in
+    /// the navi's state.)
+    pub marker: u32,
+    /// +0x12: the attack's count (its shots, swings, slashes, a hold's
+    /// ticks, the recovery after a shot: each action its own). Every
+    /// action shares the word and none clears it, so one that reads it
+    /// before writing it reads what an earlier one left: a thrown obstacle
+    /// waits it out as its recovery, a burner's roar counts on from it,
+    /// Beast Over's vanish compares it with its timer.
+    pub count: u16,
+    /// The running action's own state (timers, destinations).
+    pub action: crate::kinds::player::actions::ActionVars,
+    /// The effect the instant chips' action runs (`off_80EC3F0[subtype]`):
+    /// the chip's, or a weapon's that names one (TenguCross's wind).
+    pub instant: Option<crate::kinds::player::actions::instant::Effect>,
+    /// The wrapper's state starts over: `sub_801011A` clears its bytes
+    /// (+0x1E..+0x27, which the game's wrapper, EXE6's Beast Out rush, now
+    /// keeps in the rules' state); the wrapper clears this once it has.
+    pub wrapper_fresh: bool,
+}
+
+/// Joypad state as an actor sees it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Pad {
+    pub held: u16,
+    pub pressed: u16,
+    pub released: u16,
+    pub previous: u16,
+}
+
+impl Pad {
+    pub fn update(&mut self, held: u16) {
+        let old = self.held;
+        self.previous = old;
+        self.held = held;
+        self.pressed = !old & held;
+        self.released = old & !held;
+    }
+}
+
+#[derive(Clone, Debug, Default, Hash)]
+pub struct ActorData {
+    pub actor_type: ActorType,
+    /// The actor record's AI index.
+    pub ai_index: u8,
+    /// The identity whose actor record this is (a navi's: it stays the
+    /// navi's through its forms). What the original's tables by actor
+    /// type and AI index hold, the rules read of it.
+    pub identity: Option<saito_content_api::IdentityHandle>,
+    /// 1 = not counted as a combatant.
+    pub not_counted: u8,
+    /// Weapons (the game's routine bytes; none for 0xFF): battle-mode-9 A
+    /// press, A-charge type, buster, charged shot, B+Back special.
+    pub mode9_a: Option<WeaponHandle>,
+    pub a_charge: Option<WeaponHandle>,
+    pub buster: Option<WeaponHandle>,
+    pub charge_shot: Option<WeaponHandle>,
+    pub back_special: Option<WeaponHandle>,
+    /// AIData+0x09: ticks toward the next HP lost to the fight-time HP bug
+    /// (`sub_8010230`; `sub_801026A` for actors without navi stats).
+    pub hp_drain_counter: u8,
+    /// AIData+0x0A: ticks toward the next HP lost to the custom-screen HP
+    /// drain bug (`sub_80102AC`).
+    pub drain_counter: u8,
+    /// The side's rules' `navi_tick` runs for it each tick (EXE6's
+    /// NaviCust emotion-swing bug, `sub_8013DA0`).
+    pub ticked: bool,
+    // (AIData+0x0F, the turn-start Beast Out check's delay, is EXE6's beast
+    // part's state: content/exe6/rules/beast/init.luau.)
+    /// AIData+0x10: drain hits this navi landed on the opponent, turned
+    /// into healing (MaxHP/10 each) on its own next hit collection
+    /// (`sub_801A308`, `sub_801A324`).
+    pub drain_heal_credits: u8,
+    /// Alternative A-charge type (form chips).
+    pub alt_a_charge: Option<WeaponHandle>,
+    /// AIData+0x13: ticks left to press Back after B for the B+Back
+    /// special (`sub_8012FC8`: 8 on a B press).
+    pub back_special_window: u8,
+    /// AIData+0x15: ticks before the B+Back special can be input again:
+    /// the special's lockout, set when a `set_attack` kind-3 action (the
+    /// B+Back special) ends (`sub_801171C`), counted down by
+    /// `sub_80107D4`.
+    pub back_special_cooldown: u8,
+    /// Input lockout after a chip, in ticks.
+    pub lockout: u8,
+    /// Buffered auto-move.
+    pub buffered_move: u8,
+    /// Charge counter, level (0 none, 1 charging, 2 full) and source
+    /// (0 none, 1 A, 2 B).
+    pub charge_counter: u16,
+    pub charge_level: u8,
+    pub charge_source: u8,
+    /// EXE4's rapid presses (AIData +0x12, the count, and +0x11, the
+    /// ticks left for the next): a form's `rapid_presses` asks for the
+    /// forced charged shot at its count (GutsSoul's, 0x0800BE50); the shot
+    /// clears both as it ends (action 0x10, 0x080EBE84).
+    pub rapid_presses: u8,
+    pub rapid_window: u8,
+    pub total_damage_taken: u16,
+    pub pad: Pad,
+    /// Mirror of `pad` maintained while dimmed.
+    pub dimmed_pad: Pad,
+    /// AIData+0x32: held tired (the game stores 0xFFFF; EXE6's "the Beast
+    /// Out counter is spent"): emotion 1, the mood held (`sub_8015BEC`)
+    /// and no anger (`sub_80143CE`). A game's rules set it: EXE6's at the
+    /// round's start with a zero counter (`sub_8013892`), at the turn-start
+    /// check (`sub_80159C6`), when a Beast Out reverts (`sub_80158CC`), and
+    /// by the NaviCust emotion-swing bug (`sub_8013DA0`); `sub_8014446`
+    /// clears it.
+    pub tired: bool,
+    pub anger: u16,
+    /// AIData+0x36: exhausted for the rest of the battle (EXE6's after Beast
+    /// Over: `sub_80158CC` → `sub_8014466` stores 0x3C0, which nothing
+    /// counts down; rules/beast sets it, `form_reverted`): emotion 5,
+    /// mood changes blocked, and 1 HP lost per tick, never the last one
+    /// (`sub_8014498`).
+    pub exhausted: bool,
+    /// EXE5's AIData+0x36 (where EXE6 keeps `exhausted`): the no-charge
+    /// drive's ticks left (DarkInvs sets 600, 0x080E2318), counted down in
+    /// the intake while the navi has the no-charge state and the battle is
+    /// neither paused nor dimmed (0x0800DBE0); its end asks for the stun
+    /// strike (EXE5's action 0x49, the drive's end). 0xFFFF holds.
+    pub no_charge_timer: u16,
+    /// EXE5's AIData+0xF0: the auto battle AI drives it (0x0802C110:
+    /// DarkInvs); the AI's breath clears it one time in two (0x0802B5B8)
+    /// and the idle's reset of its state when the drive is off
+    /// (0x0802C03A). VarSwrd's pick reads it.
+    pub in_auto_battle: bool,
+    /// The controller's state starts over (a form's `berserk` effect,
+    /// `sub_802D310`); the controller clears it once it has.
+    pub controller_fresh: bool,
+    /// AIData+0x70: the party switch its player asks for this tick, the
+    /// member (the DS's navi input copy, 0x0203C180, from the side's input
+    /// record +8: `Battle::switch_inputs`; it keeps its last once the
+    /// battle is over). (The DS copies its microphone byte to +0x71 beside
+    /// it.)
+    pub switch_input: Option<u8>,
+    /// AIData+0x72: the member an in-battle switch goes to (the DS's input
+    /// handler stores it with the request, 0x0203C5F6; action 0x59 reads it).
+    pub switch_member: Option<u8>,
+    /// AIData+0x38: ticks before a road panel can start another slide
+    /// (5 after a road slide, `sub_80166D0`/`sub_8016730`; counted down
+    /// by `sub_801A36A`).
+    pub slide_cooldown: u16,
+    /// AIData+0x3C: the height (Z, whole pixels) a bubble bobs around and
+    /// restores when it pops (`sub_8016B72`, `sub_801A2B0`). Viruses
+    /// record it every tick (`sub_8108F74`); nothing sets it for players.
+    pub bubble_base_z: i16,
+    /// EXE5's AIData+0x3C: DarkPlus's tint (0x0800E1DC sets 24; the
+    /// cooldowns count it down, not while dimmed: 0x0800E54C), which picks
+    /// the navi's status shader after the invulnerable glow (0x080136B8).
+    /// EXE6 has none.
+    pub plus_tint: u16,
+    /// AIData+0x40: the target marker (effect #0xF, EXE6's Beast Out lock-on marker:
+    /// `sub_80E1620`), which `sub_80E1662` unfreezes.
+    pub target_marker: Option<ObjectRef>,
+    /// Action requests from input (`request::*`).
+    pub requests: u32,
+    /// Actor state bits (`status::*`).
+    pub status: u32,
+    /// AIData+0x4C: consecutive ticks spent flinching or paralyzed
+    /// (`sub_80143FC`); 120 of them make MegaMan angry (`sub_80142DC`).
+    pub stun_ticks: u32,
+    /// AIData+0x50 (EXE4's +0x5C): an object tied to the navi that the full
+    /// status reset ends (`sub_801390C` → `sub_80E5410`: state 8, first
+    /// extra var cleared): EXE4's WindSoul's wind (0x0800E10C), which its
+    /// form's reset sets.
+    pub reset_linked_object: Option<ObjectRef>,
+    /// The navi object's ExtraVars+0x10 and +0x18 in battle mode 9, for
+    /// DustMan (AI index 10): the attack #0xD2 and actor #0x28 his
+    /// post-init hook spawns (`sub_80F22F8`).
+    pub mode9_objects: [Option<ObjectRef>; 2],
+    /// The charge-glow effect object.
+    pub charge_glow: Option<ObjectRef>,
+    /// AIData+0x5C: the Full Synchro aura (actor #0x5E, spawned by
+    /// `sub_80139C4` → `sub_80C4C12`); form changes end it, deletion
+    /// forgets it (`sub_801746E`).
+    pub full_synchro_aura: Option<ObjectRef>,
+    /// AIData+0x60: the barrier's visual (effect #7, content's), which
+    /// hides and shows with the navi (`sub_80E1352`, `sub_80E13DC`);
+    /// deletion forgets it (`sub_801A7F4`).
+    pub barrier_visual: Option<ObjectRef>,
+    /// A sprite overlay attached for the current chip.
+    pub overlay: Option<ObjectRef>,
+    pub attack: AttackVars,
+    /// What it runs (its CurAction).
+    pub navi_action: crate::kinds::player::NaviAction,
+    /// Its saved lifecycle position (`obj+0x5C`), which a status action
+    /// and a form change return to.
+    pub saved_word: Option<crate::kinds::player::NaviWord>,
+    /// A B charge the side's rules arm in place of the charged shot's
+    /// (EXE5's Chaos Unison charge, which its soul change arms): the ticks
+    /// to a full charge (in place of the charged shot's by the Charge
+    /// stat), the glow it shows (seen and heard by its side alone) and the
+    /// glow's animation once full. The rules push them (EXE5's while its
+    /// cycle runs: `navi_tick`); a full charge's release is theirs
+    /// (`request::RULES_RELEASE`), and the weapons' load drops them all
+    /// (EXE5's 0x0800DCD8). None: no such charge.
+    pub b_charge_time: Option<u8>,
+    pub b_charge_glow: Option<saito_content_api::SpriteId>,
+    pub b_charge_anim: Option<u8>,
+    /// EXE5's AIData+0x0D: its form's priming is up (GyroSoul's, after a
+    /// Wind chip: `FormData::priming`). EXE6 never primes.
+    pub primed: bool,
+    /// A navi no player controls (actor type navi): who brought it
+    /// (AIData+0x54, `sub_80076A0`'s caller), its target (AIData+0x78: the
+    /// other side's player, `sub_800F318`), and the rules that drive it.
+    pub summoner: Option<ObjectRef>,
+    pub target: Option<ObjectRef>,
+    pub controller: Option<crate::kinds::player::Controller>,
+    /// AIData+0x74: what sparkles over it while its deletion runs.
+    pub deletion_sparkles: Option<ObjectRef>,
+}
+
+/// The actor-data pool.
+#[derive(Clone, Debug, Default, Hash)]
+pub struct Actors {
+    slots: [ActorData; SLOTS],
+    in_use: u8,
+    /// The actors' content actions' states, each at its actor's slot (its
+    /// attack state's `ActionVars::Content` says which layout).
+    action_states: saito_content_api::StateArena<SLOTS>,
+}
+
+impl Actors {
+    pub fn get(&self, id: ActorId) -> &ActorData {
+        &self.slots[id.0 as usize]
+    }
+
+    pub fn get_mut(&mut self, id: ActorId) -> &mut ActorData {
+        &mut self.slots[id.0 as usize]
+    }
+
+    /// Allocate the lowest free slot, cleared. (The game leaves the last
+    /// 0x10 bytes alone: the controllers' state, Beast Over's berserk and
+    /// the Cross special's, which are EXE6's rules' now, by side.)
+    pub fn allocate(&mut self) -> Option<ActorId> {
+        let slot = (0..SLOTS as u8).find(|&i| self.in_use & (1 << i) == 0)?;
+        self.in_use |= 1 << slot;
+        self.slots[slot as usize] = ActorData::default();
+        self.action_states.reset(slot as usize, 0);
+        Some(ActorId(slot))
+    }
+
+    /// The actor's content action's state, if its attack state holds one.
+    pub fn action_state(&self, id: ActorId) -> Option<saito_content_api::StateRef<'_>> {
+        match self.get(id).attack.action {
+            crate::kinds::player::actions::ActionVars::Content(s) => Some(self.action_states.state(id.0 as usize, s)),
+            _ => None,
+        }
+    }
+
+    pub fn action_state_mut(&mut self, id: ActorId) -> Option<saito_content_api::StateMut<'_>> {
+        match self.get(id).attack.action {
+            crate::kinds::player::actions::ActionVars::Content(s) => {
+                Some(self.action_states.state_mut(id.0 as usize, s))
+            }
+            _ => None,
+        }
+    }
+
+    /// Give the actor's attack state a content action's state of layout
+    /// `layout`, `size` bytes, zeroed, in place of what it held.
+    pub fn set_action_state(&mut self, id: ActorId, layout: saito_content_api::StateId, size: usize) {
+        self.get_mut(id).attack.action = crate::kinds::player::actions::ActionVars::Content(layout);
+        self.action_states.reset(id.0 as usize, size);
+    }
+
+    pub fn free(&mut self, id: ActorId) {
+        self.in_use &= !(1 << id.0);
+    }
+
+    pub fn reset(&mut self) {
+        self.in_use = 0;
+    }
+}

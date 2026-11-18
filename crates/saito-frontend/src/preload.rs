@@ -1,0 +1,627 @@
+//! What a match still waits for once its game is loaded, made ready before
+//! its first tick, a step at a time: for a loading screen whose bars
+//! advance and whose window stays live.
+//!
+//! **What there is to wait for.** A game loads whole ([`crate::game`]): its
+//! content, every sprite, picture and sound of its game's graphics. A match reads no
+//! file ([`Late::reads`] counts any that were read; the example
+//! `preload` plays one with the game's graphics and the content deleted). What a
+//! match's first tick did wait for, before this, was made on the way:
+//!
+//! - **the content's runtime on the thread that runs the battle**: every
+//!   thread that makes or steps a battle keeps a Luau runtime of the
+//!   content (`saito_battle::behavior`), and loading one runs all of the
+//!   game's scripts: about a second (EXE4 0.4 s, EXE5 0.8 s, EXE6 1.2 to
+//!   1.4 s, measured in a release build on a loaded machine:
+//!   docs/frontend.md §9), paid by the first battle made on the thread, or
+//!   the first build checked there. [`runtime`] loads it ahead; it is the
+//!   long step of a [`Preload`], and none at all once the thread has it (a
+//!   host may load it behind its start-up bar, as soon as the game is
+//!   loaded);
+//! - **the round's first battle and its first picture**: about 15 ms;
+//! - **the text**: with the sharp text, a string is laid out the first time
+//!   it shows in a box, and each glyph's distance field is made from the
+//!   font's outline the first time the glyph shows, once for every size
+//!   (8 to 27 µs a Latin glyph, 35 to 80 µs a kanji: docs/design/
+//!   text-rendering.md §9.10; [`Late::layouts`] and [`Late::glyphs`] count
+//!   them). The first picture's are made here, and so are the glyphs of
+//!   every name and description of both folders and both navis
+//!   (`TextRenderer::prepare`, with each side's steps): a window of any
+//!   size, or resized, draws them without making any. The layouts of the
+//!   strings a fight goes on to show (a chip's name, a number) are made as
+//!   they show, well inside a frame.
+//!
+//! **Each side's part** is its things looked up in the game's graphics that is in
+//! memory: its navi's face, emblem and name, its forms' faces and names,
+//! each chip of its folder's icon, picture, name and description, by the
+//! same lookups a frame draws through. They take microseconds; what they
+//! give is [`Preload::missing`], said before the match starts, and a bar a
+//! side.
+//!
+//! ```ignore
+//! let mut preload = Preload::new(&game, &set, 0, (width, height));
+//! while preload.step() {
+//!     show(preload.fraction_of(Part::Side(0)), preload.fraction_of(Part::Side(1)), preload.fraction());
+//! }
+//! let mut player = preload.player(Box::new(LivePlayer::new(set)));
+//! // ... and after the match: player.late() says what it still made on the way.
+//! ```
+
+use crate::driver::Driver;
+use crate::game::Loaded;
+use crate::player::Player;
+use saito_audio::BattleAudio;
+use saito_battle::Battle;
+use saito_battle::behavior::Behaviors;
+use saito_battle::content::{ChipCode, ChipRole, Content, Emotion};
+use saito_content_api::{ChipHandle, FormHandle, NaviHandle};
+use saito_match::Set;
+use saito_render::Renderer;
+use saito_render::audit::Lookup;
+use saito_render::lookups;
+use saito_render::strings::DisplayText;
+use saito_render::vfont::{Role, TextRenderer};
+use std::sync::Arc;
+
+/// Load `content`'s runtime on this thread, if the thread hasn't it: the
+/// thread that will make and step the battles (and check builds). True
+/// when it was loaded now (the long wait: `preload`'s module docs), false
+/// when the thread had it. A content error is the same on every machine.
+pub fn runtime(content: &Content) -> Result<bool, String> {
+    let before = Behaviors::loads();
+    Behaviors::for_content(content).map_err(|e| e.to_string())?;
+    Ok(Behaviors::loads() != before)
+}
+
+/// What a player's ticks and pictures made on the way, because nothing had
+/// made it ready ([`Player::late`]): the work a [`Preload`] does ahead. A
+/// match played by a preloaded player on its thread has no runtime loaded
+/// and nothing read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Late {
+    /// Content runtimes this thread loaded since the player was made
+    /// (`Behaviors::loads`): each a wait of about a second.
+    pub runtimes: u64,
+    /// Parts of the content this thread read from disk since
+    /// (`saito_content::load::reads`).
+    pub reads: u64,
+    /// Strings its text was laid out for, and glyphs' distance fields made
+    /// from the font, each for the first time, since (the enhanced
+    /// mode's).
+    pub layouts: u64,
+    pub glyphs: u64,
+    /// Drawings of the frames rasterized while a frame was drawn, none
+    /// having said they were coming (the sharp text's).
+    pub rasters: u64,
+}
+
+/// Whose a step of a match's preloading is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Part {
+    /// The match's own: the content's runtime on this thread, the round's
+    /// first battle, its first picture (the arena, the background, both
+    /// navis as they come in, the HUD) and the sound.
+    Match,
+    /// One side's: its navi, its navi's forms and each chip of its folder.
+    Side(u8),
+}
+
+/// What a step makes ready.
+#[derive(Clone, Copy)]
+enum Work {
+    Runtime,
+    Battle,
+    /// The other games' backgrounds the set's rounds are drawn on, being
+    /// extracted ([`Preload::with`] asks for them): done once they are.
+    Backgrounds,
+    Picture,
+    Sound,
+    Navi(NaviHandle),
+    Form(NaviHandle, FormHandle),
+    Chip(ChipHandle, ChipCode),
+}
+
+struct Step {
+    part: Part,
+    /// Its share of the whole, for the fractions: about its time.
+    share: u32,
+    work: Work,
+    done: bool,
+}
+
+/// The sound a player is made with: the battle's banks and the content's
+/// songs, as `BattleAudio::with_banks` takes them.
+pub type SoundParts = (Vec<Arc<m4a::SoundBank>>, saito_audio::Songs);
+
+/// A match being made ready: see the module's docs. It must be stepped on
+/// the thread that will run the player it becomes ([`Preload::player`]):
+/// the runtime it loads is that thread's.
+pub struct Preload {
+    content: Arc<Content>,
+    set: Set,
+    /// The side whose console is shown.
+    viewer: u8,
+    /// The host's picture, in its pixels.
+    size: (usize, usize),
+    renderer: Renderer,
+    text: Option<TextRenderer>,
+    sound: Option<SoundParts>,
+    /// The music by the rounds' backgrounds ([`Preload::round_music`]).
+    round_music: Option<Arc<saito_audio::RoundMusic>>,
+    audio: Option<BattleAudio>,
+    /// The round's first battle, once made, as the viewer's console shows
+    /// it.
+    battle: Option<Battle>,
+    steps: Vec<Step>,
+    stopped: Option<String>,
+}
+
+impl Preload {
+    /// What `set`'s first round waits for, shown and heard from `game` (its
+    /// sound, if it was loaded) on `viewer`'s console (the local player's
+    /// side: 0 in live play and a replay watched from the left, a netplay
+    /// peer's own) in a picture of `size` (the host's pixels: the text is
+    /// drawn at that size).
+    pub fn new(game: &Loaded, set: &Set, viewer: u8, size: (usize, usize)) -> Preload {
+        let sound = game.sound.as_ref().map(|s| (vec![s.bank.clone()], s.songs.clone()));
+        Preload::with(game.renderer(), game.font.clone().map(TextRenderer::new), sound, set, viewer, size)
+    }
+
+    /// The same from a player's parts ([`Player::with`]): the renderer, the
+    /// sharp text's text renderer and the sound (none: silent).
+    pub fn with(renderer: Renderer, text: Option<TextRenderer>, sound: Option<SoundParts>, set: &Set, viewer: u8, size: (usize, usize)) -> Preload {
+        let content = set.content().clone();
+        // (The other games' backgrounds the rounds are drawn on: extracted on threads of their own while the rest is
+        // made ready, and waited for before the first picture.)
+        let backgrounds = saito_render::graphics::set_backgrounds(set.first());
+        renderer.graphics().want_backgrounds(&content, backgrounds.iter().copied());
+        let waits = !renderer.graphics().backgrounds_ready(&content, backgrounds.iter().copied());
+        let mut steps = Vec::new();
+        // The runtime is the wait (about a second against the rest's
+        // hundredths), unless the thread has it.
+        let runtime = if Behaviors::is_loaded(set.first().content) { 1 } else { 600 };
+        steps.push(Step { part: Part::Match, share: runtime, work: Work::Runtime, done: false });
+        steps.push(Step { part: Part::Match, share: 6, work: Work::Battle, done: false });
+        let first = set.first();
+        for side in 0..2u8 {
+            let mut add = |work| steps.push(Step { part: Part::Side(side), share: 1, work, done: false });
+            let navi = first.navi_stats[side as usize].navi;
+            add(Work::Navi(navi));
+            // The form it starts in and every form its navi lists, each
+            // once (a form two lists hold is one form).
+            let mut forms: Vec<FormHandle> = content.navi(navi).forms.iter().flat_map(|f| f.lists.iter().flat_map(|(_, forms)| forms.iter().copied())).collect();
+            forms.push(first.navi_stats[side as usize].form);
+            forms.sort();
+            forms.dedup();
+            for form in forms {
+                add(Work::Form(navi, form));
+            }
+            // Each chip of its folder, once in each code it is there in.
+            let mut chips: Vec<(ChipHandle, ChipCode)> = first.players[side as usize].folder.chips.iter().flatten().map(|c| (c.id, c.code)).collect();
+            chips.sort_by_key(|&(chip, code)| (chip, code.0));
+            chips.dedup();
+            for (chip, code) in chips {
+                add(Work::Chip(chip, code));
+            }
+        }
+        steps.push(Step { part: Part::Match, share: if waits { 30 } else { 1 }, work: Work::Backgrounds, done: false });
+        steps.push(Step { part: Part::Match, share: 6, work: Work::Picture, done: false });
+        if sound.is_some() {
+            steps.push(Step { part: Part::Match, share: 2, work: Work::Sound, done: false });
+        }
+        Preload { content, set: set.clone(), viewer, size, renderer, text, sound, round_music: None, audio: None, battle: None, steps, stopped: None }
+    }
+
+    /// Run the next step. True while a step is left after it.
+    pub fn step(&mut self) -> bool {
+        if let Some(i) = self.steps.iter().position(|s| !s.done) {
+            self.run(i);
+        }
+        !self.done()
+    }
+
+    /// Run the next step of `part` (one side's alone, or the match's own).
+    /// True while that part has a step left after it.
+    pub fn step_of(&mut self, part: Part) -> bool {
+        if let Some(i) = self.steps.iter().position(|s| !s.done && s.part == part) {
+            self.run(i);
+        }
+        self.steps.iter().any(|s| !s.done && s.part == part)
+    }
+
+    /// Every step ran.
+    pub fn done(&self) -> bool {
+        self.steps.iter().all(|s| s.done)
+    }
+
+    /// How far it is, from 0 to 1: the shares of the steps that ran over
+    /// all of them. The match's own steps are nearly all of it while the
+    /// thread has no runtime of the content (the step that loads one is
+    /// about a second, the others hundredths together).
+    pub fn fraction(&self) -> f32 {
+        fraction(self.steps.iter())
+    }
+
+    /// How far `part` is, from 0 to 1 (1 for a part with no step: a silent
+    /// match's sound).
+    pub fn fraction_of(&self, part: Part) -> f32 {
+        fraction(self.steps.iter().filter(|s| s.part == part))
+    }
+
+    /// What the steps run so far looked up that the game's assets don't have (a
+    /// chip without a picture, a navi without a face), one line each: the
+    /// match plays without it (a missing picture isn't drawn), and the host
+    /// may say so before it starts.
+    pub fn missing(&self) -> Vec<String> {
+        self.renderer.problems.iter().map(|(what, _)| what.to_string()).collect()
+    }
+
+    /// Why the round can't start, if a step found it can't: the content's
+    /// runtime doesn't load, or the engine stopped making the first battle
+    /// (the same on every machine). The steps still run to their end.
+    pub fn stopped(&self) -> Option<&str> {
+        self.stopped.as_deref()
+    }
+
+    /// The match's music by its rounds' backgrounds (`music`: each
+    /// background's music in place of the battle's own;
+    /// `BattleAudio::set_round_music`): what the player or viewer it becomes
+    /// plays. Asked for before the steps run.
+    pub fn round_music(mut self, music: Option<Arc<saito_audio::RoundMusic>>) -> Preload {
+        self.round_music = music;
+        self
+    }
+
+    /// The battle's sound from its parts, with the music by background.
+    fn audio_of(&mut self, (banks, songs): SoundParts) -> BattleAudio {
+        let mut audio = BattleAudio::with_banks(banks, songs);
+        audio.set_round_music(self.round_music.clone());
+        audio
+    }
+
+    /// The player of what `driver` plays (the set this was made for), with
+    /// what was made ready: its renderer and text as the steps left them,
+    /// its sound. Steps not run are made up on the way, as a player made
+    /// without a preload makes everything ([`Player::late`] counts it).
+    pub fn player(mut self, driver: Box<dyn Driver>) -> Player {
+        let audio = self.audio.take().or_else(|| self.sound.take().map(|parts| self.audio_of(parts)));
+        Player::with(self.renderer, self.text, audio, driver)
+    }
+
+    /// The viewer of `replay` (the replay whose set this was made for:
+    /// `crate::replay::set_of`), shown from `view`'s side, with what was
+    /// made ready, as [`Preload::player`] gives a player. Refused as
+    /// [`crate::viewer::Viewer::open`] refuses a replay.
+    pub fn viewer(mut self, replay: &crate::replay::Replay, view: Option<u8>) -> Result<crate::viewer::Viewer, crate::replay::Refused> {
+        let audio = self.audio.take().or_else(|| self.sound.take().map(|parts| self.audio_of(parts)));
+        crate::viewer::Viewer::with(&self.content, replay, view, self.renderer, self.text, audio)
+    }
+
+    fn run(&mut self, i: usize) {
+        self.steps[i].done = true;
+        match self.steps[i].work {
+            Work::Runtime => {
+                if let Err(why) = runtime(&self.content) {
+                    self.stopped.get_or_insert(why);
+                }
+            }
+            Work::Battle => self.make_battle(),
+            Work::Backgrounds => {
+                let backgrounds = saito_render::graphics::set_backgrounds(self.set.first());
+                if !self.renderer.graphics().backgrounds_ready(&self.content, backgrounds) {
+                    // (Not yet: the step runs again. Off a page, a moment's rest between asks.)
+                    self.steps[i].done = false;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+            Work::Picture => {
+                if self.battle.is_none() && self.stopped.is_none() {
+                    self.make_battle();
+                }
+                let Some(battle) = &self.battle else { return };
+                // The first picture, as the player will draw it: every
+                // lookup it makes, and its text at the host's size.
+                let frame = self.renderer.render(battle, [None, None]);
+                let (w, h) = self.size;
+                let mut pixels = vec![0u32; w * h];
+                saito_render::present::present(&frame, self.text.as_mut(), &mut pixels, w, h);
+            }
+            Work::Sound => {
+                if let Some(parts) = self.sound.take() {
+                    self.audio = Some(self.audio_of(parts));
+                }
+            }
+            Work::Navi(navi) => self.look_up_navi(navi),
+            Work::Form(navi, form) => self.look_up_form(navi, form),
+            Work::Chip(chip, code) => self.look_up_chip(chip, code),
+        }
+    }
+
+    /// The round's first battle, as the set starts it, shown from the
+    /// viewer's console (a tick's panic is the engine stopping: here, at
+    /// the setup).
+    fn make_battle(&mut self) {
+        let set = &self.set;
+        match crate::session::in_engine(|| set.start()) {
+            Ok(mut battle) => {
+                // (The console drawn is the setup's; the simulation's own
+                // perspective stays: `netplay`.)
+                battle.setup.local_side = self.viewer;
+                self.battle = Some(battle);
+            }
+            Err(e) => {
+                let why = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+                self.stopped.get_or_insert(format!("the round can't start: {}", why.unwrap_or_else(|| "the engine stopped".into())));
+            }
+        }
+    }
+
+    /// A navi's own in the game's graphics: its face (a navi that changes form shows
+    /// its forms'), its emblem, its name and variant name.
+    fn look_up_navi(&mut self, navi: NaviHandle) {
+        let sharp = self.renderer.enhancements().text;
+        let (c, graphics) = (&*self.content, self.renderer.graphics().clone());
+        let view = graphics.view();
+        let strings = self.renderer.strings().cloned();
+        let text = DisplayText::new(strings.as_deref());
+        let p = &mut self.renderer.problems;
+        let (hud, a) = (&view.bundle().hud, &view.bundle().custom);
+        if !c.navi(navi).changes_form() {
+            lookups::navi_face(&view, c, navi, p);
+        }
+        if lookups::custom_graphics(a, p) {
+            lookups::emblem(a, c, navi, p);
+        }
+        lookups::navi_name(hud, navi, false, text.navi_name(c, navi), p);
+        if let Some(name) = text.navi_variant_name(c, navi) {
+            lookups::navi_name(hud, navi, true, name, p);
+        }
+        // The sharp text's glyphs of its names, on their bar.
+        if let Some(t) = self.text.as_mut().filter(|_| sharp) {
+            for name in [Some(text.navi_name(c, navi)), text.navi_variant_name(c, navi)].into_iter().flatten() {
+                t.prepare(name, Role::FittedCell);
+            }
+        }
+    }
+
+    /// A form's in the game's graphics: its face for each of the game's emotions, and
+    /// where the game's custom screen lists forms in a window, its name
+    /// there and its description.
+    fn look_up_form(&mut self, navi: NaviHandle, form: FormHandle) {
+        let (c, graphics) = (&*self.content, self.renderer.graphics().clone());
+        let view = graphics.view();
+        let strings = self.renderer.strings().cloned();
+        let text = DisplayText::new(strings.as_deref());
+        let p = &mut self.renderer.problems;
+        let (hud, a) = (&view.bundle().hud, &view.bundle().custom);
+        for e in 0..c.rules().emotion.names.len() {
+            for variant in [false, true] {
+                lookups::form_face(&view, c, form, Emotion(e as u8), variant, p);
+            }
+        }
+        let windowed = c.defs.rules().is_some_and(|r| r.views.form_list.is_some());
+        if windowed && lookups::custom_graphics(a, p) && saito_render::custom::form_name_picture(c, a, navi, form).is_some() {
+            lookups::form_name(a, c, navi, form, p);
+            if let Some(said) = text.form_description(c, form).filter(|_| lookups::chatbox_graphics(hud, p)) {
+                lookups::dialogue(&hud.dialogue_font, Lookup::FormDescription(form), said.text, p);
+            }
+        }
+    }
+
+    /// A chip's in the game's graphics: its icon, its picture (the button chip's is
+    /// its button's), its name, the chip window's colors in its code, and
+    /// its description.
+    fn look_up_chip(&mut self, chip: ChipHandle, code: ChipCode) {
+        let sharp = self.renderer.enhancements().text;
+        let (c, graphics) = (&*self.content, self.renderer.graphics().clone());
+        let view = graphics.view();
+        let strings = self.renderer.strings().cloned();
+        let text = DisplayText::new(strings.as_deref());
+        let p = &mut self.renderer.problems;
+        let (hud, a) = (&view.bundle().hud, &view.bundle().custom);
+        lookups::chip_icon(&view, c, chip, p);
+        if c.defs.roles().try_chip(ChipRole::ButtonChip) != Some(chip) {
+            lookups::chip_art(&view, c, chip, p);
+        }
+        lookups::chip_name(hud, c, chip, text.chip_name(c, chip), p);
+        if lookups::custom_graphics(a, p) {
+            lookups::chip_window(a, c, chip, code.0, p);
+        }
+        if let Some(said) = text.chip_description(c, chip).filter(|_| lookups::chatbox_graphics(hud, p)) {
+            lookups::dialogue(&hud.dialogue_font, Lookup::ChipDescription(chip), said.text, p);
+        }
+        // The sharp text's glyphs of its name (in the chip window and
+        // the hand, and as a telop) and of its description.
+        if let Some(t) = self.text.as_mut().filter(|_| sharp) {
+            let name = text.chip_name(c, chip);
+            t.prepare(name, Role::FittedCell);
+            t.prepare(name, Role::Cell);
+            if let Some(said) = text.chip_description(c, chip) {
+                t.prepare(said.text, Role::Dialogue);
+            }
+        }
+    }
+}
+
+/// The shares of the steps that ran over all of `steps`'.
+fn fraction<'a>(steps: impl Iterator<Item = &'a Step>) -> f32 {
+    let (mut all, mut done) = (0u32, 0u32);
+    for s in steps {
+        all += s.share;
+        done += if s.done { s.share } else { 0 };
+    }
+    if all == 0 { 1.0 } else { done as f32 / all as f32 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::driver::{InFight, LivePlayer, Opponent, bot_tick};
+    use saito_battle::battle::mode;
+
+    /// A set of EXE6's content, picked from a seed (1000 HP each, so the
+    /// round lasts): made on the test's thread, which so has the content's
+    /// runtime; what a test holds the preload to it runs on a thread that
+    /// hasn't ([`fresh`]).
+    fn set() -> Set {
+        let content = saito_match::testing::exe6_content();
+        let mut m = saito_match::pick::live(&content, "exe6", 5, None).unwrap();
+        for s in &mut m.sides {
+            s.set_fact(&content, "hp", &[saito_battle::rules::Fact::Value(saito_content_api::Value::Int(1000))]).unwrap();
+        }
+        Set::of(&content, &m, 5)
+    }
+
+    /// Run `f` on a thread of its own: one that has loaded no runtime.
+    fn fresh<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::spawn(f).join().unwrap()
+    }
+
+    /// A renderer of graphics with nothing in them.
+    fn renderer() -> Renderer {
+        Renderer::new(Arc::new(saito_assets::Bundle::default()))
+    }
+
+    /// `player` through `ticks` ticks of its set, a picture drawn of each:
+    /// the local player presses through its custom screens and mashes in
+    /// the fight.
+    fn play(player: &mut Player, ticks: u32) {
+        let mut masher = saito_netplay::standin::Masher::new(3);
+        masher.buster = true;
+        for tick in 0..ticks {
+            let b = player.battle();
+            let input = if b.round.mode == mode::CUSTOM { bot_tick(b, 0, tick) } else { saito_battle::PlayerTick::buttons(masher.buttons()) };
+            if let Some(c) = input.choice {
+                player.choose(c);
+            }
+            assert!(player.tick(input.held), "tick {tick}: {:?}", player.stopped());
+            player.frame();
+        }
+        assert!(player.battle().round.turn >= 1, "the fight ran");
+    }
+
+    /// The thread's runtime is loaded once, ahead: `runtime` says whether
+    /// it loaded one, and a battle made after it loads none.
+    #[test]
+    fn the_runtime_is_loaded_ahead() {
+        let set = set();
+        fresh(move || {
+            let (content, hash) = (set.content(), set.first().content);
+            assert!(!Behaviors::is_loaded(hash));
+            assert_eq!((runtime(content), Behaviors::loads()), (Ok(true), 1));
+            assert_eq!((runtime(content), Behaviors::loads()), (Ok(false), 1));
+            assert!(Behaviors::is_loaded(hash));
+            set.start();
+            assert_eq!(Behaviors::loads(), 1);
+        });
+    }
+
+    /// A match is made ready a step at a time, by part: a side's steps run
+    /// alone and need no runtime; the match's own load the thread's, which
+    /// is most of the whole; the fractions go from 0 to 1. The player it
+    /// becomes plays its set with nothing made late: no runtime loaded on
+    /// its thread and nothing read from disk, through custom screens and
+    /// fights. What the game's graphics haven't is said before the match starts.
+    #[test]
+    fn a_preloaded_match_loads_nothing_late() {
+        let set = set();
+        fresh(move || {
+            let mut preload = Preload::with(renderer(), None, None, &set, 0, (480, 320));
+            let parts = |p: &Preload| [Part::Match, Part::Side(0), Part::Side(1)].map(|part| p.fraction_of(part));
+            assert_eq!((preload.fraction(), parts(&preload), preload.done()), (0.0, [0.0; 3], false));
+            // One side's alone: its bar fills, nothing else moves.
+            let mut steps = 0;
+            while preload.step_of(Part::Side(1)) {
+                steps += 1;
+                let f = preload.fraction_of(Part::Side(1));
+                assert!(f > 0.0 && f < 1.0, "{f}");
+            }
+            assert!(steps >= 10, "a navi, its forms and its folder's chips: {steps} steps");
+            assert_eq!(parts(&preload), [0.0, 0.0, 1.0]);
+            assert_eq!(Behaviors::loads(), 0, "a side's things are looked up without the runtime");
+            // The rest, in order: the thread's runtime first, most of the
+            // whole.
+            let before = preload.fraction();
+            assert!(preload.step());
+            assert_eq!(Behaviors::loads(), 1);
+            assert!(preload.fraction() - before > 0.5, "the runtime's share: {} to {}", before, preload.fraction());
+            let mut last = preload.fraction();
+            while preload.step() {
+                assert!(preload.fraction() >= last);
+                last = preload.fraction();
+            }
+            assert!(preload.done() && !preload.step() && !preload.step_of(Part::Match));
+            assert_eq!((preload.fraction(), parts(&preload), preload.stopped()), (1.0, [1.0; 3], None));
+            // (Graphics with nothing in them: every chip's icon is missing.)
+            let missing = preload.missing();
+            assert!(missing.iter().any(|m| m.contains("has no icon in the game's graphics")), "{missing:?}");
+            let opponent = Opponent { in_fight: InFight::AttacksAtRandom, ..Opponent::default() };
+            let mut player = preload.player(Box::new(LivePlayer::against(set, opponent, 9)));
+            assert_eq!(player.late(), Late::default());
+            play(&mut player, 1500);
+            let late = player.late();
+            assert_eq!((late.runtimes, late.reads, Behaviors::loads()), (0, 0, 1), "{late:?}");
+        });
+    }
+
+    /// A set drawn on another game's background (the background pool's) has
+    /// that game's backgrounds extracted while it is made ready, once: asked
+    /// for as the preload is made, waited for before the first picture.
+    #[test]
+    fn a_set_on_another_games_background_waits_for_it() {
+        use saito_render::graphics::{GameGraphics, OtherBackgrounds, OtherGame};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let content = saito_match::testing::exe6_content();
+        let mut m = saito_match::pick::live(&content, "exe6", 5, None).unwrap();
+        m.rounds.iter_mut().for_each(|r| r.background = Some("exe5:nebula-area".into()));
+        let set = Set::of(&content, &m, 5);
+        assert_eq!(content.background_of(set.first().settings.background), Some(("exe5", "nebula-area")));
+        let made = Arc::new(AtomicUsize::new(0));
+        let counted = made.clone();
+        let exe5 = OtherGame::new(Box::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok([("nebula-area".to_string(), saito_assets::Background { first_tile: 3, ..Default::default() })].into())
+        }));
+        let mut others = OtherBackgrounds::default();
+        others.insert("exe5", exe5.clone());
+        let graphics = GameGraphics::new(Arc::new(saito_assets::Bundle::default())).with_others(Arc::new(others));
+        fresh(move || {
+            let mut preload = Preload::with(Renderer::with_graphics(graphics), None, None, &set, 0, (240, 160));
+            while preload.step() {}
+            assert!(exe5.ready(), "extracted before the preload is done");
+            assert_eq!(made.load(Ordering::SeqCst), 1);
+            let missing = preload.missing();
+            assert!(!missing.iter().any(|m| m.contains("nebula-area")), "no lookup of it failed: {missing:?}");
+        });
+    }
+
+    /// Without a preload the same match loads the thread's runtime as its
+    /// player is made: the wait the preload takes ahead, which `late`
+    /// counts.
+    #[test]
+    fn a_match_that_was_not_preloaded_loads_its_runtime_late() {
+        let set = set();
+        fresh(move || {
+            let mut player = Player::with(renderer(), None, None, Box::new(LivePlayer::new(set)));
+            assert_eq!(player.late(), Late { runtimes: 1, ..Late::default() });
+            play(&mut player, 400);
+            assert_eq!(player.late(), Late { runtimes: 1, ..Late::default() });
+        });
+    }
+
+    /// Steps left out are made up by the player: a preload nobody stepped
+    /// still gives one, which then loads the runtime late.
+    #[test]
+    fn a_preload_not_stepped_still_gives_a_player() {
+        let set = set();
+        fresh(move || {
+            let preload = Preload::with(renderer(), None, None, &set, 1, (240, 160));
+            assert_eq!(preload.fraction_of(Part::Match), 0.0);
+            let mut player = preload.player(Box::new(LivePlayer::new(set)));
+            assert_eq!(player.late().runtimes, 1);
+            assert!(player.tick(0));
+        });
+    }
+}

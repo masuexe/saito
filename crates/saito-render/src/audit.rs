@@ -1,0 +1,341 @@
+//! What a battle asked the presentation for and the game's assets didn't have: a
+//! sprite, an animation or a palette an object names, a chip without a
+//! name or an icon, a banner without glyphs, a sound without a song.
+//!
+//! Drawing skips what it can't find, so nothing here stops a frame; the
+//! renderer and the audio check note each case in [`Problems`]. Every
+//! lookup the drawing code makes of the game's graphics and the content goes through
+//! [`crate::lookups`] (the audio's, a cue's song, through saito-tools'
+//! `sound_lookups`), which notes it as a [`Lookup`] and checks it once a
+//! run. Two audits, saito-tools', use them:
+//!
+//! - `--audit-content` (saito-tools' `content_audit`) makes every
+//!   lookup the content can: every chip's icon, picture and name, every
+//!   navi's and form's face, every asset the content names, in both
+//!   languages;
+//! - `--audit` runs traces and makes the lookups their frames make (only
+//!   those: nothing is drawn, `Renderer::set_lookups_only`), the asset's
+//!   animation and palette an object asks for among them, and lists each
+//!   trace's lookups for the verification's trace cover (`--lookups`).
+//!
+//! An empty list says the frames were drawn and the cues played with
+//! everything they named, not that they look or sound like the original
+//! (the frame comparison outside this repository checks that).
+
+use saito_battle::content::{BackgroundId, BannerId, Content, MugshotId, SpriteId};
+use saito_content_api::{AssetKind, ChipHandle, FormHandle, NaviHandle};
+use std::collections::{BTreeMap, HashSet};
+
+/// A lookup the drawing code or the audio makes of the game's graphics or the
+/// content: what a frame or a cue named, by what it is for. Each is
+/// checked once a run ([`Problems::lookup`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lookup {
+    /// A sprite's sheet, in its game's graphics.
+    Sprite(SpriteId),
+    /// A sprite's animation, with its frames.
+    Animation(SpriteId, u8),
+    /// A palette of a sprite's palette set: (set, index).
+    Palette(SpriteId, u8, u8),
+    /// A background, in its game's graphics.
+    Background(BackgroundId),
+    /// The game's field's panel block for a panel type (the engine's
+    /// number), owner (0 the viewer's) and row (1..=3).
+    Panel(u8, u8, u8),
+    /// A panel type (the engine's number), or a highlight (16 + its number),
+    /// that the game's field doesn't draw: a tinted normal panel
+    /// (`stage::FieldArt`).
+    PanelTint(u8),
+    /// A chip's icon (over the navi, on the custom screen's slots).
+    ChipIcon(ChipHandle),
+    /// A chip's picture in the chip window.
+    ChipArt(ChipHandle),
+    /// A chip's name in the 8x16 font (the next chip, the chip window, a
+    /// telop).
+    ChipName(ChipHandle),
+    /// The chip window's colors and pictures of a chip's class, element
+    /// and code.
+    ChipWindow(ChipHandle),
+    /// A chip's description in the dialogue font (R on the custom screen).
+    ChipDescription(ChipHandle),
+    /// A mugshot, in its game's HUD.
+    Mugshot(MugshotId),
+    /// A link navi's own face in the emotion window.
+    NaviFace(NaviHandle),
+    /// A form's face for an emotion of its game's, of its second set or
+    /// not.
+    FormFace(FormHandle, saito_battle::content::Emotion, bool),
+    /// A navi's name on the custom screen (the enemy names).
+    NaviName(NaviHandle),
+    /// A navi's variant name there (`battle.set_hud("name_variant", ..)`: EXE5's Hub
+    /// Style).
+    NaviVariantName(NaviHandle),
+    /// A navi's emblem on the custom screen.
+    Emblem(NaviHandle),
+    /// A custom-screen button's look (by the button's handle).
+    Button(u16),
+    /// A navi's no-running message in the dialogue font, with its portrait.
+    RunMessage(NaviHandle),
+    /// A form's name and colors in the form list's window.
+    FormName(FormHandle),
+    /// A form's description in the dialogue font.
+    FormDescription(FormHandle),
+    /// A banner's glyphs.
+    Banner(BannerId),
+    /// A telop's place (its banner's layout).
+    Telop(BannerId),
+    /// A telop of a chip the engine wasn't told.
+    TelopUnknown,
+    /// A telop with no look to draw it in.
+    TelopWithoutLook,
+    /// A line of the HUD's text (`Hud::texts`).
+    TextLine(u8),
+    /// A sound's song, in its game's sound.
+    Sound(u16),
+    /// A part of the game's graphics that is there or not as a whole.
+    Graphics(GraphicsPart),
+}
+
+/// The parts of a game's graphics a frame needs as a whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GraphicsPart {
+    /// The custom screen's (`graphics/custom`).
+    CustomScreen,
+    /// The chatbox's and the dialogue font.
+    Chatbox,
+    /// The warning marker.
+    Warning,
+}
+
+impl Lookup {
+    /// The lookup as a line of text, by the content's names (`--lookups`:
+    /// stable from run to run, and between content of other packs).
+    pub fn describe(&self, c: &Content) -> String {
+        let asset = |kind: AssetKind, h: u16| crate::graphics::name(c, kind, h).map_or(format!("#{h}"), str::to_string);
+        let sprite = |id: SpriteId| asset(AssetKind::Sprite, id.0);
+        let chip = |h: ChipHandle| &c.defs.chip(h).key;
+        let navi = |h: NaviHandle| &c.defs.navi(h).key;
+        let form = |h: FormHandle| &c.defs.form(h).key;
+        match *self {
+            Lookup::Sprite(id) => format!("sprite {}", sprite(id)),
+            Lookup::Animation(id, anim) => format!("sprite {} animation {anim}", sprite(id)),
+            Lookup::Palette(id, set, index) => format!("sprite {} palette {set}/{index}", sprite(id)),
+            Lookup::Background(id) => format!("background {}", asset(AssetKind::Background, id.0)),
+            Lookup::Panel(kind, owner, row) => format!("panel {kind} owner {owner} row {row} in {}", c.game()),
+            Lookup::PanelTint(kind) => format!("panel {kind} tinted in {}", c.game()),
+            Lookup::ChipIcon(h) => format!("chip {} icon", chip(h)),
+            Lookup::ChipArt(h) => format!("chip {} picture", chip(h)),
+            Lookup::ChipName(h) => format!("chip {} name", chip(h)),
+            Lookup::ChipWindow(h) => format!("chip {} window", chip(h)),
+            Lookup::ChipDescription(h) => format!("chip {} description", chip(h)),
+            Lookup::Mugshot(id) => format!("mugshot {}", asset(AssetKind::Mugshot, id.0)),
+            Lookup::NaviFace(h) => format!("navi {} face", navi(h)),
+            Lookup::FormFace(h, e, variant) => {
+                format!("form {} face {}{}", form(h), c.rules().emotion.name(e), if variant { " (second set)" } else { "" })
+            }
+            Lookup::NaviName(h) => format!("navi {} name", navi(h)),
+            Lookup::NaviVariantName(h) => format!("navi {} variant name", navi(h)),
+            Lookup::Emblem(h) => format!("navi {} emblem", navi(h)),
+            Lookup::Button(h) => format!("button {}", c.defs.button(saito_battle::content::ButtonHandle(h)).name),
+            Lookup::RunMessage(h) => format!("navi {} run message", navi(h)),
+            Lookup::FormName(h) => format!("form {} name in the form list", form(h)),
+            Lookup::FormDescription(h) => format!("form {} description", form(h)),
+            Lookup::Banner(id) => format!("banner {}", asset(AssetKind::Banner, id.0)),
+            Lookup::Telop(id) => format!("telop {}", asset(AssetKind::Banner, id.0)),
+            Lookup::TelopUnknown => "telop of an untold chip".into(),
+            Lookup::TelopWithoutLook => "telop without a look".into(),
+            Lookup::TextLine(n) => format!("text line {n}"),
+            Lookup::Sound(h) => format!("sound {}", asset(AssetKind::Sound, h)),
+            Lookup::Graphics(g) => format!("graphics {g:?}"),
+        }
+    }
+}
+
+/// How often a problem was seen, and on which frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seen {
+    pub count: u32,
+    /// The first and last frames it was seen on (the driver's frame
+    /// numbers; none when it has none).
+    pub first: Option<u32>,
+    pub last: Option<u32>,
+}
+
+/// The problems seen so far, each once, in the order of their text; and
+/// the lookups made so far.
+#[derive(Clone, Debug, Default)]
+pub struct Problems {
+    frame: Option<u32>,
+    seen: BTreeMap<String, Seen>,
+    /// The last frame's places where the frontend draws something else
+    /// than the original on purpose (`Known`).
+    pub known: Vec<Known>,
+    /// What the caller asks to have marked wherever a frame draws it
+    /// (`Mark`): `sprite:NAME` (an object drawn with that sprite; with
+    /// `:ANIM`, while it plays that animation),
+    /// `background:NAME` (the frame's background), `chip:KEY` (the chip's
+    /// picture in the custom screen's chip window), `chip-window:KEY` (what
+    /// that window draws by the chip's record: its cells in the colors of
+    /// the chip's class, picture and element, and the damage's digits),
+    /// `button:NAME` (a custom
+    /// screen button's picture there), `chip-icon:KEY` (the
+    /// chip's icon: over its navi, in the custom screen's slots and its
+    /// picked chips' column, and carried over the screen),
+    /// `chip-description:KEY` (the chip's description in the chatbox) and
+    /// `chip-window-at-close` (the HUD's chip name while it shows from the
+    /// custom screen's close, before the navi's first decision). The frontend knows no console
+    /// that shows them otherwise: the verification's frame comparison asks
+    /// for what its table says a recording's console does.
+    pub marking: std::collections::BTreeSet<String>,
+    /// The last frame's places where something `marking` names is drawn.
+    pub marks: Vec<Mark>,
+    /// Every distinct lookup made so far, each checked once.
+    lookups: HashSet<Lookup>,
+    /// What is drawn otherwise than the graphics would, by design, and said,
+    /// not counted (a panel the game's field doesn't draw, drawn tinted).
+    said: BTreeMap<String, Seen>,
+}
+
+/// A place of a frame where the frontend differs from the original on
+/// purpose: a rectangle and why. The frame comparison leaves it out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Known {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub why: &'static str,
+}
+
+/// A place of a frame where something the caller named is drawn
+/// (`Problems::marking`): a rectangle, in the screen's coordinates (it may
+/// reach past the screen: a caller widening it gets what reaches back in),
+/// and the name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub what: String,
+}
+
+impl Problems {
+    /// Whether the caller asked for `what` to be marked where drawn.
+    pub fn wants(&self, what: &str) -> bool {
+        !self.marking.is_empty() && self.marking.contains(what)
+    }
+
+    /// Note where `what`, which the caller asked for, is drawn this frame
+    /// (`[x0, y0, x1, y1]`, the ends exclusive).
+    pub fn mark(&mut self, [x0, y0, x1, y1]: [i32; 4], what: String) {
+        if x0 < x1 && y0 < y1 {
+            self.marks.push(Mark { x: x0, y: y0, width: x1 - x0, height: y1 - y0, what });
+        }
+    }
+
+    /// Note a place the frontend draws differently on purpose this frame.
+    pub fn known(&mut self, x: i32, y: i32, width: i32, height: i32, why: &'static str) {
+        self.known.push(Known { x, y, width, height, why });
+    }
+
+    /// The frame the notes that follow belong to.
+    pub fn at(&mut self, frame: Option<u32>) {
+        self.frame = frame;
+    }
+
+    /// Note a problem (the text names what is missing and who asked).
+    pub fn note(&mut self, what: String) {
+        let frame = self.frame;
+        let s = self.seen.entry(what).or_insert(Seen { count: 0, first: frame, last: frame });
+        s.count += 1;
+        s.last = frame;
+    }
+
+    /// Note what is drawn otherwise by design: said, not counted as a
+    /// problem.
+    pub fn say(&mut self, what: String) {
+        let frame = self.frame;
+        let s = self.said.entry(what).or_insert(Seen { count: 0, first: frame, last: frame });
+        s.count += 1;
+        s.last = frame;
+    }
+
+    /// What was said ([`Problems::say`]), as [`Problems::lines`] says the
+    /// problems.
+    pub fn said_lines(&self) -> Vec<String> {
+        lines(&self.said)
+    }
+
+    /// Note a lookup: true the first time it is made this run, when the
+    /// caller checks it (a lookup is checked once a run).
+    pub fn lookup(&mut self, l: Lookup) -> bool {
+        self.lookups.insert(l)
+    }
+
+    /// The distinct lookups made so far.
+    pub fn lookups(&self) -> impl Iterator<Item = Lookup> + '_ {
+        self.lookups.iter().copied()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Seen)> {
+        self.seen.iter().map(|(k, &v)| (k.as_str(), v))
+    }
+
+    /// Forget everything (a new run).
+    pub fn clear(&mut self) {
+        // (What the caller asks to have marked stays.)
+        let marking = std::mem::take(&mut self.marking);
+        *self = Problems { marking, ..Problems::default() };
+    }
+
+    /// Forget which lookups were made, so each is checked again when it is
+    /// next made (the graphics or the strings they are checked against
+    /// changed); the problems found so far stay.
+    pub fn recheck(&mut self) {
+        self.lookups.clear();
+    }
+
+    /// One line per problem: the text, how often, and the frames.
+    pub fn lines(&self) -> Vec<String> {
+        lines(&self.seen)
+    }
+}
+
+/// One line per entry: the text, how often, and the frames.
+fn lines(seen: &BTreeMap<String, Seen>) -> Vec<String> {
+    seen.iter()
+        .map(|(what, s)| match (s.first, s.last) {
+            (Some(a), Some(b)) if a != b => format!("{what} ({} times, frames {a}..={b})", s.count),
+            (Some(a), _) => format!("{what} (frame {a})"),
+            _ if s.count == 1 => format!("{what} (once)"),
+            _ => format!("{what} ({} times)", s.count),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn problems_are_counted_once_each() {
+        let mut p = Problems::default();
+        assert!(p.is_empty());
+        p.at(Some(10));
+        p.note("no sprite".into());
+        p.at(Some(12));
+        p.note("no sprite".into());
+        p.note("no icon".into());
+        assert_eq!(p.len(), 2);
+        assert_eq!(p.lines(), ["no icon (frame 12)", "no sprite (2 times, frames 10..=12)"]);
+    }
+}

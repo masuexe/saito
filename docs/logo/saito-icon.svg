@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="彩斗 saito">
+  <title>彩斗 saito</title>
+  <circle cx="128" cy="128" r="120" fill="#000000"/>
+  <circle cx="128" cy="128" r="107" fill="none" stroke="#FFB800" stroke-width="12"/>
+  <path d="M 42.935 168 A 94 94 0 0 1 168 42.935 L 168 85 L 85 168 Z" fill="#C60500"/>
+  <path d="M 213.065 88 A 94 94 0 0 1 88 213.065 L 88 171 L 171 88 Z" fill="#C60500"/>
+</svg>

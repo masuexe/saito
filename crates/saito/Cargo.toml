@@ -1,0 +1,193 @@
+[package]
+name = "saito"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The saito app: the menus, the builds, netplay and the replays around a battle played through saito-frontend, in a Slint window (the UI itself is saito-ui); built as a binary and cdylib (EXESSR Hub / top.exessrhub.saito)"
+
+[[bin]]
+name = "saito"
+path = "src/main.rs"
+
+[dependencies]
+# What the app asks of its system, the same on the desktop, in a browser and on a phone, a crate a concern: files
+# and the app's folders, threads, and dialogs (and the clipboard). (The browser's page and the app's life are the
+# app's own modules: `page.rs`, `lifecycle.rs`.)
+saito-files = { path = "../saito-files" }
+saito-threads = { path = "../saito-threads" }
+saito-dialogs = { path = "../saito-dialogs" }
+# Time: std's natively, the browser's `performance.now()` there (std's panics).
+web-time = "1"
+# Files over HTTP(S) (`http.rs`: the games' content, the dummy's network): reqwest, hyper and rustls natively (no
+# provider of its own: ring's, given), the browser's fetch there; a body taken as it comes, for its progress.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The UI: the Slint files compiled, a crate of its own so an edit here doesn't compile it again (docs/app.md §14).
+saito-ui = { path = "../saito-ui" }
+saito-frontend = { path = "../saito-frontend" }
+# The practice dummy's AI (its Action "Fights"; the `ai` feature): the trained network's player, plugged into live
+# play, and its chips' fingerprints made on threads of their own.
+saito-training = { path = "../saito-training", features = ["live"], optional = true }
+# The games' content indexes (`contents.rs`) and the AI network's (`screens/practice/weights.rs`), JSON.
+serde_json = "1"
+# The SHA-256 a downloaded network is checked by (`screens/practice/weights.rs`).
+sha2 = { version = "0.10", optional = true }
+saito-battle = { path = "../saito-battle" }
+saito-render = { path = "../saito-render" }
+saito-content = { path = "../saito-content" }
+saito-match = { path = "../saito-match" }
+saito-content-api = { path = "../saito-content-api" }
+# The audio device (`Output`: the `playback` feature, cpal).
+saito-audio = { path = "../saito-audio" }
+# The window's types (the features are saito-ui's).
+slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "compat-1-2", "unstable-fontique-011"] }
+# Slint's winit backend, whose window events the app hears before Slint does (`on_winit_window_event`, the
+# window's own: `WinitWindowAccessor`), on every system: what `slint::winit_030` re-exports, used directly, as that
+# module (Slint's `unstable-winit-030`) doesn't build for Android. The version slint is, exactly.
+i-slint-backend-winit = { version = "=1.18.1", default-features = false }
+# Gamepads, one pull-based API over each system's (SDL3 on the desktop, the browser's, GameController on iOS,
+# Android's events). It says what goes wrong through `log`: it goes to the app's log file.
+saito-gamepad = { path = "../saito-gamepad" }
+# The libraries' warnings go to the app's log file through `log`.
+log = "0.4"
+# The system's language, for the first one shown.
+sys-locale = "0.3"
+# Text in capitals by the language's own rules (`I18n::upper`: a Turkish i is İ), from Unicode's data built in.
+icu_casemap = "2"
+icu_locale_core = "2"
+# Lists by the language's own separator (`I18n::list`: "A, B, C", "A、B、C"), from CLDR's data built in.
+icu_list = "2"
+# The log's and a replay's times in the local time.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The screenshot pass's pictures (the `tour` feature's).
+png = { version = "0.17", optional = true }
+# A replay's video: its errors are worded here (`errors.rs`); the Replays screen runs the export.
+saito-video = { path = "../saito-video" }
+# A replay's file: what its head names (the Replays screen's list) and its writer (the screenshot pass's replays).
+saito-replay = { path = "../saito-replay" }
+# Netplay's link: WebRTC through a room of the signaling server.
+saito-rtc = { path = "../saito-rtc" }
+# The signaling server's room codes, as Play shows and takes them.
+saito-signaling = { path = "../saito-signaling" }
+# The app's own updates, checked for at its loading screen: Velopack's on the desktop, the release's APK on Android.
+saito-updater = { path = "../saito-updater" }
+# A build from a save: each game's own reader of its saves.
+exe6-compat = { path = "../exe6-compat" }
+exe5-compat = { path = "../exe5-compat" }
+exe4-compat = { path = "../exe4-compat" }
+# The builds' and the settings' files.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# The Legacy Collection found (or a folder chosen), and each game's recipe, whose ROMs the games' loading extracts
+# (`games.rs`; docs/app.md §17).
+saito-extract = { path = "../saito-extract" }
+# The Legacy Collection from a computer nearby, to a device without it (`nearby.rs`; docs/app.md §17).
+saito-nearby = { path = "../saito-nearby" }
+
+# Android: Slint's winit backend set by the app (`select_backend`), as Slint's selector offers none there, with femtovg
+# on the activity's OpenGL ES (the version slint is, exactly); winit on the activity android-activity runs
+# (GameActivity: android/saito/app/SaitoActivity.kt), whose entry point is the app's (`activity.rs`).
+# (The screenshot pass's window that doesn't take the keyboard: the selector's winit hook, which Android's selector
+# hasn't.)
+[target.'cfg(not(target_os = "android"))'.dependencies]
+slint = { version = "1.18", default-features = false, features = ["unstable-winit-030"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+i-slint-backend-winit = { version = "=1.18.1", default-features = false, features = ["renderer-femtovg"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "android-game-activity"] }
+# The app's calls into Java and Java's into it (`activity.rs`: the safe area; `lifecycle.rs`: the window's screen
+# kept on, by android/saito/lifecycle/SaitoAwake.kt; `haptics.rs`: the pad's taps, by
+# android/saito/haptics/SaitoHaptics.kt), through JNI on the activity android-activity hands over.
+# (The Kotlin is the APK's: its Gradle build compiles every crate's android/ folder in.)
+jni = "0.22"
+# The context the crates' JNI is on (their pickers, nearby, the clipboard: they call an `android.app.Activity`'s
+# methods), which `android_main` sets to the activity: android-activity 0.6.1 sets the Application there.
+ndk-context = "0.1"
+# reqwest checks certificates with Android's own verifier through this (the version reqwest's is), which calls its
+# Kotlin component in the APK through JNI: it is given the VM and the activity first (`android_main`).
+rustls-platform-verifier = "0.7"
+
+# macOS: the activity that keeps the app's time while a battle runs in a covered window (`lifecycle::Awake`). (In the
+# tree already, for the window.)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString"] }
+
+# iOS: the idle timer (`lifecycle::Awake`); the app made active and its sound given back (`lifecycle::resumed`); the
+# pad's taps (`haptics.rs`: an impact feedback generator). (In the tree already, for the window.)
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSObject", "NSOperation", "NSString"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIApplication", "UIFeedbackGenerator", "UIImpactFeedbackGenerator", "UIResponder"] }
+objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVAudioSessionTypes"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The program runs under tokio (main.rs: `#[tokio::main]`, Slint's loop in `block_in_place`), so the futures the
+# window's loop runs can use reqwest (`http.rs`).
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# The TLS provider reqwest is given (`http.rs`): ring's, as the tree's rustls has (saito-signaling's).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+# The browser's page: the log on its console, and a panic said there; what it calls (`page.rs`: the library is the
+# module it loads, packaging/web/build.sh's), and its window and the input over a field, through web-sys.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log = "1"
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Document",
+    "DomRect",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "HtmlInputElement",
+    "KeyboardEvent",
+    "Node",
+    "Window",
+] }
+
+# A terminate request's signals, taken back from SDL (`quit.rs`). (In the tree already.)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+
+[features]
+# The screenshot pass and the motion probe (docs/app.md §13: `SAITO_TOUR`), with what they need: the pictures'
+# encoder, and saito-signaling's signaling server in the process, which Play's second player meets the first
+# through (`screens/play/tour.rs`). A player's build has none of it: `cargo run -p saito --features tour`. The tests
+# compile the pass whatever the features (the same two dependencies are the tests' below).
+tour = ["dep:png", "saito-signaling/testing"]
+# The practice dummy that fights: its Action "Fights" and its Level, played by the trained network
+# (docs/design/training-ai.md §10), downloaded from the saito-ai repository when Fights is first picked (or
+# `SAITO_AI_WEIGHTS`'s file). Off by default: a build without it offers the dummy's other Actions alone.
+# `cargo run -p saito --features ai`.
+ai = ["dep:saito-training", "dep:sha2"]
+
+[build-dependencies]
+# What the app is built from, for its About screen (build.rs: `cargo metadata`'s JSON).
+serde_json = "1"
+# Android's library: the NDK's clang, asked where its compiler-rt builtins are (build.rs). (In the tree already.)
+cc = "1"
+
+# The Windows program's icon (build.rs: `SAITO_WINDOWS_ICON`, an .ico packaging/ makes).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+png = "0.17"
+# The tests' compat tables: the repository's, built in (the app reads its content's at run time).
+exe6-compat = { path = "../exe6-compat", features = ["builtin"] }
+exe5-compat = { path = "../exe5-compat", features = ["builtin"] }
+exe4-compat = { path = "../exe4-compat", features = ["builtin"] }
+saito-signaling = { path = "../saito-signaling", features = ["testing"] }
+# The tests: the content of the repository.
+saito-match = { path = "../saito-match", features = ["testing"] }
+# A short set and graphics with no pack, for a battle played to its end.
+saito-frontend = { path = "../saito-frontend", features = ["testing"] }
+# The games' tests: content and archives of their own, in folders of their own.
+tempfile = "3"
+saito-extract = { path = "../saito-extract", features = ["testing"] }

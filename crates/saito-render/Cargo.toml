@@ -1,0 +1,35 @@
+[package]
+name = "saito-render"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Draws saito battles into frames: the stage, the objects, the HUD, the custom screen and the text, from engine state and the packs' graphics"
+
+# Drawing only: no window, sound, network or command line (saito-frontend
+# plays the battles it draws; saito and saito-tools are the programs around both).
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+# Threads (a Web Worker in a browser) and the locks they share.
+saito-threads = { path = "../saito-threads" }
+saito-battle = { path = "../saito-battle" }
+saito-assets = { path = "../saito-assets" }
+# The player's language's strings table.
+saito-content = { path = "../saito-content" }
+# The handles the engine names content by (a chip in a hand).
+saito-content-api = { path = "../saito-content-api" }
+# A frame as a PNG file (`present::write_png`).
+png = "0.17"
+# The text layer's vector font: shaping with kerning, outlines rasterized with
+# antialiasing (docs/design/text-rendering.md).
+swash = "0.2"
+# The bundled fonts' WOFF2 files unpacked (`bundled`): a decoder in Rust, which
+# the browser's build runs too.
+wuff = { version = "0.2.9", default-features = false, features = ["brotli"] }
+
+[dev-dependencies]
+# The tests' deadlines (the browser's clock where std's panics).
+web-time = "1"
+saito-battle = { path = "../saito-battle", features = ["test-content"] }
+# A HUD's letters read off its font as extraction reads them (hud.rs's tests).
+saito-extract = { path = "../saito-extract" }

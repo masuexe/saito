@@ -1,0 +1,1078 @@
+// The battle (docs/design/app-ui.md §6, "In an online match"; docs/app.md §1): the picture fills the window,
+// with no header or footer. Over it: the connection's corner while online, and the link panel it opens; saito's
+// menu, which Start or Esc opens in place of the game's own pause (the practice menu or the match menu: each is
+// its screen's own component, in practice.slint and play.slint, built on `MenuOverlay` here), with the footer under
+// it where the menu gives it hints (the match menu's: the match's own controls); on a phone, the pad under the
+// picture.
+
+import { Theme, I18n } from "../theme.slint";
+import { Nav, Focusable } from "../nav.slint";
+import { Shell, BattleKind, Picture, LinkFigures, Footer, Hint, HintView, PartyMember, PartyHud } from "../shell.slint";
+import { Cut, Heading, Label, Note, Mono, Bars, Button } from "../widgets.slint";
+import { Tween } from "../motion.slint";
+
+// A menu over the battle: a shade, and a panel (which slides in from the left as the shade fades in) with its
+// title, one line under it, and what is put inside it
+// (rows of `OptionRow`, `MenuItem`, `Button`), in an area `inner-width` by `inner-height` that they measure
+// from (`parent` in the menu's own file is the whole window). `side` puts the panel at the left, the battle in
+// view beside it (the practice menu); else it is in the middle, as tall as `content-height` asks (the match
+// menu). Its controls' names begin with `menu.`: while it is open the keys reach nothing else. Given `hints`, the
+// footer is along the window's bottom under it, as on the menu screens (a phone has none), the panel above it.
+export component MenuOverlay inherits Rectangle {
+    in property <string> title;
+    in property <string> note;
+    in property <bool> side;
+    in property <length> content-height;
+    in property <[Hint]> hints;
+    property <length> foot: root.hints.length > 0 ? Theme.footer : 0px;
+    // (On a phone held sideways, docs/design/app-ui.md §2.103: the side panel 400 wide at most and 8 from the window's
+    // top and foot, its padding 16 and its title smaller, at the phone's size.)
+    property <length> pad: Theme.sideways ? 16px : 24px;
+    property <length> edge: Theme.sideways ? 8px : 24px;
+    out property <length> inner-width: panel.width - 2 * root.pad;
+    out property <length> inner-height: panel.height - 2 * root.pad - root.head;
+    property <length> head: Theme.sideways ? (root.note == "" ? 40px : 58px) : (root.note == "" ? 56px : 76px);
+    // The shade fades in as the panel slides in from the left.
+    arrive := Tween { }
+
+    Rectangle {
+        background: root.side && !Theme.phone ? @linear-gradient(90deg, Theme.shade 0%, Theme.shade 46%, transparent 74%) : Theme.shade;
+        opacity: arrive.t;
+        TouchArea { }
+    }
+
+    panel := Rectangle {
+        x: (root.side ? Theme.margin : (parent.width - self.width) / 2) - (1 - arrive.t) * 40px;
+        y: root.side ? root.edge : (parent.height - root.foot - self.height) / 2;
+        width: min(parent.width - 2 * Theme.margin, root.side ? (Theme.sideways ? 400px : 500px) : 340px);
+        height: root.side ? parent.height - root.foot - 2 * root.edge : min(parent.height - root.foot - 48px, root.head + root.content-height + 2 * root.pad);
+        opacity: arrive.t;
+        Cut {
+            cut: 18px;
+        }
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 72px * arrive.t;
+            height: 2px;
+            background: @linear-gradient(90deg, Theme.cursor 0%, Theme.clear 100%);
+        }
+
+        Heading {
+            x: root.pad;
+            y: root.pad;
+            width: parent.width - 2 * root.pad;
+            height: Theme.sideways ? 28px : 36px;
+            text: root.title;
+            font-size: Theme.sideways ? 20px : 28px;
+        }
+
+        Note {
+            x: root.pad;
+            y: root.pad + (Theme.sideways ? 28px : 36px);
+            width: parent.width - 2 * root.pad;
+            height: 22px;
+            text: root.note;
+            wrap: no-wrap;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: root.pad;
+            y: root.pad + root.head;
+            width: parent.width - 2 * root.pad;
+            height: parent.height - 2 * root.pad - root.head;
+            @children
+        }
+    }
+
+    // (Shown or not: an `if` would be a component of its own.)
+    Footer {
+        y: root.height - self.height;
+        visible: root.hints.length > 0;
+        opacity: arrive.t;
+        hints: root.hints;
+    }
+}
+
+// The connection's quality, in a corner for the whole match: four bars and the round trip, or how long the link
+// has been down. A click on it opens the link panel over it, and another closes it.
+component Connection inherits Rectangle {
+    // (One width whichever it says: room for the longest thing it says, the link down with all its time left.)
+    width: max(132px, longest.preferred-width + 28px);
+    height: 30px;
+    Rectangle {
+        background: Theme.shade;
+        border-width: 1px;
+        border-color: Shell.connection-open || hit.has-hover ? Theme.cursor : Theme.line;
+    }
+
+    longest := Text {
+        visible: false;
+        text: @tr("Reconnecting {} s", 30);
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 700;
+    }
+
+    Bars {
+        x: 12px;
+        visible: Shell.connection-down < 0;
+        level: Shell.connection-level;
+    }
+
+    Mono {
+        x: Shell.connection-down < 0 ? 42px : 12px;
+        width: parent.width - self.x - 12px;
+        text: Shell.connection-down >= 0 ? @tr("Reconnecting {} s", Shell.connection-down) : (Shell.connection-ping < 0 ? "" : @tr("{} ms", Shell.connection-ping));
+        color: Shell.connection-down >= 0 ? Theme.bad : Theme.text;
+        font-family: Shell.connection-down >= 0 ? Theme.body : Theme.mono;
+        horizontal-alignment: right;
+    }
+
+    // (On a phone what is tapped is 44 tall: the corner's touch reaches past its box.)
+    hit := TouchArea {
+        mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+        y: Theme.handheld ? -7px : 0;
+        height: Theme.handheld ? 44px : parent.height;
+        clicked => {
+            Shell.connection-open = !Shell.connection-open;
+        }
+    }
+}
+
+// One of the link panel's figures: its name at the left and its value at the right, in fixed-width digits, in a
+// tone where it says the link is doing badly.
+component LinkRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tone: Theme.text;
+    height: 20px;
+    Label {
+        x: 0;
+        width: max(0px, parent.width - figure.width - 8px);
+        height: parent.height;
+        text: root.label;
+    }
+
+    figure := Mono {
+        x: parent.width - self.width;
+        width: min(self.preferred-width, parent.width * 0.65);
+        height: parent.height;
+        text: root.value;
+        color: root.tone;
+        horizontal-alignment: right;
+    }
+}
+
+// The link panel (the user: "you should allow clicking the ping indicator in pvp to bring up a detailed link
+// quality panel thing"), over the connection's corner while it is open, live: the round trip's last ten seconds
+// as a graph; then the link (the round trip and its jitter, the loss, the reconnects, clock sync's skew and the
+// lead) beside the rollback (the input delay, the rollbacks, the last one's depth and the deepest, the frames
+// waited); and what went each way. It fades and rises in. The match goes on under it: it takes no keys, and the clicks
+// on it, which do nothing, but on a phone upright, where it covers the corner that opened it: there a tap on it closes
+// it.
+component LinkPanel inherits Rectangle {
+    property <LinkFigures> f: Shell.link;
+    property <length> column: (self.width - 24px - 16px) / 2;
+    property <length> top: 98px;
+    // The round trip's tone, as the bars': green, amber, red.
+    property <color> tone: Shell.connection-level >= 3 ? Theme.good : Shell.connection-level == 2 ? Theme.action : Theme.bad;
+    arrive := Tween {
+        duration: Theme.brisk;
+    }
+
+    height: root.top + 8 * 20px + 12px;
+    Rectangle {
+        x: 0;
+        y: (1 - arrive.t) * 8px;
+        opacity: arrive.t;
+        Cut {
+            cut: 12px;
+            background: Theme.panel;
+        }
+
+        TouchArea {
+            clicked => {
+                if Theme.handheld {
+                    Shell.connection-open = false;
+                }
+            }
+        }
+
+        Label {
+            x: 12px;
+            y: 10px;
+            width: parent.width - 24px - 34px;
+            height: 20px;
+            text: I18n.upper(@tr("Connection"));
+            color: Theme.text;
+        }
+
+        Bars {
+            x: parent.width - 12px - self.width;
+            y: 13px;
+            level: Shell.connection-down >= 0 ? 0 : Shell.connection-level;
+        }
+
+        // The graph: the round trip at its top, and a line across at half of it.
+        Rectangle {
+            x: 12px;
+            y: 38px;
+            width: parent.width - 24px;
+            height: 52px;
+            background: Theme.inset;
+            Rectangle {
+                x: 0;
+                y: parent.height / 2;
+                height: 1px;
+                background: Theme.line;
+            }
+
+            Path {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                commands: root.f.graph-area;
+                fill: root.tone.with-alpha(0.18);
+                viewbox-width: 99;
+                viewbox-height: 100;
+                fit: fill;
+            }
+
+            Path {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                commands: root.f.graph;
+                stroke: root.tone;
+                stroke-width: 1.5px;
+                viewbox-width: 99;
+                viewbox-height: 100;
+                fit: fill;
+            }
+
+            Mono {
+                x: 4px;
+                y: 2px;
+                width: parent.width - 8px;
+                height: 14px;
+                text: @tr("{} ms", root.f.graph-top);
+                color: Theme.muted;
+                font-size: 10px;
+            }
+        }
+
+        // The link.
+        LinkRow {
+            x: 12px;
+            y: root.top;
+            width: root.column;
+            label: I18n.upper(@tr("Round trip"));
+            value: Shell.connection-ping < 0 ? "–" : @tr("{} ms", Shell.connection-ping);
+            tone: Shell.connection-level >= 3 ? Theme.text : root.tone;
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 20px;
+            width: root.column;
+            label: I18n.upper(@tr("Jitter"));
+            value: root.f.jitter < 0 ? "–" : @tr("{} ms", root.f.jitter);
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 40px;
+            width: root.column;
+            label: I18n.upper(@tr("Loss"));
+            value: @tr("{}%", floor(root.f.loss / 10) + "." + mod(root.f.loss, 10));
+            tone: root.f.loss < 10 ? Theme.text : root.f.loss < 50 ? Theme.action : Theme.bad;
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 60px;
+            width: root.column;
+            label: I18n.upper(@tr("Reconnects"));
+            value: root.f.reconnects;
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 80px;
+            width: root.column;
+            label: I18n.upper(@tr("Skew"));
+            value: root.f.skew > 0 ? "+" + root.f.skew : "" + root.f.skew;
+            tone: abs(root.f.skew) <= 3 ? Theme.text : abs(root.f.skew) <= 7 ? Theme.action : Theme.bad;
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 100px;
+            width: root.column;
+            label: I18n.upper(@tr("Lead"));
+            value: root.f.lead;
+        }
+
+        // The rollback.
+        LinkRow {
+            x: parent.width - 12px - root.column;
+            y: root.top;
+            width: root.column;
+            label: I18n.upper(@tr("Input delay"));
+            value: root.f.input-delay;
+        }
+
+        LinkRow {
+            x: parent.width - 12px - root.column;
+            y: root.top + 20px;
+            width: root.column;
+            label: I18n.upper(@tr("Rollbacks"));
+            value: root.f.rollbacks;
+        }
+
+        LinkRow {
+            x: parent.width - 12px - root.column;
+            y: root.top + 40px;
+            width: root.column;
+            label: I18n.upper(@tr("Last rollback"));
+            value: root.f.last-rollback;
+            tone: root.f.last-rollback <= 2 ? Theme.text : root.f.last-rollback <= 5 ? Theme.action : Theme.bad;
+        }
+
+        LinkRow {
+            x: parent.width - 12px - root.column;
+            y: root.top + 60px;
+            width: root.column;
+            label: I18n.upper(@tr("Deepest"));
+            value: root.f.deepest-rollback;
+        }
+
+        LinkRow {
+            x: parent.width - 12px - root.column;
+            y: root.top + 80px;
+            width: root.column;
+            label: I18n.upper(@tr("Frames waited"));
+            value: root.f.waits;
+        }
+
+        // What went each way.
+        LinkRow {
+            x: 12px;
+            y: root.top + 120px;
+            width: parent.width - 24px;
+            label: I18n.upper(@tr("Sent"));
+            value: @tr("{} packets · {} KB", root.f.sent, root.f.sent-kb);
+        }
+
+        LinkRow {
+            x: 12px;
+            y: root.top + 140px;
+            width: parent.width - 24px;
+            label: I18n.upper(@tr("Received"));
+            value: @tr("{} packets · {} KB", root.f.received, root.f.received-kb);
+        }
+    }
+}
+
+// A button of the on-screen pad: held while a finger is on it. The fingers are the app's to follow (each its
+// own: a direction and a button held together), so the button says where it is and is drawn as the app says it
+// is held; the mouse, one pointer, comes through its `TouchArea`. Over the picture (`over`: a phone held sideways)
+// it is see-through.
+component PadKey inherits Rectangle {
+    in property <string> text;
+    // An arrow, as a path in a box of `glyph`, in place of a text.
+    in property <string> shape;
+    in property <int> button;
+    in property <bool> round;
+    in property <bool> over;
+    in property <length> font-size: 16px;
+    in property <length> glyph: 14px;
+    property <length> ax: self.absolute-position.x;
+    property <length> ay: self.absolute-position.y;
+    property <bool> held: Shell.pad-held.length > root.button && Shell.pad-held[root.button];
+    function place() {
+        Shell.pad-key(root.button, root.ax, root.ay, self.width, self.height);
+    }
+    Rectangle {
+        background: root.held ? Theme.line : Theme.raised;
+        border-width: 1px;
+        border-color: Theme.line;
+        border-radius: root.round ? self.width / 2 : 0px;
+        opacity: !root.over ? 1 : root.held ? 0.75 : 0.35;
+    }
+
+    Text {
+        text: root.text;
+        color: Theme.text;
+        font-family: "Chakra Petch";
+        font-size: root.font-size;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        opacity: root.over ? 0.8 : 1;
+    }
+
+    Path {
+        width: root.glyph;
+        height: root.glyph;
+        commands: root.shape;
+        fill: Theme.text;
+        opacity: root.over ? 0.8 : 1;
+        viewbox-width: 14;
+        viewbox-height: 14;
+    }
+
+    touch := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                Shell.touch(root.button, true);
+            } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                Shell.touch(root.button, false);
+            }
+        }
+    }
+
+    init => {
+        place();
+    }
+    changed ax => {
+        place();
+    }
+    changed ay => {
+        place();
+    }
+    changed width => {
+        place();
+    }
+    changed height => {
+        place();
+    }
+}
+
+// A member of the party, as a phone's switch buttons show it: its face and its HP over a bar of it, dimmed with none
+// left.
+component MemberCell inherits Rectangle {
+    in property <PartyMember> member;
+    in property <bool> there: true;
+
+    Image {
+        x: 4px;
+        y: (parent.height - 16px) / 2 - 2px;
+        width: 32px;
+        height: 16px;
+        visible: root.there;
+        source: root.member.face;
+        image-rendering: pixelated;
+        opacity: root.member.hp > 0 ? 1 : 0.4;
+    }
+
+    Text {
+        x: 40px;
+        y: 0;
+        width: parent.width - 44px;
+        height: parent.height - 4px;
+        visible: root.there;
+        text: root.member.hp;
+        color: root.member.hp > 0 ? Theme.text : Theme.bad;
+        font-family: Theme.mono;
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    // (Its HP against its most, under it.)
+    Rectangle {
+        x: 4px;
+        y: parent.height - 4px;
+        width: parent.width - 8px;
+        height: 2px;
+        visible: root.there;
+        background: Theme.inset;
+        Rectangle {
+            x: 0;
+            width: root.member.max-hp > 0 ? parent.width * min(1, root.member.hp / root.member.max-hp) : 0px;
+            background: root.member.hp * 4 > root.member.max-hp ? Theme.good : Theme.bad;
+        }
+    }
+}
+
+// The navi changes a round allows, each a pip: those made outlined, those left lit.
+component Pips inherits Rectangle {
+    in property <int> made;
+    in property <int> limit;
+    width: max(0px, root.limit * 13px - 4px);
+    height: 9px;
+    for i in root.limit: Rectangle {
+        x: i * 13px;
+        y: 0;
+        width: 9px;
+        height: 9px;
+        // (One made: an outlined slot; one left: lit.)
+        border-width: i < root.made ? 1px : 0px;
+        border-color: Theme.dim;
+        background: i < root.made ? transparent : Theme.cursor;
+    }
+}
+
+// A switch, as the strip shows it: its control as bound (a key cap or a pad's button; none in a replay), the face of the
+// member it switches to, and its HP.
+component SwitchUnit inherits Rectangle {
+    in property <Hint> hint;
+    in property <PartyMember> member;
+    width: (key.width > 0 ? key.width + 6px : 0px) + 48px + 6px + hp.width;
+    key := HintView {
+        x: 0;
+        y: (parent.height - 22px) / 2;
+        height: 22px;
+        hint: root.hint;
+    }
+
+    Image {
+        x: key.width > 0 ? key.width + 6px : 0px;
+        y: (parent.height - self.height) / 2;
+        width: 48px;
+        height: 24px;
+        source: root.member.face;
+        image-rendering: pixelated;
+        opacity: root.member.hp > 0 ? 1 : 0.4;
+    }
+
+    hp := Text {
+        x: parent.width - self.width;
+        width: self.preferred-width;
+        text: root.member.hp;
+        color: root.member.hp > 0 ? Theme.text : Theme.bad;
+        font-family: Theme.mono;
+        font-size: 13px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+}
+
+// The party beside the battle, on a desktop (a phone's is its pad's: `TouchPad`), and over a replay's picture: one row
+// (the user's choice, the verification workspace's docs/saito-ui/party/chosen/battle-strip-2.png): each switch, its
+// control, the face of the member it switches to and its HP, then the round's navi changes as pips, those made
+// outlined, those left lit. Each switch and the pips a cell of their own, a line between each two (the user: "you
+// should visually separate the two navis and dots"). The member on the field isn't in it: the battle's own picture
+// shows it. Where it goes is its user's.
+export component PartyStrip inherits Rectangle {
+    in property <PartyHud> party;
+    // (Each cell's padding at either side: a line between two cells is in the middle of the room between them.)
+    property <length> pad: 11px;
+    width: (left.visible ? left.width + 2 * root.pad : 0px) + (right.visible ? right.width + 2 * root.pad : 0px) + pips.width + 2 * root.pad;
+    height: 34px;
+    Rectangle {
+        background: Theme.shade;
+        border-width: 1px;
+        border-color: Theme.line;
+    }
+
+    left := SwitchUnit {
+        x: root.pad;
+        y: 5px;
+        height: 24px;
+        visible: root.party.left >= 0;
+        hint: root.party.left-key;
+        member: root.party.members[root.party.left];
+    }
+
+    Rectangle {
+        x: left.x + left.width + root.pad;
+        width: 1px;
+        visible: left.visible;
+        background: Theme.line;
+    }
+
+    right := SwitchUnit {
+        x: (left.visible ? left.width + 2 * root.pad : 0px) + root.pad;
+        y: 5px;
+        height: 24px;
+        visible: root.party.right >= 0;
+        hint: root.party.right-key;
+        member: root.party.members[root.party.right];
+    }
+
+    Rectangle {
+        x: right.x + right.width + root.pad;
+        width: 1px;
+        visible: right.visible;
+        background: Theme.line;
+    }
+
+    pips := Pips {
+        x: parent.width - root.pad - self.width;
+        y: (parent.height - self.height) / 2;
+        made: root.party.switches;
+        limit: root.party.limit;
+    }
+}
+
+// One of a phone's two switch buttons: a button of the pad (its bit, 14 the left, 15 the right) with the member it
+// names; held, drawn so.
+component SwitchKey inherits Rectangle {
+    in property <int> button;
+    in property <int> at;
+    PadKey {
+        button: root.button;
+    }
+
+    MemberCell {
+        x: 6px;
+        y: 6px;
+        width: parent.width - 12px;
+        height: parent.height - 12px;
+        there: root.at >= 0;
+        member: Shell.party.members[root.at];
+    }
+}
+
+// The pad under the picture on a phone: the GBA's buttons where thumbs reach, and MENU, with what the battle is
+// beside it (`Shell.battle-note`: its owner's words). In a party battle, under MENU: the switches' two buttons, each
+// with the member it names, and between them the navi changes left (EXE5 DS's bottom screen's party panel, as its touch
+// screen offers it).
+component TouchPad inherits Rectangle {
+    menu := Button {
+        x: 0;
+        y: 0;
+        nav: "pad.menu";
+        text: I18n.upper(@tr("Menu"));
+    }
+
+    Text {
+        x: menu.width + 12px;
+        y: 0;
+        width: parent.width - self.x;
+        height: menu.height;
+        text: Shell.battle-note;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (The party's: shown in a party battle; a button with no member does nothing.)
+    Rectangle {
+        y: menu.height + 12px;
+        height: 64px;
+        visible: Shell.party.shown;
+        SwitchKey {
+            x: 0;
+            width: (parent.width - 16px) / 3;
+            button: 14;
+            at: Shell.party.left;
+        }
+
+        // (The round's navi changes between the switches, as the desktop's strip has them.)
+        Pips {
+            x: (parent.width - self.width) / 2;
+            y: (64px - self.height) / 2;
+            made: Shell.party.switches;
+            limit: Shell.party.limit;
+        }
+
+        SwitchKey {
+            x: parent.width - self.width;
+            width: (parent.width - 16px) / 3;
+            button: 15;
+            at: Shell.party.right;
+        }
+    }
+
+    // The GBA's buttons, a quarter larger than the first pad's (the directions' keys were 56, A and B 76), laid out
+    // low in the room under MENU (and the party's row) where the thumbs rest: SELECT and START at the foot, 44 tall;
+    // 12 over them the directions' square at the left and A and B at the right; 12 over those L and R. A phone too
+    // short for them at that size has them smaller, all but SELECT and START, in proportion (`scale`), so none is
+    // over another; what the room has to spare is between them and MENU.
+    property <length> top: menu.height + 12px + (Shell.party.shown ? 64px + 12px : 0px);
+    property <length> foot: 44px;
+    property <float> scale: clamp((root.height - root.top - root.foot - 24px) / 266px, 0.5, 1);
+    property <length> key: 70px * root.scale;
+    property <length> square: 3 * root.key;
+    property <length> face: 95px * root.scale;
+    property <length> shoulder: 56px * root.scale;
+    property <length> square-y: root.height - root.foot - 12px - root.square;
+    property <length> middle: root.square-y + root.square / 2;
+    // A at the right edge; B left of it as far as the GBA's (nine tenths of a button), but 12 clear of the
+    // directions' square, whose touch reaches past it; and under A as far as keeps the two 4 apart (a third of a
+    // button at least), the pair centered on the square's middle.
+    property <length> a-x: root.width - root.face;
+    property <length> b-x: max(root.square + 12px, root.a-x - 0.9 * root.face);
+    property <float> apart: (root.a-x - root.b-x) / 1px;
+    property <float> reach: (root.face + 4px) / 1px;
+    property <length> drop: max(root.face / 3, sqrt(max(0, root.reach * root.reach - root.apart * root.apart)) * 1px);
+    PadKey {
+        x: 0;
+        y: root.square-y - 12px - self.height;
+        width: 132px;
+        height: root.shoulder;
+        text: "L";
+        button: 9;
+    }
+
+    PadKey {
+        x: parent.width - self.width;
+        y: root.square-y - 12px - self.height;
+        width: 132px;
+        height: root.shoulder;
+        text: "R";
+        button: 8;
+    }
+
+    PadKey {
+        x: root.key;
+        y: root.square-y;
+        width: root.key;
+        height: root.key;
+        glyph: 18px * root.scale;
+        shape: "M 7 1 L 13 12 L 1 12 Z";
+        button: 6;
+    }
+
+    PadKey {
+        x: 0;
+        y: root.square-y + root.key;
+        width: root.key;
+        height: root.key;
+        glyph: 18px * root.scale;
+        shape: "M 1 7 L 12 1 L 12 13 Z";
+        button: 5;
+    }
+
+    PadKey {
+        x: 2 * root.key;
+        y: root.square-y + root.key;
+        width: root.key;
+        height: root.key;
+        glyph: 18px * root.scale;
+        shape: "M 13 7 L 2 1 L 2 13 Z";
+        button: 4;
+    }
+
+    PadKey {
+        x: root.key;
+        y: root.square-y + 2 * root.key;
+        width: root.key;
+        height: root.key;
+        glyph: 18px * root.scale;
+        shape: "M 7 13 L 13 2 L 1 2 Z";
+        button: 7;
+    }
+
+    PadKey {
+        x: root.a-x;
+        y: root.middle - root.drop / 2 - root.face / 2;
+        width: root.face;
+        height: root.face;
+        font-size: 20px * root.scale;
+        text: "A";
+        button: 0;
+        round: true;
+    }
+
+    PadKey {
+        x: root.b-x;
+        y: root.middle + root.drop / 2 - root.face / 2;
+        width: root.face;
+        height: root.face;
+        font-size: 20px * root.scale;
+        text: "B";
+        button: 1;
+        round: true;
+    }
+
+    PadKey {
+        x: parent.width / 2 - 104px;
+        y: parent.height - self.height;
+        width: 96px;
+        height: root.foot;
+        text: "SELECT";
+        button: 2;
+    }
+
+    PadKey {
+        x: parent.width / 2 + 8px;
+        y: parent.height - self.height;
+        width: 96px;
+        height: root.foot;
+        text: "START";
+        button: 3;
+    }
+}
+
+// The pad on a phone held sideways (the user chose it over a smaller picture with the pad beside it): the picture
+// keeps the window's height, and the GBA's buttons are over its left and right edges, see-through: L and R at the
+// top corners, the directions and A and B at the sides, SELECT, MENU and START along the foot. Sized by the window's
+// height (`u`, a hundredth of it: about 4 points on a phone), as the layout's units are the desktop's here.
+component TouchOverlay inherits Rectangle {
+    property <length> u: self.height / 100;
+    property <length> margin: 3 * root.u;
+    // A direction's key, and the square the four make.
+    property <length> key: 12.5 * root.u;
+    property <length> pad-top: (self.height - 3 * root.key) / 2 + 4 * root.u;
+    property <length> face: 17 * root.u;
+    property <length> foot-y: self.height - root.margin - 8.5 * root.u;
+    property <length> text-size: 4.5 * root.u;
+    property <length> glyph: 4.5 * root.u;
+    PadKey {
+        x: root.margin;
+        y: root.margin;
+        width: 26 * root.u;
+        height: 10.5 * root.u;
+        over: true;
+        font-size: root.text-size;
+        text: "L";
+        button: 9;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.width - root.margin - self.width;
+        y: root.margin;
+        width: 26 * root.u;
+        height: 10.5 * root.u;
+        over: true;
+        font-size: root.text-size;
+        text: "R";
+        button: 8;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.margin + root.key;
+        y: root.pad-top;
+        width: root.key;
+        height: root.key;
+        over: true;
+        glyph: root.glyph;
+        shape: "M 7 1 L 13 12 L 1 12 Z";
+        button: 6;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.margin;
+        y: root.pad-top + root.key;
+        width: root.key;
+        height: root.key;
+        over: true;
+        glyph: root.glyph;
+        shape: "M 1 7 L 12 1 L 12 13 Z";
+        button: 5;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.margin + 2 * root.key;
+        y: root.pad-top + root.key;
+        width: root.key;
+        height: root.key;
+        over: true;
+        glyph: root.glyph;
+        shape: "M 13 7 L 2 1 L 2 13 Z";
+        button: 4;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.margin + root.key;
+        y: root.pad-top + 2 * root.key;
+        width: root.key;
+        height: root.key;
+        over: true;
+        glyph: root.glyph;
+        shape: "M 7 13 L 13 2 L 1 2 Z";
+        button: 7;
+        visible: !Shell.pad-gives-way;
+    }
+
+    PadKey {
+        x: root.width - root.margin - root.face;
+        y: 31 * root.u;
+        width: root.face;
+        height: root.face;
+        over: true;
+        font-size: root.text-size;
+        text: "A";
+        button: 0;
+        round: true;
+    }
+
+    PadKey {
+        x: root.width - root.margin - root.face - 19 * root.u;
+        y: 50 * root.u;
+        width: root.face;
+        height: root.face;
+        over: true;
+        font-size: root.text-size;
+        text: "B";
+        button: 1;
+        round: true;
+    }
+
+    PadKey {
+        x: root.margin;
+        y: root.foot-y;
+        width: 21 * root.u;
+        height: 8.5 * root.u;
+        over: true;
+        font-size: root.text-size * 0.8;
+        text: "SELECT";
+        button: 2;
+        visible: !Shell.pad-gives-way;
+    }
+
+    // (MENU opens the match's menu, as the upright pad's does.)
+    Rectangle {
+        x: (root.width - self.width) / 2;
+        y: root.foot-y;
+        width: 21 * root.u;
+        height: 8.5 * root.u;
+        Rectangle {
+            background: menu-touch.pressed ? Theme.line : Theme.raised;
+            border-width: 1px;
+            border-color: Theme.line;
+            opacity: menu-touch.pressed ? 0.75 : 0.35;
+        }
+
+        Text {
+            text: I18n.upper(@tr("Menu"));
+            color: Theme.text;
+            font-family: Theme.display;
+            font-size: root.text-size * 0.8;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            opacity: 0.8;
+        }
+
+        menu-touch := TouchArea {
+            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+            clicked => {
+                Nav.activate("pad.menu", 0);
+            }
+        }
+    }
+
+    PadKey {
+        x: root.width - root.margin - self.width;
+        y: root.foot-y;
+        width: 21 * root.u;
+        height: 8.5 * root.u;
+        over: true;
+        font-size: root.text-size * 0.8;
+        text: "START";
+        button: 3;
+    }
+}
+
+// The battle's own part of the window: the picture, the connection's corner, the phone's pad. The menus over it
+// are put in by app.slint, each from its screen's file.
+export component BattleScreen inherits Rectangle {
+    // (On a phone the picture's room is the window's width, at its top, with no gutter: the picture is a whole
+    // multiple of the game's, and a gutter's 32 can be the difference between one multiple and the next.)
+    property <length> picture-height: Theme.phone ? min(self.height, self.width * 2 / 3) : self.height;
+    // (No ground of its own: the backdrop is behind the picture, around it too.)
+    Picture {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.picture-height;
+        ground: transparent;
+    }
+
+    // The custom screen by pointer, over the picture as the replay viewer's is: the mouse's and a finger's downs,
+    // ups and moves, while the battle takes them (`Shell.screen-pointer`); the app finds what they are on.
+    // The mouse's cursor is a hand over what a click there takes (`Shell.picture-hand`: a chip, OK, a button, the
+    // Cross list's tab, an entry), as over the app's own controls, and the arrow elsewhere.
+    TouchArea {
+        x: Shell.picture-x;
+        y: Shell.picture-y;
+        width: Shell.picture-width;
+        height: Shell.picture-height;
+        enabled: Shell.screen-pointer;
+        mouse-cursor: Shell.picture-hand ? MouseCursor.pointer : MouseCursor.default;
+        function send(kind: int, button: int) {
+            Shell.picture-pointer(kind, button, self.mouse-x, self.mouse-y);
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down || e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                self.send(
+                    e.kind == PointerEventKind.down ? 0 : e.kind == PointerEventKind.up ? 1 : 3,
+                    e.button == PointerEventButton.left ? 0 : e.button == PointerEventButton.right ? 1 : 2);
+            }
+        }
+        moved => {
+            self.send(2, 0);
+        }
+        changed mouse-x => {
+            if self.has-hover && !self.pressed {
+                self.send(2, 0);
+            }
+        }
+        changed mouse-y => {
+            if self.has-hover && !self.pressed {
+                self.send(2, 0);
+            }
+        }
+        changed has-hover => {
+            if !self.has-hover {
+                self.send(4, 0);
+            }
+        }
+    }
+
+    // (A phone held sideways: at the foot, right of the pad's MENU, clear of START in the corner.)
+    property <bool> overlay: Theme.phone-app && !Theme.phone;
+    corner := Connection {
+        x: root.overlay ? (parent.width + parent.height * 0.21) / 2 + parent.height * 0.03 : parent.width - self.width - (Theme.phone ? Theme.margin : 56px);
+        y: root.overlay ? parent.height - parent.height * 0.03 - (parent.height * 0.085 + self.height) / 2 : (Theme.phone ? root.picture-height : parent.height) - self.height - 16px;
+        visible: Shell.connection-shown;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // (Over the corner, its right edge on the corner's; on a phone, where the picture is short, as near the top
+    // as it has to be.)
+    // (The player's party, in a party battle: on a phone its pad's. At the right (the user: "you should show the navi
+    // switcher on the right actually"), left of the connection's corner where that shows. Under the picture where the
+    // window leaves room, else over the frame's last 10 rows, the field's foot under the panels' lip (in a frame taller
+    // than 160 rows, the background under the field): nothing of the battle is there, at any size of window.)
+    property <length> picture-bottom: Shell.picture-y + Shell.picture-height;
+    property <length> foot: Shell.picture-height * 10 / Shell.picture-rows;
+    property <length> strip-right: min(root.width - 16px, Shell.picture-x + Shell.picture-width - 16px);
+    PartyStrip {
+        x: (corner.visible ? min(root.strip-right, corner.x - 12px) : root.strip-right) - self.width;
+        y: root.height - root.picture-bottom >= self.height + 16px || Shell.picture-height <= 0 ? root.height - self.height - 16px : root.picture-bottom - root.foot + max(0px, (root.foot - self.height) / 2);
+        visible: Shell.party.shown && !Theme.phone && !root.overlay;
+        party: Shell.party;
+    }
+
+    if Shell.connection-shown && Shell.connection-open: LinkPanel {
+        width: min(340px, parent.width - 2 * Theme.margin);
+        x: corner.x + corner.width - self.width;
+        y: max(8px, corner.y - self.height - 8px);
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    if Theme.phone: TouchPad {
+        x: Theme.margin;
+        y: root.picture-height + 16px;
+        width: parent.width - 2 * Theme.margin;
+        height: parent.height - self.y - Theme.margin;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    if root.overlay: TouchOverlay {
+        width: parent.width;
+        height: parent.height;
+    }
+}

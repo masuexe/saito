@@ -1,0 +1,546 @@
+//! Where a game's ROMs are read from ([`RomSource`]): Battle Network Legacy Collection Vol. 2, Steam's release of
+//! BN4, BN5 and BN6 (both versions of each, in English and Japanese), installed ([`Install`]); or ROM files, a
+//! folder of them or each one named.
+//!
+//! The install is ported from reference `bnlc-library/src/bnlc.rs` (its `locate_app_dir`, `rom_archives` and
+//! `scan_rom_archive`), Vol. 2 alone, with the crates it uses (`steamlocate`, `zip`). It is found through Steam by
+//! the volume's app id; a folder chosen is looked in too, for an install Steam doesn't list. Its ROMs are the `.srl`
+//! entries of the per-game `exeN.dat` zip archives under `<install>/exe/data/` (the shared `exe.dat` beside them
+//! holds the collection's own art, and no ROM).
+//!
+//! Where `steamlocate` looks for Steam: on Windows the registry's `InstallPath` (`HKLM\SOFTWARE\Wow6432Node\Valve\
+//! Steam`, else `SOFTWARE\Valve\Steam`); on macOS `~/Library/Application Support/Steam`; on Linux Flatpak's
+//! (`~/.var/app/com.valvesoftware.Steam/.local/share/Steam`, `.steam/steam`, `.steam/root`), the usual
+//! (`$XDG_DATA_HOME/Steam` or `~/.local/share/Steam`, `~/.steam/steam`, `~/.steam/root`,
+//! `~/.steam/debian-installation`) and Snap's (`$SNAP_USER_DATA` or `~/snap`, then `steam/common/.local/share/
+//! Steam`, `.steam/steam`, `.steam/root`), each that has a `steamapps` folder. Then Steam's libraries
+//! (`steamapps/libraryfolders.vdf`) for the app's manifest (`appmanifest_1798020.acf`), whose install folder is
+//! `<library>/steamapps/common/<installdir>`. (reference lock has steamlocate 2.0.1, which on Linux takes the first
+//! of those folders that exists, with `~/.local/share/Steam` and `~/.steam` in the two's place; this is 2.1.1,
+//! and every Steam found is looked in: `locate_all`.) The collection is a Windows game: Steam on Linux installs
+//! it with Proton in its own libraries, where it is found; Steam on macOS doesn't install it, and a Windows Steam
+//! in a compatibility layer (CrossOver, Whisky) keeps it in a folder the player chooses.
+//!
+//! The ROMs are read into memory and extracted there; none is written to disk, but for the copies a browser keeps of
+//! the collection chosen ([`RomSource::Copies`]: it can't read the player's folder again without asking). Which game a ROM is of is its
+//! content's to say: each game's recipe declares the game codes of its ROMs ([`crate::Recipe::roms`]), and a ROM is
+//! found by the code in its header ([`crate::header_code`]). Nothing here names a game.
+//!
+//! The tools and development name the ROMs one way ([`RomSource::from_env`]): `$SAITO_ROMS`, a folder that is
+//! the collection's install or holds the ROM files; unset, the collection where Steam installed it.
+
+use crate::{Error, Recipe, RomSet};
+use std::fmt;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// The environment variable that names the ROMs for the tools and development ([`RomSource::from_env`]).
+pub const ROMS: &str = "SAITO_ROMS";
+
+/// The per-game archives of a folder chosen as the install, at the three places [`Install::at`] looks: the
+/// browser reads them, and no more, from the folder chosen (`saito_dialogs::open_folder`). (`exe?*`: not
+/// the shared `exe.dat`, which holds no ROM and is large.)
+pub const ARCHIVES: [&str; 3] = ["exe/data/exe?*.dat", "data/exe?*.dat", "exe?*.dat"];
+
+/// Vol. 2's Steam app id (reference `Volume::Vol2`).
+#[cfg(not(target_arch = "wasm32"))]
+const STEAM_APP_ID: u32 = 1798020;
+
+/// An install of the collection: the folder its archives are in, and the per-game archives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Install {
+    /// `<install>/exe/data`.
+    pub data: PathBuf,
+    pub archives: Vec<PathBuf>,
+}
+
+impl Install {
+    /// The install: in `chosen` (a folder the player chose) if it holds one, else where Steam has it. None:
+    /// neither has.
+    pub fn find(chosen: Option<&Path>) -> Option<Install> {
+        chosen.and_then(Install::at).or_else(|| steam().and_then(|dir| Install::at(&dir)))
+    }
+
+    /// The install in `folder`: the collection's own folder (the one with `exe/` in it), or its `exe` or
+    /// `exe/data` folder, whichever was chosen. None: no per-game archive is there.
+    pub fn at(folder: &Path) -> Option<Install> {
+        [folder.join("exe").join("data"), folder.join("data"), folder.to_path_buf()].into_iter().find_map(|data| {
+            let archives = archives(&data);
+            (!archives.is_empty()).then_some(Install { data, archives })
+        })
+    }
+}
+
+/// Where a game's ROMs are read from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RomSource {
+    /// The Legacy Collection installed: the ROMs in its archives.
+    Collection(Install),
+    /// ROM files (a folder's, or each one named): each one's header says which ROM it is, and a file that is none
+    /// asked for is passed over.
+    Files(Vec<PathBuf>),
+    /// Copies of the collection's ROMs, as a browser keeps them (saito's `games`): in the folder given, each its
+    /// archive entry as it was, compressed, in a zip of its own named by its game code (`BR6E.zip`: [`copy_of`]),
+    /// stowed (`saito_files::stow`) and read into memory as a game wants them ([`Rom::read`]).
+    Copies(PathBuf),
+}
+
+/// A ROM of a [`RomSource`]: where it is, and the game code its header says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rom {
+    pub code: String,
+    pub at: RomAt,
+}
+
+/// Where a [`Rom`] is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RomAt {
+    /// An entry of one of the collection's archives: its place in the archive, and its name there.
+    Entry { archive: PathBuf, entry: usize, name: String },
+    /// A file of its own.
+    File(PathBuf),
+}
+
+impl fmt::Display for RomAt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RomAt::Entry { archive, name, .. } => write!(f, "{name} in {}", archive.display()),
+            RomAt::File(path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
+impl fmt::Display for RomSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RomSource::Collection(install) => write!(f, "the Legacy Collection in {}", install.data.display()),
+            RomSource::Files(files) => match common_folder(files) {
+                Some(dir) => write!(f, "the ROM files in {}", dir.display()),
+                None => write!(f, "the ROM files given"),
+            },
+            RomSource::Copies(dir) => write!(f, "the Legacy Collection's ROMs kept in {}", dir.display()),
+        }
+    }
+}
+
+/// The folder every one of `files` is in, if they share one.
+fn common_folder(files: &[PathBuf]) -> Option<&Path> {
+    let first = files.first()?.parent()?;
+    files.iter().all(|f| f.parent() == Some(first)).then_some(first)
+}
+
+impl RomSource {
+    /// The ROMs in `folder`: the Legacy Collection installed there (its own folder, its `exe` or its `exe/data`:
+    /// [`Install::at`]), else the files in it whose headers have a game code (each read only as far as its
+    /// header). An error: the folder can't be read, or it is neither and holds no ROM.
+    pub fn at(folder: &Path) -> Result<RomSource, Error> {
+        if let Some(install) = Install::at(folder) {
+            return Ok(RomSource::Collection(install));
+        }
+        let read = saito_files::read_dir(folder).map_err(|e| Error(format!("{}: {e}", folder.display())))?;
+        let mut files: Vec<PathBuf> = read
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| saito_files::is_file(p) && file_code(p).is_ok_and(|c| c.is_some()))
+            .collect();
+        if files.is_empty() {
+            return Err(Error(format!(
+                "{} has no ROM: it is neither the Legacy Collection's folder (its own, its exe or its exe/data) nor a folder of ROM files",
+                folder.display()
+            )));
+        }
+        files.sort();
+        Ok(RomSource::Files(files))
+    }
+
+    /// The ROMs the tools and development read: `$SAITO_ROMS` ([`ROMS`]), a folder as [`RomSource::at`] takes
+    /// it; unset, the Legacy Collection where Steam installed it. An error says how to name them.
+    pub fn from_env() -> Result<RomSource, Error> {
+        match std::env::var_os(ROMS) {
+            Some(dir) => RomSource::at(Path::new(&dir)).map_err(|e| Error(format!("${ROMS}: {e}"))),
+            None => steam().and_then(|dir| Install::at(&dir)).map(RomSource::Collection).ok_or_else(|| {
+                Error(format!(
+                    "no ROMs: ${ROMS} isn't set, and Steam has no Battle Network Legacy Collection Vol. 2 installed; set ${ROMS} to the collection's folder, or to a folder of its ROMs"
+                ))
+            }),
+        }
+    }
+
+    /// The ROMs of the game codes `codes` (a game's recipe's: every one required), in their order, as each one's
+    /// header says: the first of each code (a copy of one is passed over). An archive or a file that doesn't read
+    /// is passed over (and said in the log: the `log` crate's). Err: the codes no ROM is of, with the ROMs found.
+    pub fn find(&self, codes: &[String]) -> Result<Vec<Rom>, (Vec<String>, Vec<Rom>)> {
+        let mut found: Vec<Rom> = Vec::new();
+        let mut keep = |rom: Rom| {
+            if !found.iter().any(|r| r.code == rom.code) {
+                found.push(rom);
+            }
+        };
+        match self {
+            RomSource::Collection(install) => {
+                for archive in &install.archives {
+                    match scan(archive, codes) {
+                        Ok(roms) => roms.into_iter().for_each(&mut keep),
+                        Err(why) => log::warn!("reading {}: {why}", archive.display()),
+                    }
+                }
+            }
+            RomSource::Files(files) => {
+                for file in files {
+                    match file_code(file) {
+                        Ok(Some(code)) if codes.contains(&code) => keep(Rom { code, at: RomAt::File(file.clone()) }),
+                        Ok(_) => {}
+                        Err(why) => log::warn!("reading {}: {why}", file.display()),
+                    }
+                }
+            }
+            // (Each copy by its name: its game code, as its copy was made. None is read till a game wants it.)
+            RomSource::Copies(dir) => {
+                for copy in saito_files::stowed(dir) {
+                    let code = copy.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    if copy.extension().is_some_and(|e| e == "zip") && codes.contains(&code) {
+                        keep(Rom { at: RomAt::Entry { archive: copy, entry: 0, name: format!("{code}.srl") }, code });
+                    }
+                }
+            }
+        }
+        found.sort_by_key(|r| codes.iter().position(|c| *c == r.code));
+        let missing: Vec<String> = codes.iter().filter(|c| !found.iter().any(|r| r.code == **c)).cloned().collect();
+        if missing.is_empty() { Ok(found) } else { Err((missing, found)) }
+    }
+
+    /// Copies of the ROMs of the game codes `codes` this source has (those it hasn't are passed over), as
+    /// [`RomSource::Copies`] keeps them, stowed in folder `dir` (`saito_files::stow`): what a browser keeps
+    /// of the collection chosen, so that the next start needs no folder chosen. How many there are.
+    pub fn keep_copies(&self, codes: &[String], dir: &Path) -> Result<usize, Error> {
+        let roms = self.find(codes).unwrap_or_else(|(_, found)| found);
+        for rom in &roms {
+            let copy = copy_of(rom)?;
+            saito_files::stow(&dir.join(format!("{}.zip", rom.code)), copy).map_err(|e| Error(format!("keeping {}: {e}", rom.at)))?;
+        }
+        Ok(roms.len())
+    }
+
+    /// Copies of the ROMs of the game codes `codes` this source has (those it hasn't are passed over), as
+    /// [`RomSource::Copies`] keeps them: each its file's name there (`BR6E.zip`) and its bytes ([`copy_of`]). What a
+    /// device that has the collection sends one that hasn't (saito-nearby), which checks each ([`check_copy`]).
+    pub fn copies(&self, codes: &[String]) -> Result<Vec<(String, Vec<u8>)>, Error> {
+        let roms = self.find(codes).unwrap_or_else(|(_, found)| found);
+        roms.iter().map(|rom| Ok((format!("{}.zip", rom.code), copy_of(rom)?))).collect()
+    }
+
+    /// Every ROM `recipe` declares, read whole into a set for it ([`Recipe::extract`]). An error names the ROMs
+    /// missing (the source hasn't the whole collection's), or the one that doesn't read.
+    pub fn read(&self, recipe: &Recipe) -> Result<RomSet, Error> {
+        let roms = self.find(recipe.roms()).map_err(|(missing, _)| {
+            Error(format!(
+                "{}: {} missing from {self} (the game's ROMs are {}: every one is needed)",
+                recipe.game(),
+                missing.join(", "),
+                recipe.roms().join(", ")
+            ))
+        })?;
+        let mut set = recipe.rom_set();
+        for rom in &roms {
+            set.insert(rom.read()?).map_err(|e| Error(format!("{}: {e}", rom.at)))?;
+        }
+        Ok(set)
+    }
+}
+
+impl Rom {
+    /// The ROM's bytes, read into memory (out of its archive, for one of the collection's; a copy kept is read in
+    /// first: `saito_files::fetch`, which waits, off a page's main thread).
+    pub fn read(&self) -> Result<Vec<u8>, Error> {
+        let said = |e: &dyn fmt::Display| Error(format!("{}: {e}", self.at));
+        match &self.at {
+            RomAt::Entry { archive, entry, .. } => {
+                saito_files::fetch(std::slice::from_ref(archive)).map_err(|e| said(&e))?;
+                let mut zip = open(archive).map_err(|e| said(&e))?;
+                let mut file = zip.by_index(*entry).map_err(|e| said(&e))?;
+                let mut bytes = Vec::with_capacity(file.size() as usize);
+                file.read_to_end(&mut bytes).map_err(|e| said(&e))?;
+                Ok(bytes)
+            }
+            RomAt::File(path) => saito_files::read(path).map_err(|e| said(&e)),
+        }
+    }
+}
+
+/// A copy of `rom` as [`RomSource::Copies`] keeps it: a zip of one entry, `<code>.srl`, the ROM's archive entry as
+/// it is there (its compressed bytes copied, not compressed again), or a ROM file's bytes stored.
+pub fn copy_of(rom: &Rom) -> Result<Vec<u8>, Error> {
+    let said = |e: &dyn fmt::Display| Error(format!("copying {}: {e}", rom.at));
+    let name = format!("{}.srl", rom.code);
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    match &rom.at {
+        RomAt::Entry { archive, entry, .. } => {
+            saito_files::fetch(std::slice::from_ref(archive)).map_err(|e| said(&e))?;
+            let mut zip = open(archive).map_err(|e| said(&e))?;
+            let file = zip.by_index_raw(*entry).map_err(|e| said(&e))?;
+            out.raw_copy_file_rename(file, name).map_err(|e| said(&e))?;
+        }
+        RomAt::File(path) => {
+            use std::io::Write;
+            let bytes = saito_files::read(path).map_err(|e| said(&e))?;
+            out.start_file(name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).map_err(|e| said(&e))?;
+            out.write_all(&bytes).map_err(|e| said(&e))?;
+        }
+    }
+    Ok(out.finish().map_err(|e| said(&e))?.into_inner())
+}
+
+/// A copy another device sent ([`RomSource::copies`]), checked before it is kept as [`RomSource::Copies`] keeps one:
+/// named `<code>.zip` for one of the game codes `codes`, a zip of the one entry `<code>.srl`, whose header says that
+/// code, and which reads whole (its CRC-32 checked as it is). The code.
+pub fn check_copy(name: &str, bytes: &[u8], codes: &[String]) -> Result<String, Error> {
+    let said = |why: &dyn fmt::Display| Error(format!("the copy {name}: {why}"));
+    let code = name.strip_suffix(".zip").filter(|c| codes.iter().any(|d| d == c)).ok_or_else(|| said(&"not a copy of a ROM a game wants"))?;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| said(&e))?;
+    if zip.len() != 1 {
+        return Err(said(&format_args!("{} entries, where a copy has one", zip.len())));
+    }
+    let mut entry = zip.by_index(0).map_err(|e| said(&e))?;
+    if entry.name() != format!("{code}.srl") {
+        return Err(said(&format_args!("its entry is {}", entry.name())));
+    }
+    let mut header = Vec::with_capacity(crate::HEADER_LEN);
+    (&mut entry).take(crate::HEADER_LEN as u64).read_to_end(&mut header).map_err(|e| said(&e))?;
+    match crate::header_code(&header) {
+        Some(c) if c == code => {}
+        other => return Err(said(&format_args!("its ROM's header says {}", other.unwrap_or("no game code")))),
+    }
+    std::io::copy(&mut entry, &mut std::io::sink()).map_err(|e| said(&e))?;
+    Ok(code.to_string())
+}
+
+/// The collection's folder as Steam has it installed, if it is: in the first Steam found that has it. (No Steam
+/// is nothing gone wrong.)
+fn steam() -> Option<PathBuf> {
+    // (The browser can't look for Steam: the player chooses the folder.)
+    #[cfg(target_arch = "wasm32")]
+    return None;
+    #[cfg(not(target_arch = "wasm32"))]
+    steamlocate::locate_all().ok()?.into_iter().find_map(|steam| {
+        let (app, library) = steam.find_app(STEAM_APP_ID).map_err(|e| log::warn!("finding the Legacy Collection in Steam: {e}")).ok().flatten()?;
+        Some(library.resolve_app_dir(&app))
+    })
+}
+
+/// The per-game archives in an install's data folder: each `exe*.dat` but the shared `exe.dat`.
+fn archives(data: &Path) -> Vec<PathBuf> {
+    let Ok(read) = saito_files::read_dir(data) else { return Vec::new() };
+    let mut out: Vec<PathBuf> = read
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|p| {
+            let name = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            name != "exe.dat" && name.starts_with("exe") && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dat")) && saito_files::is_file(p)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The ROMs of the game codes `codes` in one archive, by their headers: each `.srl` entry's first bytes read, no
+/// more.
+fn scan(archive: &Path, codes: &[String]) -> Result<Vec<Rom>, String> {
+    let mut zip = open(archive)?;
+    let mut out = Vec::new();
+    for entry in 0..zip.len() {
+        let mut file = zip.by_index(entry).map_err(|e| format!("entry {entry}: {e}"))?;
+        let Some(name) = file.enclosed_name() else { continue };
+        if !name.extension().is_some_and(|e| e.eq_ignore_ascii_case("srl")) || !file.is_file() {
+            continue;
+        }
+        let name = name.to_string_lossy().into_owned();
+        let mut header = Vec::with_capacity(crate::HEADER_LEN);
+        (&mut file).take(crate::HEADER_LEN as u64).read_to_end(&mut header).map_err(|e| format!("{name}: {e}"))?;
+        if let Some(code) = crate::header_code(&header).filter(|c| codes.iter().any(|d| d == c)) {
+            out.push(Rom { code: code.to_string(), at: RomAt::Entry { archive: archive.to_path_buf(), entry, name } });
+        }
+    }
+    Ok(out)
+}
+
+/// The game code a file's header says, reading no more than the header: none for a file too short to have one,
+/// or with no game code there.
+fn file_code(path: &Path) -> Result<Option<String>, String> {
+    let file = saito_files::File::open(path).map_err(|e| e.to_string())?;
+    let mut header = Vec::with_capacity(crate::HEADER_LEN);
+    file.take(crate::HEADER_LEN as u64).read_to_end(&mut header).map_err(|e| e.to_string())?;
+    Ok(crate::header_code(&header).map(str::to_string))
+}
+
+fn open(archive: &Path) -> Result<zip::ZipArchive<saito_files::File>, String> {
+    let file = saito_files::File::open(archive).map_err(|e| e.to_string())?;
+    zip::ZipArchive::new(file).map_err(|e| e.to_string())
+}
+
+/// What tests of a source are made from: ROMs and archives of made-up bytes.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use std::io::Write;
+    use std::path::Path;
+
+    /// A ROM's bytes as far as the code under test looks: `len` bytes, its header's game code `code`, and the
+    /// rest a pattern.
+    pub fn fake_rom(code: &str, len: usize) -> Vec<u8> {
+        let mut rom: Vec<u8> = (0..len).map(|i| (i * 7 % 251) as u8).collect();
+        rom[0xac..0xb0].copy_from_slice(code.as_bytes());
+        rom
+    }
+
+    /// A zip archive at `path` of `entries` (a name and its bytes), compressed as the collection's may be.
+    pub fn archive(path: &Path, entries: &[(&str, &[u8])]) {
+        saito_files::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut zip = zip::ZipWriter::new(saito_files::File::create(path).unwrap());
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{archive, fake_rom};
+    use super::*;
+
+    fn codes(c: &[&str]) -> Vec<String> {
+        c.iter().map(|c| c.to_string()).collect()
+    }
+
+    /// An install is found from its own folder, its `exe` folder or its `exe/data`; its per-game archives are
+    /// listed and the shared one isn't; and a folder of none is no install.
+    #[test]
+    fn an_install_is_found_from_any_of_its_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("exe").join("data");
+        archive(&data.join("exe.dat"), &[("bg/a.tga", b"art")]);
+        archive(&data.join("exe6.dat"), &[]);
+        archive(&data.join("exe4.dat"), &[]);
+        saito_files::write(data.join("notes.txt"), b"").unwrap();
+        let install = Install { data: data.clone(), archives: vec![data.join("exe4.dat"), data.join("exe6.dat")] };
+        assert_eq!(Install::at(dir.path()).as_ref(), Some(&install));
+        assert_eq!(Install::at(&dir.path().join("exe")).as_ref(), Some(&install));
+        assert_eq!(Install::at(&data).as_ref(), Some(&install));
+        assert_eq!(Install::find(Some(dir.path())), Some(install.clone()));
+        assert_eq!(RomSource::at(&data).unwrap(), RomSource::Collection(install));
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(Install::at(empty.path()), None);
+        assert_eq!(Install::at(&empty.path().join("missing")), None);
+        assert!(RomSource::at(empty.path()).unwrap_err().to_string().contains("has no ROM"));
+        assert!(RomSource::at(&empty.path().join("missing")).is_err());
+    }
+
+    /// The ROMs are the archives' `.srl` entries of the codes asked for, by their headers, wherever in an archive
+    /// they are, in the codes' order; anything else is passed over, and so is a second copy of one game code, and
+    /// an archive that isn't one. Codes no archive has are said, with the ROMs found. Each reads back whole.
+    #[test]
+    fn the_roms_are_found_by_their_headers_and_read_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("exe").join("data");
+        let (us, jp, other) = (fake_rom("BR6E", 0x1000), fake_rom("BR5J", 0x2000), fake_rom("AREE", 0x1000));
+        archive(&data.join("exe6.dat"), &[("exe6_rom_e.srl", &us), ("readme.txt", b"BR6E"), ("roms/exe6f_rom_f.srl", &jp), ("exe1_rom_e.srl", &other)]);
+        archive(&data.join("exe7.dat"), &[("again/exe6_rom_e.srl", &us)]);
+        saito_files::write(data.join("exe5.dat"), b"not a zip").unwrap();
+        let RomSource::Collection(install) = RomSource::at(dir.path()).unwrap() else { panic!("an install") };
+        assert_eq!(install.archives.len(), 3);
+        let source = RomSource::Collection(install);
+        let roms = source.find(&codes(&["BR5J", "BR6E"])).unwrap();
+        let found: Vec<(String, &str)> = roms.iter().map(|r| (r.at.to_string(), r.code.as_str())).collect();
+        let at = |name: &str| format!("{name} in {}", data.join("exe6.dat").display());
+        assert_eq!(found, [(at("roms/exe6f_rom_f.srl"), "BR5J"), (at("exe6_rom_e.srl"), "BR6E")]);
+        let (missing, some) = source.find(&codes(&["BR6E", "BR5E", "BR6J", "BR5J"])).unwrap_err();
+        assert_eq!((missing, some.len()), (codes(&["BR5E", "BR6J"]), 2));
+        assert_eq!(roms[1].read().unwrap(), us);
+        assert_eq!(roms[0].read().unwrap(), jp);
+        // An archive gone since: a failure to read, said in words for the log.
+        saito_files::remove_file(data.join("exe6.dat")).unwrap();
+        assert!(roms[1].read().unwrap_err().to_string().contains("exe6_rom_e.srl"));
+    }
+
+    /// Copies kept of a collection's ROMs (a browser's): each a zip of its one entry, compressed as the archive
+    /// had it, named by its game code; found by their names and read back whole, the ROM's own bytes. A ROM file's
+    /// copy is stored. Codes the source hasn't are passed over.
+    #[test]
+    fn copies_of_the_roms_kept_read_back_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("exe").join("data");
+        let (us, jp) = (fake_rom("BR6E", 0x4000), fake_rom("BR5J", 0x2000));
+        archive(&data.join("exe6.dat"), &[("exe6_rom_e.srl", &us), ("roms/exe6f_rom_f.srl", &jp)]);
+        let kept = dir.path().join("kept");
+        let source = RomSource::at(dir.path()).unwrap();
+        assert_eq!(source.keep_copies(&codes(&["BR6E", "BR5J", "BR6J"]), &kept).unwrap(), 2);
+        let copy = zip::ZipArchive::new(std::fs::File::open(kept.join("BR6E.zip")).unwrap()).unwrap();
+        assert_eq!((copy.len(), copy.name_for_index(0)), (1, Some("BR6E.srl")));
+        let copies = RomSource::Copies(kept.clone());
+        let roms = copies.find(&codes(&["BR6E", "BR5J"])).unwrap();
+        assert_eq!((roms[0].read().unwrap(), roms[1].read().unwrap()), (us.clone(), jp));
+        assert_eq!(copies.find(&codes(&["BR6E", "BR6J"])).unwrap_err().0, codes(&["BR6J"]));
+        // (Compressed as the archive had it: no bigger than the entry there.)
+        let size = |path: &Path, name: &str| zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap().by_name(name).unwrap().compressed_size();
+        assert_eq!(size(&kept.join("BR6E.zip"), "BR6E.srl"), size(&data.join("exe6.dat"), "exe6_rom_e.srl"));
+        // A ROM file's copy, stored.
+        let files = tempfile::tempdir().unwrap();
+        saito_files::write(files.path().join("b.gba"), &us).unwrap();
+        let from_files = files.path().join("kept");
+        assert_eq!(RomSource::at(files.path()).unwrap().keep_copies(&codes(&["BR6E"]), &from_files).unwrap(), 1);
+        assert_eq!(RomSource::Copies(from_files).find(&codes(&["BR6E"])).unwrap()[0].read().unwrap(), us);
+    }
+
+    /// The copies a device sends are each named and made as a kept one; the receiver's check takes them, and refuses
+    /// a copy of a ROM no game wants, one named for another code than its header's, one that isn't a copy's shape, and
+    /// one whose bytes were changed.
+    #[test]
+    fn copies_sent_are_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (us, jp) = (fake_rom("BR6E", 0x4000), fake_rom("BR5J", 0x2000));
+        archive(&dir.path().join("exe").join("data").join("exe6.dat"), &[("exe6_rom_e.srl", &us), ("roms/exe6f_rom_f.srl", &jp)]);
+        let wanted = codes(&["BR6E", "BR5J"]);
+        let sent = RomSource::at(dir.path()).unwrap().copies(&wanted).unwrap();
+        assert_eq!(sent.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["BR6E.zip", "BR5J.zip"]);
+        for (name, bytes) in &sent {
+            assert_eq!(check_copy(name, bytes, &wanted).unwrap(), name.trim_end_matches(".zip"));
+        }
+        let (name, bytes) = &sent[0];
+        assert!(check_copy(name, bytes, &codes(&["BR5J"])).is_err(), "no game wants it");
+        assert!(check_copy("BR5J.zip", bytes, &wanted).is_err(), "named for another code");
+        let two = dir.path().join("two.zip");
+        archive(&two, &[("BR6E.srl", &us), ("BR5J.srl", &jp)]);
+        assert!(check_copy(name, &std::fs::read(&two).unwrap(), &wanted).is_err(), "two entries");
+        let misnamed = dir.path().join("misnamed.zip");
+        archive(&misnamed, &[("BR6E.srl", &jp)]);
+        assert!(check_copy(name, &std::fs::read(&misnamed).unwrap(), &wanted).is_err(), "another ROM's header");
+        let mut changed = bytes.clone();
+        let middle = changed.len() / 2;
+        changed[middle] ^= 0xff;
+        assert!(check_copy(name, &changed, &wanted).is_err(), "changed");
+    }
+
+    /// A folder of ROM files: each file whose header is of a code asked for, whatever its name; a file that is
+    /// no ROM, or another game's, is passed over, and so is a second copy.
+    #[test]
+    fn a_folder_of_rom_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (us, jp) = (fake_rom("BR6E", 0x1000), fake_rom("BR5J", 0x1000));
+        saito_files::write(dir.path().join("b.gba"), &us).unwrap();
+        saito_files::write(dir.path().join("c.srl"), &us).unwrap();
+        saito_files::write(dir.path().join("a.srl"), &jp).unwrap();
+        saito_files::write(dir.path().join("game.sav"), [0u8; 0x40]).unwrap();
+        saito_files::write(dir.path().join("other.gba"), fake_rom("AREE", 0x1000)).unwrap();
+        saito_files::create_dir_all(dir.path().join("sub")).unwrap();
+        let source = RomSource::at(dir.path()).unwrap();
+        assert!(matches!(&source, RomSource::Files(f) if f.len() == 4), "the save isn't one: {source:?}");
+        assert_eq!(source.to_string(), format!("the ROM files in {}", dir.path().display()));
+        let roms = source.find(&codes(&["BR6E", "BR5J"])).unwrap();
+        assert_eq!(roms.iter().map(|r| (r.code.as_str(), r.at.clone())).collect::<Vec<_>>(), [
+            ("BR6E", RomAt::File(dir.path().join("b.gba"))),
+            ("BR5J", RomAt::File(dir.path().join("a.srl")))
+        ]);
+        assert_eq!(roms[0].read().unwrap(), us);
+        assert_eq!(source.find(&codes(&["BR6E", "BR5E"])).unwrap_err().0, codes(&["BR5E"]));
+    }
+}

@@ -1,0 +1,31 @@
+[package]
+name = "saito-match"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Match files: everything a round needs (the game and its rules, the arena, each side's navi, folder, Crosses, patch cards and NaviCust), by name in the game, checked against the content; and live play's random draw of one"
+
+[dependencies]
+saito-battle.workspace = true
+saito-content-api = { path = "../saito-content-api" }
+serde ={ version = "1", features = ["derive"] }
+toml = "0.8"
+# A match file's folder entries written one a line.
+toml_edit = "0.22"
+# `testing`: EXE6's content for other crates' tests (its strings).
+saito-content = { path = "../saito-content", optional = true }
+
+[features]
+# `testing::exe6_content`: content/exe6's definitions on a made-up asset index,
+# for this and other crates' tests (nothing from a ROM).
+testing = ["dep:saito-content", "saito-battle/test-content"]
+
+# Prints the setups of random matches and match files, to compare before and
+# after a change to how a side is made.
+[[example]]
+name = "setup_dump"
+required-features = ["testing"]
+
+[dev-dependencies]
+saito-battle = { workspace = true, features = ["test-content"] }
+saito-content = { path = "../saito-content" }

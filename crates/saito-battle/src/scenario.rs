@@ -1,0 +1,216 @@
+//! A synthetic netbattle for tests and benchmarks that need whole rounds
+//! without golden traces, on the hand-authored test content
+//! (`content::testing`): two navis in the sun whose folders hold only a
+//! level-3 GunDelSol chip (code A), picking four at each custom screen,
+//! stepping about and firing. It is recorded as an input tape (both
+//! players' inputs and the link events for every tick), the way a replay
+//! is, so rollback runs and benchmarks can play it back exactly.
+
+use crate::battle::{Battle, TickEvents, mode};
+use crate::behavior::Behaviors;
+use crate::content::{ChipCode, Content, testing};
+use saito_content_api::ChipHandle;
+use crate::custom::screen::{Phase, SlotKind, SlotState};
+use crate::custom::{BattleFolder, FolderChip, PlayerSetup};
+use crate::input::{PlayerTick, ScreenChoice, keys};
+use crate::setup::{BattleSettings, NaviStats, NaviWeapons, RoundSetup, SetScore};
+use std::sync::Arc;
+
+/// One tick of a tape.
+#[derive(Clone, Debug)]
+pub struct Tick {
+    pub input: [PlayerTick; 2],
+    pub events: TickEvents,
+}
+
+/// A plain MegaMan with 1000 HP, fighting in the sun (the game's own stat:
+/// `NaviStats::game`).
+fn megaman(content: &Content) -> NaviStats {
+    let mut s = NaviStats {
+        hp: 1000,
+        max_hp: 1000,
+        max_base_hp: 1000,
+        mood: 0x80,
+        custom_level: 5,
+        mega_level: 5,
+        giga_level: 1,
+        weapons: NaviWeapons {
+            buster: testing::weapon_in(content, "megaman/buster"),
+            charge_shot: testing::weapon_in(content, "megaman/charged-shot"),
+            back_special: None,
+            a_charge: None,
+            mode9_a: None,
+            ..Default::default()
+        },
+        ..testing::megaman_on(content)
+    };
+    s.set_game_stat(content, "sun", saito_content_api::Value::Bool(true)).expect("the test content's stats have the sun");
+    s
+}
+
+/// The test content the duel is fought on.
+pub fn content() -> Arc<Content> {
+    testing::content()
+}
+
+/// The round: a link battle with the usual two-navi list (side 1 first),
+/// on a field of plain panels (no roads or ice to slide on).
+pub fn setup() -> RoundSetup {
+    setup_on(&testing::build())
+}
+
+/// The same round for `content` (the test content with its rules patched,
+/// `testing::with_rules`: a player's setup is its rules'):
+/// both players of the test content's version (`testing::VERSION`), where
+/// the rules of the content take one.
+pub fn setup_on(content: &Content) -> RoundSetup {
+    let mut folder = BattleFolder::empty();
+    folder.chips = [Some(FolderChip::new(testing::chip_in(content, testing::SUN_GUN_3), ChipCode(0))); 30];
+    let mut player = PlayerSetup {
+        folder,
+        joypad_phase: 0,
+        console: Default::default(),
+        rules: None,
+    };
+    player.set_fact(content, "version", &[crate::rules::Fact::Name(testing::VERSION)]).expect("the test content's version");
+    RoundSetup {
+        content: content.hash(),
+        settings: BattleSettings::on(content, content.stage_by_key(testing::LINK_BATTLE)),
+        navi_stats: [megaman(content); 2],
+        rng: 0x1234_5678,
+        local_side: 0,
+        score: SetScore::default(),
+        later_stages: Default::default(),
+        low_hp_music_latched: false,
+        host_keys: crate::setup::HostKeys::NONE,
+        custom_screen_limit: None,
+        players: [player.clone(), player],
+    }
+}
+
+/// The same round with both folders holding `chips` (in turn, all code
+/// A) instead.
+pub fn setup_with(chips: &[&str]) -> RoundSetup {
+    let content = testing::content();
+    let handles: Vec<ChipHandle> = chips.iter().map(|&key| testing::chip_in(&content, key)).collect();
+    setup_with_handles(&handles)
+}
+
+/// The same round with both folders holding `chips` by handle (in turn),
+/// so they may be chips content defines: each in code A if it comes in
+/// it (the test content's own chips all do), else `*`, else its
+/// first code.
+pub fn setup_with_handles(chips: &[ChipHandle]) -> RoundSetup {
+    let mut s = setup();
+    let content = testing::content();
+    let mut folder = BattleFolder::empty();
+    for (slot, &h) in folder.chips.iter_mut().zip(chips.iter().cycle()) {
+        let codes = &content.chip(h).codes;
+        let code = [ChipCode(0), ChipCode::ASTERISK]
+            .into_iter()
+            .find(|c| codes.contains(c))
+            .or_else(|| codes.first().copied())
+            .unwrap_or_else(|| panic!("chip {h:?} comes in no code"));
+        *slot = Some(FolderChip::new(h, code));
+    }
+    for p in &mut s.players {
+        p.folder = folder;
+    }
+    s
+}
+
+/// A player's choice on the custom screen: the first chip that can be
+/// picked, until four are; then OK. A tick with a choice is followed by one
+/// without, as a key is let go between presses (`last`: the tick before's).
+pub fn custom_choice(b: &Battle, side: usize, last: Option<ScreenChoice>) -> Option<ScreenChoice> {
+    let screen = b.custom.sides[side].screen.as_ref().filter(|s| s.phase == Phase::Choosing)?;
+    if last.is_some() {
+        return None;
+    }
+    let pickable = (0..10u8).find(|&s| matches!(screen.slots[s as usize].kind, SlotKind::Chip { .. }) && screen.slots[s as usize].state == SlotState::Selectable);
+    match pickable {
+        Some(slot) if screen.selected < 4 => Some(ScreenChoice::Pick(slot)),
+        _ => Some(ScreenChoice::Ok),
+    }
+}
+
+/// A small deterministic generator for the players' inputs.
+struct Lcg(u32);
+
+impl Lcg {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.0 >> 8
+    }
+}
+
+/// Record `ticks` ticks of the duel (a tape plays back the same with any
+/// runtime options).
+pub fn record(ticks: usize) -> Vec<Tick> {
+    record_seeded(ticks, 7)
+}
+
+/// The same with the players' steps and shots drawn from another seed:
+/// another duel. (A tape drives the custom screens too, so it plays back
+/// only from the start of the round it was recorded on.)
+pub fn record_seeded(ticks: usize, seed: u32) -> Vec<Tick> {
+    record_on(setup(), ticks, seed)
+}
+
+/// The duel's players on another round (`setup_with`), with the steps and
+/// shots from `seed`.
+pub fn record_on(setup: RoundSetup, ticks: usize, seed: u32) -> Vec<Tick> {
+    record_on_content(setup, content(), ticks, seed)
+}
+
+/// The same on other content (the setup naming it): a field with holes,
+/// say.
+pub fn record_on_content(setup: RoundSetup, content: Arc<Content>, ticks: usize, seed: u32) -> Vec<Tick> {
+    let mut b = Battle::new(setup, content);
+    let mut rng = Lcg(seed);
+    let mut tape = Vec::with_capacity(ticks);
+    // Per side: a held direction and how long to keep it.
+    let mut held = [0u16; 2];
+    let mut hold_for = [0u32; 2];
+    let mut last = [None; 2];
+    for _ in 0..ticks {
+        let events = TickEvents::default();
+        let in_custom = b.round.mode == mode::CUSTOM;
+        let mut input = [PlayerTick::default(), PlayerTick::default()];
+        for side in 0..2 {
+            if hold_for[side] == 0 {
+                let r = rng.next();
+                // Side 0 first steps into range (two panels from side 1),
+                // then both step up and down and fire.
+                let x = b.player(side as u8).map_or(0, |p| b.objects.get(p).panel.x);
+                held[side] = match r % 16 {
+                    _ if side == 0 && x == 2 => keys::RIGHT,
+                    0..=3 => keys::UP,
+                    4..=7 => keys::DOWN,
+                    8 | 9 => keys::A,
+                    _ => 0,
+                };
+                hold_for[side] = 2 + (r >> 4) % 12;
+            }
+            hold_for[side] -= 1;
+            let choice = if in_custom { custom_choice(&b, side, last[side]) } else { None };
+            input[side] = PlayerTick::buttons(if in_custom { 0 } else { held[side] }).with_choice(choice);
+            last[side] = choice;
+        }
+        b.tick(&input, events.clone());
+        tape.push(Tick { input, events });
+    }
+    tape
+}
+
+/// Play a tape from the start of the round with `behaviors` running the
+/// content.
+pub fn play(tape: &[Tick], behaviors: Behaviors) -> Battle {
+    crate::behavior::with_runtime(&behaviors, || {
+        let mut b = Battle::new(setup(), content());
+        for t in tape {
+            b.tick(&t.input, t.events.clone());
+        }
+        b
+    })
+}

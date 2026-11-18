@@ -1,0 +1,434 @@
+# Japanese: what every screen shares (the header, the footer, the dialogs, the errors), the loading screens,
+# the main menu and the battle's own. A screen's strings are in the file of its name.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ja\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# The language's own name, as Settings lists it.
+msgctxt "language"
+msgid "English"
+msgstr "日本語"
+
+# ---- The main menu ----
+
+msgid "Play"
+msgstr "対戦"
+
+msgid "Practice"
+msgstr "練習"
+
+msgid "Replays"
+msgstr "リプレイ"
+
+msgid "Demo"
+msgstr "デモ"
+
+msgid "vs"
+msgstr "vs"
+
+# ---- The header and the key hints ----
+
+msgid "Menu"
+msgstr "メニュー"
+
+msgid "Select"
+msgstr "選択"
+
+msgid "Open"
+msgstr "決定"
+
+msgid "Back"
+msgstr "もどる"
+
+# A text field's own hints, while it is typed in: Enter finishes it, Esc leaves it as it was.
+msgid "Done"
+msgstr "確定"
+
+# A setting taken (Enter on it): Left and Right change it.
+msgid "Change"
+msgstr "変更"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Change game"
+msgstr "ゲーム切り替え"
+
+# ---- Loading ----
+
+msgid "Loading {}"
+msgstr "{} を読み込み中"
+# A game's content being downloaded (the app has none of it yet): {} is the game, as the header shows it.
+msgid "Downloading {}"
+msgstr "{} をダウンロード中"
+
+msgid "Loading"
+msgstr "読み込み中"
+
+msgid "VS"
+msgstr "VS"
+
+# ---- The battle ----
+
+msgid "Reconnecting {} s"
+msgstr "再接続中 {} 秒"
+
+msgid "{} ms"
+msgstr "{} ms"
+
+# The link panel the connection's corner opens. The figures in frames (the input delay, a rollback's depth,
+# the skew, the lead) are bare numbers.
+msgid "Connection"
+msgstr "接続状況"
+
+msgid "Round trip"
+msgstr "往復時間"
+
+msgid "Jitter"
+msgstr "ゆらぎ"
+
+# The share of the other player's packets lost: {} is the number, to a tenth.
+msgid "Loss"
+msgstr "ロス率"
+
+msgid "{}%"
+msgstr "{}%"
+
+msgid "Reconnects"
+msgstr "再接続"
+
+# Clock sync's skew: how far this player runs ahead of the other (+) or behind (-), in frames.
+msgid "Skew"
+msgstr "ずれ"
+
+# This player's inputs the other's haven't matched yet, in frames.
+msgid "Lead"
+msgstr "先行"
+
+msgid "Rollbacks"
+msgstr "巻き戻し回数"
+
+msgid "Last rollback"
+msgstr "直近の巻き戻し"
+
+# The deepest rollback of the match, in frames.
+msgid "Deepest"
+msgstr "最大の巻き戻し"
+
+msgid "Frames waited"
+msgstr "待機フレーム"
+
+msgid "Sent"
+msgstr "送信"
+
+msgid "Received"
+msgstr "受信"
+
+msgid "{} packets · {} KB"
+msgstr "{} パケット · {} KB"
+
+# ---- What can go wrong ----
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Can't reach the server. Check your connection."
+msgstr "サーバーに接続できません。接続を確認してください。"
+
+msgid "Can't reach the server"
+msgstr "サーバーに接続できません"
+
+msgid "Check your connection."
+msgstr "接続を確認してください。"
+
+msgid "No match with that code."
+msgstr "そのコードの対戦はありません。"
+
+msgid "No match with that code"
+msgstr "そのコードの対戦はありません"
+
+msgid "That match is full."
+msgstr "その対戦は満員です。"
+
+msgid "That match is full"
+msgstr "その対戦は満員です"
+
+msgid "Your opponent has a different version of saito. You both need the latest."
+msgstr "相手の saito のバージョンが違います。どちらも最新版にしてください。"
+
+msgid "Different versions"
+msgstr "バージョンが違います"
+
+msgid "This build can't be used: {}."
+msgstr "この構築は使えません: {}。"
+
+msgid "This build can't be used"
+msgstr "この構築は使えません"
+
+msgid "No build"
+msgstr "構築がありません"
+
+msgid "{}."
+msgstr "{}。"
+
+msgid "This version of saito is too old for the server. Get the latest."
+msgstr "この saito はサーバーに対して古すぎます。最新版にしてください。"
+
+msgid "This version of saito is too old for the server"
+msgstr "この saito はサーバーに対して古すぎます"
+
+msgid "Get the latest."
+msgstr "最新版にしてください。"
+
+msgid "Your opponent is on {}. Pick the same game."
+msgstr "相手は {} を選んでいます。同じゲームを選んでください。"
+
+msgid "Your opponent is on {}"
+msgstr "相手は {} を選んでいます"
+
+msgid "Pick the same game."
+msgstr "同じゲームを選んでください。"
+
+msgid "This build can't be used."
+msgstr "この構築は使えません。"
+
+msgid "Make a build first."
+msgstr "先に構築を作ってください。"
+
+msgid "Your opponent's build can't be used."
+msgstr "相手の構築は使えません。"
+
+msgid "Your opponent's build can't be used"
+msgstr "相手の構築は使えません"
+
+msgid "Your opponent left."
+msgstr "相手が退出しました。"
+
+msgid "Your opponent left"
+msgstr "相手が退出しました"
+
+msgid "No answer from your opponent."
+msgstr "相手から応答がありません。"
+
+msgid "No answer from your opponent"
+msgstr "相手から応答がありません"
+
+msgid "Couldn't connect to your opponent."
+msgstr "相手に接続できませんでした。"
+
+msgid "Couldn't connect to your opponent"
+msgstr "相手に接続できませんでした"
+
+msgid "That isn't an address. Use host:port."
+msgstr "アドレスではありません。host:port の形で入力してください。"
+
+msgid "That isn't an address"
+msgstr "アドレスではありません"
+
+msgid "Use host:port."
+msgstr "host:port の形で入力してください。"
+
+msgid "That port is already in use."
+msgstr "そのポートはすでに使われています。"
+
+msgid "That port is already in use"
+msgstr "そのポートはすでに使われています"
+
+msgid "Connection lost. The match has ended."
+msgstr "接続が切れました。対戦は終了しました。"
+
+msgid "Connection lost"
+msgstr "接続が切れました"
+
+msgid "The match has ended."
+msgstr "対戦は終了しました。"
+
+msgid "This replay is from a different version and can't be played."
+msgstr "このリプレイは別のバージョンのもので、再生できません。"
+
+msgid "Different version"
+msgstr "別のバージョン"
+
+# A replay made on content the app hasn't, which its game's index doesn't list either.
+msgid "The content this replay was made with isn't available, so it can't be played."
+msgstr "このリプレイが作られたコンテンツがないため、再生できません。"
+
+msgid "Content not available"
+msgstr "コンテンツがありません"
+
+msgid "That file isn't a replay."
+msgstr "そのファイルはリプレイではありません。"
+
+msgid "That file isn't a replay"
+msgstr "そのファイルはリプレイではありません"
+
+msgid "This replay is damaged and can't be played."
+msgstr "このリプレイは壊れていて、再生できません。"
+
+msgid "This replay is damaged"
+msgstr "このリプレイは壊れています"
+
+msgid "It can't be played."
+msgstr "再生できません。"
+
+msgid "This is a {} replay. Pick {} to watch it."
+msgstr "これは {} のリプレイです。{} を選ぶと再生できます。"
+
+msgid "This is a {} replay"
+msgstr "これは {} のリプレイです"
+
+msgid "Pick {} to watch it."
+msgstr "{} を選ぶと再生できます。"
+
+msgid "Video export needs ffmpeg. Install it, then try again."
+msgstr "動画の書き出しには ffmpeg が必要です。インストールしてから、もう一度お試しください。"
+
+msgid "Video export needs ffmpeg"
+msgstr "動画の書き出しには ffmpeg が必要です"
+
+msgid "Install it, then try again."
+msgstr "インストールしてから、もう一度お試しください。"
+
+msgid "The video's file couldn't be written. Check the folder and the space left."
+msgstr "動画ファイルを書き込めませんでした。フォルダと空き容量を確認してください。"
+
+msgid "The video's file couldn't be written"
+msgstr "動画ファイルを書き込めませんでした"
+
+msgid "Check the folder and the space left."
+msgstr "フォルダと空き容量を確認してください。"
+
+msgid "The video couldn't be made. Details are in the log file."
+msgstr "動画を作成できませんでした。詳しくはログファイルをご覧ください。"
+
+msgid "The video couldn't be made"
+msgstr "動画を作成できませんでした"
+
+msgid "Not a {} save."
+msgstr "{}のセーブではありません。"
+
+# (A dialog's title: it has a phone's dialog's width, 310, at 20.)
+msgid "Not a {} save"
+msgstr "{}のセーブではありません"
+
+# A file chosen to import as a ruleset that isn't one of the game's: {} is the game, as the header shows it.
+msgid "Not a {} ruleset."
+msgstr "{}のルールではありません。"
+
+msgid "Not a {} ruleset"
+msgstr "{}のルールではありません"
+
+# A game that couldn't be loaded (its content, or its assets extracted from its ROMs): {} is the game, as the header
+# shows it.
+msgid "{}'s data couldn't be loaded. Details are in the log file."
+msgstr "{} のデータを読み込めませんでした。詳しくはログファイルをご覧ください。"
+
+msgid "{}'s data couldn't be loaded"
+msgstr "{} のデータを読み込めませんでした"
+
+# The Legacy Collection not found: by its Japanese name, and how to drag its folder onto the
+# window from Steam (Steam's own menu words, as its Japanese client has them: 管理 → ローカルファイルを閲覧); the
+# button opens the system's folder dialog, to choose the folder it is installed in.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "saito にはロックマンエグゼ アドバンスドコレクション Vol.2 が必要です。Steam でインストールしてから、ライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこのウィンドウにドラッグしてください。"
+msgid "saito needs Battle Network Legacy Collection Vol. 2"
+msgstr "saito にはロックマンエグゼ アドバンスドコレクション Vol.2 が必要です"
+msgid "Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "Steam でインストールしてから、ライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこのウィンドウにドラッグしてください。"
+# The same in a browser (the web build), which has no Steam to install it from.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "saito にはロックマンエグゼ アドバンスドコレクション Vol.2 が必要です。Steam のライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこのページにドラッグしてください。"
+msgid "In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "Steam のライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこのページにドラッグしてください。"
+# The same on a phone (iOS, Android), which has no Steam and takes nothing dragged onto it: the exe folder copied
+# to it from a computer, then chosen.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "saito にはロックマンエグゼ アドバンスドコレクション Vol.2 が必要です。パソコンの Steam のライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこの端末にコピーしてから、ここでそのフォルダを選んでください。"
+msgid "On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "パソコンの Steam のライブラリで右クリックして「管理」→「ローカルファイルを閲覧」を選び、exe フォルダをこの端末にコピーしてから、ここでそのフォルダを選んでください。"
+msgid "Choose folder"
+msgstr "フォルダを選ぶ"
+# The Legacy Collection found lacks some of a game's ROMs: {} is the game, as the header
+# shows it; by its Japanese name, and Steam's own name for checking a game's files (ゲームファイルの整合性を確認); the button opens the folder dialog again.
+msgid "The Legacy Collection's files are incomplete: some of {}'s are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "アドバンスドコレクションのファイルが揃っていません（{} のファイルの一部が見つかりません）。Steam でゲームファイルの整合性を確認してから、もう一度フォルダを選んでください。"
+msgid "The Legacy Collection's files are incomplete"
+msgstr "アドバンスドコレクションのファイルが揃っていません"
+msgid "Some of {}'s files are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "{} のファイルの一部が見つかりません。Steam でゲームファイルの整合性を確認してから、もう一度フォルダを選んでください。"
+# The Legacy Collection from a computer nearby (src/nearby.rs): the loading screen's note while one is looked
+# for, {} the computer's name as it calls itself; the bar's line while it comes; and the computer's dialog when a
+# device asks, {} the device's. The dialog's buttons are the last two; the note names the first.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Open saito on a computer that has it, on the same Wi-Fi, to send it here. Looking…"
+msgstr "saito にはロックマンエグゼ アドバンスドコレクション Vol.2 が必要です。それがあるパソコンで、同じ Wi-Fi につないで saito を開くと、ここに送れます。探しています…"
+msgid "No computer found. Open saito on a computer that has the Legacy Collection, on the same Wi-Fi. Still nothing? Check that its firewall allows saito and that no VPN is on. Or copy its exe folder here and choose it."
+msgstr "パソコンが見つかりません。アドバンスドコレクションがあるパソコンで、同じ Wi-Fi につないで saito を開いてください。見つからないときは、ファイアウォールと VPN を確認するか、exe フォルダをここにコピーして選んでください。"
+msgid "Found {}. Choose Send there to send the Legacy Collection here."
+msgstr "{} が見つかりました。そちらで「送る」を選ぶと、アドバンスドコレクションがここに送られます。"
+msgid "{} didn't send the Legacy Collection. Open saito on another computer that has it, or copy its exe folder here and choose it."
+msgstr "{} からアドバンスドコレクションは送られませんでした。それがある別のパソコンで saito を開くか、exe フォルダをここにコピーして選んでください。"
+msgid "{} has a different version of saito. You both need the latest."
+msgstr "{} の saito はバージョンが違います。どちらも最新版にしてください。"
+msgid "Couldn't get the Legacy Collection from {}. Check that its firewall allows saito. Trying again…"
+msgstr "{} からアドバンスドコレクションを受け取れませんでした。そのファイアウォールが saito を許可しているか確認してください。もう一度試しています…"
+msgid "{} is sending to another device. Trying again soon…"
+msgstr "{} はほかの端末に送信中です。少ししてからもう一度試します…"
+msgid "What {} sent can't be played. Details are in the log file."
+msgstr "{} から送られたものではプレイできません。詳しくはログファイルをご覧ください。"
+msgid "saito isn't allowed to look for computers on this network. Allow it in Settings > Privacy & Security > Local Network, or copy the exe folder here and choose it."
+msgstr "saito にローカルネットワークでの検索が許可されていません。「設定」→「プライバシーとセキュリティ」→「ローカルネットワーク」で許可するか、exe フォルダをここにコピーして選んでください。"
+msgid "Receiving from {}"
+msgstr "{} から受信中"
+msgid "Send the Legacy Collection to {}?"
+msgstr "{} にアドバンスドコレクションを送りますか？"
+msgid "{} is asking for the Legacy Collection's ROMs, to play saito there. They're sent over this network."
+msgstr "{} が saito で遊ぶために、アドバンスドコレクションの ROM を求めています。このネットワークを通して送られます。"
+msgid "Send"
+msgstr "送る"
+msgid "Not now"
+msgstr "あとで"
+msgid "Sending the Legacy Collection to {}"
+msgstr "{} にアドバンスドコレクションを送信中"
+msgid "Keep saito open until it's done."
+msgstr "終わるまで saito を閉じないでください。"
+msgid "Couldn't send the Legacy Collection to {}"
+msgstr "{} にアドバンスドコレクションを送れませんでした"
+# A game's content couldn't be downloaded: {} is the game, as the header shows it (the first: no game named,
+# none could be).
+msgid "The games' content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "ゲームのコンテンツをダウンロードできませんでした。接続を確認してから、saito をもう一度起動してください。"
+msgid "{}'s content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "{} のコンテンツをダウンロードできませんでした。接続を確認してから、saito をもう一度起動してください。"
+msgid "{}'s content couldn't be downloaded"
+msgstr "{} のコンテンツをダウンロードできませんでした"
+msgid "Check your connection, then start saito again."
+msgstr "接続を確認してから、saito をもう一度起動してください。"
+# No game's content is published for this version of saito yet (the loading screen's note).
+msgid "There's no game content for this version of saito yet. Check back later."
+msgstr "このバージョンの saito 用のゲームコンテンツはまだありません。しばらくしてからもう一度ご確認ください。"
+
+msgid "Something went wrong. Details are in the log file."
+msgstr "問題が発生しました。詳しくはログファイルをご覧ください。"
+
+msgid "Something went wrong"
+msgstr "問題が発生しました"
+
+msgid "Details are in the log file."
+msgstr "詳しくはログファイルをご覧ください。"
+
+# The battle music list's first choice (Practice): each round's background's music.
+msgid "By background"
+msgstr "背景に合わせる"
+
+# ---- An update of the app: the loading screen's lines as the app starts, and the footer's if it fails ----
+
+msgid "Checking for updates"
+msgstr "更新を確認中"
+
+msgid "Updating to saito {}"
+msgstr "saito {} に更新中"
+
+msgid "The update couldn't be downloaded. It's tried again next start."
+msgstr "更新をダウンロードできませんでした。次回の起動時にもう一度試します。"

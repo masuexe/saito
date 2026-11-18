@@ -1,0 +1,32 @@
+//! A headless host's battles need no assets (docs/design/content-model-v2.md §6.3): each game's real content
+//! (content/), loaded alone as the training pool loads it, plays a battle (a random match, both sides mashing) with
+//! no error. (The battle counts a sprite's steps; how long a frame shows is the sheet's, drawing's alone.)
+
+use saito_battle::RoundEnd;
+use saito_netplay::standin::Masher;
+
+#[test]
+fn each_game_plays_from_its_content_alone() {
+    for game in ["exe4", "exe5", "exe6"] {
+        let content = saito_training::pool::load_game(None, game).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!content.assets.sprites.is_empty(), "{game}: no sprite");
+        let m = saito_match::pick::live(&content, game, 7, None).unwrap_or_else(|e| panic!("{game}: {e}"));
+        let mut b = saito_match::Set::of(&content, &m, 7).start();
+        let mut sides = [Masher::new(1), Masher::new(2)];
+        for s in &mut sides {
+            s.buster = true;
+        }
+        let mut ticks = 0;
+        while ticks < 3600 {
+            let input = [sides[0].input(&b, 0), sides[1].input(&b, 1)];
+            if !saito_training::env::step_ticks(&mut b, input) {
+                break;
+            }
+            ticks += 1;
+        }
+        if let Some(RoundEnd::Error(why)) = b.round_end() {
+            panic!("{game}: the battle stopped after {ticks} ticks: {why}");
+        }
+        assert!(ticks == 3600 || b.round_end().is_some(), "{game}: {ticks} ticks");
+    }
+}

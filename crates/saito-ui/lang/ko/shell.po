@@ -1,0 +1,459 @@
+# Korean: what every screen shares (the header, the footer, the dialogs, the errors), the loading screens,
+# the main menu and the battle's own. A screen's strings are in the file of its name.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# The language's own name, as Settings lists it.
+msgctxt "language"
+msgid "English"
+msgstr "한국어"
+
+# ---- The main menu ----
+
+msgid "Play"
+msgstr "대전"
+
+msgid "Practice"
+msgstr "연습"
+
+msgid "Replays"
+msgstr "리플레이"
+
+msgid "Demo"
+msgstr "데모"
+
+msgid "vs"
+msgstr "vs"
+
+# ---- The header and the key hints ----
+
+msgid "Menu"
+msgstr "메뉴"
+
+msgid "Select"
+msgstr "선택"
+
+msgid "Open"
+msgstr "결정"
+
+msgid "Back"
+msgstr "뒤로"
+
+# A text field's own hints, while it is typed in: Enter finishes it, Esc leaves it as it was.
+msgid "Done"
+msgstr "완료"
+
+# A setting taken (Enter on it): Left and Right change it.
+msgid "Change"
+msgstr "변경"
+
+msgid "Cancel"
+msgstr "취소"
+
+msgid "Change game"
+msgstr "게임 전환"
+
+# ---- Loading ----
+
+msgid "Loading {}"
+msgstr "{} 불러오는 중"
+
+# A game's content being downloaded (the app has none of it yet): {} is the game, as the header shows it.
+msgid "Downloading {}"
+msgstr "{} 다운로드 중"
+
+msgid "Loading"
+msgstr "불러오는 중"
+
+msgid "VS"
+msgstr "VS"
+
+# ---- The battle ----
+
+msgid "Reconnecting {} s"
+msgstr "재연결 중 {}초"
+
+msgid "{} ms"
+msgstr "{} ms"
+
+# The link panel the connection's corner opens.
+msgid "Connection"
+msgstr "연결 상태"
+
+msgid "Round trip"
+msgstr "왕복 지연"
+
+msgid "Jitter"
+msgstr "지터"
+
+# The share of the other player's packets lost: {} is the number, to a tenth.
+msgid "Loss"
+msgstr "손실률"
+
+msgid "{}%"
+msgstr "{}%"
+
+msgid "Reconnects"
+msgstr "재연결 횟수"
+
+# Clock sync's skew: how far this player runs ahead of the other (+) or behind (-), in frames.
+msgid "Skew"
+msgstr "시계 편차"
+
+# This player's inputs the other's haven't matched yet, in frames.
+msgid "Lead"
+msgstr "선행 입력"
+
+msgid "Rollbacks"
+msgstr "롤백 횟수"
+
+msgid "Last rollback"
+msgstr "최근 롤백"
+
+# The deepest rollback of the match, in frames.
+msgid "Deepest"
+msgstr "최대 롤백"
+
+msgid "Frames waited"
+msgstr "대기 프레임"
+
+msgid "Sent"
+msgstr "전송"
+
+msgid "Received"
+msgstr "수신"
+
+msgid "{} packets · {} KB"
+msgstr "{} 패킷 · {} KB"
+
+# ---- What can go wrong ----
+
+msgid "OK"
+msgstr "확인"
+
+msgid "Can't reach the server. Check your connection."
+msgstr "서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요."
+
+msgid "Can't reach the server"
+msgstr "서버에 연결할 수 없습니다"
+
+msgid "Check your connection."
+msgstr "인터넷 연결을 확인하세요."
+
+msgid "No match with that code."
+msgstr "해당 코드의 대전이 없습니다."
+
+msgid "No match with that code"
+msgstr "해당 코드의 대전이 없습니다"
+
+msgid "That match is full."
+msgstr "해당 대전 방이 가득 찼습니다."
+
+msgid "That match is full"
+msgstr "해당 대전 방이 가득 찼습니다"
+
+msgid "Your opponent has a different version of saito. You both need the latest."
+msgstr "상대방의 saito 버전이 다릅니다. 두 분 모두 최신 버전이 필요합니다."
+
+msgid "Different versions"
+msgstr "버전 불일치"
+
+msgid "This build can't be used: {}."
+msgstr "이 빌드는 사용할 수 없습니다: {}."
+
+msgid "This build can't be used"
+msgstr "이 빌드는 사용할 수 없습니다"
+
+msgid "No build"
+msgstr "빌드 없음"
+
+msgid "{}."
+msgstr "{}."
+
+msgid "This version of saito is too old for the server. Get the latest."
+msgstr "이 saito 버전은 서버에 비해 너무 오래되었습니다. 최신 버전을 받아주세요."
+
+msgid "This version of saito is too old for the server"
+msgstr "이 saito 버전은 서버에 비해 너무 오래되었습니다"
+
+msgid "Get the latest."
+msgstr "최신 버전을 받아주세요."
+
+msgid "Your opponent is on {}. Pick the same game."
+msgstr "상대방이 {}을(를) 선택했습니다. 같은 게임을 선택하세요."
+
+msgid "Your opponent is on {}"
+msgstr "상대방이 {}을(를) 선택했습니다"
+
+msgid "Pick the same game."
+msgstr "같은 게임을 선택하세요."
+
+msgid "This build can't be used."
+msgstr "이 빌드는 사용할 수 없습니다."
+
+msgid "Make a build first."
+msgstr "먼저 빌드를 만들어 주세요."
+
+msgid "Your opponent's build can't be used."
+msgstr "상대방의 빌드를 사용할 수 없습니다."
+
+msgid "Your opponent's build can't be used"
+msgstr "상대방의 빌드를 사용할 수 없습니다"
+
+msgid "Your opponent left."
+msgstr "상대방이 나갔습니다."
+
+msgid "Your opponent left"
+msgstr "상대방이 나갔습니다"
+
+msgid "No answer from your opponent."
+msgstr "상대방으로부터 응답이 없습니다."
+
+msgid "No answer from your opponent"
+msgstr "상대방으로부터 응답이 없습니다"
+
+msgid "Couldn't connect to your opponent."
+msgstr "상대방과 연결할 수 없었습니다."
+
+msgid "Couldn't connect to your opponent"
+msgstr "상대방과 연결할 수 없었습니다"
+
+msgid "That isn't an address. Use host:port."
+msgstr "올바른 주소가 아닙니다. host:port 형식으로 입력하세요."
+
+msgid "That isn't an address"
+msgstr "올바른 주소가 아닙니다"
+
+msgid "Use host:port."
+msgstr "host:port 형식으로 입력하세요."
+
+msgid "That port is already in use."
+msgstr "해당 포트가 이미 사용 중입니다."
+
+msgid "That port is already in use"
+msgstr "해당 포트가 이미 사용 중입니다"
+
+msgid "Connection lost. The match has ended."
+msgstr "연결이 끊겼습니다. 대전이 종료되었습니다."
+
+msgid "Connection lost"
+msgstr "연결이 끊겼습니다"
+
+msgid "The match has ended."
+msgstr "대전이 종료되었습니다."
+
+msgid "This replay is from a different version and can't be played."
+msgstr "이 리플레이는 다른 버전에서 기록되어 재생할 수 없습니다."
+
+msgid "Different version"
+msgstr "다른 버전"
+
+# A replay made on content the app hasn't, which its game's index doesn't list either.
+msgid "The content this replay was made with isn't available, so it can't be played."
+msgstr "이 리플레이에 필요한 콘텐츠를 찾을 수 없어 재생할 수 없습니다."
+
+msgid "Content not available"
+msgstr "콘텐츠 없음"
+
+msgid "That file isn't a replay."
+msgstr "해당 파일은 리플레이가 아닙니다."
+
+msgid "That file isn't a replay"
+msgstr "해당 파일은 리플레이가 아닙니다"
+
+msgid "This replay is damaged and can't be played."
+msgstr "이 리플레이 파일이 손상되어 재생할 수 없습니다."
+
+msgid "This replay is damaged"
+msgstr "손상된 리플레이"
+
+msgid "It can't be played."
+msgstr "재생할 수 없습니다."
+
+msgid "This is a {} replay. Pick {} to watch it."
+msgstr "{}의 리플레이입니다. 시청하려면 {}을(를) 선택하세요."
+
+msgid "This is a {} replay"
+msgstr "{}의 리플레이입니다"
+
+msgid "Pick {} to watch it."
+msgstr "시청하려면 {}을(를) 선택하세요."
+
+msgid "Video export needs ffmpeg. Install it, then try again."
+msgstr "동영상 내보내기에는 ffmpeg가 필요합니다. 설치한 후 다시 시도하세요."
+
+msgid "Video export needs ffmpeg"
+msgstr "ffmpeg가 필요합니다"
+
+msgid "Install it, then try again."
+msgstr "설치한 후 다시 시도하세요."
+
+msgid "The video's file couldn't be written. Check the folder and the space left."
+msgstr "동영상 파일을 저장할 수 없습니다. 폴더 권한과 남은 용량을 확인하세요."
+
+msgid "The video's file couldn't be written"
+msgstr "동영상 파일을 저장할 수 없습니다"
+
+msgid "Check the folder and the space left."
+msgstr "폴더 권한과 남은 용량을 확인하세요."
+
+msgid "The video couldn't be made. Details are in the log file."
+msgstr "동영상을 생성하지 못했습니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "The video couldn't be made"
+msgstr "동영상을 생성하지 못했습니다"
+
+msgid "Not a {} save."
+msgstr "{}의 세이브 파일이 아닙니다."
+
+# (A dialog's title: it has a phone's dialog's width, 310, at 20.)
+msgid "Not a {} save"
+msgstr "{}의 세이브가 아닙니다"
+
+# A file chosen to import as a ruleset that isn't one of the game's: {} is the game, as the header shows it.
+msgid "Not a {} ruleset."
+msgstr "{}의 규칙 파일이 아닙니다."
+
+msgid "Not a {} ruleset"
+msgstr "{}의 규칙이 아닙니다"
+
+# A game that couldn't be loaded (its content, or its assets extracted from its ROMs): {} is the game, as the header
+# shows it.
+msgid "{}'s data couldn't be loaded. Details are in the log file."
+msgstr "{}의 데이터를 불러오지 못했습니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "{}'s data couldn't be loaded"
+msgstr "{}의 데이터를 불러오지 못했습니다"
+
+# The Legacy Collection not found
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "saito 실행에는 록맨 에그제 어드밴스드 컬렉션 Vol. 2가 필요합니다. Steam에서 설치한 뒤 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하고 exe 폴더를 이 창으로 드래그하세요."
+
+msgid "saito needs Battle Network Legacy Collection Vol. 2"
+msgstr "saito에는 에그제 어드밴스드 컬렉션 Vol. 2가 필요합니다"
+
+msgid "Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "Steam에서 설치한 뒤 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하고 exe 폴더를 이 창으로 드래그하세요."
+
+# The same in a browser (the web build)
+msgid "saito needs Battle Network Legacy Collection Vol. 2. In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "saito 실행에는 록맨 에그제 어드밴스드 컬렉션 Vol. 2가 필요합니다. Steam 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하고 exe 폴더를 이 페이지로 드래그하세요."
+
+msgid "In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "Steam 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하고 exe 폴더를 이 페이지로 드래그하세요."
+
+# The same on a phone (iOS, Android)
+msgid "saito needs Battle Network Legacy Collection Vol. 2. On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "saito 실행에는 록맨 에그제 어드밴스드 컬렉션 Vol. 2가 필요합니다. PC의 Steam 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하여 exe 폴더를 이 기기에 복사한 뒤 여기서 선택하세요."
+
+msgid "On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "PC의 Steam 라이브러리에서 우클릭 → 관리 → 로컬 파일 탐색을 선택하여 exe 폴더를 이 기기에 복사한 뒤 여기서 선택하세요."
+
+msgid "Choose folder"
+msgstr "폴더 선택"
+
+# The Legacy Collection found lacks some of a game's ROMs
+msgid "The Legacy Collection's files are incomplete: some of {}'s are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "어드밴스드 컬렉션 파일이 완전하지 않습니다({} 파일 일부 누락). Steam에서 게임 파일 무결성 검사를 실행한 뒤 폴더를 다시 선택하세요."
+
+msgid "The Legacy Collection's files are incomplete"
+msgstr "어드밴스드 컬렉션 파일이 불완전합니다"
+
+msgid "Some of {}'s files are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "{}의 파일 일부가 누락되었습니다. Steam에서 게임 파일 무결성 검사를 실행한 뒤 폴더를 다시 선택하세요."
+
+# The Legacy Collection from a computer nearby (src/nearby.rs)
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Open saito on a computer that has it, on the same Wi-Fi, to send it here. Looking…"
+msgstr "saito에는 록맨 에그제 어드밴스드 컬렉션 Vol. 2가 필요합니다. 같은 Wi-Fi에 연결된 PC에서 saito를 열면 이 기기로 전송할 수 있습니다. 찾는 중…"
+
+msgid "No computer found. Open saito on a computer that has the Legacy Collection, on the same Wi-Fi. Still nothing? Check that its firewall allows saito and that no VPN is on. Or copy its exe folder here and choose it."
+msgstr "컴퓨터를 찾지 못했습니다. 어드밴스드 컬렉션이 있는 PC를 같은 Wi-Fi에 연결하고 saito를 실행하세요. 계속 나타나지 않으면 방화벽이 saito를 허용하는지, VPN이 꺼져 있는지 확인하거나 exe 폴더를 직접 복사해 선택하세요."
+
+msgid "Found {}. Choose Send there to send the Legacy Collection here."
+msgstr "{}을(를) 찾았습니다. 해당 기기에서 '전송'을 누르면 어드밴스드 컬렉션이 여기로 전송됩니다."
+
+msgid "{} didn't send the Legacy Collection. Open saito on another computer that has it, or copy its exe folder here and choose it."
+msgstr "{}에서 어드밴스드 컬렉션을 전송하지 않았습니다. 컬렉션이 있는 다른 PC에서 saito를 열거나 exe 폴더를 이 기기에 복사해 선택하세요."
+
+msgid "{} has a different version of saito. You both need the latest."
+msgstr "{}의 saito 버전이 다릅니다. 두 기기 모두 최신 버전이 필요합니다."
+
+msgid "Couldn't get the Legacy Collection from {}. Check that its firewall allows saito. Trying again…"
+msgstr "{}에서 어드밴스드 컬렉션을 받지 못했습니다. 방화벽이 saito를 허용하는지 확인하세요. 다시 시도 중…"
+
+msgid "{} is sending to another device. Trying again soon…"
+msgstr "{}이(가) 다른 기기로 전송 중입니다. 잠시 후 다시 시도합니다…"
+
+msgid "What {} sent can't be played. Details are in the log file."
+msgstr "{}에서 전송된 데이터로 실행할 수 없습니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "saito isn't allowed to look for computers on this network. Allow it in Settings > Privacy & Security > Local Network, or copy the exe folder here and choose it."
+msgstr "saito가 이 네트워크에서 컴퓨터를 찾을 권한이 없습니다. 설정 > 개인정보 보호 및 보안 > 로컬 네트워크에서 허용하거나 exe 폴더를 직접 복사해 선택하세요."
+
+msgid "Receiving from {}"
+msgstr "{}에서 수신 중"
+
+msgid "Send the Legacy Collection to {}?"
+msgstr "{}에 어드밴스드 컬렉션을 전송하시겠습니까?"
+
+msgid "{} is asking for the Legacy Collection's ROMs, to play saito there. They're sent over this network."
+msgstr "{}이(가) saito 실행을 위해 어드밴스드 컬렉션 ROM을 요청하고 있습니다. 로컬 네트워크를 통해 전송됩니다."
+
+msgid "Send"
+msgstr "전송"
+
+msgid "Not now"
+msgstr "나중에"
+
+msgid "Sending the Legacy Collection to {}"
+msgstr "{}에 어드밴스드 컬렉션 전송 중"
+
+msgid "Keep saito open until it's done."
+msgstr "완료될 때까지 saito를 닫지 마세요."
+
+msgid "Couldn't send the Legacy Collection to {}"
+msgstr "{}에 어드밴스드 컬렉션을 전송하지 못했습니다"
+
+# A game's content couldn't be downloaded
+msgid "The games' content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "게임 콘텐츠를 다운로드하지 못했습니다. 연결을 확인한 뒤 saito를 다시 실행하세요."
+
+msgid "{}'s content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "{}의 콘텐츠를 다운로드하지 못했습니다. 연결을 확인한 뒤 saito를 다시 실행하세요."
+
+msgid "{}'s content couldn't be downloaded"
+msgstr "{}의 콘텐츠를 다운로드하지 못했습니다"
+
+msgid "Check your connection, then start saito again."
+msgstr "연결을 확인한 뒤 saito를 다시 실행하세요."
+
+# No game's content is published for this version yet
+msgid "There's no game content for this version of saito yet. Check back later."
+msgstr "이 버전의 saito용 게임 콘텐츠가 아직 없습니다. 나중에 다시 확인하세요."
+
+msgid "Something went wrong. Details are in the log file."
+msgstr "문제가 발생했습니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "Something went wrong"
+msgstr "문제가 발생했습니다"
+
+msgid "Details are in the log file."
+msgstr "자세한 내용은 로그 파일을 확인하세요."
+
+# The battle music list's first choice (Practice): each round's background's music.
+msgid "By background"
+msgstr "배경에 맞추기"
+
+# ---- An update of the app ----
+
+msgid "Checking for updates"
+msgstr "업데이트 확인 중"
+
+msgid "Updating to saito {}"
+msgstr "saito {}(으)로 업데이트 중"
+
+msgid "The update couldn't be downloaded. It's tried again next start."
+msgstr "업데이트를 다운로드하지 못했습니다. 다음 실행 시 다시 시도합니다."

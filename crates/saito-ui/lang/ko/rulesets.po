@@ -1,0 +1,100 @@
+# Korean: a ruleset's page (ui/ruleset.slint), which the lobby and the build editor open over themselves.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# Where its Back goes, and the tag a preset's name has.
+msgid "Editor"
+msgstr "편집기"
+
+msgid "Preset"
+msgstr "프리셋"
+
+# Why the ruleset shown can't be changed here.
+msgid "A preset can't be changed. Duplicate it to make your own."
+msgstr "프리셋은 수정할 수 없습니다. 복제하여 나만의 규칙을 만드세요."
+
+msgid "This is your opponent's choice. Duplicate it to make your own."
+msgstr "상대방이 선택한 규칙입니다. 복제하여 나만의 규칙을 만드세요."
+
+# How much a category allows.
+msgid "All allowed"
+msgstr "모두 허용"
+
+msgid "None allowed"
+msgstr "모두 금지"
+
+msgid "{} of {} allowed"
+msgstr "{}/{} 허용"
+
+# The row of the name: Version exclusives, a build of one version's alone or of the versions' mixed.
+msgid "Version exclusives"
+msgstr "버전 한정 요소"
+
+msgid "One version"
+msgstr "단일 버전"
+
+msgid "Mix versions"
+msgstr "혼합 허용"
+
+msgid "Search"
+msgstr "검색"
+
+# The key hint of an item's row.
+msgid "Allow or not"
+msgstr "허용/금지 전환"
+
+# The categories' panel's title.
+msgid "Categories"
+msgstr "카테고리"
+
+# The quick choice of every version's own items, beside the category's ALL and NONE.
+msgid "Both"
+msgstr "양쪽 모두"
+
+# The footer: how many items the category shown lists.
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n}개 항목"
+
+# The page's buttons: a file of the ruleset shown, written out; a file read in as the player's own.
+msgctxt "verb"
+msgid "Export"
+msgstr "내보내기"
+
+msgctxt "verb"
+msgid "Import"
+msgstr "가져오기"
+
+# What the system's file dialogs ask for.
+msgid "Ruleset files"
+msgstr "규칙 파일"
+
+# A paired category's page (the Party page: its navis, and their programs, every navi's and each one's own).
+msgid "{} of {} navis"
+msgstr "내비 {}/{} 허용"
+
+msgid "{} of {} navis, {n} program ban"
+msgid_plural "{} of {} navis, {n} program bans"
+msgstr[0] "내비 {}/{} 허용, 프로그램 금지 {n}건"
+
+msgid "{} of {} allowed, {n} program ban"
+msgid_plural "{} of {} allowed, {n} program bans"
+msgstr[0] "{}/{} 허용, 프로그램 금지 {n}건"
+
+msgid "{} banned"
+msgstr "{} 금지"
+
+msgid "All navis"
+msgstr "모든 내비"
+
+msgid "Programs for all navis"
+msgstr "모든 내비의 프로그램"
+
+msgid "{}'s programs"
+msgstr "{}의 프로그램"
+
+msgid "Banned for all navis"
+msgstr "모든 내비에서 금지됨"

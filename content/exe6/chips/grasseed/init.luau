@@ -1,0 +1,28 @@
+--!strict
+-- GrasSeed: a seed that turns the panels it lands on into grass.
+
+local seed = require("../lib/bombs/seed")
+local throw = require("../lib/bombs/throw")
+local grab_shot_sprite = asset.sprite("grab-shot")
+
+local chip: Chip = {
+    codes = { "A", "F", "S", "*" },
+    element = "wood", family = "wood", class = "standard",
+    rarity = 1, mb = 19, damage = 10, hit_param = 10, lockout = 10,
+    flags = { "standard_library", "library" },
+    slot_in_limit = 3,
+    action = throw.action {
+        held = seed.held(2),
+        held_anim = 8,
+        thrower = seed.thrower(seed.variant {
+            element = 4,
+            palette = 2,
+            panel = "grass",
+            -- Its green sprout (effect 0x3C).
+            effect = new.effect { sprite = grab_shot_sprite, anim = 1, palette = 8, steps = 16 },
+            sound = asset.sound("grass"),
+        }),
+    },
+}
+
+return { grasseed = chip }

@@ -1,0 +1,1042 @@
+//! The graphics a battle frontend draws with, in typed form: what
+//! saito-extract extracts from the user's copies of the games (their ROMs),
+//! in memory. Nothing ROM-derived is checked in.
+//!
+//! Colors are the GBA's 15-bit BGR555. Tiles are 8x8 with one palette index
+//! per pixel, where index 0 is transparent.
+
+#![forbid(unsafe_code)]
+
+pub mod custom;
+pub mod letters;
+pub mod lettering;
+pub mod shapes;
+pub use lettering::{BASE_LANGUAGE, ButtonLettering, CustomLettering, HudLettering};
+pub use custom::{
+    ButtonPictures, ButtonPlace, ButtonSets, ChipArt, CursorPlace, CustomLayout, CustomScreen, ElementSprite, Emblem, MapPatch, PatchList, Picture,
+    SlotPictures, VersionPictures, WindowEmblem, WindowLabel,
+};
+
+/// Assets a game version has its own of: the base game's (`base_version`,
+/// an EXE6 game's "falzar"), and other versions' that differ, by version name
+/// ("gregar", from the second ROM). A console of a version shows its own,
+/// else the base's. In a game's graphics each is its own asset, named with its
+/// version (`form-names-falzar`, `form-names-gregar`); one that no other
+/// version has its own of is named without.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Versioned<T> {
+    pub base: T,
+    pub base_version: String,
+    pub versions: Vec<(String, T)>,
+}
+
+impl<T> Versioned<T> {
+    pub fn new(base_version: &str, base: T) -> Versioned<T> {
+        Versioned { base, base_version: base_version.into(), versions: Vec::new() }
+    }
+
+    /// A file or asset name with its version's suffix, when versions
+    /// differ (`name` alone otherwise): the base's for `None`.
+    pub fn name(&self, name: &str, version: Option<&str>) -> String {
+        if self.versions.is_empty() {
+            name.into()
+        } else {
+            format!("{name}-{}", version.unwrap_or(&self.base_version))
+        }
+    }
+
+    /// The version's own, else the base's.
+    pub fn get(&self, version: &str) -> &T {
+        self.version(version).unwrap_or(&self.base)
+    }
+
+    /// The version's own, if it has its own.
+    pub fn version(&self, version: &str) -> Option<&T> {
+        self.versions.iter().find(|(v, _)| v == version).map(|(_, t)| t)
+    }
+}
+
+/// Everything the frontend draws with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Bundle {
+    /// Battle sprites, sorted by (category, index).
+    pub sprites: Vec<SpriteSheet>,
+    pub field: Field,
+    /// Battle backgrounds by the battle settings' background id.
+    pub backgrounds: Vec<Option<Background>>,
+    pub hud: Hud,
+    /// The custom screen's (empty in a game's graphics that predates it).
+    pub custom: CustomScreen,
+}
+
+impl Bundle {
+    /// A battle sprite by (category, index).
+    pub fn sprite(&self, category: u8, index: u8) -> Option<&SpriteSheet> {
+        self.sprites
+            .binary_search_by_key(&(category, index), |s| (s.category, s.index))
+            .ok()
+            .map(|i| &self.sprites[i])
+    }
+
+    /// A background by id.
+    pub fn background(&self, id: u8) -> Option<&Background> {
+        self.backgrounds.get(id as usize).and_then(|b| b.as_ref())
+    }
+    /// Every drawing of its frames (`shapes`): the HUD's, the banners'
+    /// (each language's too), the custom screen's; a frontend draws them
+    /// from these, made ready when the game is loaded.
+    pub fn drawings(&self) -> Vec<&shapes::Drawing> {
+        let mut out: Vec<&shapes::Drawing> = Vec::new();
+        out.extend(self.hud.shapes.drawings());
+        out.extend(self.custom.shapes.drawings());
+        let banners = self.hud.banners.iter().chain(self.hud.languages.iter().flat_map(|(_, l)| l.banners.iter().flatten()));
+        for b in banners {
+            out.extend(b.bar.iter().chain(b.logo.iter()));
+        }
+        out
+    }
+}
+
+/// 8x8 tiles, 64 palette indices each (row-major).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tiles {
+    pub pixels: Vec<u8>,
+}
+
+impl Tiles {
+    pub const TILE: usize = 64;
+
+    /// Decode 4-bit-per-pixel GBA tile data (low nibble first).
+    pub fn from_4bpp(data: &[u8]) -> Tiles {
+        let n = data.len() / 32;
+        let mut pixels = Vec::with_capacity(n * Self::TILE);
+        for b in &data[..n * 32] {
+            pixels.push(b & 0xF);
+            pixels.push(b >> 4);
+        }
+        Tiles { pixels }
+    }
+
+    pub fn len(&self) -> usize {
+        self.pixels.len() / Self::TILE
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pixels.is_empty()
+    }
+
+    pub fn get(&self, i: usize) -> Option<&[u8]> {
+        self.pixels.get(i * Self::TILE..(i + 1) * Self::TILE)
+    }
+
+    pub fn push(&mut self, tile: &[u8]) {
+        assert_eq!(tile.len(), Self::TILE);
+        self.pixels.extend_from_slice(tile);
+    }
+}
+
+/// A 16-color palette.
+pub type Palette = [u16; 16];
+
+/// Decode little-endian BGR555 palettes.
+pub fn palettes_from_bytes(data: &[u8]) -> Vec<Palette> {
+    data.chunks_exact(32)
+        .map(|c| std::array::from_fn(|i| u16::from_le_bytes([c[2 * i], c[2 * i + 1]])))
+        .collect()
+}
+
+/// A BGR555 color as RGB.
+pub fn rgb(c: u16) -> [u8; 3] {
+    let w = |v: u16| ((v << 3) | (v >> 2)) as u8;
+    [w(c & 31), w((c >> 5) & 31), w((c >> 10) & 31)]
+}
+
+/// An RGB color as BGR555, each channel's top five bits ([`rgb`]'s
+/// colors come back as they were).
+pub fn bgr555([r, g, b]: [u8; 3]) -> u16 {
+    u16::from(r >> 3) | u16::from(g >> 3) << 5 | u16::from(b >> 3) << 10
+}
+
+/// A background map entry: which tile, flipped how, in which palette.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MapEntry {
+    pub tile: u16,
+    pub hflip: bool,
+    pub vflip: bool,
+    pub palette: u8,
+}
+
+impl MapEntry {
+    /// From the GBA's text-mode map format.
+    pub fn from_gba(e: u16) -> MapEntry {
+        MapEntry { tile: e & 0x3FF, hflip: e & 0x400 != 0, vflip: e & 0x800 != 0, palette: (e >> 12) as u8 }
+    }
+}
+
+// ---- Sprites ----------------------------------------------------------------
+
+/// A battle sprite: its animations, and the tiles, palettes and part
+/// layouts their frames draw with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpriteSheet {
+    /// The engine's `SpriteId`.
+    pub category: u8,
+    pub index: u8,
+    pub tilesets: Vec<Tiles>,
+    /// Palette sets; a sprite draws with one palette of its frame's set,
+    /// chosen by the object (`sprite_setPalette`) plus the frame's offset.
+    pub palette_sets: Vec<Vec<Palette>>,
+    pub part_lists: Vec<Vec<SpritePart>>,
+    pub animations: Vec<Vec<SpriteFrame>>,
+}
+
+/// One animation frame: what it draws, how long it shows, and whether its
+/// animation ends or loops after it. Its timing is the sheet's alone: the
+/// battle counts a sprite's steps, and drawing finds the frame those reach
+/// ([`SpriteSheet::frame_index`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpriteFrame {
+    /// Index into `tilesets`.
+    pub tileset: u16,
+    /// Index into `palette_sets`.
+    pub palette_set: u16,
+    /// Index into `part_lists`.
+    pub parts: u16,
+    /// Steps it shows for.
+    pub duration: u8,
+    /// [`FRAME_LAST`] on its animation's last frame, with [`FRAME_LOOP`]
+    /// where the animation plays again from its first.
+    pub flags: u8,
+}
+
+/// A frame's flag: its animation's last.
+pub const FRAME_LAST: u8 = 0x80;
+/// A last frame's flag: after it, its animation plays again from its first.
+pub const FRAME_LOOP: u8 = 0x40;
+
+impl SpriteSheet {
+    /// The frame of animation `anim` a sprite shows after `steps` steps
+    /// (`sub_3006792`, each a tick off the frame's time): from the
+    /// animation's start (`started`), or else from a sprite just loaded,
+    /// whose blank timing moves on to the second frame at its first step.
+    /// Past the animation's frames (or the sheet's animations) every frame
+    /// is one step long and the last. Its index may be past the last
+    /// frame, as the game's can be.
+    pub fn frame_index(&self, anim: u8, steps: u32, started: bool) -> usize {
+        let frames = self.animations.get(anim as usize).map_or(&[][..], Vec::as_slice);
+        frame_index(frames, steps, started)
+    }
+}
+
+/// [`SpriteSheet::frame_index`] of an animation of `frames`.
+pub fn frame_index(frames: &[SpriteFrame], steps: u32, started: bool) -> usize {
+    let timing = |i: usize| frames.get(i).map_or((1, FRAME_LAST), |f| (f.duration, f.flags & (FRAME_LAST | FRAME_LOOP)));
+    let (mut frame, (mut count, mut flags)) = (0, if started { timing(0) } else { (0, 0) });
+    // A looping animation comes back to its state after its first restart once a round: count its rounds off.
+    let mut round: Option<(u32, u32)> = None;
+    let mut step = 0;
+    while step < steps {
+        loop {
+            let old = count;
+            count = old.wrapping_sub(1);
+            if old != 0 {
+                break;
+            }
+            if flags & FRAME_LAST != 0 {
+                if flags & FRAME_LOOP != 0 {
+                    frame = 0;
+                    (count, flags) = timing(0);
+                    if frames.iter().all(|f| f.duration == 0) {
+                        // (The game would spin here forever: show the first.)
+                        return 0;
+                    }
+                    match round {
+                        None => round = Some((step, 0)),
+                        Some((first, 0)) => {
+                            let len = step - first;
+                            round = Some((first, len));
+                            // Skip whole rounds.
+                            let left = steps - step - 1;
+                            step += left / len * len;
+                        }
+                        Some(_) => {}
+                    }
+                } else {
+                    count = 1;
+                }
+            } else {
+                frame += 1;
+                (count, flags) = timing(frame);
+            }
+        }
+        step += 1;
+    }
+    frame
+}
+
+/// One hardware sprite of a frame. The first part of every frame is the
+/// object's shadow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpritePart {
+    /// First tile in the frame's tileset (the part's tiles follow in
+    /// row-major order).
+    pub tile: u16,
+    /// Offset from the object's screen position.
+    pub x: i8,
+    pub y: i8,
+    pub width: u8,
+    pub height: u8,
+    pub hflip: bool,
+    pub vflip: bool,
+    /// Added to the sprite's palette; the first part's offset applies to
+    /// the whole frame.
+    pub palette: u8,
+}
+
+// ---- Field ------------------------------------------------------------------
+
+/// The battle field's panels.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Field {
+    /// Panel tiles; `tiles[0]` is tile number `first_tile` of the map
+    /// entries below.
+    pub tiles: Tiles,
+    pub first_tile: u16,
+    /// Background palettes `first_palette..` at the start of a battle.
+    pub palettes: Vec<Palette>,
+    pub first_palette: u8,
+    /// Panel palettes that cycle.
+    pub palette_anims: Vec<PaletteAnim>,
+    /// The panel types the field draws, by their names (its game's: the
+    /// rules' `panels.numbers`), in the order of their blocks in `panels`:
+    /// EXE6's 13, EXE5's 11, EXE4's 12, each in its game's order.
+    /// docs/design/rules-in-luau.md §7.4.
+    pub panel_types: Vec<String>,
+    /// A panel's 5x3 block by `6 * k + 3 * owner + row - 1`, where `k` is
+    /// the type's place in `panel_types` and `row` the field row (1..=3).
+    pub panels: Vec<[MapEntry; 15]>,
+    /// The 5x1 edge under a front-row panel, by owner.
+    pub front_edges: [[MapEntry; 5]; 2],
+    /// Highlighted panel blocks (a chip's target), by highlight - 1: EXE6
+    /// has two; a field may have one (a highlight it lacks is another
+    /// game's, or drawn as a fallback).
+    pub highlights: Vec<[MapEntry; 15]>,
+}
+
+impl Field {
+    /// Whether the field draws the panel type named `kind`.
+    pub fn draws(&self, kind: &str) -> bool {
+        self.panel_types.iter().any(|t| t == kind)
+    }
+
+    /// The 5x3 block of the panel type named `kind` for an owner (0 the
+    /// viewer's) and a row (1..=3), if the field draws the type and has the
+    /// block.
+    pub fn panel(&self, kind: &str, owner: usize, row: u8) -> Option<&[MapEntry; 15]> {
+        let k = self.panel_types.iter().position(|t| t == kind)?;
+        self.panels.get(6 * k + 3 * owner + (row as usize).checked_sub(1)?)
+    }
+}
+
+/// A palette that cycles through frames.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PaletteAnim {
+    /// The background palette it replaces.
+    pub slot: u8,
+    /// Each frame's palette and how many frames it shows.
+    pub frames: Vec<(Palette, u8)>,
+    /// Picks until the first switch (to frame 1).
+    pub initial_timer: u8,
+}
+
+// ---- Backgrounds -------------------------------------------------------------
+
+/// A battle background: a scrolling, possibly animated tile map.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Background {
+    /// `tiles[0]` is tile number `first_tile`.
+    pub tiles: Tiles,
+    pub first_tile: u16,
+    pub map: Vec<MapEntry>,
+    pub map_width: u16,
+    pub map_height: u16,
+    /// Background palette 0.
+    pub palette: Option<Palette>,
+    /// Scroll per frame in 1/16 pixel (the game's scroll counters).
+    pub scroll: (i32, i32),
+    /// Or a scroll that speeds up ([`Speeding`]); with it, `scroll` is
+    /// none.
+    pub speeding: Option<Speeding>,
+    pub anims: Vec<GfxAnim>,
+}
+
+/// A scroll that speeds up (a BG1 callback that takes a step from its
+/// counter each frame, to a top, and moves the picture by the counter's
+/// whole pixels: EXE5's 0x080019EC, EXE4's the scrollers' +0xB8): on its
+/// `k`th frame its speed is `k * step`, at most `top` (its sign `step`'s),
+/// both in 1/65536 pixel a frame, and the picture moves by the speed's whole
+/// pixels, a part of one counting whole (the game's arithmetic shift of a
+/// counter that falls). Its frames are the background's own from its load,
+/// or with `from_battle` the battle's from its first (EXE5's moves the
+/// picture only while battle flag 0x40 is set, which the battle's intro sets
+/// on the battle's first frame, 0x080E06A0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Speeding {
+    pub step: (i32, i32),
+    pub top: (i32, i32),
+    pub from_battle: bool,
+}
+
+impl Speeding {
+    /// How far the picture has moved by the end of its `k`th frame (the
+    /// first frame's 1), on each axis.
+    pub fn offset(&self, k: u32) -> (i32, i32) {
+        fn axis(step: i32, top: i32, k: u32) -> i32 {
+            if step == 0 {
+                return 0;
+            }
+            let (s, t, k) = (step.unsigned_abs() as u64, top.unsigned_abs() as u64, k as u64);
+            // A frame's move: its speed's whole pixels, a part counting whole.
+            let moved = |i: u64| (i * s).min(t).div_ceil(0x1_0000);
+            // (From the frame the speed reaches the top, the same each frame.)
+            let full = t.div_ceil(s);
+            let total = (1..=k.min(full)).map(moved).sum::<u64>() + k.saturating_sub(full) * t.div_ceil(0x1_0000);
+            // (Wrapped to the counter's width: a picture repeats long before.)
+            let total = (total & 0xFFFF_FFFF) as u32 as i32;
+            if step < 0 { total.wrapping_neg() } else { total }
+        }
+        (axis(self.step.0, self.top.0, k), axis(self.step.1, self.top.1, k))
+    }
+}
+
+/// A graphics animation: tiles or palettes replaced on a schedule, or the
+/// palettes shown shifted by a color.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GfxAnim {
+    pub target: AnimTarget,
+    pub frames: Vec<GfxAnimFrame>,
+    /// Where playback continues after the last frame (None = it stops on
+    /// the last frame).
+    pub repeat_from: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnimTarget {
+    /// Replaces tiles `first..first + count`.
+    Tiles { first: u16, count: u16 },
+    /// Replaces background palettes `first..first + count`.
+    Palettes { first: u8, count: u8 },
+    /// Shifts background palettes `first..first + count` as shown (after
+    /// the palettes' own animations) by each frame's `shift`, per channel
+    /// and saturating: brightened by adding it, or darkened by taking it
+    /// away (EXE4's GFX animation command 0x0C, a palette transform of
+    /// mode 0 or 4 that 0x0800258C runs each frame on the palettes it
+    /// shows: EXE4's background 0x09, background 0x03 darkened).
+    PaletteShift { first: u8, count: u8, darken: bool },
+    #[default]
+    Nothing,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GfxAnimFrame {
+    pub tiles: Tiles,
+    pub palettes: Vec<Palette>,
+    /// The color (BGR555) a palette shift adds or takes away.
+    pub shift: u16,
+    /// Frames this one shows for.
+    pub delay: u16,
+}
+
+/// A color shifted by `by`, per 5-bit channel, saturating: brightened
+/// (`darken` false) or darkened (`AnimTarget::PaletteShift`).
+pub fn shift_color(c: u16, by: u16, darken: bool) -> u16 {
+    (0..3).fold(0, |out, k| {
+        let (a, b) = ((c >> (5 * k)) & 31, (by >> (5 * k)) & 31);
+        let ch = if darken { a.saturating_sub(b) } else { (a + b).min(31) };
+        out | ch << (5 * k)
+    })
+}
+
+// ---- HUD -----------------------------------------------------------------------
+
+/// The HUD's graphics. "Glyphs" are 8x16: glyph k is tiles 2k (top) and
+/// 2k + 1 (bottom).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Hud {
+    /// The HUD layer's tiles: `tiles[0]` is tile number `first_tile` of the
+    /// map entries below (the HP box, HP and damage digits, '+', '×2').
+    pub tiles: Tiles,
+    pub first_tile: u16,
+    /// The custom gauge's tiles, from tile number `gauge_first_tile`.
+    pub gauge_tiles: Tiles,
+    pub gauge_first_tile: u16,
+    /// HP box colors: normal, healing, hurt or low.
+    pub hp_palettes: [Palette; 3],
+    pub gauge_palette: Palette,
+    /// The HP box (6x2) and the gauge frame (18x2) as first placed.
+    pub hp_box: Vec<MapEntry>,
+    pub gauge_frame: Vec<MapEntry>,
+    /// The 8x16 text font, which chip names are drawn with: glyph k draws
+    /// `font_chars[k]`.
+    pub font: Tiles,
+    /// What each glyph of the font draws, as text (the game's text
+    /// encoding; the game's marks are characters, one in the Private Use
+    /// Area for a glyph Unicode has none for: the stacked EX is U+E002).
+    /// Content's names are written in these.
+    pub font_chars: Vec<String>,
+    /// The opponent's HP digits by color (normal, dropping, rising):
+    /// glyph d is digit d.
+    pub enemy_digits: [Tiles; 3],
+    pub enemy_palette: Palette,
+    /// Chip icons (2x2 tiles), each under its chip's key, in the game's graphics'
+    /// order (a chip the graphics number has its number's place), and the
+    /// icon of an opponent's hidden chip.
+    pub chip_icons: Vec<ChipIcon>,
+    pub hidden_icon: Tiles,
+    pub icon_palette: Palette,
+    /// Mugshots (4x2 tiles) and their palettes by emotion.
+    pub mugshots: Vec<(Tiles, Palette)>,
+    /// The count box beside the mugshot (2x2 tiles) showing 0..=10, and
+    /// without a number.
+    pub counts: Vec<Tiles>,
+    pub count_box: Tiles,
+    /// The box a face brings for beside it (2x2 tiles), by mugshot: EXE5's
+    /// faces have their own (all but its souls', which show a count); none
+    /// (empty, or past the list: EXE6's) shows the count box or a count.
+    pub mugshot_boxes: Vec<Tiles>,
+    /// The link navis' faces (a ROM holds its own version's navis' and
+    /// ProtoMan's or Colonel's). Which face a form or a navi shows is its
+    /// definition's (`mugshot`), by number (see [`NAVI_MUGSHOTS`]).
+    pub navi_mugshots: Vec<NaviMugshot>,
+    /// The box beside a link navi's mugshot (2x2 tiles), where MegaMan's
+    /// count is.
+    pub navi_box: Tiles,
+    /// "PAUSE": five glyphs, drawn with the opponents' HP digits' palette.
+    pub pause: Tiles,
+    /// The HUD's text lines, each as glyphs of the font
+    /// (`TextScript86F0374`): the multiple deletions (0, 1, 19), "TIME
+    /// UP!" (3), the turn timer's seconds 1-10 (4-13), "COUNTER HIT!" (14)
+    /// and the custom screen's own.
+    pub texts: Vec<Vec<u16>>,
+    /// Banners by banner id / 4.
+    pub banners: Vec<BannerLayout>,
+    /// The banner font's digits (glyph d is digit d; glyph 10 is blank).
+    pub banner_digits: Tiles,
+    pub banner_palette: Palette,
+    /// "Cstmzing..." (8x2 tiles), shown while the opponent is still on the
+    /// custom screen, and its palette.
+    pub waiting: Tiles,
+    pub waiting_palette: Palette,
+    /// The warning marker (`sub_800AE90`: a blinking arrow over the custom
+    /// gauge or a place on the field): two 16x16 frames of 2x2 tiles, and
+    /// its palette.
+    pub warning: Tiles,
+    pub warning_palette: Palette,
+    /// The dialogue font (the chatbox's).
+    pub dialogue_font: DialogueFont,
+    /// The chatbox's box and key-wait arrow.
+    pub chatbox: Chatbox,
+    /// Where the HUD's code puts its pieces, where games differ.
+    pub layout: HudLayout,
+    /// The language the lettering above is in (the fonts, the text lines,
+    /// the banners' and "Cstmzing..."'s words; empty: `BASE_LANGUAGE`),
+    /// and the other languages' the game's graphics have (`lettering`).
+    pub language: String,
+    pub languages: Vec<(String, HudLettering)>,
+    /// How its pictures' letters and digits look (`letters`), the words'
+    /// in the language the lettering above is in.
+    pub letters: letters::HudLetters,
+    /// Its frames as shapes (`shapes`), and the emotion window's frame apart
+    /// from its faces, and the frame of the boxes the faces bring apart from
+    /// the boxes.
+    pub shapes: shapes::HudShapes,
+    pub mugshot_frame: Option<shapes::MugshotFrame>,
+    pub mugshot_box_frame: Option<shapes::MugshotBoxFrame>,
+}
+
+/// Where the HUD's code puts its pieces, where games differ (the default:
+/// EXE6's, which EXE5's are).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HudLayout {
+    /// "PAUSE"'s place (its first glyph's x and y: EXE6's `sub_801C9E4`
+    /// (100, 63); EXE4's 0x0801554C (100, 64)).
+    pub pause: (u8, u8),
+    /// The priority the HP numbers under objects are drawn at (EXE6's
+    /// `sub_801C202`: 2; EXE4's 0x08014EB8: 1).
+    pub hp_number_priority: u8,
+    /// The priority of the HUD's layer, BG3: the HP box, the gauge and
+    /// the custom screen (EXE6's 1; EXE4's 0, 0x08006AD4's BG3CNT 0x1F00,
+    /// so the custom screen covers the HP numbers' priority 1 there). The
+    /// custom screen's sprites (its cursors, the element, the emblem, the
+    /// chips flying) are drawn at it too: EXE4's cursor and element at 0.
+    pub hud_priority: u8,
+    /// Where a message ("COUNTER HIT!") is laid: its first column and its
+    /// row, and how many glyphs wide (EXE6's `sub_801E270`: from column 7,
+    /// row 2, 17; EXE4's 0x08015FE8: from column 8, row 2, 14).
+    pub message: (u8, u8, u8),
+    /// The damage judge's numbers show from its banner's hold until the
+    /// judge lets the banner go (EXE4's task 9: 0x08014AA8 waits for the
+    /// holding banner; the release, 0x080163B6, slides the banner out and
+    /// clears them, its state 8, 0x0801544C); otherwise while the banner
+    /// slides in and holds (EXE6's `sub_801D048`).
+    pub judge_from_hold: bool,
+    /// Where the chatbox's text starts (its sprites' top left:
+    /// `chatbox_runScript`'s text place, EXE6's (0x33, 0x6C); EXE4's
+    /// 0x0804E3B4: (0x3F, 0x6D) in the US games, which a language's
+    /// lettering may place itself, `HudLettering::chatbox_text`).
+    pub chatbox_text: (u8, u8),
+    /// Where the chatbox's key-wait arrow is, in the message box and in the
+    /// description box (EXE6's `byte_8045DCC`: (0xE2, 0x8D), and the
+    /// description's E8 06 box (0xCA, 0x8D); EXE4 shows a description in
+    /// the message box, its arrow where the message's is).
+    pub chatbox_arrows: [(u8, u8); 2],
+    /// The telops' own look, where the game lays a telop out in its code
+    /// rather than from a banner record of its table (EXE4's 0x0801650C);
+    /// none: the telop banners' places, in the HP box's palette (EXE6's).
+    pub telop: Option<TelopLook>,
+}
+
+impl Default for HudLayout {
+    fn default() -> Self {
+        HudLayout {
+            pause: (100, 63),
+            hp_number_priority: 2,
+            hud_priority: 1,
+            message: (7, 2, 17),
+            judge_from_hold: false,
+            chatbox_text: (0x33, 0x6C),
+            chatbox_arrows: [(0xE2, 0x8D), (0xCA, 0x8D)],
+            telop: None,
+        }
+    }
+}
+
+/// A telop laid out by the game's code (`HudLayout::telop`): where it is
+/// laid out from on its user's console and on the other player's (x, y:
+/// fifteen glyphs centered from there), and the glyphs it draws after the
+/// chip's name, which the game loads for it, in its own palette.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TelopLook {
+    pub places: [(u8, u8); 2],
+    /// The damage digits 0 to 9, '+', then the '×' and the '2' of a
+    /// doubled chip (8x16 glyphs).
+    pub glyphs: Tiles,
+    pub palette: Palette,
+    /// Where the game loads the telops' sprite tiles among the banners',
+    /// and the palette they share; none: apart.
+    pub tiles: Option<TelopTiles>,
+}
+
+/// The sprite tiles (VRAM tile numbers) and the palette the telops share
+/// with the banners, each load overwriting what an earlier one put there
+/// (EXE4's: a banner's twenty glyphs from tile 0x360 as five 32x16
+/// sprites, 0x0801617E; a telop's eight name glyphs, two tiles each, from
+/// 0x360 on the left and from 0x384 on the right, 0x0801650C; every
+/// telop's '×' and '2' pieces into 0x380 to 0x383 as a 16x16 sprite, its
+/// list 0x08016680; one sprite palette, 11, which a banner, a telop and
+/// "PAUSE" load as each starts).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TelopTiles {
+    /// A banner's first tile.
+    pub banner: u16,
+    /// Each place's first name tile (the user's, the other player's).
+    pub names: [u16; 2],
+    /// The '×' and '2' pieces' first tile.
+    pub signs: u16,
+    /// "PAUSE" loads the banners' palette into the shared one (EXE4's list
+    /// 0x080166D0).
+    pub pause_loads_banner_palette: bool,
+}
+
+impl TelopTiles {
+    /// The tiles a banner's glyphs take: twenty, two tiles each.
+    pub const BANNER_TILES: u16 = 40;
+    /// The tiles a telop's name takes: eight glyphs, the name padded with
+    /// blanks.
+    pub const NAME_TILES: u16 = 16;
+    /// The '×' and '2' pieces: a 16x16 sprite.
+    pub const SIGN_TILES: u16 = 4;
+}
+
+impl TelopLook {
+    /// Its glyphs: the digits from 0, then '+', then '×' and '2'.
+    pub const PLUS: usize = 10;
+    pub const TIMES: usize = 11;
+    pub const GLYPHS: usize = 13;
+}
+
+/// The chatbox's graphics (`chatbox_runScript`'s transfers): the box's
+/// tiles and palette, its maps by kind and opening step, the key-wait
+/// arrow's frames, and the palette the text and the arrow draw with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Chatbox {
+    /// The box's tiles; its maps' entries count from the first.
+    pub tiles: Tiles,
+    pub palette: Palette,
+    /// The box's maps (`spritePtrArr8045CEC`): by kind (0 the message box,
+    /// 1 the description box), its four opening steps (0 to 3, open),
+    /// each `Chatbox::COLUMNS` x `Chatbox::ROWS` entries row by row.
+    pub boxes: Vec<[Vec<MapEntry>; 4]>,
+    /// The arrow's three 16x16 frames (2x2 tiles each).
+    pub arrow: Tiles,
+    pub text_palette: Palette,
+}
+
+impl Chatbox {
+    pub const COLUMNS: usize = 30;
+    pub const ROWS: usize = 8;
+
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+}
+
+/// Where the link navis' faces (`Hud::navi_mugshots`) start among the
+/// mugshots' numbers; the emotion window's (`Hud::mugshots`) start at 0.
+pub const NAVI_MUGSHOTS: u8 = 0x80;
+
+impl Hud {
+    /// Glyphs of the HUD layer's tiles (tile `first_tile + 2k`; EXE6's from
+    /// 0x1A0, EXE5's from 0x180): the HP digits (from the first), the HP
+    /// box's blank, the damage digits (EXE6's tiles 0x1B8..), the '?' of a
+    /// defensive chip's "????" (0x1CC), '+' (0x1CE), and the 'x' and '2' of a
+    /// doubled chip (0x1D2, 0x1D4).
+    pub const HP_BLANK: usize = 10;
+    pub const DAMAGE_DIGIT: usize = (0x1B8 - 0x1A0) / 2;
+    pub const HIDDEN_GLYPH: usize = (0x1CC - 0x1A0) / 2;
+    pub const PLUS_GLYPH: usize = (0x1CE - 0x1A0) / 2;
+    pub const TIMES_GLYPH: usize = (0x1D2 - 0x1A0) / 2;
+    /// The custom gauge's tiles (from `gauge_first_tile`: EXE6's 0x222,
+    /// EXE5's 0x202): its cell filling by eighths (from the first), filled,
+    /// full (four frames), and its "L or R" (two frames of four).
+    pub const GAUGE_FILLED: u16 = 0x22A - 0x222;
+    pub const GAUGE_FULL: u16 = 0x232 - 0x222;
+    pub const GAUGE_L_OR_R: u16 = 0x236 - 0x222;
+    /// The gauge frame's columns (`gauge_frame`: two rows of them).
+    pub const GAUGE_COLUMNS: usize = 18;
+    /// The gauge's fill: sixteen cells from the frame's column 1 of its row
+    /// 1 (the screen's column 7), over its cells there; a full gauge's "L or
+    /// R" over four of them from the frame's column 7.
+    pub const GAUGE_FILL_ROW: usize = 1;
+    pub const GAUGE_FILL_COLUMN: usize = 1;
+    pub const GAUGE_FILL_CELLS: usize = 16;
+    pub const GAUGE_L_OR_R_COLUMN: usize = 7;
+
+    /// A tile of the HUD layer by its number: the gauge's block's or the
+    /// layer's (the gauge's tiles follow the layer's in EXE6's and EXE5's
+    /// VRAM, and come before them in EXE4's).
+    pub fn layer_tile(&self, tile: u16) -> Option<&[u8]> {
+        tile.checked_sub(self.gauge_first_tile)
+            .and_then(|i| self.gauge_tiles.get(i as usize))
+            .or_else(|| tile.checked_sub(self.first_tile).and_then(|i| self.tiles.get(i as usize)))
+    }
+
+    /// Mugshot `number`: its tiles and palettes (an emotion window face
+    /// has one; a link navi's two, normal and Full Synchro).
+    pub fn mugshot(&self, number: u8) -> Option<(&Tiles, &[Palette])> {
+        match number.checked_sub(NAVI_MUGSHOTS) {
+            Some(i) => self.navi_mugshots.get(i as usize).map(|m| (&m.tiles, &m.palettes[..])),
+            None => self.mugshots.get(number as usize).map(|(t, p)| (t, std::slice::from_ref(p))),
+        }
+    }
+
+    /// The box emotion-window face `number` brings for beside it, if it
+    /// has its own (`mugshot_boxes`).
+    pub fn mugshot_box(&self, number: u8) -> Option<&Tiles> {
+        self.mugshot_boxes.get(number as usize).filter(|t| !t.is_empty())
+    }
+}
+
+/// The dialogue font (the chatbox's, `byte_86ACD60`): glyphs of 16x12
+/// pixels, each with its advance (`byte_8043CA4`), and what each draws:
+/// the game's text encoding's glyphs, then bytes 0xE0-0xE3 and the
+/// two-byte codes E4 00 on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DialogueFont {
+    /// A palette index a pixel, glyph after glyph, row by row (0 is
+    /// clear; the text's color is added to the others).
+    pub pixels: Vec<u8>,
+    pub advances: Vec<u8>,
+    pub chars: Vec<String>,
+}
+
+impl DialogueFont {
+    pub const WIDTH: usize = 16;
+    pub const HEIGHT: usize = 12;
+
+    pub fn len(&self) -> usize {
+        self.advances.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.advances.is_empty()
+    }
+
+    /// Glyph `i`'s pixels (16x12).
+    pub fn glyph(&self, i: usize) -> Option<&[u8]> {
+        let n = Self::WIDTH * Self::HEIGHT;
+        self.pixels.get(n * i..n * (i + 1))
+    }
+
+    /// The palette index the glyphs' strokes are drawn in: the commonest of
+    /// their pixels that is neither clear nor the cells' ground (the index
+    /// commonest in the glyphs' top left corners). EXE6's and EXE5's glyphs
+    /// are clear around their strokes, in 1; EXE4's fill their cells with 1,
+    /// the box's white, around strokes in 3. What a text drawn in another
+    /// font in the glyphs' place takes for its color.
+    pub fn ink(&self) -> u8 {
+        let ground = self.ground() as usize;
+        let mut counts = [0usize; 16];
+        for &p in &self.pixels {
+            counts[p as usize & 15] += 1;
+        }
+        (1..16).filter(|&i| i != ground).max_by_key(|&i| (counts[i], std::cmp::Reverse(i))).unwrap_or(1) as u8
+    }
+
+    /// The palette index of the glyphs' cells around their strokes: the
+    /// commonest in their top left corners (0, clear, in EXE6's and EXE5's
+    /// fonts; 1, the box's white, in EXE4's).
+    pub fn ground(&self) -> u8 {
+        let n = Self::WIDTH * Self::HEIGHT;
+        let mut corners = [0usize; 16];
+        for glyph in self.pixels.chunks(n) {
+            corners[glyph[0] as usize & 15] += 1;
+        }
+        (0..16).max_by_key(|&i| (corners[i], std::cmp::Reverse(i))).unwrap_or(0) as u8
+    }
+
+    /// The glyphs of a string, each glyph's longest name first, and the
+    /// characters none draws.
+    pub fn glyphs(&self, text: &str) -> (Vec<u16>, Vec<char>) {
+        let mut out = Vec::new();
+        let mut missing = Vec::new();
+        let mut rest = text;
+        while let Some(c) = rest.chars().next() {
+            let best = self
+                .chars
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| !g.is_empty() && rest.starts_with(g.as_str()))
+                .max_by_key(|(i, g)| (g.len(), std::cmp::Reverse(*i)));
+            match best {
+                Some((i, g)) => {
+                    out.push(i as u16);
+                    rest = &rest[g.len()..];
+                }
+                None => {
+                    missing.push(c);
+                    rest = &rest[c.len_utf8()..];
+                }
+            }
+        }
+        (out, missing)
+    }
+}
+
+/// A link navi's mugshot (4x2 tiles) with its palettes: normal, angry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NaviMugshot {
+    pub tiles: Tiles,
+    pub palettes: [Palette; 2],
+}
+
+/// A chip's icon. Empty tiles: the chip has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChipIcon {
+    /// The chip's key (the icon's file name in the game).
+    pub key: String,
+    pub tiles: Tiles,
+}
+
+impl Hud {
+    /// The icon of the chip with this key; none if the chip has no icon.
+    pub fn chip_icon(&self, key: &str) -> Option<&Tiles> {
+        let icon = self.chip_icons.iter().find(|i| i.key == key)?;
+        (!icon.tiles.is_empty()).then_some(&icon.tiles)
+    }
+
+    /// The font's glyphs for `text` (the longest glyph name that matches
+    /// at each place), and the characters it has no glyph for.
+    pub fn glyphs(&self, text: &str) -> (Vec<u16>, Vec<char>) {
+        let (mut glyphs, mut missing) = (Vec::new(), Vec::new());
+        let mut rest = text;
+        while let Some(c) = rest.chars().next() {
+            let best = self
+                .font_chars
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| !g.is_empty() && rest.starts_with(g.as_str()))
+                // The first of equally long names: the encoding has two
+                // spaces and two hyphens, each pair drawn alike.
+                .min_by_key(|(k, g)| (std::cmp::Reverse(g.len()), *k));
+            match best {
+                Some((k, g)) => {
+                    glyphs.push(k as u16);
+                    rest = &rest[g.len()..];
+                }
+                None => {
+                    missing.push(c);
+                    rest = &rest[c.len_utf8()..];
+                }
+            }
+        }
+        (glyphs, missing)
+    }
+}
+
+/// A banner's text and where it sits.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BannerLayout {
+    pub x: u8,
+    pub y: u8,
+    /// 0 plain, 1 with a number, 2 and 4 hold until removed; 3 (the
+    /// telops) has no glyphs of its own: a frontend draws the chip's name
+    /// with the font, and 4 (the judge's) adds two numbers to its glyphs.
+    pub kind: u8,
+    /// 20 glyphs, drawn as five 32x16 sprites.
+    pub glyphs: Tiles,
+    /// Where the number goes (kind 1).
+    pub number_at: Option<(u8, u8)>,
+    /// Its bar as shapes (`shapes`; none: it has none, or none was read).
+    pub bar: Option<shapes::Drawing>,
+    /// The whole picture as shapes, a logo with no bar its words stand on
+    /// (the Program Advance's), its letters drawn too: none, it has none.
+    pub logo: Option<shapes::Drawing>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A glyph name may be several characters (saito-extract names a glyph
+    /// its content has no character for by its number, `[0a3]`); EXE6's
+    /// are one each, its marks too (U+E002 the stacked EX).
+    #[test]
+    fn text_takes_the_longest_glyph_names() {
+        let hud = Hud {
+            font_chars: [" ", "A", "[", "[0a3]", "n", " ", "\u{E002}"].map(String::from).to_vec(),
+            ..Hud::default()
+        };
+        assert_eq!(hud.glyphs("An [0a3]"), (vec![1, 4, 0, 3], vec![]));
+        assert_eq!(hud.glyphs("A?[0"), (vec![1, 2], vec!['?', '0']));
+        assert_eq!(hud.glyphs("An\u{E002}"), (vec![1, 4, 6], vec![]));
+    }
+
+    #[test]
+    fn chip_icons_are_found_by_key_then_number() {
+        let icon = |key: &str, n: usize| ChipIcon { key: key.into(), tiles: Tiles { pixels: vec![1; n * Tiles::TILE] } };
+        let hud = Hud { chip_icons: vec![icon("cannon", 4), icon("no-icon", 0), icon("sword", 4)], ..Hud::default() };
+        assert_eq!(hud.chip_icon("sword"), Some(&hud.chip_icons[2].tiles));
+        assert_eq!(hud.chip_icon("no-icon"), None);
+        assert_eq!(hud.chip_icon("other"), None);
+    }
+
+    #[test]
+    fn map_entries_decode() {
+        let e = MapEntry::from_gba(0x54A7);
+        assert_eq!(e, MapEntry { tile: 0xA7, hflip: true, vflip: false, palette: 5 });
+    }
+
+    /// EXE5's nebulagray (0x1B) as the original draws it: its BG1 offset
+    /// on the battle's kth frame, read off the chip lab's frame shots of
+    /// backgrounds/0x1b and 0x1b-turns (the frame 141 + k): a pixel a frame
+    /// for 64 frames, then 2, 3 and from frame 193 on 4 a frame, through
+    /// the custom screen and the pause.
+    #[test]
+    fn a_speeding_scroll_moves_as_nebulagray_does() {
+        let s = Speeding { step: (0, 0x400), top: (0, 0x4_0000), from_battle: true };
+        let y = |k: u32| s.offset(k).1 & 0xFF;
+        let shots = [(19, 19), (59, 59), (109, 154), (159, 29), (209, 196), (215, 220), (279, 220), (759, 92), (1129, 36)];
+        for (k, vofs) in shots {
+            assert_eq!(y(k), vofs, "frame {k}");
+        }
+        assert_eq!(s.offset(0), (0, 0));
+        assert_eq!(s.offset(256), (0, 640));
+        assert_eq!(s.offset(257).1 - s.offset(256).1, 4);
+    }
+
+    /// The dialogue font's ink is its strokes' index, whatever fills the
+    /// cells around them: EXE6's and EXE5's glyphs are clear around strokes
+    /// in 1 (a shade in 3); EXE4's fill their cells with 1, the box's
+    /// white, around strokes in 3, and a text in the vector font drawn in 1
+    /// there was white on white.
+    #[test]
+    fn the_dialogue_fonts_ink_is_its_strokes() {
+        let n = DialogueFont::WIDTH * DialogueFont::HEIGHT;
+        let font = |ground: u8, stroke: u8, shade: u8| {
+            let mut pixels = Vec::new();
+            for _ in 0..4 {
+                let mut g = vec![ground; n];
+                for p in g.iter_mut().skip(20).take(30) {
+                    *p = stroke;
+                }
+                for p in g.iter_mut().skip(60).take(5) {
+                    *p = shade;
+                }
+                pixels.extend(g);
+            }
+            DialogueFont { pixels, advances: vec![8; 4], chars: vec![String::new(); 4] }
+        };
+        assert_eq!(font(0, 1, 3).ink(), 1, "EXE6's and EXE5's");
+        assert_eq!(font(1, 3, 2).ink(), 3, "EXE4's");
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    fn timed(t: &[(u8, u8)]) -> Vec<SpriteFrame> {
+        t.iter().map(|&(duration, flags)| SpriteFrame { duration, flags, ..Default::default() }).collect()
+    }
+
+    /// The frame `steps` steps reach, as `sub_3006792` steps a sprite one at a time (the reference).
+    fn stepped(frames: &[SpriteFrame], steps: u32, started: bool) -> usize {
+        let timing = |i: usize| frames.get(i).map_or((1u8, FRAME_LAST), |f| (f.duration, f.flags & (FRAME_LAST | FRAME_LOOP)));
+        let (mut frame, (mut count, mut flags)) = (0, if started { timing(0) } else { (0, 0) });
+        for _ in 0..steps {
+            loop {
+                let old = count;
+                count = old.wrapping_sub(1);
+                if old != 0 {
+                    break;
+                }
+                if flags & FRAME_LAST != 0 {
+                    if flags & FRAME_LOOP != 0 {
+                        frame = 0;
+                        (count, flags) = timing(0);
+                    } else {
+                        count = 1;
+                    }
+                } else {
+                    frame += 1;
+                    (count, flags) = timing(frame);
+                }
+            }
+        }
+        frame
+    }
+
+    /// An animation steps by its frames' times, and loops or holds; a sprite just loaded moves on to its second
+    /// frame at its first step; past the animation every frame is a step long.
+    #[test]
+    fn an_animation_steps_by_its_frames_times_and_loops_or_holds() {
+        // MegaMan's talking face: 7, 6, then loops from the start.
+        let talking = timed(&[(7, 0), (6, 0xC0)]);
+        let at = |n| frame_index(&talking, n, true);
+        assert_eq!((at(1), at(7), at(8), at(13), at(14)), (0, 0, 1, 1, 0));
+        // A still face holds its one frame.
+        assert_eq!(frame_index(&timed(&[(6, 0x80)]), 100, true), 0);
+        // Just loaded: the second frame at once.
+        assert_eq!(frame_index(&timed(&[(3, 0), (3, 0x80)]), 1, false), 1);
+        // Against the step-by-step reference, far into loops too.
+        let shapes = [timed(&[(2, 0), (3, 0), (1, 0xC0)]), timed(&[(4, 0x80)]), timed(&[(1, 0), (0, 0), (2, 0xC0)]), timed(&[(3, 0xC0)]), timed(&[])];
+        for frames in &shapes {
+            for started in [true, false] {
+                for steps in (0..200).chain([1000, 12345]) {
+                    assert_eq!(frame_index(frames, steps, started), stepped(frames, steps, started), "{frames:?} {steps} {started}");
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,132 @@
+# Korean: Practice (ui/screens/practice.slint).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ---- The practice menu's rows ----
+
+# The DUMMY group's: the dummy's build, one of the game's builds.
+msgid "Dummy's build"
+msgstr "더미 빌드"
+
+# The STAGE group's: where each round is fought.
+msgid "Arena"
+msgstr "스테이지"
+
+msgid "Background"
+msgstr "배경"
+
+msgid "Random"
+msgstr "랜덤"
+
+# ---- Before the battle, and in it ----
+
+msgid "Dummy"
+msgstr "더미"
+
+# Beside MENU on a phone: {} is the round's number.
+msgid "Practice · Round {}"
+msgstr "연습 · 라운드 {}"
+
+# ---- The practice menu ----
+
+# Under the menu's title: the two builds' names.
+msgid "{} vs {}"
+msgstr "{} vs {}"
+
+# The menu's groups: where the battle is fought (the arena, the background, the music), and the battle's options.
+msgid "Stage"
+msgstr "스테이지"
+
+msgid "Options"
+msgstr "옵션"
+
+msgid "Action"
+msgstr "행동"
+
+msgid "Stands still"
+msgstr "가만히 있기"
+
+msgid "Moves around"
+msgstr "움직이기"
+
+# The dummy fights as a player would, as well as its Level lets it.
+msgid "Fights"
+msgstr "전투"
+
+# The dummy is played on a second connected gamepad.
+msgid "A second pad"
+msgstr "두 번째 패드"
+
+# How well the dummy fights: a row under the Action while it is Fights.
+msgid "Level"
+msgstr "난이도"
+
+msgctxt "level"
+msgid "Easy"
+msgstr "쉬움"
+
+msgctxt "level"
+msgid "Normal"
+msgstr "보통"
+
+msgctxt "level"
+msgid "Hard"
+msgstr "어려움"
+
+# Battle, rows of two columns under the headings YOU and DUMMY.
+msgid "HP"
+msgstr "HP"
+
+msgid "Normal"
+msgstr "일반"
+
+msgid "Refills"
+msgstr "자동 회복"
+
+# Each side's navi held in one of the game's emotions, or as the game goes (Normal).
+msgid "Emotion"
+msgstr "감정"
+
+msgid "Custom gauge"
+msgstr "커스텀 게이지"
+
+msgid "Always full"
+msgstr "항상 가득 참"
+
+# The order the custom screen deals the folder in: shuffled, or from the folder's top.
+msgid "Chip draw"
+msgstr "칩 드로우"
+
+msgid "Shuffled"
+msgstr "셔플"
+
+msgid "Folder order"
+msgstr "폴더순"
+
+msgid "Input display"
+msgstr "입력 표시"
+
+msgid "Off"
+msgstr "끄기"
+
+msgid "On"
+msgstr "켜기"
+
+msgid "Resume"
+msgstr "재개"
+
+msgid "Restart"
+msgstr "다시 시작"
+
+# Ends the session: back to Practice's entry.
+msgid "Exit"
+msgstr "종료"
+
+# ---- Over the battle ----
+
+# In a corner over the battle, beside a count of chips ("34/58"): the dummy that fights is getting ready.
+msgid "Getting ready"
+msgstr "준비 중"

@@ -1,0 +1,671 @@
+//! Action 8: the idle controller (`sub_80EA734` → `sub_80F0354`). Its
+//! phase 0 arms the "controllable" state for 10 ticks; every tick it
+//! starts the highest-priority requested action: special forms, reactive
+//! chips, the forced charged shot, buster, charged shot, B+Back special,
+//! mode-9 A, a chip, a move, a turn or a buffered move. See
+//! objects-and-player.md §M5 and §B5.
+
+use super::actions::movement::{self, MoveKind};
+use super::{
+    EmotionRole, ai, ai_mut, switch_protected, emotion_role, exit_attack_state, flag1, form_of,
+    is_link, reset_charge, set_attack, stats, stats_mut,
+};
+use crate::actor::{request, status};
+use crate::battle::Battle;
+use crate::collision::f1;
+use crate::input::keys;
+use crate::object::ObjectRef;
+use saito_content_api::{ChipHandle, WeaponHandle};
+
+/// Action 8, `sub_80EA734`. (A navi no player controls idles its own way,
+/// its driver's: `ai_navi::idle`.)
+pub(super) fn control(b: &mut Battle, r: ObjectRef) {
+    if super::ai_navi::is_ai_navi(b, r) {
+        return super::ai_navi::idle(b, r);
+    }
+    if b.is_battle_over() {
+        return battle_over(b, r);
+    }
+    let f = ai(b, r).requests;
+    // (Where the rules say so, `idle_entry_counter`: EXE4's entry starts a
+    // counter for a navi in auto battle alone, 0x080EB0D6, and its idle
+    // starts it in its turn: `decide`.)
+    let traps = request::ANTI_DAMAGE_TRIGGERED | request::ANTI_SWORD_TRIGGERED | request::BODY_GUARD_TRIGGERED;
+    if b.game_rules().idle_entry_counter && f & traps != 0 {
+        return reactive_chip(b, r);
+    }
+    if f & request::STUN_STRIKE != 0 {
+        let strike = super::role_action(b, crate::content::ActionRole::StunStrike);
+        return set_attack(b, r, strike, 0);
+    }
+    // JumpTable80EA7B0[enemy struct byte 4]: every entry is sub_80F0354.
+    // EXE5's table (0x080EB068, by control mode and AI index) has an entry
+    // of GyroMan's own (0x080F0978): the navi's `idle`, which goes on to
+    // the common idle unless it started an action.
+    let navi = stats(b, r).navi;
+    if let Some(f) = b.content.defs.navi(navi).idle {
+        crate::behavior::call_hook(b, f, saito_content_api::HookCall::FormNavi { navi: r });
+        if super::navi_action(b, r) != super::NaviAction::Idle {
+            return;
+        }
+    }
+    decide(b, r);
+}
+
+/// Once the battle is over the survivor drops its charge and statuses and
+/// stands still (a Cross navi returns to base form).
+fn battle_over(b: &mut Battle, r: ObjectRef) {
+    reset_charge(b, r);
+    super::clear_statuses(b, r);
+    // sub_801DACC(0x42): the console's chip icons and window go, whichever
+    // navi this is.
+    b.chip_hud = Default::default();
+    if switch_protected(b, r) {
+        // (The original stores 1 in the attack's variant byte first; the
+        // action it starts doesn't use it.) The rules' role, else the
+        // switch knockout (EXE5 DS's 0x02045108: action 0x4D).
+        let protect = match b.roles().try_action(crate::content::ActionRole::SwitchProtect) {
+            Some(h) => super::NaviAction::Content(h),
+            None => super::NaviAction::Engine(super::EngineAction::SwitchKnockout),
+        };
+        return set_attack(b, r, protect, 0);
+    }
+    b.objects.get_mut(r).anim = 0;
+}
+
+/// `sub_801056A`: a reactive defensive chip fires.
+fn reactive_chip(b: &mut Battle, r: ObjectRef) {
+    super::actions::reactive::counter(b, r);
+}
+
+/// `sub_80F0354`.
+fn decide(b: &mut Battle, r: ObjectRef) {
+    // Its console's chip window follows `sub_800A772`: shown on its own
+    // console, hidden as the game hides it (`hide_chip_window`).
+    let side = b.objects.get(r).alliance as usize & 1;
+    b.chip_hud[side].from_close = false;
+    if super::input::chips_enabled(b, r) {
+        b.chip_hud[side].window = true;
+    } else {
+        hide_chip_window(b, side);
+    }
+    phase_timer(b, r);
+    // A controlled form (EXE6's Beast Over): the side's rules' controller
+    // decides (`sub_802D322`, the berserk).
+    if form_of(b, r).traits.has(crate::content::FormTraits::CONTROLLED) {
+        match b.rules_controller(side as u8, r) {
+            // A chip's use started: the hand's (1), or the attack's own (4).
+            1 => {
+                let chip = super::next_chip(b, r);
+                after_chip(b, r, chip);
+            }
+            4 => {
+                let chip = ai(b, r).attack.chip;
+                after_chip(b, r, chip);
+            }
+            // The buster.
+            2 => {
+                leave_idle(b, r);
+                let action = buster_routine(b, r);
+                set_attack(b, r, action, 1);
+            }
+            // Nothing, or a step started.
+            _ => {}
+        }
+        return;
+    }
+    // (A game with no transformation sequencer at a turn's start, EXE4's:
+    // the idle starts a revert asked for, the form's own, 0x080EEBB4.)
+    if !b.game_rules().flow.sequencer_at_turn_start
+        && ai(b, r).requests & request::REVERT_FORM != 0
+        && ai(b, r).status & status::FORM_CHANGE == 0
+        && let Some(revert) = form_of(b, r).revert
+    {
+        ai_mut(b, r).requests &= !request::REVERT_FORM;
+        ai_mut(b, r).status |= status::REVERTING_FORM;
+        leave_idle(b, r);
+        return set_attack(b, r, super::NaviAction::Content(revert), 0);
+    }
+    start_specials(b, r);
+    let side = b.objects.get(r).alliance as usize;
+    // sub_802E4B8: a running special takes the navi over.
+    if b.sides[side].select_special != 0 {
+        return select_special(b, r);
+    }
+    // The rules' takeover (EXE6's Cross special, `sub_802D4C6`): the side's
+    // systems' `takeover` decides, and ends it.
+    if b.sides[side].takeover != 0 {
+        match b.rules_takeover(side as u8, r) {
+            // A chip's use started: the hand's (1), or the attack's own (4).
+            1 => {
+                let chip = super::next_chip(b, r);
+                after_chip(b, r, chip);
+            }
+            4 => {
+                let chip = ai(b, r).attack.chip;
+                after_chip(b, r, chip);
+            }
+            // The buster.
+            2 => {
+                leave_idle(b, r);
+                let action = buster_routine(b, r);
+                set_attack(b, r, action, 1);
+            }
+            // Nothing, or a step started.
+            _ => {}
+        }
+        return;
+    }
+    // (The rules' guard too: EXE5 DS's 0x0207773A.)
+    if ai(b, r).requests & (request::ANTI_DAMAGE_TRIGGERED | request::ANTI_SWORD_TRIGGERED | request::GUARD) != 0 {
+        return reactive_chip(b, r);
+    }
+    if low_hp_support(b, r) {
+        return;
+    }
+    let f = ai(b, r).requests;
+    if f & request::FORCED_CHARGED_SHOT != 0 {
+        leave_idle(b, r);
+        let shot = super::role_action(b, crate::content::ActionRole::ForcedChargedShot);
+        return set_attack(b, r, shot, 1);
+    }
+    if f & request::BUSTER != 0 {
+        leave_idle(b, r);
+        let action = buster_routine(b, r);
+        return set_attack(b, r, action, 1);
+    }
+    if f & request::CHARGED_SHOT != 0 {
+        leave_idle(b, r);
+        let routine = ai(b, r).charge_shot;
+        let action = weapon_slot_routine(b, r, routine);
+        let sticky = ai(b, r).charge_shot.is_some_and(|w| b.content.weapon(w).sticky);
+        let kind = if sticky { 2 } else { 1 };
+        return set_attack(b, r, action, kind);
+    }
+    // The rules' own B charge released (EXE5's Chaos Unison releases,
+    // 0x080F034E and 0x080F0382): the navi leaves idle, and its side's
+    // rules start what it does (`release_taken`).
+    if f & request::RULES_RELEASE != 0 {
+        leave_idle(b, r);
+        let side = b.objects.get(r).alliance;
+        b.rules_release_taken(side, r);
+        return;
+    }
+    if ai(b, r).requests & request::BACK_SPECIAL != 0 {
+        leave_idle(b, r);
+        let action = weapon_slot_routine(b, r, ai(b, r).back_special);
+        return set_attack(b, r, action, 3);
+    }
+    if ai(b, r).requests & request::MODE9_A != 0 {
+        leave_idle(b, r);
+        let action = weapon_slot_routine(b, r, ai(b, r).mode9_a);
+        return set_attack(b, r, action, 1);
+    }
+    if let Some(chip) = super::chip_use::use_chip(b, r) {
+        return after_chip(b, r, chip);
+    }
+    // Where the rules say so (`idle_asks_controller`), the side's rules
+    // take the step the navi would take: EXE5's no-charge drive
+    // (0x080F03E4: with the no-charge state DarkInvs's, the auto battle AI,
+    // 0x0802B4AC; without, the reset of their drive's state, 0x0802C03A) and
+    // EXE4's dark soul (0x080EEC78: its AI, 0x0800E4F8); an answer has
+    // decided.
+    if b.game_rules().idle_asks_controller && b.rules_controller_answer(side as u8, r).is_some() {
+        return;
+    }
+    let dir = held_direction(b, r);
+    // (Where the rules say so, a blocked step starts nothing: EXE4's.)
+    let blocked = |b: &Battle| {
+        b.game_rules().effects.steps.idle_checks_target && movement::step_target(b, r, dir).is_none()
+    };
+    if dir != 0 && !blocked(b) {
+        return start_move(b, r, dir);
+    }
+    if ai(b, r).requests & (request::TURN_L | request::TURN_R) != 0 {
+        let turn = super::role_action(b, crate::content::ActionRole::Turn);
+        return set_attack(b, r, turn, 4);
+    }
+    let buffered = ai(b, r).buffered_move;
+    if buffered != 0 {
+        let lag = move_lag(b, r);
+        movement::start(b, r, buffered, lag, MoveKind::Fallback);
+    }
+}
+
+/// Phase 0: arm the controllable state (charging needs it) for 10 ticks;
+/// then phase 4, which does nothing. Decisions run in both phases.
+fn phase_timer(b: &mut Battle, r: ObjectRef) {
+    if b.objects.get(r).phase != 0 {
+        // EXE4's idle stands the navi each tick past this phase (the
+        // rules' `idle_stands`).
+        if b.game_rules().idle_stands {
+            b.objects.get_mut(r).anim = 0;
+        }
+        return;
+    }
+    if b.objects.get(r).phase_init == 0 {
+        // sub_801DA48(2): the console's chip icons show, whichever navi
+        // this is.
+        for hud in &mut b.chip_hud {
+            hud.icons = true;
+        }
+        b.objects.get_mut(r).timer = 10;
+        let a = ai_mut(b, r);
+        a.status |= status::CONTROLLABLE;
+        a.status &= !status::CHIP_IN_PROGRESS;
+        b.objects.get_mut(r).phase_init = 4;
+    }
+    let o = b.objects.get_mut(r);
+    let t = o.timer as i32 - 1;
+    o.timer = t as u16;
+    if t <= 0 {
+        o.phase = 4;
+        o.phase_init = 0;
+    }
+}
+
+/// An attack starts: no longer controllable (the local side's chip
+/// window HUD closes).
+fn leave_idle(b: &mut Battle, r: ObjectRef) {
+    ai_mut(b, r).status &= !status::CONTROLLABLE;
+    let side = b.objects.get(r).alliance as usize & 1;
+    hide_chip_window(b, side);
+}
+
+/// `sub_801DACC(0x40)` for a navi of `side`: its console's chip window
+/// goes, or every console's where the game's rules say
+/// (`window_hides_every_console`: EXE4's, which checks no side).
+pub(crate) fn hide_chip_window(b: &mut Battle, side: usize) {
+    if b.game_rules().chip_use.window_hides_every_console {
+        hide_every_chip_window(b);
+    } else {
+        (b.chip_hud[side & 1].window, b.chip_hud[side & 1].from_close) = (false, false);
+    }
+}
+
+/// `sub_801DACC(0x40)` with no check of the side: every console's chip
+/// window goes.
+pub(crate) fn hide_every_chip_window(b: &mut Battle) {
+    for hud in &mut b.chip_hud {
+        (hud.window, hud.from_close) = (false, false);
+    }
+}
+
+/// `sub_802E4E4`: the specials' requests start them: the SELECT special
+/// (the own-gauges mode's), and the Cross special (DarkInvs'
+/// auto-battle: 0x1E0 ticks, invulnerable meanwhile, its controller's
+/// state cleared).
+fn start_specials(b: &mut Battle, r: ObjectRef) {
+    let side = b.objects.get(r).alliance as usize;
+    if ai(b, r).requests & request::SELECT_SPECIAL != 0 {
+        ai_mut(b, r).requests &= !request::SELECT_SPECIAL;
+        b.sides[side].select_special = 1;
+        clear_special_selection(b, r);
+    }
+    // A takeover asked for (EXE6's Cross special): the side's rules start
+    // it (`takeover_requested`).
+    if ai(b, r).requests & request::TAKEOVER != 0 {
+        ai_mut(b, r).requests &= !request::TAKEOVER;
+        clear_special_selection(b, r);
+        b.rules_takeover_requested(side as u8, r);
+    }
+}
+
+/// `sub_802E1EC`: the special's selection is cleared: requests
+/// 0x100000..=0x1000000 (and side bytes +0x40, +0x41, which nothing ported
+/// reads).
+fn clear_special_selection(b: &mut Battle, r: ObjectRef) {
+    ai_mut(b, r).requests &= !0x01F0_0000;
+}
+
+/// `sub_802F068`: the SELECT special holds the navi for its ticks, then
+/// ends (`sub_802F084`: the gauge would be emptied if side byte +3 were set,
+/// but only `sub_802E07C` writes it, with 0).
+fn select_special(b: &mut Battle, r: ObjectRef) {
+    let s = &mut b.sides[b.objects.get(r).alliance as usize];
+    if s.select_ticks != 0 {
+        s.select_ticks -= 1;
+        if s.select_ticks != 0 {
+            return;
+        }
+    }
+    super::reset_select_special(s);
+    ai_mut(b, r).requests &= !request::SELECT_SPECIAL;
+}
+
+/// `sub_8010660`: at a quarter of its HP or less, in link battles the
+/// NaviCust support Tango (stat 0x0D bit 2) comes once; else the rules may
+/// send something (`low_hp`: EXE5 DS's 0x02098A84 goes on to Mag-Barr and
+/// ShadowMan's ambush). When something came the navi does nothing else
+/// this tick.
+fn low_hp_support(b: &mut Battle, r: ObjectRef) -> bool {
+    let o = b.objects.get(r);
+    if o.max_hp / 4 < o.hp {
+        return false;
+    }
+    if let Some(support) = stats(b, r).support
+        && is_link(b)
+        && support.tango
+    {
+        stats_mut(b, r).support = Some(crate::setup::Supports { tango: false, ..support });
+        summon_support(b, r, Support::Tango, None);
+        return true;
+    }
+    let side = b.objects.get(r).alliance;
+    b.rules_low_hp(side, r)
+}
+
+/// The buster's weapon routine.
+fn buster_routine(b: &mut Battle, r: ObjectRef) -> super::NaviAction {
+    weapon_slot_routine(b, r, ai(b, r).buster)
+}
+
+/// A weapon slot's routine; an empty slot (0xFF) reads past
+/// `off_80117D4` (the input decoding never requests one).
+fn weapon_slot_routine(b: &mut Battle, r: ObjectRef, weapon: Option<WeaponHandle>) -> super::NaviAction {
+    let Some(weapon) = weapon else { panic!("weapon routine 0xff reads past off_80117D4") };
+    weapon_routine(b, r, weapon)
+}
+
+/// `off_80117D4[routine]`: set up a weapon's attack variables and name
+/// its action: the weapon's `setup`.
+pub(super) fn weapon_routine(b: &mut Battle, r: ObjectRef, weapon: WeaponHandle) -> super::NaviAction {
+    use saito_content_api::{ActionHandle, HookCall, Registry, Value};
+    if let Some(setup) = b.content.defs.weapon(weapon).setup {
+        let instant = b.content.defs.weapon(weapon).instant;
+        let action = match crate::behavior::call_hook(b, setup, HookCall::Weapon { navi: r }) {
+            Value::Def(Registry::Action, h) => super::NaviAction::Content(ActionHandle(h)),
+            // A chip the weapon loaded as its attack: what the chip's use
+            // starts (its action, or the dimming, navi or instant chips'
+            // action), as `loc_80126EA` returns the chip record's action.
+            Value::Def(Registry::Chip, h) => super::chip_use::chip_action(b, r, Some(saito_content_api::ChipHandle(h))),
+            // A weapon with an instant effect of its own names no action:
+            // the instant chips' action runs it.
+            Value::Nil if instant.is_some() => super::EngineAction::InstantChip.into(),
+            // A routine that ended the attack itself (`object_exitAttackState`)
+            // returns false: the original returns the idle state's number
+            // (8), which the attack then runs, and the attack update ends
+            // it on the next tick (`sub_80EAF36`'s end path); the navi is
+            // idle here at once, which no frame tells apart (the patch
+            // cards' invisibility taken by Rush, the chip lab's
+            // jp/cards/combos/invisible-charge-rush).
+            Value::Bool(false) => super::NaviAction::Idle,
+            v => panic!("weapon {:?} names {v:?}, not an action", b.content.defs.weapon(weapon).key),
+        };
+        // A weapon's instant effect: a chip's (it runs, and the navi
+        // idles), or one no chip has (TenguCross's wind), after which the
+        // navi waits. (Not when the routine ended the attack.)
+        if let Some(f) = instant
+            && action != super::NaviAction::Idle
+        {
+            use super::actions::instant::Effect;
+            let waits = b.content.defs.weapon(weapon).instant_waits;
+            ai_mut(b, r).attack.instant = Some(if waits { Effect::RunsThenWaits(f) } else { Effect::Runs(f) });
+        }
+        return action;
+    }
+    let w = b.content.weapon(weapon);
+    // An A-charge that is its chip has no routine (the original's entry is
+    // `nullsub_44`): started as a weapon, the game starts whatever action
+    // the register it called through holds. (Forms name them only as
+    // A-charges, which `chip_use` handles before calling here.)
+    assert!(w.charged_chip.is_some(), "a weapon has a setup or is its chip");
+    panic!("weapon {:?} is no routine (nullsub_44, off_80117D4): the game starts an action from a stale register", w.key)
+}
+
+/// `sub_801265A`: buster damage, attack + 1 (+1 in some forms), at most
+/// 10; 1 when worn out.
+pub(crate) fn buster_damage(b: &Battle, r: ObjectRef) -> u16 {
+    let s = stats(b, r);
+    let mut d = s.attack as u16 + b.content.navi(s.navi).buster_bonus as u16;
+    if emotion_role(b, b.objects.get(r).alliance) == Some(EmotionRole::WornOut) {
+        d = 1;
+    } else {
+        d += b.content.form(s.form).buster_bonus as u16;
+    }
+    d.min(10)
+}
+
+/// `loc_80F057C`: after a chip starts: interception by the opponent's
+/// NaviCust, the chip-in-progress state, and the hand advances.
+fn after_chip(b: &mut Battle, r: ObjectRef, chip: Option<ChipHandle>) {
+    // loc_80F05F2: its console's chip window goes, intercepted or not.
+    let side = b.objects.get(r).alliance as usize & 1;
+    hide_chip_window(b, side);
+    if intercepted(b, r, chip) {
+        exit_attack_state(b, r);
+        return;
+    }
+    // The other side's rules may stop it (EXE5 DS's SearchMan's support in
+    // a link battle, 0x020778F4: `opponent_chip`).
+    let other = b.objects.get(r).alliance ^ 1;
+    if b.rules_opponent_chip(other, r) {
+        exit_attack_state(b, r);
+        return;
+    }
+    let a = ai_mut(b, r);
+    a.status &= !status::CONTROLLABLE;
+    a.status |= status::CHIP_IN_PROGRESS;
+    // The other player's console shows the chip's name (sub_801EB18),
+    // unless it is a cut-in chip (its telop does), the invalid chip
+    // (the original's 0x185), or a chip its own action names (its trait
+    // `not_named_on_use`: EXE4's 0x080EECF6).
+    let (used, damage, bonus) = {
+        let a = &ai(b, r).attack;
+        (a.chip, a.damage, a.extra)
+    };
+    if let Some(used) = used
+        && chip.is_some_and(|c| b.content.chip(c).flags.0 & crate::content::ChipFlags::DIMMING == 0)
+        && !b.roles().is_chip(crate::content::ChipRole::Invalid, used)
+        && !b.content.chip(used).traits.has(crate::content::ChipTraits::NOT_NAMED_ON_USE)
+    {
+        let side = b.objects.get(r).alliance;
+        b.show_used_chip(side, used, damage, bonus);
+    }
+    // The form's own part (EXE4's RollSoul's heal, 0x080EED04).
+    if let Some(f) = b.content.defs.form(stats(b, r).form).chip_used {
+        crate::behavior::call_hook(b, f, saito_content_api::HookCall::FormNavi { navi: r });
+    }
+    let a = &ai(b, r).attack;
+    if a.special_source == 0 && a.kind != 5 {
+        // sub_800FC7C
+        let side = b.objects.get(r).alliance as usize;
+        let hand = &mut b.hands[side];
+        if hand.cursor < 5 && hand.ids[hand.cursor as usize].is_some() {
+            hand.cursor += 1;
+        }
+    }
+}
+
+/// `sub_80106C0`, then `sub_8010740` (EXE4's 0x0800C838 and 0x0800C8C0):
+/// the opponent's NaviCust support turns the chip back, once: Beat (stat
+/// 0x0D bit 1) a Mega or Giga chip (but a dark one where the rules spare
+/// it: `chip_use.beat_spares_dark`), Rush (bit 0) a chip flagged for him.
+/// (The game reads the chip's record with the id as it is, flag bits and
+/// all.)
+fn intercepted(b: &mut Battle, r: ObjectRef, chip: Option<ChipHandle>) -> bool {
+    intercepted_by(b, r, chip, true)
+}
+
+/// `sub_8010740` alone: the opponent's Rush (a weapon that fires a chip
+/// asks it, the patch cards' invisibility).
+pub(super) fn rush_intercepts(b: &mut Battle, r: ObjectRef, chip: Option<ChipHandle>) -> bool {
+    intercepted_by(b, r, chip, false)
+}
+
+/// The opponent's Beat (`sub_80106C0`, when `beat`) or Rush (`sub_8010740`)
+/// takes the chip.
+fn intercepted_by(b: &mut Battle, r: ObjectRef, chip: Option<ChipHandle>, beat: bool) -> bool {
+    use crate::content::{ChipClass, ExtraChipFlags};
+    if !is_link(b) {
+        return false;
+    }
+    // The attack's chip; none reads as the pack's chip 0.
+    let record = b.chip_field(chip).clone();
+    let other = b.objects.get(r).alliance ^ 1;
+    let spared = b.game_rules().chip_use.beat_spares_dark && record.flags.0 & crate::content::ChipFlags::DARK != 0;
+    let support = match b.stats[other as usize].support {
+        Some(opp) if beat && opp.beat && matches!(record.class, ChipClass::Mega | ChipClass::Giga) && !spared => {
+            b.stats[other as usize].support = Some(crate::setup::Supports { beat: false, ..opp });
+            Support::Beat
+        }
+        Some(opp) if opp.rush && record.extra_flags.has(ExtraChipFlags::RUSH_CANCELS) => {
+            b.stats[other as usize].support = Some(crate::setup::Supports { rush: false, ..opp });
+            Support::Rush
+        }
+        _ => return false,
+    };
+    let Some(host) = b.player(other) else {
+        // The game goes on with a null navi: its panel and side come from
+        // the BIOS.
+        panic!("the opponent's support has no navi to come from (sub_80106C0 / sub_8010740 read a null object)");
+    };
+    summon_support(b, host, support, chip);
+    true
+}
+
+/// The NaviCust supports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Support {
+    Rush,
+    Beat,
+    Tango,
+}
+
+impl Support {
+    /// The support's name in the controller's `support` state field (the
+    /// original's first parameter: 0, 1, 2).
+    fn name(self) -> &'static str {
+        match self {
+            Support::Rush => "rush",
+            Support::Beat => "beat",
+            Support::Tango => "tango",
+        }
+    }
+
+    /// The role of the chip the controller's telop names (its +0x30).
+    fn telop_chip(self) -> crate::content::ChipRole {
+        match self {
+            Support::Rush => crate::content::ChipRole::Rush,
+            Support::Beat => crate::content::ChipRole::Beat,
+            Support::Tango => crate::content::ChipRole::Tango,
+        }
+    }
+}
+
+
+/// `sub_80E90FE`, then `sub_800BF16(side, 1, controller)`: `support`'s
+/// controller on `host`'s panel, its side's, and a dimming its side starts
+/// that no one can cut in on (`host` its user). The controller's state
+/// says which support comes (its `support` field; the original's first
+/// parameter) and, for Rush, the chip he eats (`eaten`; the original's
+/// third and fourth parameters).
+fn summon_support(b: &mut Battle, host: ObjectRef, support: Support, chip: Option<ChipHandle>) {
+    let h = b.objects.get(host);
+    let (panel, side) = (h.panel, h.alliance);
+    // (The chip Rush eats, which the controller's state carries.)
+    let chip_value = |h: Option<ChipHandle>| {
+        h.map_or(saito_content_api::Value::Nil, |h| saito_content_api::Value::Def(saito_content_api::Registry::Chip, h.0))
+    };
+    let eaten = chip_value(chip.filter(|_| support == Support::Rush));
+    let telop = chip_value(b.roles().try_chip(support.telop_chip()));
+    // The spawn's position is the caller's r1..r3: the host's panel row
+    // and two zeros.
+    let pos = crate::object::Vec3 { x: panel.y as i32, y: 0, z: 0 };
+    let kind = b.roles().kind(crate::content::KindRole::Support);
+    let controller = crate::kinds::spawn(b, kind, saito_content_api::SpawnAt::AfterCurrent, pos, [0; 4]);
+    if let Some(c) = controller {
+        let o = b.objects.get_mut(c);
+        o.panel = panel;
+        o.element = 0;
+        o.related[0] = Some(host);
+        o.alliance = side;
+        o.damage = 0;
+        o.stamina = 0;
+        crate::behavior::set_state_field(b, c, "telop_chip", telop);
+        // The same for the presentation.
+        let named = b.roles().try_chip(support.telop_chip());
+        b.objects.get_mut(c).telop_chip = named.map(|chip| crate::hud::TelopChip { chip: Some(chip), ..Default::default() });
+        crate::behavior::set_state_variant(b, c, "support", support.name());
+        crate::behavior::set_state_field(b, c, "eaten", eaten);
+    }
+    b.start_dimming(side, true, controller, host);
+}
+
+/// `sub_800FA54` (EXE4's 0x0800B4B0): the held direction, its keys read in
+/// the rules' order and taken as the rules' confused keys while confused
+/// (`effects.steps`), none while sliding.
+pub(crate) fn held_direction(b: &Battle, r: ObjectRef) -> u8 {
+    use crate::content::StepKey;
+    let steps = &b.game_rules().effects.steps;
+    let bit = |k: StepKey| match k {
+        StepKey::Up => keys::UP,
+        StepKey::Down => keys::DOWN,
+        StepKey::Left => keys::LEFT,
+        StepKey::Right => keys::RIGHT,
+    };
+    let sliding = flag1(b, r) & f1::SLIDING != 0;
+    let held = if sliding { 0 } else { ai(b, r).pad.held };
+    let Some(&key) = steps.keys.iter().find(|&&k| held & bit(k) != 0) else {
+        // No key held (or sliding): the move bug's keys, as they are.
+        let bug = move_bug(b, r);
+        if bug == 0 || bug == 0xFF {
+            return 0;
+        }
+        return steps.keys.iter().find(|&&k| bug as u16 & bit(k) != 0).map_or(0, |&k| direction_code(k));
+    };
+    let key = if flag1(b, r) & f1::CONFUSED != 0 {
+        let c = steps.confused;
+        match key {
+            StepKey::Up => c.up,
+            StepKey::Down => c.down,
+            StepKey::Left => c.left,
+            StepKey::Right => c.right,
+        }
+    } else {
+        key
+    };
+    direction_code(key)
+}
+
+/// A key's direction code: 1 up, 2 down, 3 back (left), 4 forward (right).
+fn direction_code(key: crate::content::StepKey) -> u8 {
+    use crate::content::StepKey;
+    match key {
+        StepKey::Up => 1,
+        StepKey::Down => 2,
+        StepKey::Left => 3,
+        StepKey::Right => 4,
+    }
+}
+
+/// The navi's move bug (`effects.steps.bug`: its stat), 0 where the game has
+/// none.
+pub(crate) fn move_bug(b: &Battle, r: ObjectRef) -> u8 {
+    let Some(bug) = &b.game_rules().effects.steps.bug else { return 0 };
+    match stats(b, r).game_stat(&b.content, &bug.stat) {
+        Some(saito_content_api::FieldValue::U8(n)) => n,
+        other => panic!("the move bug's stat {:?} is {other:?}, not a u8 of the rules' stats", bug.stat),
+    }
+}
+
+/// `sub_80116AE(dir, sub_8010332(), sub_80103A8())`: a step toward `dir`
+/// from input (astray with the NaviCust processing bug).
+pub(crate) fn start_move(b: &mut Battle, r: ObjectRef, dir: u8) {
+    let lag = move_lag(b, r);
+    let kind = if stats(b, r).bugs.processing != 0 { MoveKind::Astray } else { MoveKind::Input };
+    movement::start(b, r, dir, lag, kind);
+}
+
+/// `sub_8010332`: ticks of lag at the end of a move (4 for MegaMan, but
+/// in a form with its own: EXE5's ShadowSoul's 0, 0x0800E0D2).
+pub(super) fn move_lag(b: &Battle, r: ObjectRef) -> u16 {
+    if super::battle_mode(b) == 9 {
+        return 1;
+    }
+    let s = stats(b, r);
+    if super::is_megaman(b, r) {
+        return super::form_of(b, r).move_lag.unwrap_or(4) as u16;
+    }
+    b.content.navi(s.navi).move_lag[s.navi_variant as usize] as u16
+}

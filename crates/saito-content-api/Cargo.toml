@@ -1,0 +1,14 @@
+[package]
+name = "saito-content-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The battle engine's content API: what chips, attacks and effects see of the core"
+
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+# SpriteId is written "CC-II" in content files; the derives (`serde(transparent)`).
+serde = { version = "1", features = ["derive"] }
+# A pack's manifest (manifest.toml: its kind, its uses, its definitions).
+toml = "0.8"

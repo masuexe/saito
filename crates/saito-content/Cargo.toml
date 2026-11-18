@@ -1,0 +1,43 @@
+[package]
+name = "saito-content"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The battle content: a game's Luau, strings, library order and look, loaded into the engine's data; its bundles and their store"
+
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+saito-assets = { path = "../saito-assets" }
+# The battle data model the content loads into.
+saito-battle.workspace = true
+# The definitions the define phase reads (the lint of `saito-content check`).
+saito-content-api = { path = "../saito-content-api" }
+# A game's assets, extracted from its ROMs, which `saito-content check` checks against its content.
+saito-extract = { path = "../saito-extract" }
+# Custom assets' pictures (custom/): indexed PNGs.
+png = "0.17"
+# Custom songs (custom/song.rs): standard MIDI files, made into the M4A driver's songs.
+midly = { version = "0.5", default-features = false, features = ["std"] }
+# Custom songs' instruments (custom/song.rs): WAV recordings, made into the driver's samples.
+hound = "3.5"
+m4a.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+# Writing TOML with hex ids and flag words (the version toml uses).
+toml_edit = "0.22"
+# Content bundles (bundle.rs): the deterministic tar, its gzip, and its SHA-256 id.
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
+sha2 = "0.10"
+
+[build-dependencies]
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+toml = "0.8"
+
+[dev-dependencies]
+saito-battle = { workspace = true, features = ["test-content"] }

@@ -1,0 +1,653 @@
+# Korean: Builds' editor (ui/screens/builds.slint, ui/screens/builds/*.slint), and what any screen shows of a build
+# (ui/build.slint: the overview, a build's row, the words of a typed problem).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ---- A build's row: its navi and whether it is ready.
+
+msgid "{} · ready"
+msgstr "{} · 준비 완료"
+
+msgid "{} · {n} problem"
+msgid_plural "{} · {n} problems"
+msgstr[0] "{} · 문제 {n}건"
+
+msgid "Can't be read"
+msgstr "읽을 수 없습니다"
+
+# The ruleset a build is made for, at its row's right end, where it is no longer there (the player's own, deleted).
+msgid "{} (missing)"
+msgstr "{} (찾을 수 없음)"
+
+# A save made a build: the preset it was put on, then the navi ("Imported as Dark MegaMan").
+msgid "Imported as {} {}"
+msgstr "{} {}(으)로 불러왔습니다"
+
+# ---- The build overview.
+
+msgid "Stats"
+msgstr "능력치"
+
+msgid "HP"
+msgstr "HP"
+
+msgid "Attack"
+msgstr "어택"
+
+msgid "Rapid"
+msgstr "래피드"
+
+msgid "Charge"
+msgstr "차지"
+
+msgid "Custom"
+msgstr "커스텀"
+
+msgid "Mega chips"
+msgstr "메가 칩"
+
+msgid "Giga chips"
+msgstr "기가 칩"
+
+msgid "Regular memory"
+msgstr "레귤러 메모리"
+
+msgid "Regular"
+msgstr "레귤러"
+
+msgid "Abilities"
+msgstr "어빌리티"
+
+msgid "Bugs"
+msgstr "버그"
+
+msgid "None"
+msgstr "없음"
+
+# The navi, then the presets of the build's choices ("MegaMan · Light").
+msgid "{} · {}"
+msgstr "{} · {}"
+
+# A NaviCust program, then how many copies of it in its color ("Attck+1 ×3").
+msgid "{} ×{}"
+msgstr "{} ×{}"
+
+msgid "FOLDER · {n} CHIP"
+msgid_plural "FOLDER · {n} CHIPS"
+msgstr[0] "폴더 · {n}장"
+
+# A bug's level, and the amount a card writes of how many ("4 of 16").
+
+msgid "Lv {}"
+msgstr "Lv {}"
+
+msgid "{} of {}"
+msgstr "{1} 중 {0}"
+
+msgid "+{} more"
+msgstr "외 {}건"
+
+msgid "{} MB"
+msgstr "{} MB"
+
+# ---- The editor.
+
+msgid "Navi"
+msgstr "내비"
+
+msgid "Folder"
+msgstr "폴더"
+
+msgid "NaviCust"
+msgstr "내비커스트"
+
+msgid "Patch cards"
+msgstr "개조 카드"
+
+msgid "Auto battle"
+msgstr "오토 배틀"
+
+msgid "Tab"
+msgstr "탭"
+
+# ---- The Navi tab.
+
+msgid "Choose"
+msgstr "선택"
+
+msgid "{n} navi"
+msgid_plural "{n} navis"
+msgstr[0] "내비 {n}기"
+
+msgid "Element"
+msgstr "속성"
+
+# The game's own navi's name goes in ("MegaMan").
+msgid "NaviCust and patch cards are {} only."
+msgstr "내비커스트와 개조 카드는 {} 전용입니다."
+
+# A list of forms' (souls, Crosses) put all in, or take all out: a version's group's, at its head's end.
+msgid "All"
+msgstr "전체"
+
+# A pane's header's word, its dialog's button and the footer's hint: that part of the build emptied at once.
+msgid "Clear"
+msgstr "비우기"
+
+msgid "Clear the folder?"
+msgstr "폴더를 비우시겠습니까?"
+
+msgid "Clear the NaviCust?"
+msgstr "내비커스트를 비우시겠습니까?"
+
+msgid "Clear the patch cards?"
+msgstr "개조 카드를 비우시겠습니까?"
+
+msgid "Clear the auto battle data?"
+msgstr "오토 배틀 데이터를 비우시겠습니까?"
+
+# ---- The Folder tab.
+
+# The footer: the folder's chips of its size.
+msgid "{} of {} chips"
+msgstr "칩 {}/{}"
+
+msgid "Pick"
+msgstr "넣기"
+
+msgid "Remove"
+msgstr "빼기"
+
+msgid "Tag"
+msgstr "태그"
+
+msgid "Chips"
+msgstr "칩"
+
+msgid "Mega"
+msgstr "메가"
+
+msgid "Giga"
+msgstr "기가"
+
+msgid "Reg"
+msgstr "레귤러"
+
+msgid "Library"
+msgstr "라이브러리"
+
+msgid "Search chips"
+msgstr "칩 검색"
+
+msgid "Search programs"
+msgstr "프로그램 검색"
+
+msgid "Sort"
+msgstr "정렬"
+
+msgid "Library order"
+msgstr "라이브러리순"
+
+msgid "Name"
+msgstr "이름"
+
+msgid "Code"
+msgstr "코드순"
+
+msgid "MB"
+msgstr "MB순"
+
+# The Party tab's library sorted by a PartyCust program's slots; the strip's stat of a navi's gauge, the slots its
+# PartyCust holds.
+msgid "Slots"
+msgstr "슬롯"
+
+# The sort by a chip's attack power (the overview's "Attack" is the buster's).
+msgctxt "sort"
+msgid "Attack"
+msgstr "공격력순"
+
+# Over the library while a row of the build's is dragged there: let go, it is taken out.
+msgid "Drop to remove"
+msgstr "놓아서 빼기"
+
+# ---- The NaviCust tab.
+
+msgid "Pick up"
+msgstr "집기"
+
+# A program of the list taken in hand.
+msgid "Take"
+msgstr "꺼내기"
+
+msgid "Take off"
+msgstr "떼어내기"
+
+msgid "Move piece"
+msgstr "파츠 이동"
+
+msgid "Turn"
+msgstr "회전"
+
+msgid "Compress"
+msgstr "압축"
+
+msgid "Uncompress"
+msgstr "압축 해제"
+
+msgid "Place"
+msgstr "배치"
+
+# The piece in hand put away into the list.
+msgid "Put away"
+msgstr "집어넣기"
+
+# Over the list while a piece is in hand: a click there puts it away into the list.
+msgid "Click to put away"
+msgstr "클릭하여 집어넣기"
+
+msgid "{n} program"
+msgid_plural "{n} programs"
+msgstr[0] "프로그램 {n}개"
+
+msgid "Programs"
+msgstr "프로그램"
+
+# Where a program of the list is: on the board, in hand (being moved), on the board and over its ring.
+msgid "Placed"
+msgstr "배치됨"
+
+# A program placed more than once: how many copies of it are on the board.
+msgid "Placed ×{}"
+msgstr "배치됨 ×{}"
+
+msgid "In hand"
+msgstr "이동 중"
+
+msgid "Out of bounds"
+msgstr "범위 초과"
+
+msgid "Effects"
+msgstr "효과"
+
+# The key under the board.
+msgid "Board"
+msgstr "보드"
+
+msgid "Command line"
+msgstr "커맨드 라인"
+
+msgid "Plus part"
+msgstr "플러스 파츠"
+
+# The strip: the program's compressed shape, then its whole one, each over its word; then the colors it comes in.
+msgid "Compressed"
+msgstr "압축"
+
+msgid "Uncompressed"
+msgstr "비압축"
+
+msgid "Colors"
+msgstr "색상"
+
+# A program's row: Left and Right choose the color whose part Enter takes.
+msgid "Color"
+msgstr "색상 선택"
+
+# ---- The Patch cards tab.
+
+msgid "Add"
+msgstr "추가"
+
+msgid "Move up or down"
+msgstr "위아래로 이동"
+
+msgid "Put in"
+msgstr "장착"
+
+# A slot with no card (and a list's room for one more).
+msgid "Empty"
+msgstr "비어 있음"
+
+# The key hint: empty a slot.
+msgctxt "verb"
+msgid "Empty"
+msgstr "비우기"
+
+msgctxt "move"
+msgid "Up"
+msgstr "위로"
+
+msgctxt "move"
+msgid "Down"
+msgstr "아래로"
+
+msgid "{n} card"
+msgid_plural "{n} cards"
+msgstr[0] "카드 {n}장"
+
+msgid "{} of {} cards"
+msgstr "카드 {}/{}"
+
+msgid "Cards"
+msgstr "카드"
+
+msgid "Slots"
+msgstr "슬롯"
+
+# A card's number ("No. 074").
+msgid "No. {}"
+msgstr "No. {}"
+
+# The slot a card belongs in ("Slot 0C").
+msgid "Slot {}"
+msgstr "슬롯 {}"
+
+msgid "Search cards"
+msgstr "카드 검색"
+
+msgid "Number"
+msgstr "번호순"
+
+msgid "Slot"
+msgstr "슬롯순"
+
+# Why a card can't go in now: it is in already; what it costs where the MB left is less.
+msgid "Installed"
+msgstr "장착됨"
+
+msgid "Needs {} MB"
+msgstr "{} MB 필요"
+
+# ---- The Auto battle tab.
+
+msgid "{} of {} places"
+msgstr "{}/{}칸"
+
+# How many of the auto battle data's places hold the chip (a library row's note).
+msgid "In {n} place"
+msgid_plural "In {n} places"
+msgstr[0] "{n}곳에 설정됨"
+
+# A chip the auto battle data can't hold: its navi can't play it.
+msgid "{} can't be played in auto battle"
+msgstr "{}은(는) 오토 배틀에서 사용할 수 없습니다"
+
+# A chip in a list of the auto battle data that holds another class of chip: the chip's name, then the list's, as
+# the game's strings have it ("Cannon can't be in the Mega list").
+msgid "{} can't be in the {} list"
+msgstr "{}은(는) {} 목록에 넣을 수 없습니다"
+
+# What the NaviCust changes of a number, the change put in ("HP +100").
+msgid "HP {}"
+msgstr "HP {}"
+
+msgid "Attack {}"
+msgstr "어택 {}"
+
+msgid "Rapid {}"
+msgstr "래피드 {}"
+
+msgid "Charge {}"
+msgstr "차지 {}"
+
+msgid "Custom {}"
+msgstr "커스텀 {}"
+
+msgid "Mega chips {}"
+msgstr "메가 칩 {}"
+
+msgid "Giga chips {}"
+msgstr "기가 칩 {}"
+
+msgid "Regular memory {}"
+msgstr "레귤러 메모리 {}"
+
+# The strip: a chip's class and its facts.
+
+msgid "Standard"
+msgstr "스탠다드"
+
+# A Program Advance's class (in the auto battle data's strip).
+msgid "Program Advance"
+msgstr "프로그램 어드밴스"
+
+msgid "Dark"
+msgstr "다크"
+
+msgid "{} attack"
+msgstr "공격력 {}"
+
+msgid "{} in folder"
+msgstr "폴더에 {}장"
+
+# ---- Why a chip can't go into the folder now: the end of its library row.
+
+# A card with variants: the card's name, then its variant's, a version's ("Bass-Cross MegaMan (Gregar)").
+msgid "{} ({})"
+msgstr "{} ({})"
+
+msgid "Folder full"
+msgstr "폴더 가득 참"
+
+msgid "{n} copy at most"
+msgid_plural "{n} copies at most"
+msgstr[0] "최대 {n}장"
+
+msgid "Giga limit reached"
+msgstr "기가 상한 도달"
+
+msgid "Mega limit reached"
+msgstr "메가 상한 도달"
+
+msgid "Dark limit reached"
+msgstr "다크 상한 도달"
+
+msgid "Limit reached"
+msgstr "상한 도달"
+
+# ---- What is wrong with a build, each kind with its numbers.
+
+msgid "{} chips, a folder has {}"
+msgstr "칩이 {}장입니다 (폴더 정원 {})"
+
+msgid "{} can't be in a folder"
+msgstr "{}은(는) 폴더에 넣을 수 없습니다"
+
+msgid "{} has no code {}"
+msgstr "{}에 코드 {}이(가) 없습니다"
+
+# How many, a chip's name, the most a folder holds ("5 Cannon, limit 4").
+msgid "{} {}, limit {}"
+msgstr "{1} {0}장 (상한 {2}장)"
+
+msgid "{} Giga chips, limit {}"
+msgstr "기가 칩 {}장 (상한 {}장)"
+
+msgid "{} Mega chips, limit {}"
+msgstr "메가 칩 {}장 (상한 {}장)"
+
+msgid "{} Dark chips, limit {}"
+msgstr "다크 칩 {}장 (상한 {}장)"
+
+msgid "{} chips, limit {}"
+msgstr "칩 {}장 (상한 {}장)"
+
+msgid "{} is {} MB, Regular memory is {} MB"
+msgstr "{}은(는) {} MB입니다 (레귤러 메모리 {} MB)"
+
+msgid "Tag chips are {} MB, Tag memory is {} MB"
+msgstr "태그 칩은 {} MB입니다 (태그 메모리 {} MB)"
+
+msgid "The Regular chip's slot is empty"
+msgstr "레귤러 칩 슬롯이 비어 있습니다"
+
+msgid "Tag chips are two slots with a chip"
+msgstr "태그 칩은 칩이 들어 있는 슬롯 2개여야 합니다"
+
+msgid "The Regular chip can't be a tag chip"
+msgstr "레귤러 칩은 태그로 지정할 수 없습니다"
+
+msgid "This game has no tag chips"
+msgstr "이 게임에는 태그 칩이 없습니다"
+
+msgid "{} is outside {} to {}"
+msgstr "{}은(는) {}~{} 범위 밖입니다"
+
+msgid "This navi can't use it"
+msgstr "이 내비는 사용할 수 없습니다"
+
+msgid "Something is there twice"
+msgstr "중복된 항목이 있습니다"
+
+msgid "{} MB, limit {}"
+msgstr "{} MB (상한 {} MB)"
+
+msgid "A piece is off the board"
+msgstr "보드를 벗어난 파츠가 있습니다"
+
+msgid "Two pieces overlap"
+msgstr "두 파츠가 겹쳐 있습니다"
+
+# A card's name, then its slot's ("Roll belongs in slot 0C").
+msgid "{} belongs in slot {}"
+msgstr "{}은(는) 슬롯 {} 전용입니다"
+
+msgid "Made for another game"
+msgstr "다른 게임용 빌드입니다"
+
+msgid "Something isn't chosen"
+msgstr "선택되지 않은 항목이 있습니다"
+
+msgid "the folder"
+msgstr "폴더"
+
+msgid "the NaviCust"
+msgstr "내비커스트"
+
+msgid "the patch cards"
+msgstr "개조 카드"
+
+msgid "the auto battle data"
+msgstr "오토 배틀 데이터"
+
+msgid "This navi has no level"
+msgstr "이 내비에는 레벨이 없습니다"
+
+msgid "This navi doesn't change form"
+msgstr "이 내비는 폼 체인지를 하지 않습니다"
+
+msgid "This navi can't use {}"
+msgstr "이 내비는 {}을(를) 사용할 수 없습니다"
+
+msgid "No navi chosen"
+msgstr "내비가 선택되지 않았습니다"
+
+msgid "No form chosen"
+msgstr "폼이 선택되지 않았습니다"
+
+msgid "No level chosen"
+msgstr "레벨이 선택되지 않았습니다"
+
+msgid "Something in {} isn't chosen"
+msgstr "{}에 선택되지 않은 항목이 있습니다"
+
+msgid "Something in {} is there twice"
+msgstr "{}에 중복된 항목이 있습니다"
+
+msgid "This navi isn't {}'s"
+msgstr "이 내비는 {}의 것이 아닙니다"
+
+msgid "A form isn't {}'s"
+msgstr "{}의 폼이 아닌 항목이 있습니다"
+
+msgid "A chip in the folder isn't {}'s"
+msgstr "폴더에 {}의 칩이 아닌 것이 있습니다"
+
+msgid "Something in {} isn't {}'s"
+msgstr "{0}에 {1}의 것이 아닌 항목이 있습니다"
+
+msgid "Something here isn't {}'s"
+msgstr "여기에 {}의 것이 아닌 항목이 있습니다"
+
+msgid "This navi can't be used"
+msgstr "이 내비는 사용할 수 없습니다"
+
+msgid "This form can't be used"
+msgstr "이 폼은 사용할 수 없습니다"
+
+msgid "This level can't be used"
+msgstr "이 레벨은 사용할 수 없습니다"
+
+msgid "Something in {} can't be used"
+msgstr "{}에 사용할 수 없는 항목이 있습니다"
+
+msgid "Something here can't be used"
+msgstr "여기에 사용할 수 없는 항목이 있습니다"
+
+msgid "It couldn't be checked. Details are in the log file"
+msgstr "확인할 수 없습니다. 자세한 내용은 로그 파일을 참조하세요"
+
+# ---- The ruleset the build is made for (docs/design/app-ui.md §2.59, §2.73): the editor's select (its note where the
+# ruleset is no longer there), and what it doesn't allow.
+
+msgid "(missing)"
+msgstr "(찾을 수 없음)"
+
+msgid "{} isn't allowed"
+msgstr "{}은(는) 허용되지 않습니다"
+
+msgid "Not allowed"
+msgstr "사용 불가"
+
+# A build of two versions' things under one version per build.
+msgid "Mixed versions"
+msgstr "버전 혼합"
+
+# ---- The Party tab (a game whose builds have a party: EXE5's party battle). A partner's
+# programs fill slots of its gauge (PartyCust).
+
+msgid "Party"
+msgstr "파티"
+
+msgid "Search navis"
+msgstr "내비 검색"
+
+# Why a navi can't go into the party's slot: it is in the party already.
+msgid "In party"
+msgstr "파티에 있음"
+
+msgid "the party"
+msgstr "파티"
+
+msgid "Programs fill {} slots, the gauge has {}"
+msgstr "프로그램이 {}슬롯을 사용하지만 게이지는 {}슬롯입니다"
+
+# The Party tab: partners, PROGRAMS.
+msgid "Partners"
+msgstr "파트너"
+
+msgid "Navi changes"
+msgstr "내비 체인지"
+
+msgid "{n} slot free"
+msgid_plural "{n} slots free"
+msgstr[0] "빈 슬롯 {n}개"
+
+msgid "Clear the party?"
+msgstr "파티를 비우시겠습니까?"
+
+msgid "Fits: {n} slot free"
+msgid_plural "Fits: {n} slots free"
+msgstr[0] "장착 가능: 빈 슬롯 {n}개"
+
+msgid "Needs {n} slot"
+msgid_plural "Needs {n} slots"
+msgstr[0] "{n}슬롯 필요"
+
+msgid "{n} slot"
+msgid_plural "{n} slots"
+msgstr[0] "{n}슬롯"

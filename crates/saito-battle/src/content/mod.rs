@@ -1,0 +1,691 @@
+//! Game content: the typed data a battle runs on.
+//!
+//! [`Content`] holds everything the simulation reads that isn't rules
+//! code: chips, navis and forms, stages, the rules' tables (collision
+//! types, panel rules, status effects...), the identities (what an object
+//! is taken for and wears), the registries of what the content defines,
+//! and every sprite's animation timing. It never changes during a battle and is
+//! shared between battles and their snapshots through an `Arc`:
+//!
+//! ```ignore
+//! let (content, _report) = saito_content::load::load_battle(&content_dir, "exe6")?;
+//! let content = Arc::new(content);
+//! let setup = RoundSetup { content: content.hash(), ..setup };
+//! let battle = Battle::new(setup, content.clone());
+//! let chip = battle.content.chip(hand[0]);
+//! ```
+//!
+//! See docs/design/content-pack.md for the content root and this API.
+//!
+//! The engine does no file IO: a loader outside it (saito-content) reads a
+//! content root (EXE6's is the committed content/exe6) into this model, and
+//! tests build small content sets in code. Everything a battle reads is the
+//! content's, the sprites' timing too: a game's assets (extracted from the
+//! user's ROMs by `saito-extract`) are only what a frontend draws and plays.
+//!
+//! Content has an identity, [`Content::hash`], which a round's setup
+//! carries (`RoundSetup::content`) so that netplay peers can check they
+//! run the same content. The content itself is not part of a snapshot or
+//! of the state digest.
+//!
+//! What the content defines is by handle: each key interns to a dense
+//! handle at load ([`Defs`]). The engine has no navi, form or other
+//! content by the original's numbers (docs/design/content-model-v2.md
+//! §3.2, §12): compat's numbers are exe6-compat's.
+
+mod background_pool;
+mod chips;
+mod custom;
+mod defs;
+mod flags;
+mod identity;
+mod navis;
+mod reader;
+mod roles;
+mod rules;
+mod scripts;
+pub(crate) mod sections;
+mod sprites;
+mod stages;
+pub mod strings;
+mod views;
+#[cfg(any(test, feature = "test-content"))]
+pub mod testing;
+
+pub use background_pool::{BackgroundPool, pool_key};
+pub use chips::*;
+pub use custom::*;
+pub use defs::*;
+pub use identity::{ActorBody, BodyPart, FieldLook, IceSize, Identity, IdentityClass, IdentityOwner, OverlayHooks, Parts};
+pub use navis::*;
+pub use roles::*;
+pub use rules::*;
+pub use scripts::*;
+pub use sprites::*;
+pub use stages::*;
+pub use views::*;
+
+use saito_content_api::{ChipHandle, FormHandle, NaviHandle, StageHandle, WeaponHandle};
+use serde::{Deserialize, Serialize};
+
+/// A definition's value that only what shows reads (the custom screen's
+/// layer, a frontend), outside the simulation: out of the content's hash,
+/// so that what it is made from (the strings it is counted from) can change
+/// and the content stays the same content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Shown<T>(pub T);
+
+impl<T> std::hash::Hash for Shown<T> {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+impl<T> std::ops::Deref for Shown<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+/// An attack's primary element (a chip's element, a navi's or form's).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Element {
+    #[default]
+    Null = 0,
+    Fire = 1,
+    Aqua = 2,
+    Elec = 3,
+    Wood = 4,
+}
+
+/// Secondary-element bits: an attack's extra elements, or what a navi is
+/// weak to. In a content file, a list of names (`["sword"]`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SecondaryElements(pub u8);
+
+impl SecondaryElements {
+    pub const BREAK: u8 = 0x10;
+    pub const WIND: u8 = 0x20;
+    pub const CURSOR: u8 = 0x40;
+    pub const SWORD: u8 = 0x80;
+    pub(crate) const NAMES: &[(u32, &str)] =
+        &[(0x10, "break"), (0x20, "wind"), (0x40, "cursor"), (0x80, "sword")];
+}
+
+flags::serde_flags!(SecondaryElements, u8);
+
+/// A panel relative to another, `dx` toward the facing side. In a
+/// content file, `[dx, dy]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PanelOffset {
+    pub dx: i8,
+    pub dy: i8,
+}
+
+impl Serialize for PanelOffset {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        [self.dx, self.dy].serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for PanelOffset {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<PanelOffset, D::Error> {
+        let [dx, dy] = <[i8; 2]>::deserialize(d)?;
+        Ok(PanelOffset { dx, dy })
+    }
+}
+
+/// A test on a panel's flags word (`field::pflags`): all of `require`
+/// set and none of `forbid`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PanelCondition {
+    pub require: u32,
+    pub forbid: u32,
+}
+
+/// A hit region content defines (`new.region`): panels around the
+/// anchor, or the whole field's panels that meet a condition.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Region {
+    Panels(Vec<PanelOffset>),
+    Field(PanelCondition),
+}
+
+/// A banner asset: its handle over the banners the content names
+/// (`AssetNames`; what number the game's graphics give it is the frontend's
+/// to look up). The engine names
+/// none itself: what the rules show it gets by role (`Roles::banner`) or
+/// from a definition (a navi's win and lose banners, the banners that
+/// hold).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BannerId(pub u16);
+
+/// A background: its handle over the round's backgrounds, the game's own
+/// (its asset table's: a stage's, the rules' link pick's) and then the
+/// background pool's others ([`BackgroundPool`]: another game's). A round's
+/// settings hold one; no tick reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BackgroundId(pub u16);
+
+/// A mugshot asset: its handle over the mugshots the content names (a link
+/// navi's face, a form's faces). Presentation only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MugshotId(pub u16);
+
+/// The identity of a content set: a stable hash of all of it. A round's
+/// setup carries it; two peers whose setups agree run the same content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ContentHash(pub u64);
+
+impl std::fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+/// Everything the simulation reads besides its own state and code. See
+/// the module docs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Content {
+    /// Rules stated as Rust tables, which the rules' sections replace
+    /// (a tool's decode of a ROM's, a test's content of a few modules);
+    /// none: the rules state every rule (a game's content, and the
+    /// engine's test content).
+    pub base_rules: Option<Rules>,
+    /// The game's tables (what its rules state, over the Rust tables),
+    /// made by [`Content::define`]: what a battle reads
+    /// (docs/design/rules-in-luau.md §2.3; a match plays one game,
+    /// docs/design/content-model-v2.md §4.0). None until then, and for
+    /// modules of no game that state none (a test's: no rules, no Rust
+    /// tables): the engine has no game's rules of its own to give them. A
+    /// game pack that states none doesn't load. Read by [`Content::rules`].
+    pub rules: Option<Rules>,
+    /// The assets the content names (`asset.sound("throw")`,
+    /// `asset.sprite("bomb")`), whose places are their handles: made by
+    /// [`Content::define`] (docs/design/content-model-v2.md §6.3). No asset
+    /// is read: what number the game's assets give each is a frontend's
+    /// (`saito_content_api::AssetNumbers`).
+    pub assets: saito_content_api::AssetNames,
+    /// The assets the content makes from files of its own, not its ROMs'
+    /// (its `backgrounds.toml`'s, `music.toml`'s and `sprites.toml`'s, which
+    /// also times a ROM's sprite otherwise): made by [`Content::define`], and
+    /// added to the game's assets as they load (`saito_content::custom`).
+    /// Presentation, left out of the hash.
+    pub custom_assets: saito_content_api::CustomAssets,
+    /// Each background's music (its `backgrounds.toml`'s): what a round
+    /// drawn on it plays where the player picked none
+    /// ([`Content::music_of_background`]). Made by [`Content::define`].
+    /// Presentation, left out of the hash.
+    pub background_music: saito_content_api::BackgroundMusic,
+    /// The game's backgrounds and music as its `backgrounds.toml` and
+    /// `music.toml` state them (the loader reads them with its locales):
+    /// what [`Content::define`] makes its backgrounds' names, its custom
+    /// backgrounds and songs and its backgrounds' music of, its battle
+    /// themes and the backgrounds its link battles pick and draw their
+    /// stages on. Presentation, left out of the hash.
+    pub presentation: saito_content_api::Presentation,
+    /// The pack's scripts (see `scripts`).
+    pub scripts: Scripts,
+    /// What the content defines: the registries and their handles, and the
+    /// functions the scripts implement (see `defs`). Made from the rest by
+    /// [`Content::define`].
+    pub defs: Defs,
+    /// The content's own language's strings (`strings`: a content root's
+    /// `locales/`), which the define phase counts the chatbox's timing
+    /// from; presentation besides, left out of the hash.
+    pub strings: strings::Strings,
+    /// Every background of the content's games, which a round may be drawn
+    /// on whatever its game (the loader reads it from the content's
+    /// locales): the handles past the game's own ([`BackgroundId`]).
+    /// Presentation, left out of the hash (`background_pool`).
+    pub background_pool: BackgroundPool,
+    /// The content's hash once [`Content::hash`] has walked it: no part of
+    /// the content (left out of its hash and its equality; a copy computes
+    /// its own). [`Content::define`] and [`Content::rules_mut`] forget it;
+    /// a caller that changes the content's fields itself after hashing it
+    /// hashes a copy instead.
+    pub hash_cache: HashCache,
+}
+
+/// A content's hash, kept once computed ([`Content::hash_cache`]).
+#[derive(Debug, Default)]
+pub struct HashCache(std::sync::OnceLock<ContentHash>);
+
+impl HashCache {
+    /// Forget the hash: the content changed.
+    pub fn clear(&mut self) {
+        self.0 = std::sync::OnceLock::new();
+    }
+}
+
+impl Clone for HashCache {
+    /// A copy computes its own (a copy is made to be changed).
+    fn clone(&self) -> HashCache {
+        HashCache::default()
+    }
+}
+
+impl PartialEq for HashCache {
+    fn eq(&self, _: &HashCache) -> bool {
+        true
+    }
+}
+
+impl Eq for HashCache {}
+
+impl std::hash::Hash for HashCache {
+    /// Nothing: the hash is of the content, not of itself.
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+/// docs/design/content-model-v2.md §4.0: a support pack defines nothing a
+/// game has ([`saito_content_api::GAME_LISTS`]: its makers take the game's
+/// ids). (What a game has needs no check of its own: a module nothing
+/// requires never runs, so it defines nothing.)
+fn check_support(scripts: &Scripts, definitions: &saito_content_api::Definitions) -> Result<(), saito_content_api::ContentError> {
+    use saito_content_api::{ContentError, GAME_LISTS, PackKind, keys};
+    for d in &definitions.defs {
+        if !GAME_LISTS.iter().any(|(_, rs)| rs.contains(&d.registry)) {
+            continue;
+        }
+        let Some(pack) = keys::root_of(&d.module) else { continue };
+        if scripts.manifest(pack).is_some_and(|p| p.kind == PackKind::Support) {
+            return Err(ContentError::new(format!(
+                "{}.luau: {} {}: support pack {pack} defines nothing a game has (its makers take the game's ids)",
+                keys::module_path(&d.module),
+                d.registry,
+                d.key
+            )));
+        }
+    }
+    Ok(())
+}
+
+impl Content {
+    /// Run the define phase over the scripts and build the registries
+    /// (docs/design/content-model-v2.md §7.3). A battle needs defined
+    /// content; loaders call this once the data and scripts are in.
+    pub fn define(&mut self) -> Result<(), saito_content_api::ContentError> {
+        self.hash_cache.clear();
+        if self.scripts.modules.is_empty() && self.scripts.packs.is_empty() {
+            let definitions = Default::default();
+            sections::build(self, &definitions)?;
+            self.defs = Defs::build(self, definitions)?;
+            return Ok(());
+        }
+        self.scripts.check_packs().map_err(saito_content_api::ContentError::new)?;
+        if let [_, _, ..] = self.scripts.games()[..] {
+            return Err(saito_content_api::ContentError::new(format!(
+                "content holds one game, and these are {} (docs/design/content-model-v2.md §4.0: a match plays one game)",
+                self.scripts.games().join(" and ")
+            )));
+        }
+        let saito_luau::DefinePhase { definitions, compiled, assets, mut recipes } =
+            saito_luau::define(&self.scripts.pack_to_define(), saito_luau::Options::default())?;
+        self.scripts.recipe = self.scripts.games().first().and_then(|g| recipes.remove(g));
+        // The assets the modules name.
+        self.assets = assets.names;
+        self.present();
+        // What the load read is the content's modules from here on (those
+        // it read from the packs' folders with those held in memory).
+        for (name, source) in compiled.sources() {
+            if !self.scripts.modules.contains_key(name) {
+                self.scripts.modules.insert(name.to_string(), source.to_string());
+            }
+        }
+        self.scripts.compiled = CompiledModules(compiled);
+        check_support(&self.scripts, &definitions)?;
+        // The rule sections into the rules' typed tables.
+        sections::build(self, &definitions)?;
+        // (The definitions name chip families and panel types: the game's,
+        // its rules'.)
+        let families = self.rules.as_ref().map(|r| r.chip_families.clone()).unwrap_or_default();
+        let panel_types = self.rules.as_ref().map(|r| r.panels.names.clone()).unwrap_or_default();
+        self.defs = crate::field::reading_panel_types(&panel_types, || chips::reading_families(&families, || Defs::build(self, definitions)))?;
+        // (The rules' references to definitions, which have their handles
+        // now.)
+        crate::field::reading_panel_types(&panel_types, || chips::reading_families(&families, || sections::link(self)))?;
+        // (The forms' faces, keyed by the rules' emotions.)
+        navis::check_faces(self)?;
+        self.check_background_music()?;
+        self.count_strings();
+        Ok(())
+    }
+
+    /// The game's backgrounds and music, as its presentation states them
+    /// ([`Content::presentation`]): its backgrounds' names (those its
+    /// `backgrounds.toml` names and its own in the background pool, each
+    /// once, in byte order: their places are their handles), its custom
+    /// backgrounds and songs, and each background's music.
+    fn present(&mut self) {
+        let p = &self.presentation;
+        let game = self.game().to_string();
+        let mut names: Vec<String> = p.backgrounds.iter().chain(&p.link_battle).chain(&p.stage_background).cloned().collect();
+        names.extend(self.background_pool.iter().filter(|(g, _)| *g == game).map(|(_, n)| n.to_string()));
+        names.sort();
+        names.dedup();
+        self.assets.backgrounds = names;
+        self.custom_assets.backgrounds = p.custom_backgrounds.clone();
+        self.custom_assets.sounds = p.songs.clone();
+        self.custom_assets.sprites = p.sprites.clone();
+        self.background_music = p.music.clone();
+    }
+
+    /// Each background's music is one of the game's battle themes (its
+    /// `music.toml`'s `themes`): what a host plays in place of the battle's
+    /// own music is a theme, a song of the content's own one it names there.
+    fn check_background_music(&self) -> Result<(), saito_content_api::ContentError> {
+        if self.rules.is_none() {
+            return Ok(());
+        }
+        for (background, sound) in &self.background_music.0 {
+            if !self.battle_themes().contains(sound) {
+                return Err(saito_content_api::ContentError::new(format!(
+                    "backgrounds.toml: background {background:?}: its music {sound:?} is none of music.toml's themes (a background's music is a battle theme)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// What the battle reads of the content's own strings, into the
+    /// records: the descriptions' lines, the no-running messages'
+    /// characters per line and which of them move the speaker's mouth
+    /// (`strings`).
+    fn count_strings(&mut self) {
+        let w = &self.strings;
+        for d in &mut self.defs.chips {
+            let description = w.chip(&d.key).and_then(|c| c.description.as_deref());
+            d.record.description_lines = Shown(strings::description_lines(description));
+        }
+        for d in &mut self.defs.forms {
+            let description = w.form(&d.key).and_then(|f| f.description.as_deref());
+            d.record.description_lines = Shown(strings::description_lines(description));
+        }
+        // (Which characters move a speaker's mouth is the game's rule; a
+        // content with no rules has no chatbox to show one.)
+        let talks = self.rules.as_ref().map(|r| r.custom_screen.talking_characters.clone()).unwrap_or_default();
+        for d in &mut self.defs.navis {
+            let message = w.navi(&d.key).and_then(|n| n.run_message.as_deref()).unwrap_or("");
+            let m = &mut d.record.run_message;
+            let (counts, talking) =
+                if message.is_empty() { (Vec::new(), [0; 3]) } else { (strings::message_counts(message), strings::talking(message, &talks)) };
+            (m.counts, m.talking) = (Shown(counts), Shown(talking));
+        }
+    }
+
+    /// The content, defined (see [`Content::define`]); panics on a content
+    /// error.
+    pub fn defined(mut self) -> Content {
+        self.define().unwrap_or_else(|e| panic!("content error: {e}"));
+        self
+    }
+
+    /// The content's identity (a stable hash of all of it). Computing it
+    /// walks everything (tens of milliseconds for a game's), so the content
+    /// keeps it once computed ([`Content::hash_cache`]): every battle made
+    /// and every round set up asks for it.
+    pub fn hash(&self) -> ContentHash {
+        *self.hash_cache.0.get_or_init(|| ContentHash(crate::digest::stable_hash(self)))
+    }
+
+    /// The game's tables. (Content that states no rules has none: nothing
+    /// that runs a battle is made of it.)
+    pub fn rules(&self) -> &Rules {
+        self.rules.as_ref().expect("the content states its rules (rules, defined)")
+    }
+
+    /// The game's battle themes (its `music.toml`'s `themes`), by their
+    /// songs' names, in the order a list shows them: songs a player may pick
+    /// as a battle's music in place of its game's own. Presentation, which no
+    /// battle reads: a host plays the pick in place of
+    /// [`Content::battle_music`].
+    pub fn battle_themes(&self) -> &[String] {
+        &self.presentation.battle_themes
+    }
+
+    /// The music of the game's background `background` (its name in the
+    /// game; [`Content::background_music`]'s): one of its battle themes, by
+    /// its song's name. None where its `backgrounds.toml` states none.
+    pub fn music_of_background(&self, background: &str) -> Option<&str> {
+        self.background_music.0.get(background).map(String::as_str)
+    }
+
+    /// The background the game's link battle stages are drawn on (its
+    /// `backgrounds.toml`'s `stage`): a round's where it states none and
+    /// none is picked, and where its own isn't here. None: it names none.
+    pub fn stage_background(&self) -> Option<BackgroundId> {
+        let name = self.presentation.stage_background.as_deref()?;
+        self.background_handle(self.game(), name)
+    }
+
+    /// The backgrounds a link battle picks one of at random (its
+    /// `backgrounds.toml`'s `link_battle`: the original's table, one there
+    /// twice twice as likely), by their handles.
+    pub fn link_battle_backgrounds(&self) -> Vec<BackgroundId> {
+        let game = self.game();
+        self.presentation.link_battle.iter().filter_map(|n| self.background_handle(game, n)).collect()
+    }
+
+    /// The game's tables, to change (tests, which play a rule another way).
+    pub fn rules_mut(&mut self) -> &mut Rules {
+        self.hash_cache.clear();
+        self.rules.as_mut().expect("the content states its rules (rules, defined)")
+    }
+
+    /// The game the content is: its game pack's id (`exe6`); "" for content
+    /// without packs (a test's modules alone).
+    pub fn game(&self) -> &str {
+        self.scripts.packs.iter().find(|p| p.kind == saito_content_api::PackKind::Game).map_or("", |p| p.id.as_str())
+    }
+
+    /// A chip's record.
+    pub fn chip(&self, h: ChipHandle) -> &ChipData {
+        &self.defs.chip(h).record
+    }
+
+    /// A patch card.
+
+
+
+
+    /// What a chip's record names, by handle.
+    pub fn chip_links(&self, h: ChipHandle) -> &ChipLinks {
+        &self.defs.chip(h).links
+    }
+
+    /// The chip a zeroed chip field reads (`roles.chips.zeroed`: the chip
+    /// the original's chip 0 is), if the game has one.
+    pub fn zeroed_chip(&self) -> Option<ChipHandle> {
+        self.defs.roles().try_chip(ChipRole::Zeroed)
+    }
+
+    /// The chip a chip field names: itself, or for none (a zeroed field)
+    /// the game's zeroed chip, which is what the game reads.
+    pub fn chip_or_zeroed(&self, h: Option<ChipHandle>) -> ChipHandle {
+        h.unwrap_or_else(|| self.defs.roles().chip(ChipRole::Zeroed))
+    }
+
+    /// The record a chip field names (see [`Content::chip_or_zeroed`]).
+    pub fn chip_field(&self, h: Option<ChipHandle>) -> &ChipData {
+        self.chip(self.chip_or_zeroed(h))
+    }
+
+    /// A navi's data.
+    pub fn navi(&self, h: NaviHandle) -> &NaviData {
+        &self.defs.navi(h).record
+    }
+
+    /// The first navi that changes form (MegaMan), if the content has one
+    /// (stand-in setups).
+    pub fn form_changing_navi(&self) -> Option<NaviHandle> {
+        self.defs.navis.iter().position(|n| n.record.changes_form()).map(|i| NaviHandle(i as u16))
+    }
+
+    /// The navi with this key (setups by name, tools and tests).
+    pub fn navi_by_key(&self, key: &str) -> NaviHandle {
+        self.defs.navi_by_key(key).unwrap_or_else(|| panic!("navi {key:?} is not in the content"))
+    }
+
+    /// One of MegaMan's forms.
+    pub fn form(&self, h: FormHandle) -> &FormData {
+        &self.defs.form(h).record
+    }
+
+    /// The form with this key (setups by name, tools and tests).
+    pub fn form_by_key(&self, key: &str) -> FormHandle {
+        self.defs.form_by_key(key).unwrap_or_else(|| panic!("form {key:?} is not in the content"))
+    }
+
+    /// The game's base form: what its navis are in before they change form
+    /// (a link navi always).
+    pub fn base_form(&self) -> FormHandle {
+        self.defs.base_form.unwrap_or_else(|| panic!("the content has no base form"))
+    }
+
+    /// The base form of navi `navi`: the game's.
+    pub fn base_form_for(&self, _navi: NaviHandle) -> FormHandle {
+        self.base_form()
+    }
+
+    /// The identity of a navi in a form: the form's, or in the base form
+    /// (which has none of its own) the navi's.
+    pub fn form_identity(&self, navi: NaviHandle, form: FormHandle) -> Option<saito_content_api::IdentityHandle> {
+        self.form(form).identity.or(self.navi(navi).identity)
+    }
+
+    /// The battle sprite of a navi in a form (`sub_800FC9E`): its form's
+    /// if it changes form, else its own.
+    pub fn navi_sprite(&self, navi: NaviHandle, form: FormHandle) -> SpriteId {
+        let n = self.navi(navi);
+        if n.changes_form() { self.form(form).sprite } else { n.sprite }
+    }
+
+    /// A weapon.
+    pub fn weapon(&self, h: WeaponHandle) -> &WeaponDef {
+        self.defs.weapon(h)
+    }
+
+    /// The weapon with this key (setups by name, tools and tests).
+    pub fn weapon_by_key(&self, key: &str) -> WeaponHandle {
+        self.defs.weapon_by_key(key).unwrap_or_else(|| panic!("weapon {key:?} is not in the content"))
+    }
+
+    /// A status effect.
+    pub fn status(&self, h: saito_content_api::StatusHandle) -> StatusEffect {
+        self.defs.statuses[h.index()].effect
+    }
+
+
+    /// A stage.
+    pub fn stage(&self, h: StageHandle) -> &StageData {
+        &self.defs.stage(h).record
+    }
+
+    /// The songs a battle of this content starts as its music, as a round
+    /// starts (`Battle::mode_intro`): a link battle's (the roles'
+    /// `link_battle`, and `link_battle_single` where the game has one) and
+    /// each stage's own, in that order, each once. Not the result's (the
+    /// winner's, the loser's), which stay the game's. A host that plays
+    /// another song as the battle's music (a battle theme the player picked,
+    /// [`Rules::battle_themes`]) plays it for these; the battle's cues are
+    /// the same whatever it plays.
+    pub fn battle_music(&self) -> Vec<crate::sound::SoundId> {
+        let roles = self.defs.roles();
+        let mut out = Vec::new();
+        let link = [MusicRole::LinkBattle, MusicRole::LinkBattleSingle].into_iter().filter_map(|r| roles.try_music(r));
+        for music in link.chain(self.defs.stages.iter().filter_map(|s| s.record.music)) {
+            if !out.contains(&music) {
+                out.push(music);
+            }
+        }
+        out
+    }
+
+    /// The stage with this key (setups by name, tools and tests).
+    pub fn stage_by_key(&self, key: &str) -> StageHandle {
+        self.defs.stage_by_key(key).unwrap_or_else(|| panic!("stage {key:?} is not in the content"))
+    }
+
+    /// An identity; what an object without one is taken for, for none.
+    pub fn identity(&self, h: Option<saito_content_api::IdentityHandle>) -> &Identity {
+        match h {
+            Some(h) => &self.defs.identities[h.index()],
+            None => Identity::none(),
+        }
+    }
+
+    /// The actor record of an identity (`sub_80182B4`).
+    pub fn navi_record(&self, h: Option<saito_content_api::IdentityHandle>) -> NaviRecord {
+        self.identity(h).record
+    }
+
+    /// An identity's sprite attach point `index` (`sub_8018810`): a navi's;
+    /// every point of a field object is (0, 7), which the caller handles.
+    pub fn attach_point(&self, h: Option<saito_content_api::IdentityHandle>, index: usize) -> AttachPoint {
+        let id = self.identity(h);
+        self.try_attach_point(h, index).unwrap_or_else(|| {
+            panic!("identity {:?} has no attach point {index} (sub_8018810 reads another actor's table)", id.key)
+        })
+    }
+
+    /// [`Content::attach_point`], none where the identity states none
+    /// (presentation: what draws by one says so rather than stop).
+    pub fn try_attach_point(&self, h: Option<saito_content_api::IdentityHandle>, index: usize) -> Option<AttachPoint> {
+        self.identity(h).attach_points.get(index).copied()
+    }
+
+    /// The identity with this key (tools and tests).
+    pub fn identity_by_key(&self, key: &str) -> saito_content_api::IdentityHandle {
+        self.defs.identity_by_key(key).unwrap_or_else(|| panic!("identity {key:?} is not in the content"))
+    }
+
+    /// A one-shot effect's look.
+    pub fn effect(&self, h: saito_content_api::EffectHandle) -> EffectSprite {
+        self.defs.effects[h.index()]
+    }
+
+    /// A hit spark's look.
+    pub fn spark(&self, h: saito_content_api::SparkHandle) -> EffectSprite {
+        self.defs.sparks[h.index()]
+    }
+
+    /// A hit region.
+    pub fn region(&self, h: saito_content_api::RegionHandle) -> &Region {
+        &self.defs.regions[h.index()]
+    }
+
+    /// The panels around its anchor a hit region covers; none for no
+    /// region and for a whole-field one (which has no offsets: the
+    /// original's shape lookup doesn't know them).
+    pub fn region_offsets(&self, region: Option<saito_content_api::RegionHandle>) -> &[PanelOffset] {
+        match region.map(|h| self.region(h)) {
+            Some(Region::Panels(p)) => p,
+            _ => &[],
+        }
+    }
+
+    /// A collision type's flag word for `alliance`'s side, and the offset
+    /// the original's lookup of its row leaves in a register (a bug code's
+    /// high byte, `sub_801A00E`).
+    pub fn collision_type(&self, h: saito_content_api::CollisionHandle, alliance: u8) -> (u32, u16) {
+        let t = &self.defs.collisions[h.index()];
+        (t.flags[alliance as usize & 1], t.row_offset)
+    }
+
+    /// The Program Advances, in the order they are tried (each chip holds
+    /// the recipes that make it).
+    pub fn program_advances(&self) -> &[ProgramAdvance] {
+        &self.defs.program_advances
+    }
+
+    /// A link navi's own chip (none for MegaMan).
+    pub fn navi_chip(&self, navi: NaviHandle) -> Option<(ChipHandle, ChipCode)> {
+        self.defs.navi(navi).own_chip
+    }
+}

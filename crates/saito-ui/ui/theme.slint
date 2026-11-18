@@ -1,0 +1,243 @@
+// The look, in one place (docs/design/app-ui.md §4): the colors, the type and the metrics every screen uses.
+//
+// Lengths are in units of the 1280 by 800 reference window. The app sets the window's scale so that one `px` in
+// these files is one unit (`scale.rs`), so nothing here multiplies by a scale.
+
+import "../fonts/chakra-petch/ChakraPetch-Medium.ttf";
+import "../fonts/chakra-petch/ChakraPetch-SemiBold.ttf";
+import "../fonts/chakra-petch/ChakraPetch-Bold.ttf";
+import "../fonts/corporate-logo/Corporate-Logo-Bold-ver3.otf";
+// (Noto Sans CJK, the body's, is the battle's text font: the app registers saito-render's files at its start,
+// `lang::register_fonts`, so the program holds them once. It registers M PLUS 1 Code, the mono face, there too:
+// saito-render holds it as WOFF2 with them.)
+
+// What a backdrop's pattern is drawn of (the ground: shell.slint's `Backdrop`).
+export enum PatternKind {
+    // A field of hexagons, stroked.
+    hexagons,
+    // Lines at 30 degrees each way across the window.
+    isometric-grid,
+    // Three layers of dots, white and the pattern's color, with a streak across them from the pattern's color
+    // into the main action's.
+    starfield,
+}
+
+// A look: the colors everything is drawn in and the backdrop's pattern. Each game states its own (its content's
+// look.toml), and the app sets the selected game's (`look.rs`). This one's values are the app's own look, which a
+// game whose content states none is drawn in.
+export struct Look {
+    // The ground, top to bottom, and the glow at its top right (its color and its opacity).
+    ground-top: color,
+    ground-bottom: color,
+    ground-glow: color,
+    // Surfaces.
+    panel: color,
+    raised: color,
+    line: color,
+    inset: color,
+    // Text.
+    text: color,
+    muted: color,
+    dim: color,
+    // The cursor, the active pane's title, the chosen row's bar; the main action and the text on it.
+    cursor: color,
+    action: color,
+    action-ink: color,
+    // The ground's pattern, its color, and the opacity its marks are drawn at.
+    pattern: PatternKind,
+    pattern-color: color,
+    pattern-strength: float,
+}
+
+export global Theme {
+    // The selected game's look, and the one before it: as the game changes the colors cross-fade from `was` to
+    // `look` while `fade` goes from 0 to 1 (the app moves it, over `settle`, as the new ground sweeps in).
+    in property <Look> look: {
+        ground-top: #0a1330,
+        ground-bottom: #050916,
+        ground-glow: #286eff47,
+        panel: #0c1836,
+        raised: #13254d,
+        line: #27508f,
+        inset: #040813,
+        text: #eaf3ff,
+        muted: #8ea8d4,
+        dim: #55698f,
+        cursor: #66e0ff,
+        action: #ffcc1a,
+        action-ink: #000000,
+        pattern: PatternKind.hexagons,
+        pattern-color: #62b4ff,
+        pattern-strength: 0.078,
+    };
+    in property <Look> was: root.look;
+    in property <float> fade: 1;
+    pure function blend(new: color, old: color) -> color {
+        return root.fade >= 1 ? new : new.mix(old, root.fade);
+    }
+
+    // The ground, top to bottom. (Its glow and its pattern are each ground's own: `Backdrop`.)
+    out property <color> ground-top: root.blend(root.look.ground-top, root.was.ground-top);
+    out property <color> ground-bottom: root.blend(root.look.ground-bottom, root.was.ground-bottom);
+    // Surfaces.
+    out property <color> panel: root.blend(root.look.panel, root.was.panel);
+    out property <color> raised: root.blend(root.look.raised, root.was.raised);
+    out property <color> raised-hover: root.raised.brighter(0.33);
+    out property <color> line: root.blend(root.look.line, root.was.line);
+    out property <color> inset: root.blend(root.look.inset, root.was.inset);
+    // The header's and the footer's bar, and the shade under a dialog: the ground's foot, darker.
+    out property <color> bar: root.ground-bottom.darker(0.47).with-alpha(0.72);
+    out property <color> shade: root.ground-bottom.darker(0.4).with-alpha(0.8);
+    // Text.
+    out property <color> text: root.blend(root.look.text, root.was.text);
+    out property <color> muted: root.blend(root.look.muted, root.was.muted);
+    out property <color> dim: root.blend(root.look.dim, root.was.dim);
+    // The cursor, the active pane's title, the chosen row's bar; its glow; the chosen row's tint and a hovered
+    // one's.
+    out property <color> cursor: root.blend(root.look.cursor, root.was.cursor);
+    out property <color> glow: root.cursor.with-alpha(0.4);
+    out property <color> tint: root.cursor.with-alpha(0.1);
+    out property <color> tint-hover: root.cursor.with-alpha(0.05);
+    // (The cursor's color with nothing of it: what its gradients fade to.)
+    out property <color> clear: root.cursor.with-alpha(0);
+    // The main action.
+    out property <color> action: root.blend(root.look.action, root.was.action);
+    out property <color> action-ink: root.blend(root.look.action-ink, root.was.action-ink);
+    // The two sides.
+    out property <color> p1: #f2334d;
+    out property <color> p2: #4a93ff;
+    out property <color> p1-tint: #f2334d29;
+    out property <color> p2-tint: #4a93ff2e;
+    // Good; an error, or a reason something can't be done.
+    out property <color> good: #45e0a0;
+    out property <color> bad: #ff9272;
+    // What a build holds.
+    out property <color> bug: #b497ff;
+    out property <color> mega: #6cc4ff;
+    out property <color> giga: #ff7eb6;
+    out property <color> reg: #ff5c82;
+    out property <color> tag: #7fe36c;
+    out property <color> code: #ffcc1a;
+    out property <color> command-line: #0e3550;
+    out property <color> out-of-bounds: root.muted.with-alpha(0.2);
+    out property <color> out-of-bounds-edge: root.muted.with-alpha(0.6);
+    // A NaviCust piece: the dark of a plus part's cross and of the hatching over a piece out of bounds, the line
+    // round a placed piece, and the outline of the piece in hand.
+    out property <color> piece-mark: root.inset.with-alpha(0.5);
+    out property <color> piece-edge: #000000;
+    out property <color> piece-held: #ffffff;
+
+    // Type. Headings, buttons and labels are Chakra Petch; a language it has no letters for (`cjk`, set by the
+    // app with the language) has them in its own display face (`cjk-display`, set with it: Corporate Logo at 700
+    // for Japanese, squared kana closer to Chakra Petch's; the Chinese have theirs), whatever the game. Everything
+    // else is Noto Sans CJK, one design for every language, in the language's cut (`body-face`: Noto Sans JP for
+    // English and Japanese, Noto Sans SC and TC for Chinese, whose hanzi have their own forms; the battle's text is
+    // drawn in the same: saito-render's vfont). Codes, numbers and times are M PLUS 1 Code, whose digits are one
+    // width.
+    in property <bool> cjk;
+    in property <string> cjk-display: "Corporate Logo ver3";
+    in property <string> body-face: "Noto Sans JP";
+    out property <string> display: cjk ? root.cjk-display : "Chakra Petch";
+    // The display face's weights: its bold (a title, the main action) and its semibold (a label, a button). Corporate
+    // Logo is bundled at 700 alone.
+    out property <int> display-bold: 700;
+    out property <int> display-semibold: cjk ? 700 : 600;
+    out property <string> body: root.body-face;
+    out property <string> mono: "M PLUS 1 Code";
+    // A label's capitals are tracked 0.18em; a script set solid nearly not.
+    out property <length> label-tracking: cjk ? 0.4px : 2px;
+    out property <length> button-tracking: cjk ? 0.3px : 1.3px;
+    out property <length> title-tracking: cjk ? 0.6px : 2.8px;
+    // The main menu's words, the type's largest step, as a fighting game's title screen has them (48, a phone's 32:
+    // the longest, the pseudo-locale's REPLAYS, fits the 416 column's 384 with 15 to spare), tracked 0.075em.
+    out property <length> menu-word: handheld ? 32px : 48px;
+    out property <length> menu-tracking: cjk ? 1px : handheld ? 2.4px : 3.6px;
+
+    // The app runs in a browser (the web build): no Steam, no direct links, the browser's own dialogs.
+    in property <bool> web;
+    // The app is a phone's (iOS, Android), whatever its window's shape: no Steam, nothing dragged onto it, the
+    // system's own pickers and share sheet. (`phone`, below, is the upright layout.)
+    in property <bool> phone-app;
+
+    // Metrics. `phone` is the upright-phone layout (the app sets it when the window is taller than wide): one
+    // column, no footer, what is tapped 44 by 44 at least (a control drawn smaller takes a tap past its box:
+    // `Reach`). `sideways` is a phone's held sideways (the app sets it for a phone's app whose window is wider than
+    // tall and short: docs/design/app-ui.md §2.103): the desktop's panes side by side at the upright phone's sizes,
+    // its header one row 44 tall, the tabs in it where a screen has them, and no footer. `handheld` is either: the
+    // phone's sizes (text 14 for a name, rows 40, what is tapped 44), no footer, no key hints.
+    in property <bool> phone;
+    in property <bool> sideways;
+    out property <bool> handheld: phone || sideways;
+    // (Sideways the panes run to the safe area's edges, which a phone's insets keep off the screen's.)
+    out property <length> margin: phone ? 16px : sideways ? 0px : 32px;
+    out property <length> header: phone ? 56px : sideways ? 44px : 64px;
+    out property <length> footer: handheld ? 0px : 44px;
+    out property <length> control: 40px;
+    out property <length> row: 44px;
+    out property <length> chip-row: 26px;
+    // A row of the build editor's lists (the folder's library, the NaviCust's programs, the patch cards', the auto
+    // battle data's, the Navi tab's forms): a chip's row, a phone's 40 to be tapped; `list-gap` apart (a
+    // `ListView`'s own gap).
+    out property <length> list-row: handheld ? 40px : chip-row;
+    out property <length> list-gap: 2px;
+    // A thing's name on such a row, and wherever the editor names one beside them (the Party tab's navis in its picker
+    // and its partners' heads): one size and weight (in `body`), so that none drifts from the others. An Empty is
+    // `row-name-size` at the regular weight.
+    out property <length> row-name-size: handheld ? 14px : 12px;
+    out property <int> row-name-weight: 600;
+
+    // Motion (docs/design/app-ui.md §4, "Motion"; docs/app.md §10). Everything moves, briefly, and nothing
+    // waits on it; motion is offsets, opacity and overlays, never a size. These are the only durations there
+    // are: a screen uses the components, which use these. `motion` off (the player's Reduce motion, and the
+    // screenshot pass) makes every one of them a cut, and stops what moves by itself (the field's drift, the
+    // cursor's breathing, the main action's sheen).
+    in property <bool> motion: true;
+    // A control: the cursor's glide, a press, a value sliding in its box, a row's bar.
+    out property <duration> quick: motion ? 110ms : 0ms;
+    out property <duration> brisk: motion ? 150ms : 0ms;
+    // A panel, a dialog, a menu, a screen arriving; a screen leaving. (A change of game's sweep and its colors'
+    // cross-fade take `settle` too.)
+    out property <duration> settle: motion ? 200ms : 0ms;
+    out property <duration> leave: motion ? 120ms : 0ms;
+    // The two set pieces: entering a battle (the jack-in), a result.
+    out property <duration> set-piece: motion ? 480ms : 0ms;
+    // What Reduce motion keeps of the jack-in: a short fade (`Pulse`'s `calm`). The screenshot pass (`still`)
+    // keeps nothing of it: there every clock is at its end.
+    in property <bool> still;
+    out property <duration> calm-fade: still ? 0ms : 160ms;
+    // How far apart the parts of a screen arrive.
+    out property <duration> stagger: 30ms;
+    // The way the screen shown was reached: Back's arrival runs the other way.
+    in property <bool> back;
+
+    // The screenshot pass asks every label whether its text fits (`Audit.clipped`).
+    in property <bool> audit;
+}
+
+// The language shown's own rules, which the app answers (`lang::I18n`). Words in capitals (a button's, a heading's, a
+// label's): the catalogs hold them as they are written in a sentence, and `I18n.upper(@tr("Export"))` sets them in
+// capitals by the language's rules (a Turkish i is İ). Things listed on a line: `I18n.join([a, b])` puts them one after
+// the other by the language's own separator ("A, B, C"; Japanese's "A、B、C"; the user: "you should also join items by
+// locale-aware separator in the ui"). No caller passes a language: both read `language`, which the app counts up each
+// time a language is chosen (after giving its new rules here), so everything set in capitals or listed is set again by
+// the new rules, the app's own words as well as the `@tr` ones (the user: "fix the turkish issue": a name the app gave,
+// never given again, kept the old language's capitals; then "instead of Caps.language and List reading it maybe you
+// should have I18n.upper and I18n.join").
+export global I18n {
+    in property <int> language;
+    pure callback uppercased(string) -> string;
+    pure callback joined([string]) -> string;
+    // (Each reads `language`, so that a language chosen sets what it made again.)
+    public pure function upper(text: string) -> string {
+        return root.language >= 0 ? root.uppercased(text) : text;
+    }
+    public pure function join(items: [string]) -> string {
+        return root.language >= 0 ? root.joined(items) : "";
+    }
+}
+
+// The screenshot pass's check that no label is cut: a label whose text doesn't fit says so here while
+// `Theme.audit` is on.
+export global Audit {
+    callback clipped(string);
+}

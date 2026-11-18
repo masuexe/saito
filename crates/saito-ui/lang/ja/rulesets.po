@@ -1,0 +1,104 @@
+# Japanese: a ruleset's page (ui/ruleset.slint), which the lobby and the build editor open over themselves.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ja\n"
+
+# Where its Back goes, and the tag a preset's name has.
+msgid "Editor"
+msgstr "エディター"
+
+msgid "Preset"
+msgstr "プリセット"
+
+# Why the ruleset shown can't be changed here.
+msgid "A preset can't be changed. Duplicate it to make your own."
+msgstr "プリセットは変更できません。複製すると自分のルールにできます。"
+
+msgid "This is your opponent's choice. Duplicate it to make your own."
+msgstr "対戦相手が選んだルールです。複製すると自分のルールにできます。"
+
+# How much a category allows.
+msgid "All allowed"
+msgstr "すべて使用可"
+
+msgid "None allowed"
+msgstr "すべて使用不可"
+
+msgid "{} of {} allowed"
+msgstr "{}/{} 使用可"
+
+# The row of the name: Version exclusives, a build of one version's alone or of the versions' mixed.
+msgid "Version exclusives"
+msgstr "バージョン限定"
+
+msgid "One version"
+msgstr "1バージョンのみ"
+
+msgid "Mix versions"
+msgstr "混在可"
+
+msgid "Search"
+msgstr "検索"
+
+# The key hint of an item's row.
+msgid "Allow or not"
+msgstr "許可／禁止"
+
+# The categories' panel's title.
+msgid "Categories"
+msgstr "カテゴリー"
+
+# The quick choice of every version's own items, beside the category's ALL and NONE.
+msgid "Both"
+msgstr "両方"
+
+# The footer: how many items the category shown lists.
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} 件"
+msgstr[1] "{n} 件"
+
+# The page's buttons: a file of the ruleset shown, written out; a file read in as the player's own.
+msgctxt "verb"
+msgid "Export"
+msgstr "書き出す"
+
+msgctxt "verb"
+msgid "Import"
+msgstr "読み込む"
+
+# What the system's file dialogs ask for.
+msgid "Ruleset files"
+msgstr "ルールファイル"
+
+# A paired category's page (the Party page: its navis, and their programs, every navi's and each one's own): how much
+# it allows and how many programs it holds back (in the categories' list, and in its head); a navi's own bans; the row
+# of every navi; the programs' title; a program every navi's ban holds back.
+msgid "{} of {} navis"
+msgstr "ナビ {}/{} 使用可"
+
+msgid "{} of {} navis, {n} program ban"
+msgid_plural "{} of {} navis, {n} program bans"
+msgstr[0] "ナビ {}/{} 使用可、プログラム使用不可 {n}"
+msgstr[1] "ナビ {}/{} 使用可、プログラム使用不可 {n}"
+
+msgid "{} of {} allowed, {n} program ban"
+msgid_plural "{} of {} allowed, {n} program bans"
+msgstr[0] "{}/{} 使用可、プログラム使用不可 {n}"
+msgstr[1] "{}/{} 使用可、プログラム使用不可 {n}"
+
+msgid "{} banned"
+msgstr "{} 使用不可"
+
+msgid "All navis"
+msgstr "すべてのナビ"
+
+msgid "Programs for all navis"
+msgstr "すべてのナビのプログラム"
+
+msgid "{}'s programs"
+msgstr "{}のプログラム"
+
+msgid "Banned for all navis"
+msgstr "すべてのナビで使用不可"

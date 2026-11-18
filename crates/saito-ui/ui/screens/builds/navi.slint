@@ -1,0 +1,739 @@
+// The Navi tab of a build's editor (docs/design/app-ui.md §6, "Navi"): the game's navis as a grid of cards, and
+// beside it the build's navi: the face its round starts with, its stats then (its HP, and those its game's rules give
+// it: an EXE5 team navi's own chip's damage) and its element; under them the build's other
+// choices, each a segmented control of its presets (LIGHT | DARK); then the selector of the forms the build has
+// (docs/design/versions.md §2.1: EXE6's Beast form, then its Crosses; EXE4's and EXE5's souls; both versions'
+// offered, each a row of the editor's lists, checked where it is the build's, under its version's head, a list's ALL
+// and NONE at its heads' right end). What is wrong with the build is said where it is (docs/design/app-ui.md §2.66): a
+// fact's heading and a form a problem is about in the error red, and on a line kept for it under the navi's facts,
+// what the build's problems have against the form under the cursor or the pointer, else against the navi; where they
+// have nothing, for a navi that isn't the game's own, the note of what is his alone. The grid scrolls in its room
+// where its rows don't fit it. On a phone the panel is the tab's width, the forms one to a row (their names whole)
+// scrolling in the room the panel has, and the grid is a sheet from the bottom (`NaviOverlay`) the navi's card opens.
+// Its Rust half is src/screens/builds/navi.rs.
+
+import { Theme, I18n } from "../../theme.slint";
+import { Nav, NavKind, Focusable } from "../../nav.slint";
+import { Shell, Hint, PadButton } from "../../shell.slint";
+import { Cut, PanelBack, Label, Select, Button, ProblemNote, AllNone, ScrollPage, ArrowDown } from "../../widgets.slint";
+import { Tween } from "../../motion.slint";
+import { VersionTag, StatLine } from "../../build.slint";
+
+// One of the game's navis: its name, its face, whether it is the build's, and whether the ruleset the player plays
+// by doesn't allow it (docs/design/app-ui.md §2.59).
+export struct NaviCard {
+    name: string,
+    face: image,
+    chosen: bool,
+    banned: bool,
+}
+
+// One of the build's choices the build's navi has: its presets by name, in capitals ("LIGHT", "DARK"), the one the
+// build is on, and the choice's place among the game's (its focus key's index).
+export struct NaviChoice {
+    presets: [string],
+    chosen: int,
+    index: int,
+}
+
+// One of the forms the selector offers: its face, its name, whether the build has it, whether the build's problems are
+// about it (`flagged`: the build's ruleset doesn't allow it, or it is a version's in a build that mixes
+// versions under one version per build) and whether the ruleset doesn't allow it (`banned`, whether the build has it
+// or not). Its place: its column and row among its fact's rows, and how many groups' heads are over it; `head`, the
+// version's name over it where it is its group's first (the forms are grouped by version, in the groups' order; those
+// of none last, under a head's room with no name).
+export struct NaviForm {
+    face: image,
+    name: string,
+    head: VersionTag,
+    column: int,
+    row: int,
+    heads: int,
+    chosen: bool,
+    flagged: bool,
+    banned: bool,
+    // Its group's ALL and NONE, on its head, where it is its group's first in a list grouped by version (`set`, their
+    // focus keys' index; -1, none), how many columns its head spans, and whether ALL would put a form in (`all`) and
+    // NONE take one out (`none`).
+    set: int,
+    span: int,
+    all: bool,
+    none: bool,
+}
+
+// A fact of forms the build chooses: its name in capitals ("CROSSES"), how many it has of its room ("3/5"; none for
+// the one form always chosen, EXE6's Beast form), whether it has problems (its heading in the error red), its forms in
+// the battle's order, both versions' (grouped by version), and its first's place among the selector's (the focus
+// order's).
+export struct NaviFormGroup {
+    name: string,
+    count: string,
+    flagged: bool,
+    // How many columns its rows are in (each version's group a column of its own where each of two has one form, as
+    // EXE6's Beast form's), how many rows its forms take, and how many heads of their groups over them.
+    columns: int,
+    rows: int,
+    heads: int,
+    forms: [NaviForm],
+    at: int,
+    // The list's ALL and NONE on its heading's line, where its forms aren't grouped by version (`set`; -1, none), and
+    // whether each would do anything.
+    set: int,
+    all: bool,
+    none: bool,
+}
+
+// What the tab shows: src/screens/builds/navi.rs sets these.
+export global NaviView {
+    out property <[Hint]> hints: [
+        { key: "↑↓←→", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Choose") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Tab") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+    ];
+    out property <string> status: @tr("{n} navi" | "{n} navis" % self.navis.length);
+    in property <[NaviCard]> navis;
+    // The build's navi: its name, the face its round starts with, its stats then (HP: its label the tab's; a stat of the
+    // rules' own with its own; what the build's installed parts added in cyan, as the overview says it), and its
+    // element's icon. (No Attack or Charge: the user, "remove attack and charge from the navi sidebar".)
+    in property <string> name;
+    in property <image> face;
+    in property <[StatLine]> stats;
+    in property <image> element;
+    // The selector: each fact of forms the build chooses (none of a list for a navi that doesn't change form).
+    in property <[NaviFormGroup]> form-groups;
+    // The ruleset the build is made for, by its name (`ruleset-missing`: no longer there, "(missing)" after it): on a
+    // phone its select is under the panel (a desktop's is at the tab bar's right end).
+    in property <string> ruleset;
+    in property <bool> ruleset-missing;
+    // What the build's problems have against the form under the cursor or the pointer, the ruleset's among them, else
+    // against the navi (and the build where no tab shows what it is about), the first and "+n more": said in the
+    // note's place in its stead (docs/design/app-ui.md §2.66). Empty: the note.
+    in property <string> fault;
+    // The game's choices the build's navi has (none in a game without, or for a navi without).
+    in property <[NaviChoice]> choices;
+    // The game's own navi's name: the one a NaviCust and patch cards are of; and whether the build's navi is another,
+    // for whom the note says so.
+    in property <string> own;
+    in property <bool> other-navi;
+    // PRACTICE is offered (none where Practice opened the editor): on a phone here, under the ruleset's row.
+    in property <bool> practice;
+    // On a phone: the navis' sheet is open.
+    in property <bool> sheet;
+}
+
+// A navi's card: its face over its name. The build's is lit. (In the tab's grid, and in a phone's sheet: its controls'
+// name the grid's.)
+component NaviCardView inherits Rectangle {
+    in property <NaviCard> navi;
+    in property <string> nav: "navi";
+    in property <int> nav-index;
+    property <length> pad: Theme.handheld ? 8px : 12px;
+    property <length> face-width: Theme.handheld ? 64px : 96px;
+    Cut {
+        cut: 9px;
+        background: root.navi.chosen ? Theme.raised : (hit.has-hover ? Theme.raised : Theme.panel);
+        line: root.navi.chosen ? Theme.cursor : Theme.line;
+    }
+
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: root.pad + (parent.height - 2 * root.pad - 24px - self.height) / 2;
+        width: root.face-width;
+        height: root.face-width / 2;
+        source: root.navi.face;
+        image-rendering: pixelated;
+        opacity: root.navi.banned && !root.navi.chosen ? 0.5 : 1;
+    }
+
+    // (Not allowed by the ruleset: a line in the error red at its top, as a library's row says why at its end, the card
+    // dimmed; it can't be chosen (docs/design/app-ui.md §2.68). The build's navi, chosen before the ruleset said so,
+    // its name in the error red too, as an item of the build's with a problem.)
+    Text {
+        x: root.pad;
+        y: root.pad - 4px;
+        width: parent.width - 2 * root.pad;
+        height: 16px;
+        visible: root.navi.banned;
+        text: @tr("Not allowed");
+        color: Theme.bad;
+        font-family: Theme.body;
+        font-size: 11px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: root.pad;
+        y: parent.height - root.pad - 16px;
+        width: parent.width - 2 * root.pad;
+        height: 16px;
+        text: root.navi.name;
+        color: root.navi.banned ? (root.navi.chosen ? Theme.bad : Theme.dim) : Theme.text;
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+}
+
+// A form's row in the selector, as tall as the editor's lists' rows (`Theme.list-row`): a check mark (the build's or
+// not), its face, its name; its name in the error red where the build's problems are about it, and "Not allowed" at
+// its end in the error red where the ruleset holds it back (it can't be put in; one the build has can be taken out),
+// as a library's row is marked on every tab (docs/design/app-ui.md §2.66, §2.68). (It has no mark of its version: its group's head, in the version's color, says it.
+// The user: "drop the selector's per-row tags".)
+component FormRow inherits Rectangle {
+    in property <NaviForm> form;
+    in property <int> nav-index;
+    property <length> face-height: Theme.handheld ? 32px : 16px;
+    Rectangle {
+        background: hit.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Rectangle {
+        x: 8px;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        background: root.form.chosen ? Theme.cursor : Theme.inset;
+        border-width: 1px;
+        border-color: root.form.chosen ? Theme.cursor : Theme.line;
+        Path {
+            width: 10px;
+            height: 8px;
+            visible: root.form.chosen;
+            stroke: Theme.action-ink;
+            stroke-width: 2px;
+            commands: "M 1 4 L 3.75 6.75 L 9 1.25";
+        }
+    }
+
+    face := Image {
+        x: 32px;
+        y: (parent.height - self.height) / 2;
+        width: 2 * root.face-height;
+        height: root.face-height;
+        source: root.form.face;
+        image-rendering: pixelated;
+        opacity: root.form.chosen ? 1 : 0.45;
+    }
+
+    Text {
+        x: face.x + face.width + 8px;
+        width: max(0px, root.width - self.x - 8px - (root.form.banned ? banned.width + 8px : 0px));
+        text: root.form.name;
+        color: root.form.flagged ? Theme.bad : root.form.chosen ? Theme.text : Theme.dim;
+        font-family: Theme.body;
+        font-size: Theme.handheld ? 14px : 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    banned := Text {
+        x: root.width - 8px - self.width;
+        width: self.preferred-width;
+        visible: root.form.banned;
+        text: @tr("Not allowed");
+        color: Theme.bad;
+        font-family: Theme.body;
+        font-size: 12px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    hit := Focusable {
+        nav: "form";
+        nav-index: root.nav-index;
+        describes: true;
+    }
+}
+
+// A choice's segmented control, as the app's two-way one (`Seg`) but of as many presets as the choice has, and as
+// tall as the editor's lists' rows (a phone's a tap's, `Theme.row`): each preset a segment as wide as its name, the
+// build's tinted and underlined in the cursor's color. Left and Right step it, Enter takes the next, a click or a tap
+// on a segment takes its preset (the user: "the light/dark switcher also takes up too much space").
+component ChoiceSeg inherits Rectangle {
+    in property <NaviChoice> choice;
+    height: Theme.phone ? Theme.row : Theme.list-row;
+    width: segments.preferred-width;
+    Rectangle {
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: Theme.line;
+    }
+
+    Focusable {
+        nav: "choice";
+        nav-index: root.choice.index;
+        kind: NavKind.stepper;
+    }
+
+    segments := HorizontalLayout {
+        for preset[i] in root.choice.presets: Rectangle {
+            property <bool> chosen: i == root.choice.chosen;
+            min-width: max(Theme.row, word.preferred-width + 24px);
+            horizontal-stretch: 0;
+            background: self.chosen ? Theme.tint : touch.has-hover ? Theme.tint-hover : transparent;
+            // (The line between it and the one before.)
+            Rectangle {
+                x: 0;
+                width: 1px;
+                visible: i > 0;
+                background: Theme.line;
+            }
+
+            Rectangle {
+                y: parent.height - 2px;
+                height: 2px;
+                visible: parent.chosen;
+                background: Theme.cursor;
+            }
+
+            word := Text {
+                text: I18n.upper(preset);
+                color: parent.chosen ? Theme.cursor : Theme.muted;
+                font-family: Theme.display;
+                font-size: 13px;
+                font-weight: Theme.display-bold;
+                letter-spacing: 0.5px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            touch := TouchArea {
+                mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+                clicked => {
+                    Nav.point("choice", root.choice.index);
+                    Nav.choose("choice", root.choice.index, i);
+                }
+            }
+        }
+    }
+}
+
+export component NaviTab inherits Rectangle {
+    // (The grid: a desktop's. A phone's is its sheet, `NaviOverlay`; held sideways it is at the right, four across,
+    // under the ruleset's select, EDIT and PRACTICE, the panel at the left: docs/design/app-ui.md §2.103.)
+    property <int> columns: 4;
+    property <length> gap: Theme.sideways ? 8px : 12px;
+    // The build's navi's panel: beside the grid, the tab's height; on a phone the tab's width, as tall as what it shows
+    // up to the room the ruleset's row and PRACTICE leave under it, where its forms scroll (as they do sideways, in
+    // the tab's height).
+    property <length> panel-width: Theme.phone ? self.width : Theme.sideways ? max(300px, (self.width - 12px) * 0.45) : 360px;
+    property <length> panel-height: Theme.phone ? min(root.forms-y + forms-list.preferred-height + root.pad, self.height - root.under-panel) : self.height;
+    property <length> panel-x: Theme.handheld ? 0px : self.width - 360px;
+    // (On a phone the ruleset's select and EDIT are under the panel, and PRACTICE under them; sideways the three are
+    // a row over the grid.)
+    property <length> under-panel: 12px + 40px + (NaviView.practice ? 52px : 0px);
+    property <length> grid-x: Theme.sideways ? root.panel-width + 12px : 0px;
+    property <length> grid-y: Theme.sideways ? 36px + 12px : 0px;
+    property <length> grid-width: Theme.sideways ? self.width - root.grid-x - 12px : self.width - 360px - 24px;
+    property <length> card-width: (root.grid-width - (root.columns - 1) * root.gap) / root.columns;
+    property <length> card-height: Theme.sideways ? 84px : 140px;
+    // The panel's padding: 16 around what it shows, as the editor's strips and the NaviCust's effects have.
+    property <length> pad: 16px;
+    // Where the panel's facts are: beside the face; and under them, `pad` below, what else the panel shows.
+    property <length> facts-x: root.panel-x + (Theme.handheld ? 96px : 128px);
+    property <length> facts-y: Theme.phone ? 16px : 12px;
+    // Under the facts, a line kept for what the build's problems have against the form under the cursor or the
+    // pointer, else against the navi: in the same place whatever the selector holds (the user, of it in the note's
+    // place: "the error message placement on the navi tab is janky as hell").
+    property <length> stat-pitch: Theme.handheld ? 20px : 22px;
+    property <length> element-y: root.facts-y + 28px + NaviView.stats.length * root.stat-pitch;
+    property <length> fault-y: root.element-y + root.stat-pitch + 4px;
+    property <length> body-y: root.fault-y + (Theme.sideways ? 24px : 28px);
+    property <length> label-width: Theme.handheld ? 84px : 110px;
+    property <[string]> stat-labels: [@tr("HP")];
+    // Between the choices, the facts of forms and the note: room enough that each reads as its own (sideways, closer:
+    // the window is short).
+    property <length> fact-gap: Theme.sideways ? 14px : 20px;
+    // The selector: each fact's name and count over its forms' rows, the editor's lists' rows: one column (a phone's
+    // too, where two cut the names), or on a desktop each version's group a column where each of two has one form (the
+    // app places them: the group's `columns`, the form's `column` and `row`), each version's under its name: a head 16
+    // tall with `head-lead` over it (from the fact's heading, or the group before) and `head-gap` under it.
+    property <length> head-lead: 8px;
+    property <length> head-gap: 4px;
+    property <length> form-head: root.head-lead + 16px + root.head-gap;
+    property <length> form-pitch: Theme.list-row + Theme.list-gap;
+    property <string> note: @tr("NaviCust and patch cards are {} only.", NaviView.own);
+    // The grid's rows: the tab's height, where they scroll if there are more than it holds.
+    property <length> grid-height: ceil(NaviView.navis.length / root.columns) * (root.card-height + root.gap) - root.gap;
+    // (Its scroll bar in the gap at its right.)
+    if !Theme.phone: ScrollPage {
+        x: root.grid-x;
+        y: root.grid-y;
+        width: root.grid-width + 12px;
+        height: root.height - root.grid-y;
+        nav: "navi";
+        content-height: root.grid-height;
+        for navi[i] in NaviView.navis: NaviCardView {
+            x: mod(i, root.columns) * (root.card-width + root.gap);
+            y: floor(i / root.columns) * (root.card-height + root.gap);
+            width: root.card-width;
+            height: root.card-height;
+            navi: navi;
+            nav-index: i;
+        }
+    }
+
+    PanelBack {
+        x: root.panel-x;
+        y: 0;
+        width: root.panel-width;
+        height: root.panel-height;
+    }
+
+    // (On a phone the navi's card, its face and its facts, opens the grid's sheet: tinted while pressed, an arrow at
+    // its name's end saying it opens a list, as a select's does.)
+    Rectangle {
+        x: root.panel-x + 1px;
+        y: 2px;
+        width: root.panel-width - 2px;
+        height: root.fault-y - 4px;
+        visible: Theme.phone;
+        background: pick.pressed ? Theme.tint : transparent;
+    }
+
+    ArrowDown {
+        x: root.panel-x + root.panel-width - root.pad - 4px - self.width;
+        y: root.facts-y + (20px - self.height) / 2;
+        visible: Theme.phone;
+    }
+
+    Image {
+        x: root.panel-x + root.pad;
+        y: root.pad;
+        width: Theme.handheld ? 64px : 96px;
+        height: self.width / 2;
+        source: NaviView.face;
+        image-rendering: pixelated;
+    }
+
+    Text {
+        x: root.facts-x;
+        y: root.facts-y;
+        width: root.panel-x + root.panel-width - root.pad - self.x - (Theme.phone ? 20px : 0px);
+        height: 20px;
+        text: NaviView.name;
+        color: Theme.text;
+        font-family: Theme.body;
+        font-size: 16px;
+        font-weight: 700;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    for stat[i] in NaviView.stats: Rectangle {
+        x: root.facts-x;
+        y: root.facts-y + 28px + i * root.stat-pitch;
+        width: root.panel-x + root.panel-width - root.pad - self.x;
+        height: 16px;
+        Text {
+            x: 0;
+            width: root.label-width;
+            text: stat.label != "" ? stat.label : i < root.stat-labels.length ? root.stat-labels[i] : "";
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        value := Text {
+            x: root.label-width;
+            width: self.preferred-width;
+            text: stat.value;
+            color: Theme.text;
+            font-family: Theme.mono;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: value.x + value.width + 8px;
+            text: stat.added;
+            color: Theme.cursor;
+            font-family: Theme.mono;
+            font-size: 11px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+
+    element-label := Text {
+        x: root.facts-x;
+        y: root.element-y;
+        width: root.label-width;
+        height: 16px;
+        text: @tr("Element");
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 13px;
+        vertical-alignment: center;
+    }
+
+    Image {
+        x: element-label.x + root.label-width;
+        y: element-label.y;
+        width: 16px;
+        height: 16px;
+        source: NaviView.element;
+        image-rendering: pixelated;
+    }
+
+    ProblemNote {
+        x: root.panel-x + root.pad;
+        y: root.fault-y;
+        width: root.panel-width - 2 * root.pad;
+        horizontal-alignment: left;
+        text: NaviView.fault;
+    }
+
+    // (Where the build has no problem, the note, for a navi that isn't the game's own: what isn't his.)
+    Text {
+        x: root.panel-x + root.pad;
+        y: root.fault-y;
+        width: root.panel-width - 2 * root.pad;
+        height: 16px;
+        visible: NaviView.fault == "" && NaviView.other-navi;
+        text: root.note;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (Its face and its facts are a phone's control that opens the grid's sheet.)
+    pick := Focusable {
+        x: root.panel-x;
+        y: 0;
+        width: root.panel-width;
+        height: root.fault-y;
+        enabled: Theme.phone;
+        nav: Theme.phone ? "navi-pick" : "";
+    }
+
+    // Under the navi's facts, one after the other: the choices (the user: "the light/dark switcher should be above the
+    // souls"), then the selector's facts of forms. A phone's forms scroll in the room the panel has; a desktop's are
+    // all shown, nothing to scroll.
+    choices := VerticalLayout {
+        x: root.panel-x + root.pad;
+        y: root.body-y;
+        width: root.panel-width - 2 * root.pad;
+        height: self.preferred-height;
+        spacing: root.fact-gap;
+        alignment: start;
+        for choice in NaviView.choices: HorizontalLayout {
+            alignment: start;
+            ChoiceSeg {
+                choice: choice;
+            }
+        }
+    }
+
+    property <length> forms-y: root.body-y + (NaviView.choices.length > 0 ? choices.preferred-height + root.fact-gap : 0px);
+    // (Its scroll bar in the panel's padding at its right.)
+    forms := ScrollPage {
+        x: root.panel-x + root.pad;
+        y: root.forms-y;
+        width: root.panel-width - 2 * root.pad + 12px;
+        height: Theme.handheld ? max(0px, root.panel-height - root.pad - self.y) : forms-list.preferred-height;
+        nav: "form";
+        content-height: forms-list.preferred-height;
+        forms-list := VerticalLayout {
+            x: 0;
+            y: 0;
+            width: forms.view-width;
+            height: self.preferred-height;
+            spacing: root.fact-gap;
+            alignment: start;
+            for group in NaviView.form-groups: Rectangle {
+                // (Where its rows start: under its heading.)
+                property <length> top: 16px;
+                property <length> form-width: (self.width - (group.columns - 1) * 8px) / max(1, group.columns);
+                height: self.top + group.heads * root.form-head + group.rows * root.form-pitch - Theme.list-gap;
+                heading := Text {
+                    x: 0;
+                    y: 0;
+                    width: self.preferred-width;
+                    height: 16px;
+                    text: I18n.upper(group.count == "" ? group.name : group.name + "  " + group.count);
+                    color: group.flagged ? Theme.bad : Theme.muted;
+                    font-family: Theme.body;
+                    font-size: 11px;
+                    font-weight: 700;
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                }
+
+                // (A list whose forms aren't grouped by version: its ALL and NONE at its heading's right end.)
+                whole := AllNone {
+                    all-nav: "forms-all";
+                    none-nav: "forms-none";
+                    x: parent.width - self.width - 2px;
+                    y: 0;
+                    set: group.set;
+                    all: group.all;
+                    none: group.none;
+                }
+
+                // (Each version's group under its name, in its color; a list's ALL and NONE of the group at its head's right
+                // end, the head as wide as the columns the group is in.)
+                for form in group.forms: Rectangle {
+                    x: form.column * (parent.form-width + 8px);
+                    y: parent.top + (form.heads - 1) * root.form-head + root.head-lead + form.row * root.form-pitch;
+                    width: form.span * (parent.form-width + 8px) - 8px;
+                    height: 16px;
+                    Text {
+                        x: 8px;
+                        width: max(0px, (form.set >= 0 ? picks.x - 8px : parent.width - 8px) - self.x);
+                        visible: form.head.text != "";
+                        text: form.head.text;
+                        color: form.head.tone;
+                        font-family: Theme.display;
+                        font-size: 10px;
+                        font-weight: Theme.display-bold;
+                        letter-spacing: 0.8px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    picks := AllNone {
+                        all-nav: "forms-all";
+                        none-nav: "forms-none";
+                        x: parent.width - self.width - 2px;
+                        set: form.set;
+                        all: form.all;
+                        none: form.none;
+                    }
+                }
+
+                for form[j] in group.forms: FormRow {
+                    x: form.column * (parent.form-width + 8px);
+                    y: parent.top + form.heads * root.form-head + form.row * root.form-pitch;
+                    width: parent.form-width;
+                    height: Theme.list-row;
+                    form: form;
+                    nav-index: group.at + j;
+                }
+            }
+        }
+    }
+
+    // (On a phone, the build's ruleset and EDIT, under the panel; sideways at the grid's top, PRACTICE beside them,
+    // each 36 tall.)
+    property <length> sideways-practice: NaviView.practice ? phone-practice.width + 8px : 0px;
+    Select {
+        x: Theme.sideways ? root.grid-x : 0px;
+        y: Theme.sideways ? 0px : root.panel-height + 12px;
+        width: Theme.sideways ? max(0px, root.width - self.x - 8px - phone-edit.width - root.sideways-practice) : root.width - 8px - phone-edit.width;
+        height: Theme.sideways ? 36px : 40px;
+        visible: Theme.handheld;
+        focusable: Theme.handheld;
+        nav: "ruleset";
+        value: NaviView.ruleset;
+        note: NaviView.ruleset-missing ? @tr("(missing)") : "";
+    }
+
+    phone-edit := Button {
+        x: root.width - self.width - (Theme.sideways ? root.sideways-practice : 0px);
+        y: Theme.sideways ? 0px : root.panel-height + 12px;
+        width: self.natural-width;
+        height: Theme.sideways ? 36px : 40px;
+        compact: Theme.sideways;
+        visible: Theme.handheld;
+        nav: Theme.handheld ? "ruleset-edit" : "";
+        text: I18n.upper(@tr("Edit"));
+    }
+
+    // (On a phone, PRACTICE under them, the row's width: the tab bar has no room for it. Sideways at the row's end.)
+    phone-practice := Button {
+        x: Theme.sideways ? root.width - self.width : 0px;
+        y: Theme.sideways ? 0px : root.panel-height + 64px;
+        width: Theme.sideways ? self.natural-width : root.width;
+        height: Theme.sideways ? 36px : 40px;
+        compact: Theme.sideways;
+        visible: Theme.handheld && NaviView.practice;
+        nav: Theme.handheld && NaviView.practice ? "practice" : "";
+        text: I18n.upper(@tr("Practice"));
+    }
+}
+
+// What the Navi tab opens over the window: on a phone, the game's navis as a sheet from the bottom, the grid's cards
+// three to a row under its title, as tall as they take (at most the other tabs' sheets' height, where they scroll).
+// The navi's card on the tab opens it; a card chosen, a tap on the shade or Back shuts it. Its controls' names begin
+// with `sheet.`: while it is open the keys reach nothing else.
+export component NaviOverlay inherits Rectangle {
+    property <int> columns: 3;
+    property <length> gap: 8px;
+    property <length> card-width: (self.width - 32px - (root.columns - 1) * root.gap) / root.columns;
+    property <length> card-height: 84px;
+    property <length> grid-height: ceil(NaviView.navis.length / root.columns) * (root.card-height + root.gap) - root.gap;
+    property <length> sheet-height: min(self.height - 72px, 660px, 48px + root.grid-height + 16px);
+    arrive := Tween { }
+
+    Rectangle {
+        background: Theme.shade;
+        opacity: arrive.t;
+        TouchArea {
+            clicked => {
+                Nav.activate("sheet.close", 0);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - root.sheet-height + (1 - arrive.t) * 24px;
+        height: root.sheet-height;
+        opacity: arrive.t;
+        background: Theme.panel;
+        TouchArea { }
+
+        Rectangle {
+            y: 0;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        Label {
+            x: 16px;
+            y: 12px;
+            width: parent.width - 32px;
+            height: 28px;
+            text: I18n.upper(@tr("Navi"));
+            color: Theme.cursor;
+        }
+
+        // (Its scroll bar in the sheet's margin at the right.)
+        ScrollPage {
+            x: 16px;
+            y: 48px;
+            width: parent.width - 32px + 12px;
+            height: parent.height - self.y - 8px;
+            nav: "sheet.navi";
+            content-height: root.grid-height;
+            for navi[i] in NaviView.navis: NaviCardView {
+                x: mod(i, root.columns) * (root.card-width + root.gap);
+                y: floor(i / root.columns) * (root.card-height + root.gap);
+                width: root.card-width;
+                height: root.card-height;
+                navi: navi;
+                nav: "sheet.navi";
+                nav-index: i;
+            }
+        }
+    }
+}

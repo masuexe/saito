@@ -1,0 +1,46 @@
+[package]
+name = "saito-files"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Files, the same calls on the desktop (std::fs), in a browser (a tree in memory the page keeps) and on a phone, and the system's folders for the app's data and for files kept a while"
+
+# What goes wrong (the browser's storage, Android's folders), said as a warning: the app keeps them in its log.
+[target.'cfg(any(target_arch = "wasm32", target_os = "android"))'.dependencies]
+log = "0.4"
+
+# The browser's: its tree's locks (a page's main thread may not wait) and times; the stowed files' storage, the
+# page's (the origin private file system, through web-sys), written and read on threads of their own.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+saito-threads = { path = "../saito-threads" }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-time = "1"
+web-sys = { version = "0.3", features = [
+    "Blob",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemWritableFileStream",
+    "StorageManager",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+    "WritableStream",
+] }
+
+# Android's folders, the activity's (`getFilesDir`, `getCacheDir`), through JNI (ndk-context's VM and activity, which
+# android-activity sets).
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+ndk-context = "0.1"
+
+[dev-dependencies]
+# The browser's tree, in tests on the desktop.
+saito-threads = { path = "../saito-threads" }
+web-time = "1"
+
+[build-dependencies]
+# The browser by name (build.rs: `web`).
+cfg_aliases = "0.2"

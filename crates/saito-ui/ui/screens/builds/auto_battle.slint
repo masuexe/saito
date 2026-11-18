@@ -1,0 +1,572 @@
+// The Auto battle tab of a build's editor (docs/design/app-ui.md §6, "Auto battle"), in a game whose setup takes auto
+// battle data: the folder's shape. A strip across the top describes the chip under the cursor, from either pane.
+// Under it, framed, the data's places, grouped under their lists (in the game's words), two columns of them, scrolled;
+// beside it the library, an open list of the chips, with a search and a sort. Enter on a place goes to the library;
+// Enter on a chip puts it in the place and goes on to the next; Del empties a place.
+//
+// On a phone the places are one column, and the library opens as a sheet from the bottom (`AutoBattleOverlay`). Held
+// sideways (docs/design/app-ui.md §2.103) there is no strip: the places, framed, one column at the left, the library
+// beside them. Its Rust half is src/screens/builds/auto_battle.rs.
+
+import { Theme, Audit, I18n } from "../../theme.slint";
+import { Nav, Focusable, Drag } from "../../nav.slint";
+import { Shell, Hint, PadButton } from "../../shell.slint";
+import { Cut, PanelBack, Label, Field, Select, Button, ButtonKind, ListView, RowTouch, ScrollPage, Refusal, ProblemNote, WordButton } from "../../widgets.slint";
+import { Tween, Flash, Shake, Count } from "../../motion.slint";
+import { ChipCell, ChipKind, ChipRow, VersionMark } from "../../build.slint";
+import { ChipDetail, LibraryRow, LibraryHead, DropGap, LiftedRow, RemoveTarget } from "folder.slint";
+
+// A line of the places: a list's title (over both columns), or one of its places (its chip, by its place in its list
+// from 1, where it is: a column and a row of the panel).
+export struct PlaceLine {
+    title: bool,
+    text: string,
+    number: int,
+    chip: ChipCell,
+    place: int,
+    column: int,
+    row: int,
+}
+
+// What the tab shows: src/screens/builds/auto_battle.rs sets these.
+export global AutoBattleView {
+    out property <[Hint]> hints: [
+        { key: "↑↓←→", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: self.on-placed ? @tr("Remove") : @tr("Pick") },
+        { key: "Del", pad: Shell.pad-delete, text: @tr("Remove") },
+        { key: "X", pad: PadButton.none, text: @tr("Clear") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Tab") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+    ];
+    out property <string> status: @tr("{} of {} places", self.filled, self.places);
+    in property <int> filled;
+    in property <int> places;
+    // The strip.
+    in property <ChipDetail> detail;
+    // The places under their lists, how many rows they take, and the place being filled. That one has the chosen
+    // row's mark while the focus is on it or in the library, the cursor shown or not (after a click the cursor is
+    // hidden, and the focus stays on the place clicked: the mark is what shows it); -1, no place marked.
+    in property <[PlaceLine]> lines;
+    in property <int> rows;
+    in property <int> place;
+    // What the game's rules have against the data (a place's chip, or the whole), the first and "+n more": said on a
+    // phone's line over the places (docs/design/app-ui.md §2.66; a desktop's strip says them of the place it describes).
+    // A place a problem is about has its name red.
+    in property <string> problems;
+    out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
+    // Where the place a chip just went into is (its column and row), counted: it flashes.
+    in property <int> landed-column;
+    in property <int> landed-row;
+    in property <int> landed-seq;
+    // The library.
+    in property <[LibraryRow]> chips;
+    in property <string> search;
+    in property <int> sort;
+    in property <bool> descending;
+    out property <[string]> sorts: [@tr("Library order"), @tr("Name"), @tr("MB"), @tr("Element"), @tr("sort" => "Attack")];
+    in property <int> refused: -1;
+    in property <int> refused-seq;
+    in property <bool> in-library;
+    // The cursor is on the library's chip that the place being filled holds: Confirm takes it out again.
+    in property <bool> on-placed;
+    in property <bool> sheet;
+    // The place being dragged, as it shows (`Drag`; a library's chip dragged in, as a place would show it), and the
+    // place a drag let go was refused at, counted: it shakes.
+    in property <PlaceLine> lifted;
+    in property <int> refused-place: -1;
+    // CLEAR's question (docs/design/app-ui.md §2.71).
+    out property <string> clear-question: @tr("Clear the auto battle data?");
+    // How many of the places hold a chip, the note of its library row.
+    public pure function in-places(n: int) -> string {
+        return @tr("In {n} place" | "In {n} places" % n);
+    }
+}
+
+// A place being dragged (`Drag`): where it would land (`to`, a place), and whether it trades places with what is
+// there (another list's place) or the places between shift (its own list's). A library's chip dragged in
+// (`filling`) takes the place of what the place it would land in holds, none shifting.
+global PlaceDrag {
+    out property <bool> on: Drag.on && Drag.list == "places.";
+    out property <bool> filling: Drag.on && Drag.list == "lib.rows";
+    out property <int> to: self.on || self.filling ? Drag.to : -1;
+    out property <bool> shifting: self.on && self.to >= 0 && !Drag.swap;
+    // Which way place `place` shifts while one is dragged in its list: to the place before it (-1), after (1), or
+    // none.
+    public pure function step(place: int) -> int {
+        return !self.shifting ? 0 : (Drag.from < place && place <= self.to) ? -1 : (self.to <= place && place < Drag.from) ? 1 : 0;
+    }
+}
+
+// A line of the places: a list's title, or a place, the overview's chip row as a control of the places' page (empty:
+// its number alone). A click on a place while it is marked empties it; a drag takes its chip to another place
+// (`dx`, `dy`: where it is shifted to while another of its list is dragged; the one dragged is drawn under the
+// pointer, `gone` here; `gap`: a drag would land here).
+component PlaceView inherits Rectangle {
+    in property <PlaceLine> line;
+    in property <bool> chosen;
+    in property <length> dx;
+    in property <length> dy;
+    in property <bool> gone;
+    in property <bool> gap;
+    // Its number in its list, as it shows (shifted, the place's it shows at).
+    in property <int> number;
+    DropGap {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        visible: root.gap;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Label {
+        x: 0;
+        y: 6px;
+        width: parent.width;
+        height: 14px;
+        visible: root.line.title;
+        text: I18n.upper(root.line.text);
+    }
+
+    ChipRow {
+        x: root.dx;
+        y: root.dy;
+        width: root.width;
+        visible: !root.line.title;
+        opacity: root.gone ? 0 : 1;
+        chip: root.line.chip;
+        number: root.number;
+        chosen: root.chosen;
+        hover: hit.has-hover && !PlaceDrag.on && !PlaceDrag.filling;
+        big: Theme.handheld;
+        animate x, y {
+            duration: PlaceDrag.on ? Theme.quick : 0ms;
+            easing: ease-out;
+        }
+    }
+
+    hit := Focusable {
+        nav: root.line.title ? "" : "places.place";
+        nav-index: root.line.place;
+        drag: root.line.title || !root.line.chip.there ? "" : "places.";
+        removable: !root.line.title;
+        describes: !root.line.title;
+    }
+}
+
+// A chip of the library: its icon and name, a note (why it can't go in: in the error red, the row greyed), its MB, its
+// attack, its element. `dx` shakes it.
+component AutoLibraryRowView inherits Rectangle {
+    in property <LibraryRow> row-data;
+    in property <int> nav-index;
+    in property <length> dx;
+    property <length> element-x: self.width - 8px - 16px;
+    property <length> attack-x: Theme.handheld ? root.element-x : root.element-x - 8px - 40px;
+    property <length> megabytes-x: Theme.handheld ? root.element-x : root.attack-x - 8px - 56px;
+    property <length> note-width: Theme.handheld ? 118px : 150px;
+    property <length> note-x: root.megabytes-x - 8px - root.note-width;
+    Rectangle {
+        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Image {
+        x: 8px + root.dx;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.row-data.icon;
+        image-rendering: pixelated;
+        opacity: root.row-data.refused ? 0.5 : 1;
+    }
+
+    // (The chip's version's mark follows its name: a square of its color where the two don't fit.)
+    property <length> name-room: max(0px, root.note-x - 8px - 32px);
+    name := Text {
+        x: 32px + root.dx;
+        width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
+        text: root.row-data.name;
+        color: root.row-data.kind == ChipKind.mega ? Theme.mega : root.row-data.kind == ChipKind.giga ? Theme.giga : (root.row-data.refused ? Theme.dim : Theme.text);
+        opacity: root.row-data.refused && root.row-data.kind != ChipKind.standard ? 0.5 : 1;
+        font-family: Theme.body;
+        font-size: Theme.handheld ? 14px : 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    version := VersionMark {
+        x: name.x + min(name.width, name.preferred-width) + 6px;
+        y: (parent.height - self.height) / 2;
+        tag: root.row-data.version;
+        short: name.preferred-width + 6px + self.natural-width > root.name-room;
+        opacity: root.row-data.refused ? 0.5 : 1;
+    }
+
+    Text {
+        x: root.note-x + root.dx;
+        width: root.note-width;
+        text: root.row-data.note;
+        color: root.row-data.refused ? Theme.bad : Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: root.megabytes-x;
+        width: 56px;
+        visible: !Theme.handheld;
+        text: root.row-data.megabytes;
+        color: Theme.muted;
+        font-family: Theme.mono;
+        font-size: 12px;
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: root.attack-x;
+        width: 40px;
+        visible: !Theme.handheld;
+        text: root.row-data.attack;
+        color: Theme.muted;
+        font-family: Theme.mono;
+        font-size: 12px;
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    Image {
+        x: root.element-x;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.row-data.element;
+        image-rendering: pixelated;
+        opacity: root.row-data.refused ? 0.5 : 1;
+    }
+
+    // (Dragged into a place beside it, on a desktop: a phone's library is a sheet over the places.)
+    touch := RowTouch {
+        nav: "lib.rows";
+        nav-index: root.nav-index;
+        removable: true;
+        drag: Theme.phone ? "" : "lib.rows";
+        describes: true;
+    }
+}
+
+// The library: its title, the search field, the sort and its direction, and its rows.
+component ChipsPane inherits Rectangle {
+    shake := Shake {
+        seq: AutoBattleView.refused-seq;
+    }
+
+    LibraryHead {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        in-library: AutoBattleView.in-library;
+        search: AutoBattleView.search;
+        placeholder: @tr("Search chips");
+        sort: AutoBattleView.sorts[AutoBattleView.sort];
+        descending: AutoBattleView.descending;
+    }
+
+    list := ListView {
+        x: Theme.phone ? 0px : 4px;
+        y: 52px;
+        width: parent.width - self.x;
+        height: parent.height - 52px;
+        nav: "lib.rows";
+        count: AutoBattleView.chips.length;
+        row-height: Theme.list-row;
+        chosen: self.focused-row;
+        // (A mouse's drag on a row takes its chip into a place: the wheel scrolls.)
+        mouse-pan: Theme.phone;
+        for slot in list.shown: AutoLibraryRowView {
+            property <int> at: list.first + slot;
+            y: self.at * list.pitch;
+            width: list.row-width;
+            height: list.row-height;
+            row-data: AutoBattleView.chips[self.at];
+            nav-index: self.at;
+            dx: self.at == AutoBattleView.refused ? shake.dx : 0px;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+}
+
+export component AutoBattleTab inherits Rectangle {
+    property <length> top: -4px;
+    property <length> pane-y: Theme.handheld ? 0px : root.top + 104px + 12px;
+    property <length> pane-width: Theme.phone ? self.width : Theme.sideways ? (self.width - 12px) / 2 + 24px : 528px;
+    // (On a desktop down to 18 over the tab's foot, as the folder's: 482 at the reference window.)
+    property <length> pane-height: Theme.handheld ? self.height : self.height - root.pane-y - 18px;
+    property <int> columns: Theme.handheld ? 1 : 2;
+    // (A phone's line for what is wrong with the data, over the places.)
+    property <length> phone-lead: 24px;
+    property <length> place-width: (root.pane-width - 24px - 12px - (root.columns - 1) * 12px) / root.columns;
+    property <length> pitch: Theme.list-row + Theme.list-gap;
+    property <bool> has-element: AutoBattleView.detail.there && AutoBattleView.detail.element.width > 0;
+
+    // ---- The strip: the chip under the cursor.
+    PanelBack {
+        x: 0;
+        y: root.top;
+        height: Theme.handheld ? 0px : 104px;
+        visible: !Theme.handheld;
+    }
+
+    Image {
+        x: 18px;
+        y: root.top + 16px;
+        width: 84px;
+        height: 72px;
+        visible: !Theme.handheld;
+        source: AutoBattleView.detail.art;
+        image-rendering: pixelated;
+    }
+
+    Text {
+        x: 120px;
+        y: root.top + 19px;
+        width: root.width / 2 - 120px;
+        height: 20px;
+        visible: !Theme.handheld;
+        text: AutoBattleView.detail.name;
+        color: AutoBattleView.detail.kind == ChipKind.mega ? Theme.mega : AutoBattleView.detail.kind == ChipKind.giga ? Theme.giga : Theme.text;
+        font-family: Theme.body;
+        font-size: 16px;
+        font-weight: 700;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (Why what was asked of the place under the cursor wasn't done: the strip's refusal; else what the rules have
+    // against it.)
+    Refusal {
+        x: root.width / 2;
+        y: root.top + 19px;
+        width: root.width / 2 - 16px;
+        visible: !Theme.handheld;
+        text: AutoBattleView.detail.problem;
+        problem: AutoBattleView.detail.fault;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Text {
+        x: 120px;
+        y: root.top + 43px;
+        width: parent.width - 136px;
+        height: 18px;
+        visible: !Theme.handheld;
+        text: AutoBattleView.detail.description;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (A chip with no element, a Program Advance, has its facts where the element would be.)
+    HorizontalLayout {
+        x: root.has-element ? 120px : 104px;
+        y: root.top + 69px;
+        width: parent.width - 136px;
+        height: 16px;
+        visible: !Theme.handheld;
+        spacing: 16px;
+        alignment: start;
+        Image {
+            width: root.has-element ? 16px : 0px;
+            height: 16px;
+            source: AutoBattleView.detail.element;
+            image-rendering: pixelated;
+        }
+
+        for fact in AutoBattleView.detail.facts: Text {
+            text: fact;
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+
+    // ---- The places, framed: the title, then the lists' places, scrolled.
+    PanelBack {
+        x: 0;
+        y: root.pane-y;
+        width: root.pane-width;
+        height: root.pane-height;
+        visible: !Theme.phone;
+    }
+
+    places-title := Label {
+        x: 12px;
+        y: root.pane-y;
+        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        height: 44px;
+        visible: !Theme.phone;
+        text: I18n.upper(@tr("Auto battle"));
+        color: AutoBattleView.in-library ? Theme.muted : Theme.cursor;
+    }
+
+    // CLEAR (docs/design/app-ui.md §2.71; the user: "you should add clear for navicust/folder/patch cards/abd"): every
+    // place emptied, asked first; dim where none holds anything. At the header's right end; on a phone at the right
+    // end of the line over the places.
+    clear := WordButton {
+        x: root.pane-width - (Theme.phone ? 0px : 12px) + self.pad - self.width;
+        y: Theme.phone ? 0px : root.pane-y + 14px;
+        nav: "clear";
+        text: I18n.upper(@tr("Clear"));
+        enabled: AutoBattleView.filled > 0;
+    }
+
+    // (What is wrong with the data: a phone's line of its own over the places, before CLEAR; sideways in the header,
+    // after the title, as there is no strip.)
+    ProblemNote {
+        x: Theme.sideways ? places-title.x + places-title.preferred-width + 12px : 0px;
+        y: Theme.sideways ? clear.y : 0px;
+        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        visible: Theme.handheld;
+        text: AutoBattleView.problems;
+    }
+
+    page := ScrollPage {
+        x: Theme.phone ? 0px : 12px;
+        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px);
+        width: root.pane-width - (Theme.phone ? 0px : 12px);
+        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px);
+        nav: "places.";
+        content-height: AutoBattleView.rows * root.pitch;
+        // (A mouse's drag on a place moves its chip: the wheel scrolls.)
+        mouse-pan: false;
+        for line[k] in AutoBattleView.lines: PlaceView {
+            // (Shifted to the place before or after it in its list: the line before or after it.)
+            property <int> step: line.title ? 0 : PlaceDrag.step(line.place);
+            x: line.column * (root.place-width + 12px);
+            y: line.row * root.pitch;
+            width: line.title ? page.view-width - 12px : root.place-width;
+            height: root.pitch - 2px;
+            line: line;
+            chosen: !line.title && line.place == AutoBattleView.marked;
+            dx: (AutoBattleView.lines[k + self.step].column - line.column) * (root.place-width + 12px) + (!line.title && line.place == AutoBattleView.refused-place ? shake.dx : 0px);
+            dy: (AutoBattleView.lines[k + self.step].row - line.row) * root.pitch;
+            gone: PlaceDrag.on && !line.title && line.place == Drag.from;
+            gap: !line.title && line.place == PlaceDrag.to;
+            number: AutoBattleView.lines[k + self.step].number;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+
+        // (The place a chip went into.)
+        Flash {
+            x: AutoBattleView.landed-column * (root.place-width + 12px);
+            y: AutoBattleView.landed-row * root.pitch;
+            width: root.place-width;
+            height: root.pitch - 2px;
+            seq: AutoBattleView.landed-seq;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+
+    // ---- The library, open; a place's chip dragged over it is taken out, let go there.
+    if !Theme.phone: Rectangle {
+        library := ChipsPane {
+            x: root.pane-width + (Theme.sideways ? 12px : 24px);
+            y: root.pane-y;
+            width: parent.width - self.x;
+            height: root.pane-height - (Theme.sideways ? 0px : 12px);
+        }
+
+        RemoveTarget {
+            x: library.x - 8px;
+            y: library.y - 8px;
+            width: library.width + 8px;
+            height: library.height + 16px;
+            shown: PlaceDrag.on && Drag.removing;
+            text: I18n.upper(@tr("Drop to remove"));
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+
+    // (The place being dragged, under the pointer, or a ghost of the library's chip, faint until it is over a place: a
+    // library's row is wider, and its ghost is held no farther in than its middle. And a place a drag was refused at:
+    // it shakes.)
+    LiftedRow {
+        x: Drag.x - root.absolute-position.x - (PlaceDrag.filling ? min(Drag.grab-x, self.width / 2) : Drag.grab-x);
+        y: Drag.y - root.absolute-position.y - Drag.grab-y;
+        width: root.place-width;
+        height: root.pitch - 2px;
+        visible: PlaceDrag.on || PlaceDrag.filling;
+        opacity: PlaceDrag.filling && PlaceDrag.to < 0 ? 0.7 : 1;
+        big: Theme.handheld;
+        chip: AutoBattleView.lifted.chip;
+        number: AutoBattleView.lifted.number;
+        removing: Drag.removing;
+    }
+
+    shake := Shake {
+        seq: AutoBattleView.refused-seq;
+    }
+}
+
+// What the Auto battle tab opens over the window: on a phone, the library as a sheet from the bottom, for the place
+// tapped, with emptying it. Its controls' names begin with `lib.`: while it is open the keys reach nothing else.
+export component AutoBattleOverlay inherits Rectangle {
+    property <length> sheet-height: min(self.height - 72px, 660px);
+    arrive := Tween { }
+
+    Rectangle {
+        background: Theme.shade;
+        opacity: arrive.t;
+        TouchArea {
+            clicked => {
+                Nav.activate("lib.close", 0);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - root.sheet-height + (1 - arrive.t) * 24px;
+        height: root.sheet-height;
+        opacity: arrive.t;
+        background: Theme.panel;
+        TouchArea { }
+
+        Rectangle {
+            y: 0;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        Button {
+            x: 16px;
+            y: 12px;
+            width: parent.width - 32px;
+            nav: "lib.remove";
+            text: I18n.upper(@tr("Remove"));
+            kind: ButtonKind.ghost;
+            danger: true;
+        }
+
+        ChipsPane {
+            x: 16px;
+            y: 12px + 40px + 12px;
+            width: parent.width - 32px;
+            height: parent.height - self.y - 8px;
+        }
+    }
+}

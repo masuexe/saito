@@ -1,0 +1,816 @@
+//! Replays (saito-replay's files): a set recorded as it is played
+//! ([`Recorder`], which a [`crate::Player`] writes: [`crate::Player::record`]),
+//! played back ([`ReplayPlayer`], a driver that checks what it plays
+//! against the recording), and played to its end without a picture or a
+//! sound ([`play_out`]) for whoever wants what happened in it.
+//!
+//! A replay holds the match (saito-match's binary) and each tick's
+//! buttons by side, and marks the ticks a round and the set ended on; the
+//! battle's digest is kept every [`DIGEST_EVERY`] ticks of the set and at
+//! each round's end, and of the first battle before any tick. Playing one
+//! back makes the set again from those: a digest or a mark that differs is
+//! a difference from the recording ([`crate::Player::diverged`]).
+//!
+//! The simulation is side 0's on every console (a round's setup says so:
+//! its `local_side`), whoever watches it: a replay shown from side 1 draws
+//! side 1's console, and its digests are still the simulation's.
+
+use std::io::Write;
+use std::sync::Arc;
+
+use saito_battle::content::Content;
+use saito_battle::custom::Layer;
+use saito_battle::{Battle, BattleResult, PlayerTick, RoundEnd, TickInput};
+use saito_match::{After, Match, Set};
+// (What a host reads of a replay, without naming saito-replay.)
+pub use saito_replay::{End, Info, MatchKind, Mismatch, ReadError, Replay, Tick};
+use saito_replay::{Head, Writer};
+
+use crate::driver::{Driver, Place, Step};
+
+/// saito's version as a replay's head states it (the workspace's,
+/// which the app takes too).
+pub const ENGINE: &str = env!("CARGO_PKG_VERSION");
+
+/// A replay file's extension (`20261018-213000-exe6.saitoreplay`).
+pub const EXTENSION: &str = "saitoreplay";
+
+/// The set's ticks between two digests a recording keeps (besides each
+/// round's end's).
+pub const DIGEST_EVERY: u64 = 60;
+
+/// Whether a recording keeps the battle's digest after the set's tick
+/// `tick` (counted from 0, through every round): every [`DIGEST_EVERY`]th.
+pub fn digest_due(tick: u64) -> bool {
+    (tick + 1) % DIGEST_EVERY == 0
+}
+
+/// A set being recorded: the replay being written, a tick at a time.
+pub struct Recorder {
+    writer: Writer<Box<dyn Write + Send>>,
+    /// The set's ticks written.
+    ticks: u64,
+    /// Why writing failed, once it has: the recording stops there (the
+    /// file holds the ticks before).
+    failed: Option<String>,
+}
+
+impl Recorder {
+    /// A recording of match `m` (a checked one, with its seed: the set
+    /// played is `Set::of(content, m, seed)`) on `content` to `out`, which
+    /// gets the replay's head, match and `info` at once and each tick as
+    /// it is played.
+    pub fn new(out: Box<dyn Write + Send>, content: &Arc<Content>, m: &Match, info: &Info) -> Result<Recorder, String> {
+        let seed = m.seed.ok_or("a recorded match states its seed")?;
+        let head = Head {
+            engine: ENGINE.to_string(),
+            game: content.game().to_string(),
+            content: content.hash().0,
+            start: Set::of(content, m, seed).start().digest(),
+        };
+        let bytes = saito_match::binary::match_bytes(content, m)?;
+        let writer = Writer::new(out, &head, &bytes, info).map_err(|e| format!("can't write the replay: {e}"))?;
+        Ok(Recorder { writer, ticks: 0, failed: None })
+    }
+
+    /// A recording of the netplay match the lobby agreed (`agreed`: its
+    /// match and seed, this peer's side, both players' names, and whether
+    /// they opened their setups) to `out`, started at `when` (seconds since
+    /// 1970). The replay's info is the agreement's: an online match,
+    /// recorded from this peer's side, by these names, with open setups
+    /// where the players agreed them. So a host that records a netplay
+    /// match passes the flag on by making the recorder here, and a viewer
+    /// reads it back as `Replay::info.open_setups` (`Viewer::info`).
+    pub fn of_agreement(out: Box<dyn Write + Send>, content: &Arc<Content>, agreed: &crate::lobby::Agreement, when: u64) -> Result<Recorder, String> {
+        let info = Info { when, side: agreed.side as u8, kind: MatchKind::Online, open_setups: agreed.open_setups(), names: agreed.names.clone() };
+        let m = Match { seed: Some(agreed.seed), ..agreed.m.clone() };
+        Recorder::new(out, content, &m, &info)
+    }
+
+    /// Whether the battle's digest is kept after the next tick.
+    pub fn digest_due(&self) -> bool {
+        digest_due(self.ticks)
+    }
+
+    /// The next tick of the set (nothing once writing failed or the set's
+    /// end is written).
+    pub(crate) fn tick(&mut self, t: &Tick) {
+        if self.failed.is_some() || self.writer.ended() {
+            return;
+        }
+        match self.writer.tick(t) {
+            Ok(()) => self.ticks += 1,
+            Err(e) => self.failed = Some(format!("the replay stopped being written at tick {}: {e}", self.ticks)),
+        }
+    }
+
+    /// The set's ticks written.
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
+    /// Why writing failed, once it has.
+    pub fn failed(&self) -> Option<&str> {
+        self.failed.as_deref()
+    }
+}
+
+/// The digest of `b` as the simulation has it: its round's console the
+/// one its setup states (`local_side`), whichever a viewer is shown.
+fn simulation_digest(b: &Battle, local_side: u8) -> u64 {
+    if b.setup.local_side == local_side {
+        return b.digest();
+    }
+    let mut b = b.clone();
+    b.setup.local_side = local_side;
+    b.digest()
+}
+
+/// Why a replay isn't played on the content given ([`ReplayPlayer::new`],
+/// [`play_out`], [`crate::viewer::Viewer::open`]). The variant is what a
+/// host tells its user; what it says (`Display`) is the detail, for a log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// It is a replay of another game than the content's.
+    OtherGame { replay: String, here: String },
+    /// It was made by another version of saito: on another engine or
+    /// other content, or its match makes another first battle here than
+    /// the one it recorded (an engine that differs under the same
+    /// version).
+    OtherVersion(String),
+    /// Its match doesn't read, or breaks the game's rules: a file that
+    /// was damaged or changed.
+    BadMatch(String),
+    /// It is asked to be shown from a side a match doesn't have.
+    NoSide(u8),
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Refused::OtherGame { replay, here } => write!(f, "the replay is of {replay}, not {here}"),
+            Refused::OtherVersion(why) | Refused::BadMatch(why) => write!(f, "{why}"),
+            Refused::NoSide(side) => write!(f, "no side {side}: a match has sides 0 and 1"),
+        }
+    }
+}
+
+impl std::error::Error for Refused {}
+
+impl From<Mismatch> for Refused {
+    fn from(m: Mismatch) -> Refused {
+        match m {
+            Mismatch::Game { replay, here } => Refused::OtherGame { replay, here },
+            other => Refused::OtherVersion(other.to_string()),
+        }
+    }
+}
+
+/// Plays a replay back, tick by tick, shown from one side: each tick's
+/// buttons as the recording has them, the set going on round after round
+/// where it marks a round's end. It compares the battle with what the
+/// recording kept (the digests, the marks) and says where it differs
+/// (`Driver::check`).
+pub struct ReplayPlayer {
+    set: Set,
+    ticks: Vec<Tick>,
+    /// The ticks played.
+    at: usize,
+    /// The round being played, from 1.
+    round: u32,
+    /// The side shown.
+    viewer: u8,
+    /// The side the simulation's setup states.
+    local_side: u8,
+    end: End,
+    /// Both sides' custom screen layers, run again from the recorded words'
+    /// buttons (made with the round's first tick).
+    layers: Option<[Layer; 2]>,
+}
+
+/// The set a replay plays on `content`: its match, read and checked, from
+/// its seed. Refused: a replay of another engine, game or content, a match
+/// that doesn't read or that the checks refuse, and a first battle other
+/// than the recording's. (What a host makes ready before it opens the
+/// replay: `crate::preload::Preload::new` takes the set.)
+pub fn set_of(content: &Arc<Content>, replay: &Replay) -> Result<Set, Refused> {
+    replay.head.require(ENGINE, content.game(), content.hash().0)?;
+    let m = saito_match::binary::read_match(content, &replay.match_bytes).map_err(|e| Refused::BadMatch(format!("the replay's match doesn't read: {e}")))?;
+    let problems = saito_match::check_match(content, &m);
+    if !problems.is_empty() {
+        return Err(Refused::BadMatch(format!("the replay's match breaks the rules: {}", problems.join("; "))));
+    }
+    let set = Set::of(content, &m, m.seed.expect("a replay's match states its seed"));
+    let start = set.start().digest();
+    if start != replay.head.start {
+        return Err(Refused::OtherVersion(format!(
+            "the replay's match makes another battle on this engine (its first battle's digest {start:016x}, the recording's {:016x})",
+            replay.head.start
+        )));
+    }
+    Ok(set)
+}
+
+impl ReplayPlayer {
+    /// A replay's playback on `content`, shown from `viewer`'s side (none:
+    /// the side that recorded it). Refused as [`set_of`] refuses a replay,
+    /// and for a side a match doesn't have.
+    pub fn new(content: &Arc<Content>, replay: &Replay, viewer: Option<u8>) -> Result<ReplayPlayer, Refused> {
+        let set = set_of(content, replay)?;
+        let viewer = viewer.unwrap_or(replay.info.side);
+        if viewer > 1 {
+            return Err(Refused::NoSide(viewer));
+        }
+        let local_side = set.first().local_side;
+        Ok(ReplayPlayer { set, ticks: replay.ticks.clone(), at: 0, round: 1, viewer, local_side, end: replay.end, layers: None })
+    }
+
+    /// The tick last played.
+    fn last(&self) -> &Tick {
+        &self.ticks[self.at - 1]
+    }
+}
+
+impl Driver for ReplayPlayer {
+    fn start(&mut self) -> Battle {
+        self.at = 0;
+        self.round = 1;
+        self.layers = None;
+        let mut b = self.set.start();
+        b.setup.local_side = self.viewer;
+        b
+    }
+
+    fn next(&mut self, b: &Battle, _: PlayerTick) -> Option<Step> {
+        let t = *self.ticks.get(self.at)?;
+        // Each side's layer as it ran: before this tick it read the buttons (and the switch request it let
+        // through) of the word that landed the side's delay later, and the choice that word carries, whose slot
+        // its cursor goes to (a pointer player's moves aren't in the words). What it chooses is the recording's,
+        // in its words: the layer is the view alone.
+        let mut layers = self.layers.take().unwrap_or_else(|| [Layer::new(0, b), Layer::new(1, b)]);
+        for (side, layer) in layers.iter_mut().enumerate() {
+            let read = self.ticks.get(self.at + t.delays[side] as usize).map_or_else(PlayerTick::default, |r| PlayerTick::from_word(r.inputs[side]));
+            layer.input(read, b);
+        }
+        self.layers = Some(layers);
+        self.at += 1;
+        // (The words are the whole input, as a netplay peer's are.)
+        let TickInput { players, events } = saito_netplay::standin::tick_input(b, t.inputs);
+        Some(Step { input: players, events, frame: Some(self.at as u32) })
+    }
+
+    fn layers(&self) -> [Option<&Layer>; 2] {
+        match &self.layers {
+            Some([a, b]) => [Some(a), Some(b)],
+            None => [None, None],
+        }
+    }
+
+    fn follow(&mut self, b: &Battle) {
+        for layer in self.layers.iter_mut().flatten() {
+            layer.follow(b);
+        }
+    }
+
+    fn set_layers(&mut self, layers: [Option<Layer>; 2]) -> bool {
+        self.layers = match layers {
+            [Some(a), Some(b)] => Some([a, b]),
+            _ => None,
+        };
+        true
+    }
+
+    fn check(&self, b: &Battle) -> Vec<String> {
+        let t = self.last();
+        let tick = self.at - 1;
+        let mut out = Vec::new();
+        if let Some(d) = t.digest {
+            let ours = simulation_digest(b, self.local_side);
+            if ours != d {
+                out.push(format!("the battle's digest after tick {tick} is {ours:016x}, the recording's {d:016x}"));
+            }
+        }
+        let ended = matches!(b.round_end(), Some(RoundEnd::NextRound { .. } | RoundEnd::Over(_)));
+        let over = matches!(b.round_end(), Some(RoundEnd::Over(_)));
+        match (t.round_ended, ended) {
+            (true, false) => out.push(format!("the recording's round {} ends on tick {tick}; the battle's goes on", self.round)),
+            (false, true) => out.push(format!("round {} ends on tick {tick}; the recording's goes on", self.round)),
+            _ if t.set_ended != over && ended => out.push(format!(
+                "the set {} on tick {tick}; the recording's {}",
+                if over { "ends" } else { "goes on" },
+                if t.set_ended { "ends" } else { "goes on" }
+            )),
+            _ => {}
+        }
+        out
+    }
+
+    fn round_ended(&mut self, b: &Battle) -> Option<After> {
+        if !self.last().round_ended {
+            return None;
+        }
+        let mut after = self.set.after(b, self.viewer)?;
+        if let After::Round(next) = &mut after {
+            next.setup.local_side = self.viewer;
+            self.round += 1;
+            self.layers = None;
+        }
+        Some(after)
+    }
+
+    fn position(&self) -> String {
+        format!("replay round {} tick {} of {}", self.round, self.at, self.ticks.len())
+    }
+
+    fn go_to(&mut self, place: Place) -> bool {
+        if place.tick as usize > self.ticks.len() || place.viewer > 1 {
+            return false;
+        }
+        (self.at, self.round, self.viewer) = (place.tick as usize, place.round, place.viewer);
+        true
+    }
+}
+
+/// What playing a replay to its end made: for a list of replays, which
+/// keeps none of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    /// The ticks played.
+    pub ticks: u64,
+    /// Each round played to its end, its winner by side (none: a draw).
+    pub rounds: Vec<Option<u8>>,
+    /// The set's result for side 0, if it was played to its end.
+    pub result: Option<BattleResult>,
+    /// How the recording ends.
+    pub end: End,
+    /// The first difference from the recording, if any (the replay didn't
+    /// reproduce from there).
+    pub diverged: Option<String>,
+    /// Why playing stopped before the input's end: the engine stopped.
+    pub stopped: Option<String>,
+}
+
+/// Play a replay to its end on `content`, with no picture and no sound:
+/// what happened in it (who won each round and the set), and whether it
+/// reproduced. Refused as [`ReplayPlayer::new`] refuses one.
+pub fn play_out(content: &Arc<Content>, replay: &Replay) -> Result<Outcome, Refused> {
+    let mut d = ReplayPlayer::new(content, replay, Some(0))?;
+    let mut b = d.start();
+    let mut out = Outcome { ticks: 0, rounds: Vec::new(), result: None, end: d.end, diverged: None, stopped: None };
+    while let Some(step) = d.next(&b, PlayerTick::default()) {
+        let ticked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.tick(&step.input, step.events)));
+        out.ticks += 1;
+        if let Err(e) = ticked {
+            let why = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+            out.stopped = Some(format!("engine stopped at {}: {why}", d.position()));
+            break;
+        }
+        if out.diverged.is_none() {
+            let diffs = d.check(&b);
+            if !diffs.is_empty() {
+                out.diverged = Some(format!("differs from the recording at {}: {}", d.position(), diffs.join("; ")));
+            }
+        }
+        // (Who won a round: the score it ended with, side 0's, against the
+        // one it started with; the set's last round too, whatever the set's
+        // result: one of an even number of rounds may end drawn on a round
+        // won.)
+        let before = b.setup.score;
+        let winner = if b.round.wins > before.wins {
+            Some(0)
+        } else if b.round.losses > before.losses {
+            Some(1)
+        } else {
+            None
+        };
+        match d.round_ended(&b) {
+            None => {}
+            Some(After::Round(next)) => {
+                out.rounds.push(winner);
+                b = *next;
+            }
+            Some(After::Over(result)) => {
+                out.rounds.push(winner);
+                out.result = Some(result);
+                break;
+            }
+            Some(After::Stopped(why)) => {
+                out.stopped = Some(format!("engine stopped at {}: {why}", d.position()));
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// (The sink tests write a replay to and read it back from.)
+#[cfg(test)]
+pub(crate) mod testing {
+    pub use crate::testing::Shared;
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::testing::Shared;
+    use super::*;
+    use crate::driver::{LivePlayer, short_set};
+    use crate::session::Session;
+
+    /// Sets first to other numbers of round wins than the original's two,
+    /// played offline by both players (each round won by the side the case
+    /// says: it shoots, the other stands, both navis at 1 HP), end when a
+    /// side has them: first to 3 decided 3-0 after three rounds either way
+    /// and 3-2 after all five (all three games); first to 4 at 4-3 after
+    /// seven, and at 4-1 after five; first to 1 after its one round. Each
+    /// new round starts with the score carried. Each set is recorded, every
+    /// round's place kept and what the set is first to with them, and its
+    /// replay plays back to the same end with the same round ends, every
+    /// digest and mark the recording's, and played out says who won each
+    /// round.
+    #[test]
+    fn a_set_first_to_n_ends_when_it_should() {
+        use BattleResult::{Lost, Won};
+        let (six, five, four) = (saito_match::testing::exe6_content(), saito_match::testing::exe5_content(), saito_match::testing::exe4_content());
+        let cases: [(&Arc<Content>, &str, u8, &[usize], BattleResult); 11] = [
+            (&six, "exe6", 3, &[0, 0, 0], Won),
+            (&six, "exe6", 3, &[1, 1, 1], Lost),
+            (&six, "exe6", 3, &[0, 1, 0, 1, 0], Won),
+            (&five, "exe5", 3, &[1, 0, 1, 0, 1], Lost),
+            (&four, "exe4", 3, &[0, 1, 0, 1, 0], Won),
+            (&six, "exe6", 3, &[1, 1, 0, 0, 0], Won),
+            (&six, "exe6", 4, &[0, 1, 0, 1, 0, 1, 1], Lost),
+            (&four, "exe4", 4, &[0, 0, 1, 0, 0], Won),
+            (&six, "exe6", 1, &[1], Lost),
+            // (A single battle's, each game's: one round, no set.)
+            (&five, "exe5", 1, &[0], Won),
+            (&four, "exe4", 1, &[1], Lost),
+        ];
+        for (content, game, first_to, winners, result) in cases {
+            let case = format!("{game} first to {first_to}, won by {winners:?}");
+            let m = short_set::duel(content, game, 7, first_to);
+            let sink = Shared::default();
+            let live = LivePlayer::new(Set::of(content, &m, 7));
+            let mut s = Session::new(Box::new(short_set::Scripted { live, winners: winners.to_vec() }));
+            s.record(Recorder::new(Box::new(sink.clone()), content, &m, &Info::of(MatchKind::Offline, 0)).unwrap()).unwrap();
+            let mut scores = Vec::new();
+            while s.step(saito_battle::PlayerTick::default()) {
+                assert!(s.ticks < 60_000, "{case}: the set doesn't end ({})", s.driver.position());
+                if s.new_round {
+                    let r = &s.battle.round;
+                    scores.push((r.round, r.wins, r.losses));
+                }
+            }
+            assert_eq!((s.result, s.stopped.as_deref()), (Some(result), Some(format!("the match is over: {}", crate::driver::result_text(result)).as_str())), "{case}");
+            // (The score each later round starts with: rounds played, the
+            // left's wins, its losses.)
+            let mut want = Vec::new();
+            let (mut wins, mut losses) = (0, 0);
+            for (n, &w) in winners[..winners.len() - 1].iter().enumerate() {
+                (wins, losses) = if w == 0 { (wins + 1, losses) } else { (wins, losses + 1) };
+                want.push((n as u8 + 1, wins, losses));
+            }
+            assert_eq!(scores, want, "{case}");
+            // The replay keeps every round's place, and plays back.
+            let replay = Replay::read(&sink.bytes()).unwrap();
+            assert_eq!((replay.end, replay.rounds().len(), replay.ticks.len() as u64), (End::Set, winners.len(), s.ticks), "{case}");
+            let kept = saito_match::binary::read_match(content, &replay.match_bytes).unwrap();
+            assert_eq!(kept, m.stated(content, 7).unwrap(), "{case}");
+            assert_eq!((kept.first_to(), kept.rounds.len()), (first_to, saito_match::rounds_for(first_to)), "{case}");
+            let out = play_out(content, &replay).unwrap();
+            let want = Outcome {
+                ticks: s.ticks,
+                rounds: winners.iter().map(|&w| Some(w as u8)).collect(),
+                result: Some(result),
+                end: End::Set,
+                diverged: None,
+                stopped: None,
+            };
+            assert_eq!(out, want, "{case}");
+            let mut p = Session::new(Box::new(ReplayPlayer::new(content, &replay, Some(0)).unwrap()));
+            let mut ends = Vec::new();
+            while p.step(saito_battle::PlayerTick::default()) {
+                if p.new_round {
+                    ends.push(p.ticks);
+                }
+            }
+            assert_eq!((p.diverged, p.result, p.ticks, ends.len()), (None, Some(result), s.ticks, winners.len() - 1), "{case}");
+        }
+    }
+
+    /// A set drawn on other games' backgrounds (the background pool's: one
+    /// round's stated, the rest picked from the pool) is recorded with them,
+    /// by their games and names, and plays back to the same end, every
+    /// digest the recording's, each round on the background it was played
+    /// on.
+    #[test]
+    fn a_set_on_other_games_backgrounds_plays_back() {
+        let content = saito_match::testing::exe6_content();
+        let mut m = short_set::of(&content, "exe6", 7);
+        m.backgrounds = saito_match::BackgroundPick::Pool;
+        m.rounds[0].background = Some("exe5:nebula-area".into());
+        let played: Vec<_> = m.places(&content, 7).unwrap().iter().map(|p| p.background).collect();
+        assert_eq!(content.background_of(played[0]), Some(("exe5", "nebula-area")));
+        let sink = Shared::default();
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, 7))));
+        s.record(Recorder::new(Box::new(sink.clone()), &content, &m, &Info::of(MatchKind::Offline, 0)).unwrap()).unwrap();
+        while s.step(short_set::shooter(&s.battle, 0, s.ticks as u32)) {}
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let kept = saito_match::binary::read_match(&content, &replay.match_bytes).unwrap();
+        assert_eq!(kept.rounds[0].background.as_deref(), Some("exe5:nebula-area"));
+        assert_eq!(kept.places(&content, 7).unwrap().iter().map(|p| p.background).collect::<Vec<_>>(), played);
+        let out = play_out(&content, &replay).unwrap();
+        assert_eq!((out.diverged, out.end, out.ticks, out.result), (None, End::Set, s.ticks, s.result));
+        let mut p = Session::new(Box::new(ReplayPlayer::new(&content, &replay, Some(0)).unwrap()));
+        assert_eq!(p.battle.setup.settings.background, played[0], "the first round on its background");
+        while p.step(saito_battle::PlayerTick::default()) {}
+        assert_eq!((p.diverged, p.result), (None, s.result));
+    }
+
+    /// A short set played live and recorded (the shooter wins it 2-0): the
+    /// replay, and the session's ticks.
+    fn recorded(content: &Arc<Content>, game: &str) -> (Replay, u64) {
+        let m = short_set::of(content, game, 7);
+        let sink = Shared::default();
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(content, &m, 7))));
+        let info = Info { when: 1_790_000_000, names: ["Lan".into(), String::new()], ..Info::of(MatchKind::Offline, 0) };
+        s.record(Recorder::new(Box::new(sink.clone()), content, &m, &info).unwrap()).unwrap();
+        while s.step(short_set::shooter(&s.battle, 0, s.ticks as u32)) {}
+        assert_eq!(s.result, Some(BattleResult::Won), "{game}");
+        (Replay::read(&sink.bytes()).unwrap(), s.ticks)
+    }
+
+    /// A live set recorded plays back to the same end, round by round,
+    /// every digest and mark the recording's, from either side's console
+    /// (side 1's sees the set lost); and played out without a picture.
+    /// Both games. Each round's mark is the first tick its battle has the
+    /// round over, as a set stepped by hand on the recorded buttons has it:
+    /// the rule netplay's rounds end by too (`netplay`'s
+    /// `both_players_record_the_same_set`).
+    #[test]
+    fn a_recorded_set_plays_back() {
+        for (content, game) in [(saito_match::testing::exe6_content(), "exe6"), (saito_match::testing::exe5_content(), "exe5")] {
+            let (replay, ticks) = recorded(&content, game);
+            assert_eq!((replay.end, replay.ticks.len() as u64, replay.rounds().len()), (End::Set, ticks, 2), "{game}");
+            assert!(replay.ticks.iter().filter(|t| t.digest.is_some()).count() as u64 >= ticks / DIGEST_EVERY, "{game}");
+            let m = saito_match::binary::read_match(&content, &replay.match_bytes).unwrap();
+            let set = Set::of(&content, &m, m.seed.unwrap());
+            let mut b = set.start();
+            let mut ends = Vec::new();
+            for (i, t) in replay.ticks.iter().enumerate() {
+                let TickInput { players, events } = saito_netplay::standin::tick_input(&b, t.inputs);
+                b.tick(&players, events);
+                assert_eq!(t.round_ended, b.round_end().is_some(), "{game}: tick {i}");
+                if let Some(d) = t.digest {
+                    assert_eq!(b.digest(), d, "{game}: tick {i}");
+                }
+                if t.round_ended {
+                    ends.push(i);
+                    if let Some(After::Round(next)) = set.after(&b, 0) {
+                        b = *next;
+                    }
+                }
+            }
+            assert_eq!(ends.len(), 2, "{game}");
+            let out = play_out(&content, &replay).unwrap();
+            let want = Outcome { ticks, rounds: vec![Some(0), Some(0)], result: Some(BattleResult::Won), end: End::Set, diverged: None, stopped: None };
+            assert_eq!(out, want, "{game}");
+            for (side, result) in [(0, BattleResult::Won), (1, BattleResult::Lost)] {
+                let mut p = Session::new(Box::new(ReplayPlayer::new(&content, &replay, Some(side)).unwrap()));
+                assert_eq!(p.battle.setup.local_side, side);
+                let mut rounds = 0;
+                while p.step(saito_battle::PlayerTick::default()) {
+                    rounds += p.new_round as u32;
+                    assert_eq!(p.battle.setup.local_side, side, "{game}: shown from side {side}");
+                }
+                assert_eq!((p.diverged, p.result, p.finished, rounds, p.ticks), (None, Some(result), true, 1, ticks), "{game} side {side}");
+            }
+        }
+    }
+
+    /// What a layer shows, of a tick: the cursor (on its slot, or on a
+    /// pick), what is up over the chips (a description, the form list, the
+    /// hidden window), the form list's cursor, the chip window, the window's
+    /// look, the dark chip's hover, and the sounds the tick asked for.
+    fn shown(l: &Layer) -> impl PartialEq + std::fmt::Debug {
+        (l.cursor, l.pick_cursor, l.sub, l.list_cursor, l.chip_window, l.look, l.hover, l.hover_fade_last, l.calls().collect::<Vec<_>>())
+    }
+
+    /// Both sides' layers as a session's driver keeps them after a tick.
+    fn layers_shown(s: &Session) -> [Option<impl PartialEq + std::fmt::Debug>; 2] {
+        s.driver.layers().map(|l| l.map(shown))
+    }
+
+    /// A set played by keys (the local player's at an input delay of 3,
+    /// pressing about their custom screens; the opponent a bot that gives
+    /// its choices), recorded: played back, both sides' layers show on
+    /// every tick what they showed live (the cursor, what is up, the form
+    /// list and its cursor, the chip window, the hover, the sounds), every
+    /// game.
+    #[test]
+    fn a_keys_played_set_plays_back_its_screens() {
+        use saito_battle::battle::mode;
+        use saito_battle::input::keys;
+        const PRESSED: [u16; 12] =
+            [keys::RIGHT, keys::DOWN, keys::LEFT, keys::UP, keys::A, keys::A, keys::B, keys::R, keys::SELECT, keys::L, keys::RIGHT, keys::A];
+        for (content, game) in [
+            (saito_match::testing::exe6_content(), "exe6"),
+            (saito_match::testing::exe5_content(), "exe5"),
+            (saito_match::testing::exe4_content(), "exe4"),
+        ] {
+            let m = short_set::of(&content, game, 7);
+            let sink = Shared::default();
+            let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, 7)).with_input_delay(3)));
+            s.record(Recorder::new(Box::new(sink.clone()), &content, &m, &Info::of(MatchKind::Offline, 0)).unwrap()).unwrap();
+            let mut seen = Vec::new();
+            let mut up = 0;
+            loop {
+                let tick = s.ticks as u32;
+                let input = if s.battle.round.mode == mode::CUSTOM {
+                    let h = (tick / 4).wrapping_mul(0x9E37_79B9).rotate_left(15);
+                    let held = match tick % 97 {
+                        0 => keys::START,
+                        2 => keys::A,
+                        t if t % 4 == 0 => PRESSED[(h % PRESSED.len() as u32) as usize],
+                        _ => 0,
+                    };
+                    saito_battle::PlayerTick::buttons(held)
+                } else {
+                    short_set::shooter(&s.battle, 0, tick)
+                };
+                if !s.step(input) {
+                    break;
+                }
+                seen.push(format!("{:?}", layers_shown(&s)));
+                up += s.driver.layers().into_iter().flatten().filter(|l| l.chatbox().is_some() || l.list_stage().is_some()).count();
+                assert!(s.ticks < 20_000, "{game}: the set doesn't end ({})", s.driver.position());
+            }
+            assert_eq!(s.result, Some(BattleResult::Won), "{game}");
+            assert!(up > 0, "{game}: nothing came up over the chips");
+            let replay = Replay::read(&sink.bytes()).unwrap();
+            let mut p = Session::new(Box::new(ReplayPlayer::new(&content, &replay, Some(0)).unwrap()));
+            let mut tick = 0;
+            while p.step(PlayerTick::default()) {
+                assert_eq!(format!("{:?}", layers_shown(&p)), seen[tick], "{game}: tick {tick}");
+                tick += 1;
+            }
+            assert_eq!((p.diverged, p.result, tick), (None, Some(BattleResult::Won), seen.len()), "{game}");
+        }
+    }
+
+    /// A set played by pointer, both players' (the local player's at an
+    /// input delay of 3, keys among their gestures; the opponent's on its
+    /// second pad, which holds nothing), recorded: played back, the battle
+    /// is the same, and on every tick a side's layer read a choice that
+    /// names a place (a pick, a button, OK, a pick taken back), its cursor
+    /// is where it was live, every game. (The pointer's presses aren't in
+    /// the words: between choices a replay's cursor is the keys' alone.)
+    #[test]
+    fn a_pointer_played_set_plays_back_its_choices_cursors() {
+        use crate::driver::short_set::pointing;
+        use saito_battle::ScreenChoice;
+        use saito_battle::battle::mode;
+        use saito_battle::input::keys;
+        for (content, game) in [
+            (saito_match::testing::exe6_content(), "exe6"),
+            (saito_match::testing::exe5_content(), "exe5"),
+            (saito_match::testing::exe4_content(), "exe4"),
+        ] {
+            let m = short_set::of(&content, game, 7);
+            let sink = Shared::default();
+            let mut live = LivePlayer::new(Set::of(&content, &m, 7)).with_input_delay(3);
+            live.set_opponent(crate::driver::Opponent { in_fight: crate::driver::InFight::SecondPad, ..Default::default() });
+            live.set_second_pad(Some(0));
+            let mut s = Session::new(Box::new(live));
+            s.record(Recorder::new(Box::new(sink.clone()), &content, &m, &Info::of(MatchKind::Offline, 0)).unwrap()).unwrap();
+            let mut seen = Vec::new();
+            loop {
+                let tick = s.ticks as u32;
+                for side in 0..2 {
+                    if let Some(g) = pointing(&s.battle, side, tick) {
+                        s.driver.layer_mut(side as u8).expect("live play keeps both layers").point(g);
+                    }
+                }
+                let input = if s.battle.round.mode == mode::CUSTOM {
+                    saito_battle::PlayerTick::buttons(if tick % 37 < 2 { keys::RIGHT } else { 0 })
+                } else {
+                    short_set::shooter(&s.battle, 0, tick)
+                };
+                if !s.step(input) {
+                    break;
+                }
+                seen.push(s.driver.layers().map(|l| l.map(|l| (l.cursor, l.pick_cursor))));
+                assert!(s.ticks < 20_000, "{game}: the set doesn't end ({})", s.driver.position());
+            }
+            assert_eq!(s.result, Some(BattleResult::Won), "{game}");
+            let replay = Replay::read(&sink.bytes()).unwrap();
+            assert!(replay.ticks.iter().any(|t| t.delays == [3, 0]), "{game}");
+            let mut p = Session::new(Box::new(ReplayPlayer::new(&content, &replay, Some(0)).unwrap()));
+            let (mut tick, mut compared) = (0, [0; 2]);
+            while p.step(PlayerTick::default()) {
+                for side in 0..2 {
+                    let delay = replay.ticks[tick].delays[side] as usize;
+                    let read = replay.ticks.get(tick + delay).map(|t| PlayerTick::from_word(t.inputs[side]).choice);
+                    if let Some(Some(ScreenChoice::Pick(_) | ScreenChoice::Press(_) | ScreenChoice::Release(_) | ScreenChoice::Ok | ScreenChoice::Unpick(_))) = read {
+                        let shown = p.driver.layers()[side].map(|l| (l.cursor, l.pick_cursor));
+                        assert_eq!(shown, seen[tick][side], "{game}: side {side} tick {tick}: {read:?}");
+                        compared[side] += 1;
+                    }
+                }
+                tick += 1;
+            }
+            assert_eq!((p.diverged, p.result, tick), (None, Some(BattleResult::Won), seen.len()), "{game}");
+            assert!(compared[0] > 5 && compared[1] > 5, "{game}: {compared:?} choices compared");
+        }
+    }
+
+    /// How long `play_out` takes over a long EXE6 set: the left side
+    /// mashing, the right the stand-in's custom screen, 2000 HP each so the
+    /// rounds last, recorded, then played out. Run in a release build:
+    /// `cargo test --release -p saito-frontend play_out_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn play_out_timing() {
+        use saito_battle::battle::mode;
+        let content = saito_match::testing::exe6_content();
+        let mut m = saito_match::pick::live(&content, "exe6", 11, None).unwrap();
+        let hp = saito_battle::content::PlayerFact::BaseHp.name();
+        for s in &mut m.sides {
+            s.set_fact(&content, hp, &[saito_battle::rules::Fact::Value(saito_content_api::Value::Int(2000))]).unwrap();
+        }
+        let sink = Shared::default();
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, 11))));
+        s.record(Recorder::new(Box::new(sink.clone()), &content, &m, &Info::of(MatchKind::Offline, 0)).unwrap()).unwrap();
+        let mut masher = saito_netplay::standin::Masher::new(11);
+        let started = web_time::Instant::now();
+        while s.ticks < 60_000 {
+            let mashed = masher.buttons();
+            let input = if s.battle.round.mode == mode::CUSTOM { short_set::shooter(&s.battle, 0, s.ticks as u32) } else { saito_battle::PlayerTick::buttons(mashed) };
+            if !s.step(input) {
+                break;
+            }
+        }
+        let played = started.elapsed();
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let started = web_time::Instant::now();
+        let out = play_out(&content, &replay).unwrap();
+        let took = started.elapsed();
+        assert_eq!((out.diverged, out.stopped, out.ticks), (None, None, s.ticks));
+        let minutes = out.ticks as f64 / crate::player::FRAME_RATE / 60.0;
+        eprintln!(
+            "play_out: {} ticks ({minutes:.1} minutes of play; {} rounds, {:?}, the file {} bytes) in {took:.2?}: {:.0} ticks a second, \
+             {:.3} s for three minutes (playing and recording it live: {played:.2?})",
+            out.ticks,
+            out.rounds.len(),
+            out.result,
+            sink.bytes().len(),
+            out.ticks as f64 / took.as_secs_f64(),
+            took.as_secs_f64() / minutes * 3.0,
+        );
+    }
+
+    /// A replay that doesn't play as recorded says where: other buttons at
+    /// a tick show at the next digest; a cut file plays to its cut; one of
+    /// another game or content isn't played.
+    #[test]
+    fn a_replay_that_differs_says_where() {
+        let content = saito_match::testing::exe6_content();
+        let (replay, _) = recorded(&content, "exe6");
+        let mut other = replay.clone();
+        let fight = other.ticks.iter().position(|t| t.inputs[0] != 0).unwrap() + 200;
+        for t in &mut other.ticks[fight..] {
+            t.inputs[0] = 0;
+        }
+        let out = play_out(&content, &other).unwrap();
+        let diverged = out.diverged.unwrap();
+        assert!(diverged.contains("the battle's digest after tick") || diverged.contains("ends on tick"), "{diverged}");
+        let mut cut = replay.clone();
+        cut.ticks.truncate(100);
+        cut.end = End::Cut;
+        let out = play_out(&content, &cut).unwrap();
+        assert_eq!((out.ticks, out.result, out.diverged, out.end), (100, None, None, End::Cut));
+        let five = saito_match::testing::exe5_content();
+        let other_game = ReplayPlayer::new(&five, &replay, None).err().unwrap();
+        assert_eq!(other_game, Refused::OtherGame { replay: "exe6".into(), here: "exe5".into() });
+        assert_eq!(other_game.to_string(), "the replay is of exe6, not exe5");
+        // Another version's: the content's hash, the engine's minor
+        // version, or a first battle that isn't the recording's.
+        let changes: [fn(&mut Replay); 3] = [|r| r.head.content ^= 1, |r| r.head.engine = "999.0.0".into(), |r| r.head.start ^= 1];
+        for change in changes {
+            let mut other = replay.clone();
+            change(&mut other);
+            let refused = ReplayPlayer::new(&content, &other, None).err().unwrap();
+            assert!(matches!(refused, Refused::OtherVersion(_)), "{refused:?}");
+        }
+        // (A patch release of its engine plays it.)
+        let mut patched = replay.clone();
+        patched.head.engine = format!("{}.99", saito_replay::line(ENGINE));
+        assert!(ReplayPlayer::new(&content, &patched, None).is_ok());
+        let mut moved = replay.clone();
+        moved.head.start ^= 1;
+        assert!(play_out(&content, &moved).unwrap_err().to_string().starts_with("the replay's match makes another battle on this engine"));
+        let mut cut_match = replay.clone();
+        cut_match.match_bytes.truncate(3);
+        assert!(matches!(ReplayPlayer::new(&content, &cut_match, None).err().unwrap(), Refused::BadMatch(_)));
+        assert_eq!(ReplayPlayer::new(&content, &replay, Some(2)).err().unwrap(), Refused::NoSide(2));
+    }
+}

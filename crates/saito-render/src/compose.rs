@@ -1,0 +1,1260 @@
+//! Putting a frame together: full-screen tile layers and sprite parts,
+//! each with a priority, combined with the original's rules (a sprite
+//! wins over a layer of the same priority; among sprites the lowest
+//! priority, then the earliest, wins, and a later sprite's transparent
+//! pixel hands its priority to an earlier one's pixel of a lower priority
+//! under it: the hardware's quirk, as mGBA draws it; semi-transparent
+//! sprites blend with what is behind them). Colors are the original's
+//! 15-bit BGR555.
+
+use saito_assets::{Palette, Tiles};
+
+/// The original's screen: what every piece is laid out on, and the frame's
+/// size without the window filled.
+pub const WIDTH: usize = 240;
+pub const HEIGHT: usize = 160;
+pub const PIXELS: usize = WIDTH * HEIGHT;
+
+/// A transparent pixel in a layer (colors use 15 bits).
+pub const CLEAR: u16 = 0x8000;
+
+/// A frame as large as its window shows it (the filled window's wide and
+/// tall frames, docs/frontend.md §3): `width` columns of `height` rows,
+/// never fewer than the original's 240 by 160, which sit in its middle
+/// (`columns_left` columns from its left edge, an odd column left over on
+/// their right; `rows_above` rows from its top, an odd row left over under
+/// them). Every piece is laid out on the original's screen and put in the
+/// frame by where it keeps to ([`Anchor`]); the background is drawn across
+/// the whole frame, and the battle's sprites wherever they fall in it (the
+/// original draws them past its screen's edges too, where its screen leaves
+/// them out).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Size {
+    pub width: usize,
+    pub height: usize,
+}
+
+/// Where a piece keeps to across a frame wider than the original's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Horizontal {
+    /// Against the left edge.
+    Left,
+    /// In the middle, with the field: the field and the battle's objects,
+    /// and a piece the original centers.
+    #[default]
+    Center,
+    /// Against the right edge, as far from it as on the original's screen.
+    Right,
+}
+
+/// Where a piece keeps to down a frame taller than the original's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Vertical {
+    /// Against the top edge.
+    Top,
+    /// In the middle, with the field (as [`Horizontal::Center`]).
+    #[default]
+    Middle,
+    /// Against the bottom edge, as far from it as on the original's screen.
+    Bottom,
+}
+
+/// Where a piece of the frame keeps to in a frame larger than the
+/// original's ([`Size`]), each way: with the field in the middle, or
+/// against an edge or a corner, as the original draws it against that edge
+/// of its screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Anchor {
+    pub horizontal: Horizontal,
+    pub vertical: Vertical,
+}
+
+impl Anchor {
+    pub const TOP_LEFT: Anchor = Anchor::new(Horizontal::Left, Vertical::Top);
+    pub const TOP: Anchor = Anchor::new(Horizontal::Center, Vertical::Top);
+    pub const TOP_RIGHT: Anchor = Anchor::new(Horizontal::Right, Vertical::Top);
+    pub const LEFT: Anchor = Anchor::new(Horizontal::Left, Vertical::Middle);
+    /// With the field, both ways.
+    pub const CENTER: Anchor = Anchor::new(Horizontal::Center, Vertical::Middle);
+    pub const RIGHT: Anchor = Anchor::new(Horizontal::Right, Vertical::Middle);
+    pub const BOTTOM_LEFT: Anchor = Anchor::new(Horizontal::Left, Vertical::Bottom);
+    pub const BOTTOM: Anchor = Anchor::new(Horizontal::Center, Vertical::Bottom);
+    pub const BOTTOM_RIGHT: Anchor = Anchor::new(Horizontal::Right, Vertical::Bottom);
+
+    pub const fn new(horizontal: Horizontal, vertical: Vertical) -> Anchor {
+        Anchor { horizontal, vertical }
+    }
+
+    /// The frame's column and row the original's top left is at for a
+    /// piece kept to it, in a frame of `size`.
+    pub fn origin(self, size: Size) -> (i32, i32) {
+        let (more_x, more_y) = (size.width.saturating_sub(WIDTH) as i32, size.height.saturating_sub(HEIGHT) as i32);
+        let x = match self.horizontal {
+            Horizontal::Left => 0,
+            Horizontal::Center => more_x / 2,
+            Horizontal::Right => more_x,
+        };
+        let y = match self.vertical {
+            Vertical::Top => 0,
+            Vertical::Middle => more_y / 2,
+            Vertical::Bottom => more_y,
+        };
+        (x, y)
+    }
+
+    /// Where a piece mirrored across the screen keeps to: the other side
+    /// edge, as high.
+    pub fn mirrored(self) -> Anchor {
+        let horizontal = match self.horizontal {
+            Horizontal::Left => Horizontal::Right,
+            Horizontal::Right => Horizontal::Left,
+            Horizontal::Center => Horizontal::Center,
+        };
+        Anchor { horizontal, ..self }
+    }
+}
+
+impl Size {
+    /// The original's 240 by 160.
+    pub const ORIGINAL: Size = Size { width: WIDTH, height: HEIGHT };
+
+    /// A frame `width` by `height` (240 by 160 at least).
+    pub fn new(width: usize, height: usize) -> Size {
+        Size { width: width.max(WIDTH), height: height.max(HEIGHT) }
+    }
+
+    /// The columns left of the original's 240.
+    pub fn columns_left(self) -> i32 {
+        (self.width - WIDTH) as i32 / 2
+    }
+
+    /// The rows above the original's 160.
+    pub fn rows_above(self) -> i32 {
+        (self.height - HEIGHT) as i32 / 2
+    }
+
+    /// The frame's column and row the original's top left is at for a
+    /// piece kept to `anchor`.
+    pub fn origin(self, anchor: Anchor) -> (i32, i32) {
+        anchor.origin(self)
+    }
+
+    /// The column between the frame's halves: the original's middle's.
+    pub fn middle(self) -> i32 {
+        self.columns_left() + WIDTH as i32 / 2
+    }
+
+    pub fn pixels(self) -> usize {
+        self.width * self.height
+    }
+}
+
+impl Default for Size {
+    fn default() -> Size {
+        Size::ORIGINAL
+    }
+}
+
+/// A sprite part's X on the original's screen, `span` columns wide, as a
+/// frame of `size` draws it: the original's 240 columns read its coordinate
+/// as the hardware does (9 bits: a part that reaches past 512 wraps to the
+/// left of the screen); a wider frame draws it where it is, its coordinate
+/// unwrapped, as no 512 columns hold all that frame shows.
+pub fn sprite_x(x: i32, span: i32, size: Size) -> i32 {
+    if size.width > WIDTH {
+        return x;
+    }
+    let x = x & 0x1FF;
+    if x + span > 0x200 { x - 0x200 } else { x }
+}
+
+/// A sprite part's Y on the original's screen, `span` rows high, as a frame
+/// of `size` draws the part whole (an overlay's box, `smooth::Overlay`):
+/// the original's 160 rows read its coordinate as the hardware does (8
+/// bits: a part that reaches past 256 wraps to the top of the screen); a
+/// taller frame draws it where it is, its coordinate unwrapped.
+pub fn sprite_y(y: i32, span: i32, size: Size) -> i32 {
+    if size.height > HEIGHT {
+        return y;
+    }
+    let y = y & 0xFF;
+    if y + span > 0x100 { y - 0x100 } else { y }
+}
+
+/// The row of the original's screen that row `row` of a sprite part at `y`
+/// is on, as a frame of `size` draws it: on the original's 160 rows each of
+/// the part's rows wraps at 256 on its own, as the hardware's scanlines
+/// find it (a part over 96 rows high may show at the screen's bottom and
+/// its top at once: a doubled affine box); a taller frame draws it where it
+/// is.
+fn sprite_row(y: i32, row: i32, size: Size) -> i32 {
+    if size.height > HEIGHT { y + row } else { (y + row) & 0xFF }
+}
+
+/// A layer of tiles as large as the frame (the field, the background, the
+/// HUD). Pieces are drawn into it on the original's screen, each put where
+/// what keeps to its anchor goes ([`Layer::keep_to`]).
+#[derive(Clone)]
+pub struct Layer {
+    /// 0 is frontmost, 3 backmost.
+    pub priority: u8,
+    /// Breaks ties between layers of equal priority (lower is in front).
+    pub order: u8,
+    /// The palettes it draws with (which fades reach it).
+    pub palettes: Palettes,
+    /// Its columns and rows: the frame's.
+    pub width: usize,
+    pub height: usize,
+    /// Where the piece drawn next keeps to, and the column and row the
+    /// original's top left is drawn at for it.
+    pub(crate) anchor: Anchor,
+    pub(crate) origin: (i32, i32),
+    pub pixels: Vec<u16>,
+    /// What each pixel's piece keeps to (a drawn pixel's), for what moves
+    /// pieces about on the original's screen (`seat::Mirror::layer`).
+    pub anchors: Vec<Anchor>,
+    /// Which pixels were drawn with background palettes 14 and 15, past the
+    /// custom screen's ranged fades (Beast Out's and a dark chip's of
+    /// palettes 0-13, the hover's 9-13): only a fade of every palette
+    /// reaches them (`Fades::hud_past_ranged`: EXE4's chip window draws a
+    /// chip's code and damage in palette 14).
+    pub past_ranged: Vec<bool>,
+    /// Whether tiles are drawn into it (not while a frame makes only its
+    /// lookups, `Renderer::set_lookups_only`).
+    pub drawn: bool,
+}
+
+impl Layer {
+    /// A layer of the original's 240 by 160.
+    pub fn new(priority: u8, order: u8) -> Layer {
+        Layer {
+            priority,
+            order,
+            palettes: Palettes::Stage,
+            width: WIDTH,
+            height: HEIGHT,
+            anchor: Anchor::CENTER,
+            origin: (0, 0),
+            pixels: vec![CLEAR; PIXELS],
+            anchors: vec![Anchor::CENTER; PIXELS],
+            past_ranged: vec![false; PIXELS],
+            drawn: true,
+        }
+    }
+
+    /// Its columns and rows.
+    pub fn size(&self) -> Size {
+        Size { width: self.width, height: self.height }
+    }
+
+    /// Make it `size`, cleared if that is a change.
+    pub fn set_size(&mut self, size: Size) {
+        if size != self.size() {
+            (self.width, self.height) = (size.width, size.height);
+            self.pixels = vec![CLEAR; size.pixels()];
+            self.anchors = vec![Anchor::CENTER; size.pixels()];
+            self.past_ranged = vec![false; size.pixels()];
+            self.origin = self.anchor.origin(size);
+        }
+    }
+
+    /// Draw what follows kept to `anchor`.
+    pub fn keep_to(&mut self, anchor: Anchor) {
+        self.anchor = anchor;
+        self.origin = anchor.origin(self.size());
+    }
+
+    /// The column and row of the layer the original's top left is at for
+    /// what is drawn now.
+    pub fn origin(&self) -> (i32, i32) {
+        self.origin
+    }
+
+    pub fn clear(&mut self) {
+        if self.drawn {
+            self.pixels.fill(CLEAR);
+            self.past_ranged.fill(false);
+        }
+    }
+
+    /// The pixel at (x, y) of the original's screen, where it is in the
+    /// layer.
+    fn at(&self, x: i32, y: i32) -> Option<usize> {
+        let (x, y) = (x + self.origin.0, y + self.origin.1);
+        ((0..self.width as i32).contains(&x) && (0..self.height as i32).contains(&y)).then(|| y as usize * self.width + x as usize)
+    }
+
+    /// Clear the pixel at (x, y) of the original's screen.
+    pub fn clear_pixel(&mut self, x: i32, y: i32) {
+        if let Some(i) = self.at(x, y) {
+            self.pixels[i] = CLEAR;
+            self.past_ranged[i] = false;
+        }
+    }
+
+    /// Put a pixel at column `x` and row `y` of the layer, its piece kept to
+    /// `anchor`.
+    pub fn put_pixel(&mut self, x: usize, y: usize, (color, past_ranged, anchor): (u16, bool, Anchor)) {
+        let i = y * self.width + x;
+        self.pixels[i] = color;
+        self.past_ranged[i] = past_ranged;
+        self.anchors[i] = anchor;
+    }
+
+    /// Clear every pixel outside the layer's columns `kept`.
+    pub fn keep_columns(&mut self, kept: std::ops::Range<i32>) {
+        if !self.drawn {
+            return;
+        }
+        for y in 0..self.height {
+            for x in (0..self.width).filter(|&x| !kept.contains(&(x as i32))) {
+                self.pixels[y * self.width + x] = CLEAR;
+                self.past_ranged[y * self.width + x] = false;
+            }
+        }
+    }
+
+    /// Move everything drawn by (dx, dy), as a scroll of the layer by
+    /// (-dx, -dy) would; what moves in from past the edges is clear.
+    pub fn shift(&mut self, dx: i32, dy: i32) {
+        if (dx, dy) == (0, 0) {
+            return;
+        }
+        let (w, h) = (self.width, self.height);
+        let old = std::mem::replace(&mut self.pixels, vec![CLEAR; w * h]);
+        let old_past = std::mem::replace(&mut self.past_ranged, vec![false; w * h]);
+        let old_anchors = self.anchors.clone();
+        for y in 0..h as i32 {
+            let sy = y - dy;
+            if !(0..h as i32).contains(&sy) {
+                continue;
+            }
+            for x in 0..w as i32 {
+                let sx = x - dx;
+                if (0..w as i32).contains(&sx) {
+                    let (i, j) = (y as usize * w + x as usize, sy as usize * w + sx as usize);
+                    self.pixels[i] = old[j];
+                    self.past_ranged[i] = old_past[j];
+                    self.anchors[i] = old_anchors[j];
+                }
+            }
+        }
+    }
+
+    /// Put what is drawn in `from` (a layer as large) here, `dx` pixels
+    /// right (a piece laid out elsewhere first, then put in its place), over
+    /// what is here.
+    pub fn put_moved(&mut self, from: &Layer, dx: i32) {
+        if !self.drawn {
+            return;
+        }
+        debug_assert_eq!(from.size(), self.size());
+        let w = self.width;
+        for y in 0..self.height {
+            for x in 0..w {
+                let i = y * w + x;
+                let to = x as i32 + dx;
+                if from.pixels[i] == CLEAR || !(0..w as i32).contains(&to) {
+                    continue;
+                }
+                let j = y * w + to as usize;
+                self.pixels[j] = from.pixels[i];
+                self.past_ranged[j] = from.past_ranged[i];
+                self.anchors[j] = from.anchors[i];
+            }
+        }
+    }
+
+    /// Draw one 8x8 tile at (x, y) of the original's screen, clipped to the
+    /// layer.
+    pub fn draw_tile(&mut self, tile: &[u8], palette: &Palette, x: i32, y: i32, hflip: bool, vflip: bool) {
+        self.draw_tile_past(tile, palette, false, x, y, hflip, vflip);
+    }
+
+    /// [`draw_tile`](Self::draw_tile) in a palette past the ranged fades'
+    /// (background palette 14 or 15: `past_ranged`) or not.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_tile_past(&mut self, tile: &[u8], palette: &Palette, past_ranged: bool, x: i32, y: i32, hflip: bool, vflip: bool) {
+        self.draw_tile_where(tile, palette, past_ranged, x, y, hflip, vflip, |_, _| true);
+    }
+
+    /// [`draw_tile_past`](Self::draw_tile_past), only the pixels whose
+    /// places on the original's screen `keep` keeps.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_tile_where(&mut self, tile: &[u8], palette: &Palette, past_ranged: bool, x: i32, y: i32, hflip: bool, vflip: bool, keep: impl Fn(i32, i32) -> bool) {
+        if !self.drawn {
+            return;
+        }
+        let (ox, oy) = (x, y);
+        let (w, x, y) = (self.width, x + self.origin.0, y + self.origin.1);
+        for ty in 0..8 {
+            let sy = y + ty;
+            if !(0..self.height as i32).contains(&sy) {
+                continue;
+            }
+            let row = if vflip { 7 - ty } else { ty } as usize;
+            for tx in 0..8 {
+                let sx = x + tx;
+                if !(0..w as i32).contains(&sx) || !keep(ox + tx, oy + ty) {
+                    continue;
+                }
+                let col = if hflip { 7 - tx } else { tx } as usize;
+                let i = tile[row * 8 + col];
+                if i != 0 {
+                    let at = sy as usize * w + sx as usize;
+                    self.pixels[at] = palette[i as usize] & 0x7FFF;
+                    self.past_ranged[at] = past_ranged;
+                    self.anchors[at] = self.anchor;
+                }
+            }
+        }
+    }
+}
+
+/// One sprite part as the original's hardware would draw it.
+#[derive(Clone)]
+pub struct SpritePart<'a> {
+    /// Its column and row on the original's screen, not wrapped
+    /// ([`sprite_x`], [`sprite_y`]: the original's 240 columns wrap the
+    /// column at 512 and its 160 rows the row at 256, as the hardware
+    /// does).
+    pub x: i32,
+    pub y: i32,
+    pub width: u8,
+    pub height: u8,
+    pub tiles: &'a Tiles,
+    /// First tile; the part's tiles follow row-major (1D layout).
+    pub first_tile: usize,
+    pub hflip: bool,
+    pub vflip: bool,
+    pub palette: Palette,
+    pub priority: u8,
+    /// Semi-transparent: blend weight (of 16) of this sprite over what is
+    /// behind it.
+    pub alpha: Option<u8>,
+    /// Mosaic block size - 1.
+    pub mosaic: Option<u8>,
+    /// A vertical affine scale about the part's center: texture rows
+    /// step by `n / 256` per screen row (the banners' squash and stretch).
+    pub vscale: Option<i32>,
+    /// A rotated or scaled sprite (`sub_802FE7A`'s matrices).
+    pub affine: Option<Affine>,
+    /// A fade of its palette its own console runs, in place of the
+    /// sprites' (`Fades::sprites`): on a screen of both, the right
+    /// console's custom screen's sprites, faded as that console fades them.
+    pub fade: Option<Fade>,
+    /// The frame's columns it is drawn in (the first, one past the last),
+    /// where not all: on a screen of both, a console's pieces kept to its
+    /// part of the screen.
+    pub clip: Option<[i16; 2]>,
+    /// Where it keeps to in a frame larger than the original's.
+    pub anchor: Anchor,
+}
+
+impl SpritePart<'_> {
+    /// The frame columns it is drawn in, in a frame of `size` (the first,
+    /// one past the last), and the frame's column and row of the original's
+    /// top left for it.
+    pub(crate) fn placed(&self, size: Size) -> ([i32; 2], (i32, i32)) {
+        let origin = size.origin(self.anchor);
+        let [c0, c1] = match self.clip {
+            Some([a, b]) => [(a as i32).max(0), (b as i32).min(size.width as i32)],
+            None => [0, size.width as i32],
+        };
+        ([c0, c1], origin)
+    }
+}
+
+/// An affine sprite's matrix (8.8 fixed point) and its box: each pixel of
+/// the box reads the texture at M x (pixel - the box's center) + the
+/// sprite's center; a doubled box is twice the sprite's size, centered on
+/// the same point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Affine {
+    pub pa: i32,
+    pub pb: i32,
+    pub pc: i32,
+    pub pd: i32,
+    pub double: bool,
+}
+
+/// Screen-wide effects applied after composition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fade {
+    #[default]
+    None,
+    /// Towards black by n/16.
+    Black(u8),
+    /// Towards white by n/16.
+    White(u8),
+}
+
+/// Screen-wide fades. The original fades palettes: `stage` is a fade of the
+/// background palettes the stage draws with (the background, the field and
+/// the backdrop), `hud` one of the HUD layer's, `dialogue` one of the
+/// chatbox's (background palette 15, which the fades of a range of
+/// palettes leave out), `sprites` one of the sprites' palettes, `screen`
+/// one of every palette. `other_hud` is the HUD layer's of the other
+/// console on a screen of both (`Palettes::OtherHud`: the right player's
+/// pieces, its own console's fades).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Fades {
+    pub stage: Fade,
+    pub hud: Fade,
+    /// The HUD layer's pixels in palettes 14 and 15 (`Layer::past_ranged`).
+    pub hud_past_ranged: Fade,
+    pub other_hud: Fade,
+    pub other_hud_past_ranged: Fade,
+    pub dialogue: Fade,
+    pub sprites: Fade,
+    pub screen: Fade,
+}
+
+/// Which palettes a layer draws with, for [`Fades`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Palettes {
+    #[default]
+    Stage,
+    Hud,
+    /// The other console's HUD layer on a screen of both
+    /// (`crate::seat`): the right player's, faded as its console fades its
+    /// own.
+    OtherHud,
+    /// The chatbox's box (background palette 15).
+    Dialogue,
+}
+
+impl Palettes {
+    /// The fades of `fades` that reach a layer of these palettes: of its
+    /// pixels in palettes past the ranged fades' (`Layer::past_ranged`),
+    /// and of the others.
+    pub fn fades(self, fades: &Fades) -> (Fade, Fade) {
+        match self {
+            Palettes::Stage => (fades.stage, fades.stage),
+            Palettes::Hud => (fades.hud_past_ranged, fades.hud),
+            Palettes::OtherHud => (fades.other_hud_past_ranged, fades.other_hud),
+            Palettes::Dialogue => (fades.dialogue, fades.dialogue),
+        }
+    }
+}
+
+/// Combine layers and sprite parts (in hardware order: earlier parts are
+/// in front) into a BGR555 frame.
+pub fn compose(backdrop: u16, layers: &[&Layer], parts: &[SpritePart], fades: Fades) -> Vec<u16> {
+    compose_with_depth(backdrop, layers, parts, fades).0
+}
+
+/// The depth key of what is drawn at a pixel, as the text layer compares
+/// it (`TextItem::depth`): by priority, then a sprite before a layer
+/// (layers by their order), then among sprites the earlier part. A smaller
+/// key is further in front; 0 is in front of everything (the frontend's
+/// own status text).
+pub fn depth_key(priority: u8, rank: u8, index: usize) -> u32 {
+    (priority as u32) << 24 | (rank as u32) << 16 | index.min(0xFFFF) as u32
+}
+
+/// The depth key of a sprite part, `index` in hardware order.
+pub fn sprite_depth(priority: u8, index: usize) -> u32 {
+    depth_key(priority, 0, index + 1)
+}
+
+/// The depth key of a tile layer.
+pub fn layer_depth(layer: &Layer) -> u32 {
+    depth_key(layer.priority, 1 + layer.order, 0)
+}
+
+/// The backdrop's depth key: behind everything.
+pub const BACKDROP_DEPTH: u32 = 5 << 24;
+
+/// [`compose`], and per pixel the depth key of what won it (the frontmost
+/// opaque thing; a semi-transparent sprite counts as in front).
+pub fn compose_with_depth(backdrop: u16, layers: &[&Layer], parts: &[SpritePart], fades: Fades) -> (Vec<u16>, Vec<u32>) {
+    compose_sized(Size::ORIGINAL, backdrop, layers, parts, fades)
+}
+
+/// [`compose_with_depth`] into a frame of `size`, its layers as large: each
+/// sprite part where `size` puts what keeps to its anchor.
+pub fn compose_sized(size: Size, backdrop: u16, layers: &[&Layer], parts: &[SpritePart], fades: Fades) -> (Vec<u16>, Vec<u32>) {
+    let pixels = size.pixels();
+    let backdrop = apply_fade(backdrop, fades.stage);
+    // The sprite layer: per pixel the frontmost sprite's color.
+    let mut obj = SpriteBuffers {
+        width: size.width,
+        color: vec![CLEAR; pixels],
+        priority: vec![UNWRITTEN; pixels],
+        alpha: vec![0xFFu8; pixels],
+        index: vec![0u16; pixels],
+    };
+    for (k, p) in parts.iter().enumerate() {
+        draw_part(p, size, k as u16, &mut obj);
+    }
+    // Each layer's place among what is in front (its priority, then its
+    // rank, as one number: priority × 256 + rank, smaller in front), its
+    // depth key and the fades that reach its pixels (those past the ranged
+    // fades' and the others), worked out once; the layers front to back
+    // (those of one place in the order given: the first of them wins).
+    struct Plane<'l> {
+        pixels: &'l [u16],
+        past_ranged: &'l [bool],
+        place: u16,
+        depth: u32,
+        fade: Fade,
+        past_fade: Fade,
+    }
+    let mut planes: Vec<Plane> = layers
+        .iter()
+        .map(|l| {
+            let (past_fade, fade) = l.palettes.fades(&fades);
+            let place = (l.priority as u16) << 8 | (1 + l.order) as u16;
+            debug_assert_eq!(l.size(), size);
+            Plane { pixels: &l.pixels[..pixels], past_ranged: &l.past_ranged[..pixels], place, depth: layer_depth(l), fade, past_fade }
+        })
+        .collect();
+    planes.sort_by_key(|p| p.place);
+    let mut out = vec![0u16; pixels];
+    let mut depth = vec![BACKDROP_DEPTH; pixels];
+    for i in 0..pixels {
+        // The frontmost opaque layer's pixel (place, color, depth key), or
+        // the backdrop's; then the sprite's, if it is in front of that (a
+        // sprite's rank is 0: in front of the layers of its priority),
+        // blended with it where the sprite is semi-transparent.
+        let (place, color, key) = match planes.iter().find(|p| p.pixels[i] != CLEAR) {
+            Some(p) => (p.place, apply_fade(p.pixels[i], if p.past_ranged[i] { p.past_fade } else { p.fade }), p.depth),
+            None => (5 << 8, backdrop, BACKDROP_DEPTH),
+        };
+        let (c, front) = if obj.color[i] != CLEAR && (obj.priority[i] as u16) << 8 < place {
+            let c = apply_fade(obj.color[i], parts.get(obj.index[i] as usize).and_then(|p| p.fade).unwrap_or(fades.sprites));
+            let c = if obj.alpha[i] != 0xFF { blend(c, color, obj.alpha[i]) } else { c };
+            (c, sprite_depth(obj.priority[i], obj.index[i] as usize))
+        } else {
+            (color, key)
+        };
+        out[i] = apply_fade(c, fades.screen);
+        depth[i] = front;
+    }
+    (out, depth)
+}
+
+/// The sprite layer, per pixel: the frontmost sprite's color, priority,
+/// blend weight and index in hardware order.
+struct SpriteBuffers {
+    /// The frame's columns.
+    width: usize,
+    color: Vec<u16>,
+    priority: Vec<u8>,
+    alpha: Vec<u8>,
+    index: Vec<u16>,
+}
+
+/// No sprite's pixel yet (`SpriteBuffers::priority`).
+const UNWRITTEN: u8 = 4;
+
+impl SpriteBuffers {
+    /// A transparent pixel of a part of priority `priority` over the pixel
+    /// `i`, which holds a sprite's pixel of a lower priority (the caller's
+    /// test): that pixel takes the part's priority and keeps its color
+    /// (mGBA's software renderer, the hardware's sprite priority quirk: a
+    /// part drawn later, of the taken priority, no longer covers it; EXE4's
+    /// soul image's parts over a rock and over an HP number).
+    fn raise(&mut self, i: usize, priority: u8) {
+        if self.priority[i] != UNWRITTEN {
+            self.priority[i] = priority;
+        }
+    }
+
+    fn set(&mut self, i: usize, p: &SpritePart, k: u16, color: u16) {
+        self.color[i] = color;
+        self.priority[i] = p.priority;
+        self.alpha[i] = p.alpha.unwrap_or(0xFF);
+        self.index[i] = k;
+    }
+}
+
+/// A part into the sprite layer, where a frame of `size` puts it. (Laid out
+/// on the original's screen: its mosaic's blocks are that screen's.)
+fn draw_part(p: &SpritePart, size: Size, k: u16, obj: &mut SpriteBuffers) {
+    if let Some(m) = p.affine {
+        draw_affine(p, m, size, k, obj);
+        return;
+    }
+    let (w, h) = (p.width as i32, p.height as i32);
+    let tiles_per_row = (p.width / 8) as usize;
+    let mosaic = p.mosaic.map(|m| m as i32 + 1).filter(|&n| n > 1);
+    let ([c0, c1], (origin, top)) = p.placed(size);
+    for row in 0..h {
+        let sy = sprite_row(p.y, row, size);
+        let fy = sy + top;
+        if !(0..size.height as i32).contains(&fy) {
+            continue;
+        }
+        // Mosaic samples the row at the top of its screen block, clamped
+        // to the sprite (as mGBA does).
+        let row = match mosaic {
+            Some(n) => (row - sy.rem_euclid(n)).clamp(0, h - 1),
+            None => row,
+        };
+        let row = match p.vscale {
+            Some(pd) => {
+                let r = ((pd * (row - h / 2)) >> 8) + h / 2;
+                if !(0..h).contains(&r) {
+                    continue;
+                }
+                r
+            }
+            None => row,
+        };
+        // Horizontal mosaic samples the column at the start of each screen
+        // block; the sprite's span extends to the end of its last block.
+        let x0 = sprite_x(p.x, w, size);
+        let span = match mosaic {
+            Some(n) => (x0 + w + n - 1).div_euclid(n) * n - x0,
+            None => w,
+        };
+        for col in 0..span {
+            let sx = x0 + col;
+            let fx = sx + origin;
+            if !(c0..c1).contains(&fx) {
+                continue;
+            }
+            let i = fy as usize * obj.width + fx as usize;
+            if obj.priority[i] <= p.priority {
+                continue;
+            }
+            let col = match mosaic {
+                Some(n) => (col - sx.rem_euclid(n)).clamp(0, w - 1),
+                None => col,
+            };
+            let tx = if p.hflip { w - 1 - col } else { col } as usize;
+            let ty = if p.vflip { h - 1 - row } else { row } as usize;
+            let t = p.first_tile + (ty / 8) * tiles_per_row + tx / 8;
+            let Some(tile) = p.tiles.get(t) else { continue };
+            let index = tile[(ty % 8) * 8 + tx % 8];
+            if index == 0 {
+                obj.raise(i, p.priority);
+                continue;
+            }
+            obj.set(i, p, k, p.palette[index as usize] & 0x7FFF);
+        }
+    }
+}
+
+/// An affine part (as mGBA draws it): the box, its pixels read through
+/// the matrix about the centers.
+fn draw_affine(p: &SpritePart, m: Affine, size: Size, k: u16, obj: &mut SpriteBuffers) {
+    let (w, h) = (p.width as i32, p.height as i32);
+    let (bw, bh) = if m.double { (2 * w, 2 * h) } else { (w, h) };
+    let tiles_per_row = (p.width / 8) as usize;
+    let ([c0, c1], (origin, top)) = p.placed(size);
+    let x0 = sprite_x(p.x, bw, size);
+    for by in 0..bh {
+        let fy = sprite_row(p.y, by, size) + top;
+        if !(0..size.height as i32).contains(&fy) {
+            continue;
+        }
+        let dy = by - bh / 2;
+        for bx in 0..bw {
+            let fx = x0 + bx + origin;
+            if !(c0..c1).contains(&fx) {
+                continue;
+            }
+            let dx = bx - bw / 2;
+            let tx = ((m.pa * dx + m.pb * dy) >> 8) + w / 2;
+            let ty = ((m.pc * dx + m.pd * dy) >> 8) + h / 2;
+            if !(0..w).contains(&tx) || !(0..h).contains(&ty) {
+                continue;
+            }
+            let i = fy as usize * obj.width + fx as usize;
+            if obj.priority[i] <= p.priority {
+                continue;
+            }
+            let t = p.first_tile + (ty as usize / 8) * tiles_per_row + tx as usize / 8;
+            let Some(tile) = p.tiles.get(t) else { continue };
+            let index = tile[(ty as usize % 8) * 8 + tx as usize % 8];
+            if index == 0 {
+                obj.raise(i, p.priority);
+                continue;
+            }
+            obj.set(i, p, k, p.palette[index as usize] & 0x7FFF);
+        }
+    }
+}
+
+fn channels(c: u16) -> [u16; 3] {
+    [c & 31, (c >> 5) & 31, (c >> 10) & 31]
+}
+
+fn pack(ch: [u16; 3]) -> u16 {
+    ch[0] | ch[1] << 5 | ch[2] << 10
+}
+
+/// A semi-transparent sprite's color `a` over the color `b` behind it, as
+/// the hardware blends them with what `sprite_setAlpha` writes (EXE6's
+/// 0x08002C7A, EXE5's 0x08002AE6, the same code: the sprite's mode
+/// semi-transparent, and BLDALPHA's two bytes the alpha and 16 less the
+/// alpha, as bytes).
+///
+/// BLDALPHA holds two weights of five bits each, EVA in bits 0 to 4 for
+/// the sprite and EVB in bits 8 to 12 for what is behind, and a weight
+/// over 16 counts as 16; the pixel is a * EVA/16 + b * EVB/16 a channel,
+/// no more than 31. So an alpha of 0 to 16 is that many sixteenths of the
+/// sprite over the rest, and one past 16, which the routine doesn't
+/// bound, wraps in its five bits:
+/// - 17 to 31: EVA is 16 (17 to 31, over 16) and EVB is 16 too (16 less
+///   the alpha is -1 to -15, as five bits 31 to 17): the two are added in
+///   full;
+/// - 32 to 48: EVA is the alpha less 32 (its five bits), EVB 16 less
+///   that: the fade starts over from the sprite's 0.
+///
+/// (EXE5's BoyBomb's bomb fades in from 21 to 35: what counts its alpha
+/// up is the timer its first tick's HP change sets to 20. Eleven frames
+/// added to the panel in full, four nearly clear, then opaque.)
+pub fn blend(a: u16, b: u16, alpha: u8) -> u16 {
+    let (a, b) = (channels(a), channels(b));
+    let weight = |byte: u8| (byte & 0x1F).min(16) as u16;
+    let (ea, eb) = (weight(alpha), weight(16u8.wrapping_sub(alpha)));
+    pack(std::array::from_fn(|k| ((a[k] * ea + b[k] * eb) >> 4).min(31)))
+}
+
+pub fn apply_fade(c: u16, fade: Fade) -> u16 {
+    let ch = channels(c);
+    match fade {
+        Fade::None => c,
+        Fade::Black(n) => {
+            let n = n.min(16) as u16;
+            pack(ch.map(|v| v - ((v * n) >> 4)))
+        }
+        Fade::White(n) => {
+            let n = n.min(16) as u16;
+            pack(ch.map(|v| v + (((31 - v) * n) >> 4)))
+        }
+    }
+}
+
+/// BGR555 to 0x00RRGGBB, widening each 5-bit channel as `v << 3 | v >> 2`.
+pub fn to_rgb(c: u16) -> u32 {
+    let w = |v: u16| ((v << 3) | (v >> 2)) as u32;
+    let [r, g, b] = channels(c);
+    w(r) << 16 | w(g) << 8 | w(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The original's 240 by 160 sit in the middle of a larger frame, an
+    /// odd column left over on their right and an odd row under them; a
+    /// piece kept to an edge stays as far from it as on the original's
+    /// screen, each way, and one mirrored keeps to the other side edge, as
+    /// high.
+    #[test]
+    fn a_large_frame_puts_each_piece_by_its_anchor() {
+        let size = Size::new(285, 203);
+        assert_eq!((size.columns_left(), size.rows_above(), size.origin(Anchor::CENTER), size.middle()), (22, 21, (22, 21), 142));
+        assert_eq!((size.origin(Anchor::TOP_LEFT), size.origin(Anchor::RIGHT), size.origin(Anchor::BOTTOM)), ((0, 0), (45, 21), (22, 43)));
+        assert_eq!(Size::new(200, 100), Size::ORIGINAL);
+        let all = [Anchor::TOP_LEFT, Anchor::TOP, Anchor::TOP_RIGHT, Anchor::LEFT, Anchor::CENTER, Anchor::RIGHT, Anchor::BOTTOM_LEFT, Anchor::BOTTOM, Anchor::BOTTOM_RIGHT];
+        assert_eq!(all.map(|a| a.origin(Size::ORIGINAL)), [(0, 0); 9]);
+        assert_eq!([Anchor::TOP_LEFT, Anchor::CENTER, Anchor::BOTTOM_RIGHT].map(Anchor::mirrored), [Anchor::TOP_RIGHT, Anchor::CENTER, Anchor::BOTTOM_LEFT]);
+        // (A layer draws each piece where its anchor puts it, and keeps what
+        // each pixel's piece keeps to.)
+        let mut layer = Layer::new(1, 3);
+        layer.set_size(size);
+        let tile = [1u8; 64];
+        let white = [0x7FFF; 16];
+        layer.keep_to(Anchor::TOP_LEFT);
+        layer.draw_tile(&tile, &white, 0, 0, false, false);
+        layer.keep_to(Anchor::BOTTOM_RIGHT);
+        layer.draw_tile(&tile, &white, 232, 152, false, false);
+        let at = |x: usize, y: usize| y * 285 + x;
+        assert_eq!((layer.pixels[at(0, 0)], layer.pixels[at(284, 202)], layer.pixels[at(283 - 8, 202)], layer.pixels[at(284, 202 - 8)]), (0x7FFF, 0x7FFF, CLEAR, CLEAR));
+        assert_eq!((layer.anchors[at(0, 0)], layer.anchors[at(284, 202)]), (Anchor::TOP_LEFT, Anchor::BOTTOM_RIGHT));
+    }
+
+    /// On the original's screen a part's coordinates read as the hardware
+    /// reads them, the column wrapped at 512 and the row at 256; a larger
+    /// frame draws it where it is, however large (one of 1374 columns shows
+    /// 567 left of the original's screen).
+    #[test]
+    fn a_part_reads_as_the_hardware_reads_it_on_the_original_screen() {
+        for w in [8, 16, 32, 64, 128] {
+            for x in 0..0x200 {
+                let hardware = if x + w > 0x200 { x - 0x200 } else { x };
+                for unwrapped in [x - 0x400, x - 0x200, x, x + 0x200] {
+                    assert_eq!(sprite_x(unwrapped, w, Size::ORIGINAL), hardware, "x {unwrapped}, {w} wide");
+                }
+            }
+            for y in 0..0x100 {
+                let hardware = if y + w > 0x100 { y - 0x100 } else { y };
+                for unwrapped in [y - 0x200, y - 0x100, y, y + 0x100] {
+                    assert_eq!(sprite_y(unwrapped, w, Size::ORIGINAL), hardware, "y {unwrapped}, {w} high");
+                    // (Row by row, each wrapped on its own.)
+                    assert_eq!(sprite_row(unwrapped, w - 1, Size::ORIGINAL), (y + w - 1) & 0xFF);
+                }
+            }
+        }
+        for size in [Size::new(284, 160), Size::new(568, 160), Size::new(1374, 160)] {
+            assert_eq!([-300, -16, 180, 300, 496].map(|x| sprite_x(x, 16, size)), [-300, -16, 180, 300, 496]);
+            assert_eq!(sprite_y(-16, 16, size), 240, "only the width is past the original's");
+        }
+        for size in [Size::new(240, 213), Size::new(284, 320), Size::new(240, 600)] {
+            assert_eq!([-300, -16, 180, 300].map(|y| sprite_y(y, 16, size)), [-300, -16, 180, 300]);
+            assert_eq!([-300, -16, 180, 300].map(|y| sprite_row(y, 3, size)), [-297, -13, 183, 303]);
+        }
+    }
+
+    /// The battle's sprites past the old edges show in a larger frame, each
+    /// where it falls; the background layer covers the frame and the fades
+    /// reach all of it.
+    #[test]
+    fn sprites_past_the_old_edges_show() {
+        let t = solid_tiles(1, 1);
+        // (A shot 4 columns past the right edge, one 6 left of the left
+        // edge, a piece kept to the right edge past the original's right
+        // edge; one 12 rows above the top, one 3 under the bottom, and one
+        // kept to the bottom edge past the original's bottom.)
+        let parts = [
+            part(&t, 244, 0, 2, 0x001F),
+            part(&t, -6, 10, 2, 0x03E0),
+            SpritePart { anchor: Anchor::RIGHT, ..part(&t, 236, 20, 2, 0x7C00) },
+            part(&t, 100, -12, 2, 0x0011),
+            part(&t, 120, 163, 2, 0x0012),
+            SpritePart { anchor: Anchor::BOTTOM, ..part(&t, 140, 156, 2, 0x0013) },
+        ];
+        let size = Size::new(284, 213);
+        let mut background = Layer::new(3, 1);
+        background.set_size(size);
+        background.pixels.fill(0x0421);
+        let fades = Fades { stage: Fade::Black(16), ..Fades::default() };
+        let (out, _) = compose_sized(size, 0, &[&background], &parts, fades);
+        let at = |x: i32, y: i32| out[y as usize * 284 + x as usize];
+        // (The original's top left at (22, 26).)
+        assert_eq!((at(22 + 244, 26), at(22 - 6, 26 + 10)), (0x001F, 0x03E0));
+        assert_eq!((at(44 + 236, 26 + 20), at(283, 26 + 20), at(44 + 235, 26 + 20)), (0x7C00, 0x7C00, 0));
+        assert_eq!((at(22 + 100, 26 - 12), at(22 + 120, 26 + 170), at(22 + 120, 26 + 171)), (0x0011, 0x0012, 0));
+        assert_eq!((at(22 + 140, 212), at(22 + 140, 212 - 8), at(22 + 140, 26 + 159)), (0x0013, 0, 0));
+        // (The background, faded, in all four margins.)
+        assert_eq!((at(0, 100), at(283, 100), at(100, 0), at(100, 212)), (0, 0, 0, 0));
+        assert_eq!(at(22 + 239, 26), 0, "the original's last column");
+    }
+
+    /// A part kept to some columns draws in those alone.
+    #[test]
+    fn a_clipped_part_draws_in_its_columns() {
+        let tiles = solid_tiles(1, 1);
+        let layer = Layer::new(3, 0);
+        let fades = Fades::default();
+        let parts = [SpritePart { clip: Some([10, 12]), ..part(&tiles, 8, 0, 0, 0x1F) }];
+        let (pixels, _) = compose_with_depth(0, &[&layer], &parts, fades);
+        let drawn: Vec<usize> = (0..16).filter(|&x| pixels[x] == 0x1F).collect();
+        assert_eq!(drawn, [10, 11]);
+    }
+
+    fn solid_tiles(n: usize, index: u8) -> Tiles {
+        Tiles { pixels: vec![index; n * Tiles::TILE] }
+    }
+
+    fn part(tiles: &Tiles, x: i32, y: i32, prio: u8, color: u16) -> SpritePart<'_> {
+        let mut palette = [0u16; 16];
+        palette[1] = color;
+        SpritePart {
+            x,
+            y,
+            width: 8,
+            height: 8,
+            tiles,
+            first_tile: 0,
+            hflip: false,
+            vflip: false,
+            palette,
+            priority: prio,
+            alpha: None,
+            mosaic: None,
+            vscale: None,
+            affine: None,
+            fade: None,
+            clip: None,
+            anchor: Anchor::CENTER,
+        }
+    }
+
+    #[test]
+    fn an_affine_part_turns_about_its_center() {
+        // A 16x16 sprite with its top-left 8x8 quarter colored; a half
+        // turn (pa = pd = -1) shows it at the bottom right: box pixel x
+        // reads texture column 16 - x (so the box's first column is past
+        // the texture).
+        let mut tiles = solid_tiles(4, 0);
+        tiles.pixels[..64].fill(1);
+        let mut p = part(&tiles, 0, 0, 2, 0x001F);
+        (p.width, p.height) = (16, 16);
+        p.affine = Some(Affine { pa: -0x100, pb: 0, pc: 0, pd: -0x100, double: false });
+        let out = compose(0, &[], &[p.clone()], Fades::default());
+        assert_eq!(out[0], 0);
+        assert_eq!(out[15 * WIDTH + 15], 0x001F);
+        assert_eq!(out[9 * WIDTH + 9], 0x001F);
+        assert_eq!(out[8 * WIDTH + 8], 0);
+        // A doubled box, unrotated: the sprite sits in its middle.
+        p.affine = Some(Affine { pa: 0x100, pb: 0, pc: 0, pd: 0x100, double: true });
+        let out = compose(0, &[], &[p], Fades::default());
+        assert_eq!(out[8 * WIDTH + 8], 0x001F);
+        assert_eq!(out[7 * WIDTH + 7], 0);
+        assert_eq!(out[16 * WIDTH + 16], 0);
+    }
+
+    #[test]
+    fn earlier_sprites_win_ties_and_lower_priority_wins() {
+        let t = solid_tiles(1, 1);
+        let parts = [part(&t, 0, 0, 2, 0x001F), part(&t, 4, 0, 2, 0x03E0), part(&t, 10, 0, 1, 0x7C00)];
+        let out = compose(0, &[], &parts, Fades::default());
+        assert_eq!(out[5], 0x001F, "the earlier part is in front at equal priority");
+        assert_eq!(out[11], 0x7C00, "priority 1 beats priority 2");
+        assert_eq!(out[8], 0x03E0);
+        assert_eq!(out[20], 0, "the backdrop shows where nothing is drawn");
+    }
+
+    #[test]
+    fn a_later_transparent_pixel_hands_its_priority_down() {
+        // A priority-2 part, then a priority-0 part that is transparent
+        // over it, then a priority-0 part that is opaque there: the first
+        // one's pixel took priority 0 from the second and stays in front
+        // (the earlier wins ties). Without the transparent part between
+        // them the last one covers it.
+        let solid = solid_tiles(1, 1);
+        let clear = solid_tiles(1, 0);
+        let parts = [part(&solid, 0, 0, 2, 0x001F), part(&clear, 0, 0, 0, 0x03E0), part(&solid, 0, 0, 0, 0x7C00)];
+        let out = compose(0, &[], &parts, Fades::default());
+        assert_eq!(out[0], 0x001F, "the covered pixel took the transparent part's priority");
+        let out = compose(0, &[], &[parts[0].clone(), parts[2].clone()], Fades::default());
+        assert_eq!(out[0], 0x7C00, "priority 0 covers priority 2");
+        // A transparent pixel over nothing leaves nothing.
+        let out = compose(0, &[], &[parts[1].clone(), part(&solid, 0, 0, 3, 0x7FFF)], Fades::default());
+        assert_eq!(out[0], 0x7FFF);
+    }
+
+    #[test]
+    fn the_depth_mask_names_what_won_each_pixel() {
+        // A priority-1 layer over pixels 0..4, a priority-0 sprite over
+        // 2..10, a priority-2 sprite queued before it over 8..16.
+        let t = solid_tiles(1, 1);
+        let mut hud = Layer::new(1, 3);
+        hud.pixels[..4].fill(0x1234);
+        let parts = [part(&t, 8, 0, 2, 0x001F), part(&t, 2, 0, 0, 0x03E0)];
+        let (out, depth) = compose_with_depth(0, &[&hud], &parts, Fades::default());
+        assert_eq!(out[1], 0x1234);
+        assert_eq!(depth[1], layer_depth(&hud));
+        assert_eq!(depth[3], sprite_depth(0, 1), "the priority-0 sprite is in front of the layer");
+        assert_eq!(depth[12], sprite_depth(2, 0));
+        assert_eq!(depth[20], BACKDROP_DEPTH);
+        // Smaller is further in front; 0 is in front of every key.
+        assert!(sprite_depth(0, 1) < layer_depth(&hud) && layer_depth(&hud) < sprite_depth(2, 0));
+        assert!(0 < sprite_depth(0, 0));
+    }
+
+    #[test]
+    fn sprites_beat_layers_of_equal_priority_only() {
+        let t = solid_tiles(1, 1);
+        let mut front = Layer::new(1, 3);
+        front.pixels[0] = 0x1234;
+        front.pixels[1] = 0x1234;
+        let mut behind = Layer::new(2, 2);
+        behind.pixels[2] = 0x0042;
+        let parts = [part(&t, 0, 0, 2, 0x001F)];
+        let out = compose(0, &[&front, &behind], &parts, Fades::default());
+        assert_eq!(out[0], 0x1234, "a priority-1 layer covers priority-2 sprites");
+        assert_eq!(out[2], 0x001F, "a sprite covers a layer of its own priority");
+    }
+
+    #[test]
+    fn positions_wrap_like_the_hardware() {
+        let t = solid_tiles(1, 1);
+        // y 252 shows its last 4 rows at the top; x 508 its last 4 columns.
+        let out = compose(0, &[], &[part(&t, 508, 252, 2, 0x001F)], Fades::default());
+        assert_eq!(out[3 * WIDTH + 3], 0x001F);
+        assert_eq!(out[4 * WIDTH], 0);
+        assert_eq!(out[4], 0);
+    }
+
+    /// `blend`'s weights at the edges of BLDALPHA's five bits, as the
+    /// hardware has them: a sprite of (16, 8, 0) over (8, 8, 24).
+    #[test]
+    fn an_alpha_past_16_wraps_as_bldalphas_fields_do() {
+        let color = |r: u16, g: u16, b: u16| r | g << 5 | b << 10;
+        let (sprite, behind) = (color(16, 8, 0), color(8, 8, 24));
+        // 0: all of what is behind; 16: all of the sprite.
+        assert_eq!(blend(sprite, behind, 0), behind);
+        assert_eq!(blend(sprite, behind, 16), sprite);
+        // 8: half of each.
+        assert_eq!(blend(sprite, behind, 8), color(12, 8, 12));
+        // 17 and 31: both weights 16 (EVA 17 and 31; EVB -1 and -15, as
+        // five bits 31 and 17): added in full.
+        assert_eq!(blend(sprite, behind, 17), color(24, 16, 24));
+        assert_eq!(blend(sprite, behind, 31), color(24, 16, 24));
+        // (No more than 31 a channel.)
+        assert_eq!(blend(color(20, 20, 20), color(20, 20, 20), 20), color(31, 31, 31));
+        // 32: EVA 0, EVB 16 (-16 as five bits): what is behind again.
+        assert_eq!(blend(sprite, behind, 32), behind);
+        // 35: EVA 3, EVB 13.
+        assert_eq!(blend(sprite, behind, 35), color((16 * 3 + 8 * 13) / 16, 8, 24 * 13 / 16));
+    }
+
+    #[test]
+    fn semi_transparent_sprites_blend() {
+        let t = solid_tiles(1, 1);
+        let mut p = part(&t, 0, 0, 2, 31);
+        p.alpha = Some(8);
+        let out = compose(0, &[], &[p], Fades::default());
+        assert_eq!(out[0], 15);
+        assert_eq!(blend(0x7FFF, 0, 16), 0x7FFF);
+    }
+
+    #[test]
+    fn a_stage_fade_leaves_the_hud_layer_and_the_sprites() {
+        let t = solid_tiles(1, 1);
+        let mut stage = Layer::new(2, 2);
+        stage.pixels[0] = 0x7FFF;
+        stage.pixels[1] = 0x7FFF;
+        let mut hud = Layer::new(1, 3);
+        hud.palettes = Palettes::Hud;
+        hud.pixels[1] = 0x7FFF;
+        let parts = [part(&t, 2, 0, 2, 0x7FFF)];
+        let fades = Fades { stage: Fade::Black(4), ..Fades::default() };
+        let out = compose(0x7FFF, &[&hud, &stage], &parts, fades);
+        // 31 - (31 * 4 >> 4) = 24 a channel.
+        let dimmed = 24 | 24 << 5 | 24 << 10;
+        assert_eq!(out[0], dimmed);
+        assert_eq!(out[1], 0x7FFF);
+        assert_eq!(out[2], 0x7FFF);
+        assert_eq!(out[20], dimmed, "the backdrop is the stage's");
+        assert_eq!(apply_fade(0x7FFF, Fade::Black(16)), 0);
+        assert_eq!(to_rgb(0x7FFF), 0xFFFFFF);
+    }
+
+    /// The HUD's pixels in palettes 14 and 15 (EXE4's chip window's code
+    /// and damage) are past the custom screen's ranged fades: the HUD's
+    /// fade leaves them, the fade of every palette reaches them.
+    #[test]
+    fn the_hud_fade_leaves_palettes_14_and_15() {
+        let tile = [1u8; 64];
+        let mut hud = Layer::new(1, 3);
+        hud.palettes = Palettes::Hud;
+        let white = [0x7FFF; 16];
+        hud.draw_tile(&tile, &white, 0, 0, false, false);
+        hud.draw_tile_past(&tile, &white, true, 8, 0, false, false);
+        let dimmed = 24 | 24 << 5 | 24 << 10;
+        let out = compose(0, &[&hud], &[], Fades { hud: Fade::Black(4), ..Fades::default() });
+        assert_eq!((out[0], out[8]), (dimmed, 0x7FFF));
+        let out = compose(0, &[&hud], &[], Fades { hud: Fade::Black(4), hud_past_ranged: Fade::Black(4), ..Fades::default() });
+        assert_eq!((out[0], out[8]), (dimmed, dimmed));
+        // (A tile drawn over it in a ranged palette is the fade's again.)
+        hud.draw_tile(&tile, &white, 8, 0, false, false);
+        let out = compose(0, &[&hud], &[], Fades { hud: Fade::Black(4), ..Fades::default() });
+        assert_eq!(out[8], dimmed);
+    }
+
+    /// [`compose_with_depth`]'s pixels as it put them together before what
+    /// depends on a layer alone was worked out once a frame (each layer's
+    /// fade and place found at every pixel): kept to hold it to.
+    fn composed_layer_by_layer_at_each_pixel(backdrop: u16, layers: &[&Layer], parts: &[SpritePart], fades: Fades) -> (Vec<u16>, Vec<u32>) {
+        let backdrop = apply_fade(backdrop, fades.stage);
+        let mut obj = SpriteBuffers { width: WIDTH, color: vec![CLEAR; PIXELS], priority: vec![UNWRITTEN; PIXELS], alpha: vec![0xFFu8; PIXELS], index: vec![0u16; PIXELS] };
+        for (k, p) in parts.iter().enumerate() {
+            draw_part(p, Size::ORIGINAL, k as u16, &mut obj);
+        }
+        let mut out = vec![0u16; PIXELS];
+        let mut depth = vec![BACKDROP_DEPTH; PIXELS];
+        for i in 0..PIXELS {
+            let mut first: (u8, u8, u16) = (5, 0, backdrop);
+            let mut second: (u8, u8, u16) = (5, 0, backdrop);
+            let mut front = BACKDROP_DEPTH;
+            let mut consider = |key: (u8, u8), c: u16, d: u32| {
+                if (key.0, key.1) < (first.0, first.1) {
+                    second = first;
+                    first = (key.0, key.1, c);
+                    front = d;
+                } else if (key.0, key.1) < (second.0, second.1) {
+                    second = (key.0, key.1, c);
+                }
+            };
+            if obj.color[i] != CLEAR {
+                let d = sprite_depth(obj.priority[i], obj.index[i] as usize);
+                consider((obj.priority[i], 0), apply_fade(obj.color[i], parts.get(obj.index[i] as usize).and_then(|p| p.fade).unwrap_or(fades.sprites)), d);
+            }
+            for l in layers {
+                let c = l.pixels[i];
+                if c != CLEAR {
+                    let fade = match l.palettes {
+                        Palettes::Stage => fades.stage,
+                        Palettes::Hud if l.past_ranged[i] => fades.hud_past_ranged,
+                        Palettes::Hud => fades.hud,
+                        Palettes::OtherHud if l.past_ranged[i] => fades.other_hud_past_ranged,
+                        Palettes::OtherHud => fades.other_hud,
+                        Palettes::Dialogue => fades.dialogue,
+                    };
+                    consider((l.priority, 1 + l.order), apply_fade(c, fade), layer_depth(l));
+                }
+            }
+            let mut c = first.2;
+            if first.1 == 0 && obj.alpha[i] != 0xFF {
+                c = blend(c, second.2, obj.alpha[i]);
+            }
+            out[i] = apply_fade(c, fades.screen);
+            depth[i] = front;
+        }
+        (out, depth)
+    }
+
+    /// Put together, frames are pixel for pixel and key for key what
+    /// finding each layer's fade and place at every pixel made: random
+    /// layers of every kind of palettes (some of one priority and order),
+    /// over some pixels each, those of some past the ranged fades, under
+    /// sprite parts of each priority, some semi-transparent, through random
+    /// fades.
+    #[test]
+    fn a_frame_is_put_together_as_at_each_pixel_alone() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let tiles = Tiles { pixels: (0..16 * Tiles::TILE).map(|i| (i * 7 % 5) as u8).collect() };
+        for case in 0..24 {
+            let mut fade = || match random() % 4 {
+                0 | 1 => Fade::None,
+                2 => Fade::Black((random() % 18) as u8),
+                _ => Fade::White((random() % 18) as u8),
+            };
+            let fades = Fades { stage: fade(), hud: fade(), hud_past_ranged: fade(), other_hud: fade(), other_hud_past_ranged: fade(), dialogue: fade(), sprites: fade(), screen: fade() };
+            let layers: Vec<Layer> = (0..5)
+                .map(|_| {
+                    let mut l = Layer::new((random() % 4) as u8, (random() % 3) as u8);
+                    l.palettes = [Palettes::Stage, Palettes::Hud, Palettes::OtherHud, Palettes::Dialogue][(random() % 4) as usize];
+                    let shown = random() % 100;
+                    for i in 0..PIXELS {
+                        if random() % 100 < shown {
+                            l.pixels[i] = (random() & 0x7FFF) as u16;
+                            l.past_ranged[i] = random() % 4 == 0;
+                        }
+                    }
+                    l
+                })
+                .collect();
+            let layers: Vec<&Layer> = layers.iter().collect();
+            let parts: Vec<SpritePart> = (0..12)
+                .map(|_| {
+                    let mut p = part(&tiles, (random() % 260) as i32, (random() % 170) as i32, (random() % 4) as u8, (random() & 0x7FFF) as u16);
+                    (p.width, p.height) = (16, 16);
+                    p.first_tile = (random() % 8) as usize;
+                    p.palette = std::array::from_fn(|_| (random() & 0x7FFF) as u16);
+                    p.alpha = (random() % 3 == 0).then(|| (random() % 17) as u8);
+                    p
+                })
+                .collect();
+            let backdrop = (random() & 0x7FFF) as u16;
+            let now = compose_with_depth(backdrop, &layers, &parts, fades);
+            let before = composed_layer_by_layer_at_each_pixel(backdrop, &layers, &parts, fades);
+            assert!(now == before, "case {case}");
+        }
+    }
+}

@@ -1,0 +1,28 @@
+--!strict
+-- Bass, the navi of EXE5's Bass chip (EXE5's actor object #0x4F, 0x080C2948): EXE6's (@exelib/bass/navi; the same code
+-- but for his sprite, 08-13, his cape's animation offset 0x10, his wind-up's and volleys' animations 3 and 4, his
+-- last volley's 5, whose end ends him) with EXE5's shot (./strike) and EXE5's effects 0x41 and 0x12.
+
+local common = require("@exelib/bass/navi")
+local strike = require("./strike")
+local bass_sprite = asset.sprite("bass")
+local hit_sparks_sprite = asset.sprite("hit-sparks")
+local puff_sprite = asset.sprite("puff")
+
+return common.make {
+    id = "bass/navi",
+    sprite = bass_sprite,
+    cape_anim_offset = 0x10,
+    raise_anim = 3,
+    raise_steps = 20,
+    volley_anim = 4,
+    ending = "animation",
+    last_anim = 5,
+    last_steps = 10,
+    shoot = function(me: Object, x: number, y: number, damage: number)
+        strike.spawn(me, x, y, damage)
+    end,
+    flash = new.effect { sprite = hit_sparks_sprite, anim = 8, palette = 0, steps = 5 },
+    smoke = new.effect { sprite = puff_sprite, anim = 0, palette = 0, steps = 4 },
+    appear = asset.sound("appear"),
+}

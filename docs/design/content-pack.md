@@ -1,0 +1,201 @@
+# The content root
+
+A battle runs on **content**: chips, navis and their forms, weapons, stages, the ruleset's tables, object kinds,
+actions, effects, sparks, regions, collision types, statuses, lock-on modes and identities, every sprite's
+animation timing, and the Luau code that runs them. The engine holds it as one typed value,
+`saito_battle::Content`, and reads it from nowhere else: no ROM, no tables or scripts compiled into the engine. It
+comes from the **content root**, a checkout's folder of Luau modules that *define* the content, the sprites' timing
+too (since 2026-10-27, content-model-v2.md §6.3), in packs: each game's (content/exe6 in this repository: people own
+it, and the verification workspace checks it against the ROM, §3) and the support packs games depend on (exelib).
+
+What a battle is drawn and heard from is the game's **assets**, its graphics and sound, extracted from its ROMs by
+its content's recipe as the game loads (`saito_extract`, [extraction-recipes.md](extraction-recipes.md)), in memory:
+the definitions name the assets (`asset.sound("bomb-hit")`), never their numbers, and a battle reads none of them.
+Until 2026-10-27 the assets were a folder of open-format files, a pack `saito-extract` wrote; there is no such
+folder now (docs/app.md §17).
+
+This document describes the content root, how it loads, and the `Content` API the engine and other layers use. The
+assets as they are extracted are in [asset-formats.md](asset-formats.md); what a definition is and how to write one
+in [content-migration.md](content-migration.md); the runtime in [scripting.md](scripting.md); the design record, with
+the reasons and the as-built notes, in [content-model-v2.md](content-model-v2.md).
+
+## 0. Summary
+
+- **Content and assets apart.** The content root defines the battle; a game's assets are extracted from its ROMs
+  (`saito_content::load::extract`) by the recipe in its content (`extract/`, which the game's root gives as its
+  `extract` and which loads with the content), every ROM required (a complete Legacy Collection's). The engine, the
+  frontend, the audio, netplay and the verification workspace all load the content root, and extract the assets from the
+  ROMs where they draw or play.
+- **Content is definitions.** A game's top module returns its root: what a match names, by id (chips, navis, forms,
+  stages, patch cards, NaviCust programs), its rules, and its recipe. What the root reaches is what the game has; a
+  table only code reaches says what it is with a tag constructor (`new.kind { ... }`). The engine has no chip, weapon,
+  kind, action, effect, spark, region, collision type, status, lock-on mode or identity by number, and no navi or form:
+  it holds handles, and content passes definitions.
+- **The original's numbers are compat's.** content/exe6/compat maps keys to the original's numbers for the tools
+  that need them (the trace harness, save and link-data codecs, the extraction's asset names, `gen-content
+  check`). The engine never reads it (a test guards the dependency), and content can't load it.
+- **Exact.** What the definitions build equals the ROM's data, field by field (`gen-content check`), and every
+  golden trace, the sound calls and the chip lab hold. `saito-content check <game>` holds a game's extracted assets
+  to its content: every asset it names, each sprite's animations and frames, its sprites' timing against the ROMs',
+  its strings' backgrounds (§3).
+- **Shared and immutable.** A battle holds its content in an `Arc<Content>`: snapshots share it and the state
+  digest leaves it out. Its identity, `Content::hash()`, is part of the round's setup (`RoundSetup::content`), so
+  netplay peers can check they run the same content.
+
+## 1. The content root
+
+```text
+init.luau                                 the game's root: its sections (each the init of the folder named for
+                                          it, which merges its modules' tables) and its rules
+chips/KEY/init.luau                       a chip or a series, returned by key (`return { minibomb = chip }`),
+                                          with its use
+chips/KEY/*.luau                          what only that chip or series uses (its action's builder, its kinds)
+navis/KEY/navi.luau, chip.luau, *.luau    a navi, its own chip, its weapons and what they spawn
+navis/megaman/init.luau                   MegaMan
+navis/megaman/forms/KEY/form.luau         MegaMan's forms, with their weapons and kinds next to them
+navis/megaman/weapons/KEY/weapon.luau     the weapons several forms share (`new.weapon`)
+objects/KIND/*.luau                       object kinds several owners spawn (`new.kind`)
+stages.luau                               the stages by id, with their layouts and actors
+rules/init.luau                           the stock ruleset: the game's one rules definition
+rules/*.luau                              its rule sections (plain tables), collision types, statuses,
+                                          lock-on modes, and the roles (roles.luau, a plain table)
+lib/*.luau, lib/FAMILY/*.luau             helpers and builders families share; the shared effects, sparks
+                                          and regions
+types.d.luau                              the game's shared types (for editors and the checker; the
+                                          engine's API is content/saito/core.d.luau)
+compat/*.toml                             the original's numbers by id: tools' data, never the engine's
+locales/<lang>.toml                       the display text (names, descriptions, messages) by definition id; the own
+                                          language's (en.toml) is the content's, whose shape (lines, characters)
+                                          the battle counts, the others a frontend's alone
+```
+
+No folder or file is named with a number of the original's (a test guards it): a chip's folder is its key
+(`chips/gundels`), a form's its name (`navis/megaman/forms/heatcross`).
+
+A module is `--!strict` Luau that returns a table. While it loads it makes definitions and names assets; what it
+returns is what other modules get from `require("../../lib/bombs/bomb")` (a path relative to the requiring
+file). Nothing registers a module: the engine runs what the definitions hold.
+
+The folder is named as its game (content/exe6), and every id its modules, compat and locales write is in full,
+`exe6:minibomb`, as is every asset name, `asset.sprite("exe6:bomb")` (rules-in-luau.md §7.2: the content is one
+namespace). `saito_content::index::read(dir, games, report)` reads what a load of games starts from: the packs
+they load (the support packs they depend on, then the games), every module by its path without `.luau`, and the
+games' own language's strings; `read_all(dir, report)` every game of a content directory.
+`saito_content::index::content()` is the content directory: `$SAITO_CONTENT`, else this repository's content/.
+
+## 2. The assets
+
+A game's assets are no files of the content root's: they are extracted from the game's ROMs, in memory, by the
+recipe in its content's `extract/` (with exelib's), which its root gives and which loads with the content
+(`saito_content::load::recipe`; extraction-recipes.md §4.2), and checked against the content as the game loads
+(`saito_content::load::asset_numbers`, §3). The extraction's index lists every sprite, sound, banner, background and
+mugshot by name, with the game's number for it: every name compat/assets.toml gives, and the other assets under
+placeholders (`sprite-0c-2d`), which content may not use (`saito-content-check` flags one: name the asset in
+compat/assets.toml first). Nothing of them is written anywhere (asset-formats.md).
+
+## 3. Loading
+
+`saito_content::load::load_battle(content, game)` reads the content root's game and runs the define phase
+(`Content::define`), which also makes the asset names (`Content::assets`) and the sprites' timing
+(`Content::animations`) from what the modules name and define (content-model-v2.md §6.3; until 2026-10-27 both came
+from the pack's asset index and `animations.json`). No asset is read: a frontend checks the assets it extracts
+against the content as it loads the game (`load::asset_numbers`).
+
+1. every module loads once, in a VM of its own, and what the modules define is read back as data (the recipe's
+   modules load too, in an environment of their own, and define nothing: the walk names the recipe and leaves it
+   out): the canonical tree, definitions sorted by registry and key, with references between definitions by key and
+   functions as slots;
+2. the engine builds its registries from it (`content::defs`): each registry's entries in key order, an
+   entry's handle its place, the engine's own entries (its object kinds, keyed `engine/...`) among them; and
+   the typed records the ruleset reads (a chip's record and use, a navi's stats, a stage's layout and actors,
+   the rule sections);
+3. it plans what a runtime binds: the function slots it will call (a kind's `update`, a chip's `dimming`), by
+   definition and path, and the state layouts.
+
+A definition that doesn't read is a content error naming its module: a missing field, a reference to the wrong
+registry, two definitions with one key, a chip without exactly one use. `saito_content::load::battle_content` is
+the same before the define phase.
+
+`saito-content check <game> [--content DIR] [--roms DIR]` runs the define phase and reports on the definitions:
+roles the content hasn't filled, kinds under `objects/` that one owner alone uses, collision types defined twice;
+the strings, the library order and the look. It then extracts the game's assets from its ROMs (the folder given:
+the Legacy Collection's, or one of ROM files; else `$SAITO_ROMS`, else the collection where Steam installed it) and
+holds them to the content: every asset the content names is there, each sprite with as many animations and frames,
+the content times its sprites as the ROMs do (each difference an error), and the strings' backgrounds are the
+assets'. ROMs that aren't found or don't extract are an error. `saito-content-check <content>` type-checks every module against core.d.luau and lints the source
+(scripting.md §3.3).
+
+The verification workspace's `gen-content check <rom> <content>` defines the content root with compat's asset
+names and compares what it builds with the ROM, by the numbers compat gives each key: the chips, navis, forms,
+weapons, stages, rule sections, statuses, lock-on modes, effects, sparks, regions, collision types, identities
+and the variants compat names.
+
+Loading is straight from the files: there is no derived cache. A frontend that doesn't play sound (headless
+rendering, `--mute`) skips the sound.
+
+## 4. The `Content` API
+
+`Content` (crates/saito-battle/src/content) is plain data: `Clone`, `PartialEq`, `Hash`. Engine code reads it
+through the battle, by handle:
+
+```rust
+let content: Arc<Content> = Arc::new(saito_content::load::load_battle(&saito_content::index::content(), "exe6")?.0);
+let setup = RoundSetup { content: content.hash(), settings, navi_stats, ... };
+let mut b = Battle::new(setup, content.clone());
+
+let chip = b.content.chip(handle);                 // &ChipData: the chip's record
+let usage = b.content.defs.chip(handle).usage;     // its use: an action, a dimming, navi or instant hook
+let navi = b.content.navi(stats.navi);             // &NaviData (banners, move lag, ...)
+let form = b.content.form(stats.form);             // &FormData (sprite, weapons, ...)
+let weapon = b.content.weapon(form.weapons.charge_shot.unwrap());
+let frames = b.content.animation(sprite, anim);    // &[AnimFrame]
+let look = b.content.effect(effect);               // EffectSprite, by EffectHandle
+let panels = b.content.region_offsets(region);     // &[PanelOffset], by Option<RegionHandle>
+let stage = b.content.stage(b.setup.settings.stage);
+let action = b.content.defs.roles.action(ActionRole::StunStrike);
+let pas = b.content.program_advances();            // in the order they are tried
+```
+
+- A handle (`ChipHandle`, `KindHandle`, `ActionHandle`, ...) is an index into its registry; a key reaches one
+  through `content.defs` (`chip_by_key`, `kind_by_key`, `action_by_key`). Engine code holds handles; only tests,
+  tools and the setup codecs name keys.
+- What the ruleset itself needs from content, it asks by **role** (`content.defs.roles`, filled by
+  rules/roles.luau): the action a request starts, the kind it spawns, the chip a zeroed field reads, the effect
+  a deletion shows. A role content hasn't filled is an error where the ruleset needs it.
+- `Battle::new(setup, content)` panics if `setup.content` isn't `content.hash()`: a round can't silently run on
+  other content than its setup names.
+- Code without a `Battle` gets what it needs passed in: the sprite stepper takes the content
+  (`sprite.set_animation(anim, &b.content)`), the field takes it to lay out and refresh panels, the custom
+  screen reads a `custom::Library`, which `Content` implements.
+- Where a function needs `&mut Battle` while holding content data, clone the `Arc` first (`let content =
+  b.content.clone();`): it costs an atomic increment.
+- Trace replays (exe6-compat's `trace`) take the content and compat: `trace::run_round(round, &content,
+  &compat)`. The setup codecs (`exe6_compat::codec`) take an `Ids` (the content and compat), which maps the
+  records' numbers to the engine's handles and back: a folder's chip ids, a navi stats record's weapons, the
+  stage a battle settings record is.
+- The scripts run from the content: `Battle::new` gets the runtime with `Behaviors::for_content(&content)`
+  (once per thread and content hash; the VM is a cache, not battle state).
+
+## 5. Identity, snapshots and netplay
+
+- `Content::hash()` is a stable 64-bit hash of all of it, scripts included (the state digest's hasher over the
+  typed data and the modules' source). It changes with any edit to a definition or a script and with the
+  engine's data layout.
+- `RoundSetup::content` carries it. The setup is part of the state digest, so two peers whose digests agree run
+  the same content; a netplay session should compare setups (hence the hash) before the match.
+- `Battle::content` is an `Arc<Content>`: cloning a battle (a snapshot) shares it, and the digest leaves it out.
+  Battle state refers to content by handle only.
+
+## 6. Tests and other content
+
+In-repo tests never load game data. `saito_battle::content::testing` (the `test-content` feature, and the
+engine's own tests) is a small content set: its own modules (crates/saito-battle/testdata/content: made-up chips,
+navis, stages, statuses and lock-on modes, and its roles), some of content/exe6's modules read from the
+repository with whatever they `require`, and made-up assets for the names they use. So the tests run the real
+scripts on made-up data. A second set, the test pack (crates/saito-battle/testdata/pack), is definitions written
+for the tests alone. The engine, netplay, audio and frontend tests run on them; one test defines all of
+content/exe6 with made-up assets.
+
+Tests about EXE6's actual data (effect lifetimes, GunDelSol's 480 HP in the sun, the stages' rocks, the golden
+traces, the chip lab) live in the verification workspace, which loads content/exe6 and extracts its assets from the
+ROMs `$SAITO_ROMS` names.

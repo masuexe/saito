@@ -1,0 +1,231 @@
+# Japanese: Play (ui/screens/play.slint).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ja\n"
+
+# ---- The builds, the chosen build, and what is done with it ----
+
+msgid "+ New build"
+msgstr "+ 新規構築"
+
+msgctxt "title"
+msgid "New build"
+msgstr "新規構築"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "Duplicate"
+msgstr "複製"
+
+msgid "Delete"
+msgstr "削除"
+
+msgid "Delete {}?"
+msgstr "{}を削除しますか？"
+
+msgid "Save files"
+msgstr "セーブファイル"
+
+# A new build, and a build's new name.
+
+msgid "New build"
+msgstr "新しい構築"
+
+# After what a new build of a version starts with, in the game's own words ("Starts with the version's Crosses and
+# Beast Out.").
+msgid "{} They can be changed later in the editor."
+msgstr "{} あとから編集画面で変えられます。"
+
+msgid "Create build"
+msgstr "構築を作成"
+
+# The NEW BUILD dialog's other way to start one: a save file chosen in the system's dialog.
+msgid "From a save file…"
+msgstr "セーブファイルから…"
+
+# The band under the builds: HOST, JOIN's field (an invite's code) and JOIN, and DIRECT CONNECT.
+
+msgid "Host"
+msgstr "ホスト"
+
+msgid "Join"
+msgstr "参加"
+
+msgid "Direct connect"
+msgstr "直接接続"
+
+# JOIN's field's placeholder, and the dialog of the code's six boxes (a pad can't type one).
+msgid "Invite code"
+msgstr "招待コード"
+
+msgid "Connecting…"
+msgstr "接続中…"
+
+msgid "Choose"
+msgstr "選ぶ"
+
+# ---- A direct connection ----
+
+msgid "Direct connection"
+msgstr "直接接続"
+
+msgid "Copy"
+msgstr "コピー"
+
+# Under this machine's address in the dialog, and under it while a direct host waits.
+msgid "Send this address to your opponent."
+msgstr "このアドレスを対戦相手に伝えてください。"
+
+msgid "address:port"
+msgstr "アドレス:ポート"
+
+msgid "Connect"
+msgstr "接続"
+
+# ---- Waiting for the other player ----
+
+msgid "Your address"
+msgstr "あなたのアドレス"
+
+msgid "Copy code"
+msgstr "コードをコピー"
+
+msgid "Copy address"
+msgstr "アドレスをコピー"
+
+msgid "Stop practice"
+msgstr "練習をやめる"
+
+msgid "Cancel invite"
+msgstr "招待を取り消す"
+
+msgid "Stop hosting"
+msgstr "ホストをやめる"
+
+msgid "Waiting for opponent"
+msgstr "対戦相手を待っています"
+
+msgid "The lobby opens when they join."
+msgstr "相手が参加するとロビーが開きます。"
+
+msgid "Practice menu"
+msgstr "練習メニュー"
+
+msgid "Fight"
+msgstr "バトル"
+
+# ---- The lobby ----
+
+msgid "Lobby"
+msgstr "ロビー"
+
+msgid "You"
+msgstr "あなた"
+
+msgid "Opponent"
+msgstr "対戦相手"
+
+msgid "Ready"
+msgstr "準備完了"
+
+msgid "Not ready"
+msgstr "準備中"
+
+msgid "First to"
+msgstr "先取"
+
+msgctxt "first to"
+msgid "{}"
+msgstr "{}本先取"
+
+# The match's ruleset (docs/design/app-ui.md §2.59), and the joiner's button that opens it to read.
+msgid "Ruleset"
+msgstr "ルール"
+
+msgctxt "ruleset"
+msgid "View"
+msgstr "見る"
+
+msgid "Leave the lobby?"
+msgstr "ロビーから退出しますか？"
+
+msgid "Open setups"
+msgstr "構築公開"
+
+# The lobby's two groups: the match's settings (the host's), and what is this player's own (the input delay, the
+# connection).
+msgid "Match settings"
+msgstr "対戦設定"
+
+msgid "Your connection"
+msgstr "あなたの接続"
+
+# The custom screen's time limit (saito's own): its seconds, or none.
+msgid "Custom timer"
+msgstr "カスタム時間"
+
+msgctxt "custom timer"
+msgid "{}s"
+msgstr "{}秒"
+
+msgid "Ping"
+msgstr "Ping"
+
+msgid "Change build"
+msgstr "構築変更"
+
+msgid "Leave"
+msgstr "退出"
+
+msgid "Waiting for you to ready up."
+msgstr "あなたの準備を待っています。"
+
+msgid "Waiting for your opponent to ready up."
+msgstr "対戦相手の準備を待っています。"
+
+# A failure's button, back to Play's first part.
+msgid "Back to play"
+msgstr "対戦メニューにもどる"
+
+# ---- In a match ----
+
+msgid "Back to match"
+msgstr "対戦にもどる"
+
+# The match menu's footer: Tab (Select on a pad) held shows both builds.
+msgid "Show builds"
+msgstr "構築を見る"
+
+msgid "Leave match"
+msgstr "対戦をやめる"
+
+msgid "The match keeps running"
+msgstr "対戦は止まりません"
+
+# ---- After a match ----
+
+msgid "Win"
+msgstr "勝利"
+
+msgid "Lose"
+msgstr "敗北"
+
+msgid "Draw"
+msgstr "引き分け"
+
+msgid "Rounds"
+msgstr "ラウンド"
+
+msgid "Time"
+msgstr "タイム"
+
+msgid "Continue"
+msgstr "つづける"
+
+# The footer: how many builds the game has.
+msgid "{n} build"
+msgid_plural "{n} builds"
+msgstr[0] "構築 {n}件"
+msgstr[1] "構築 {n}件"

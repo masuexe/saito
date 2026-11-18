@@ -1,0 +1,120 @@
+// Loading (docs/design/app-ui.md §6): the logo (the icon over the name) and one bar while the selected game loads, as the app starts and
+// whenever the player steps to a game that isn't ready yet (its assets are extracted from the Legacy Collection's ROMs as
+// it loads); before that, while its content is downloaded, the bar is the download's. The bar has one width and the
+// percentage fixed-width digits, so nothing moves as it fills. Where no Legacy Collection is found, a computer nearby
+// is looked for that sends it (src/nearby.rs): the note says how that goes, and the bar is its transfer's.
+
+import { Theme, I18n } from "../theme.slint";
+import { Shell, Errors, ErrorKind, NearbyState, NearbyWords } from "../shell.slint";
+import { Label, Mono, Bar, Note, Button, ButtonKind } from "../widgets.slint";
+import { Tween } from "../motion.slint";
+
+export component LoadingScreen inherits Rectangle {
+    property <length> column: min(480px, self.width - 2 * Theme.margin);
+    // The icon, large above the name (the user: "you should put it prominently on the loading screen"), and the
+    // room between them. `top` is the name's: the icon, the name and the bar are centered together.
+    property <length> mark: Theme.handheld ? 112px : 160px;
+    property <length> mark-gap: Theme.handheld ? 12px : 16px;
+    property <length> top: (self.height - 158px - root.steps - root.mark - root.mark-gap) / 2 + root.mark + root.mark-gap;
+    // No game, and the Legacy Collection not found: its error's line, and the way to its folder. (No game for want
+    // of the games' content: that error's line alone.)
+    property <bool> wants-folder: Shell.no-games && !Shell.no-content;
+    // The app's update is checked for or downloading, as the app starts (its line in place of the game's).
+    property <bool> updating: Shell.update-line != "";
+    // The Legacy Collection coming in from a computer nearby: the bar is that, in place of the note and the button.
+    property <bool> receiving: root.wants-folder && Shell.nearby == NearbyState.receiving;
+    // The room the line's steps from Steam take below what the bar's would (two lines more).
+    property <length> steps: root.wants-folder ? 32px : 0px;
+    // The logo settles into place as the app starts.
+    arrive := Tween {
+        duration: Theme.set-piece;
+    }
+
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: root.top - root.mark - root.mark-gap + (1 - arrive.t) * 10px;
+        width: root.mark;
+        height: root.mark;
+        opacity: arrive.t;
+        source: @image-url("../../../../docs/logo/saito-icon.svg");
+    }
+
+    // The logotype: 彩斗 in Navi Mark gold (#FFCC1A), then saito in crimson (#F2334D).
+    HorizontalLayout {
+        y: root.top + (1 - arrive.t) * 10px;
+        height: 90px;
+        alignment: center;
+        spacing: Theme.handheld ? 10px : 14px;
+        opacity: arrive.t;
+        Text {
+            text: "彩斗";
+            color: #ffcc1a;
+            font-family: "Corporate Logo ver3";
+            font-size: Theme.handheld ? 44px : 57px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "saito";
+            color: #f2334d;
+            font-family: "Chakra Petch";
+            font-size: Theme.handheld ? 56px : 72px;
+            font-weight: 700;
+            letter-spacing: 2.9px;
+            vertical-alignment: center;
+        }
+    }
+
+    Bar {
+        y: root.top + 122px;
+        width: root.column;
+        visible: !Shell.no-games || root.updating || root.receiving;
+        value: root.receiving ? Shell.nearby-progress : Shell.loading-progress;
+    }
+
+    Label {
+        x: (parent.width - root.column) / 2;
+        y: root.top + 142px;
+        width: root.column - 56px;
+        height: 16px;
+        // (No game known yet: the catalog of games is being read, the bar alone. The app's update, as it starts:
+        // its line.)
+        visible: root.updating || root.receiving || (!Shell.no-games && Shell.game != "");
+        text: root.updating ? I18n.upper(Shell.update-line) : root.receiving ? I18n.upper(NearbyWords.receiving(Shell.nearby-name)) : Shell.downloading ? I18n.upper(@tr("Downloading {}", Shell.game)) : I18n.upper(@tr("Loading {}", Shell.game));
+    }
+
+    Mono {
+        x: (parent.width + root.column) / 2 - 48px;
+        y: root.top + 142px;
+        width: 48px;
+        height: 16px;
+        visible: root.updating ? !Shell.update-checking : root.receiving || (!Shell.no-games && Shell.game != "");
+        text: "\{round((root.receiving ? Shell.nearby-progress : Shell.loading-progress) * 100)}%";
+        horizontal-alignment: right;
+    }
+
+    // No game can be played: what to do about it. The Legacy Collection is what is missing (the error's own line with
+    // the steps to drag the folder in from Steam: five lines on a phone in Japanese, down to the button's top less
+    // 4), or the games' content. While a computer nearby is looked for, the line is how that goes, which says the
+    // collection is needed as it starts.
+    Note {
+        y: root.top + 116px;
+        width: root.column;
+        height: root.wants-folder ? 64px + root.steps : 88px;
+        vertical-alignment: TextVerticalAlignment.top;
+        wrap: word-wrap;
+        visible: Shell.no-games && !root.updating && !root.receiving;
+        text: Shell.no-content ? Errors.line(Shell.unpublished ? ErrorKind.content-unpublished : ErrorKind.download-failed, "") : Shell.incomplete != "" ? Errors.line(ErrorKind.incomplete-legacy-collection, Shell.incomplete) : Shell.nearby != NearbyState.none ? NearbyWords.line(Shell.nearby, Shell.nearby-name) : Errors.line(ErrorKind.no-legacy-collection, "");
+        horizontal-alignment: center;
+    }
+
+    Button {
+        x: (parent.width - self.width) / 2;
+        y: root.top + 184px + root.steps;
+        visible: root.wants-folder && !root.updating && !root.receiving;
+        enabled: root.wants-folder && !root.updating && !root.receiving;
+        nav: "source.choose";
+        kind: ButtonKind.main;
+        text: Errors.choose-folder();
+    }
+}

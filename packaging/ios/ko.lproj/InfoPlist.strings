@@ -1,0 +1,2 @@
+/* Why the local network is asked for (Info.plist's NSLocalNetworkUsageDescription), in this language. */
+"NSLocalNetworkUsageDescription" = "saito는 레거시 컬렉션이 있고 saito가 실행 중인 컴퓨터를 로컬 네트워크에서 찾아 데이터를 전송받습니다.";

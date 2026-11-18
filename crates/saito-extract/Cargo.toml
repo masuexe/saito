@@ -1,0 +1,41 @@
+[package]
+name = "saito-extract"
+# The app's: the primitives change only with its line (major.minor).
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A game's assets extracted from its ROMs in memory by the game's recipe, the ROMs found where they are (the Legacy Collection installed, or ROM files)"
+
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+m4a.workspace = true
+saito-assets = { path = "../saito-assets" }
+saito-content-api = { path = "../saito-content-api" }
+# The recipes' VM (`saito_luau::tool`) and its binding.
+saito-luau = { path = "../saito-luau" }
+# A recipe's `data` (its compat TOML).
+toml = "0.8"
+# The Legacy Collection's archives (`source.rs`, ported from reference).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# What finding the ROMs passes over (an archive or a file that doesn't read): the host's log.
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The Legacy Collection's install, found through Steam (`source.rs`, ported from reference, with the crates it uses).
+steamlocate = "2"
+
+[features]
+# ROMs and archives of made-up bytes, for the tests of the crates over this one (`source::testing`).
+testing = []
+
+[dev-dependencies]
+tempfile = "3"
+# The content audit of the extracted assets (tests/extract.rs): a game loaded as
+# a frontend loads it, and the lookups it makes of everything the content
+# defines.
+saito-frontend = { path = "../saito-frontend" }
+saito-tools = { path = "../saito-tools" }
+# The content's languages (tests/extract.rs) and the repository's content
+# directory (examples/shapes_check.rs).
+saito-content = { path = "../saito-content" }

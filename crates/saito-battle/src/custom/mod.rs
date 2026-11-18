@@ -1,0 +1,968 @@
+//! The custom screen (EXE6 rules): between turns each player deals chips
+//! from their folder, picks some (and maybe Beast Out or a Cross), and
+//! presses OK; the hand is built and sent over the link, and the fight
+//! resumes once both players' results are in.
+//!
+//! In the original each console runs only its own player's screen and
+//! receives the other's result over the link. Here both screens run inside
+//! the simulation, each driven by its player's choices (`ScreenChoice`, in
+//! the tick's input), and a result arrives once its words have gone over,
+//! one a tick, so the fight resumes when the original's would have over a
+//! link that delivered at once. The cursor and what only shows are each
+//! player's own screen layer's ([`layer`]), outside the simulation: it
+//! turns their keys into the choices, as the original's screen read them.
+//! See docs/engine/custom-screen.md and docs/design/custom-screen-actions.md.
+
+pub mod builder;
+pub mod chatbox;
+pub mod folder;
+pub mod layer;
+pub mod library;
+pub mod look;
+pub mod screen;
+
+pub use folder::{BattleFolder, FolderChip, SavedFolder};
+pub use layer::{Layer, Lockstep};
+pub use library::Library;
+pub use look::{ChipShade, Draw, Drawn, ScreenLook, WindowLook};
+pub use screen::{ButtonCell, ButtonPlace, Phase, PlayerView, Request, RoundMemory, Screen, Slot, SlotKind, SlotState};
+
+use crate::battle::{Battle, CustomResult, battle_flags};
+use crate::console::{Console, ConsoleSetup};
+use saito_content_api::ChipHandle;
+use crate::hand::ChipHand;
+use crate::input::ScreenChoice;
+use crate::kinds::player::Emotion;
+use crate::setup::{NaviStats, effects};
+use crate::transform::TransformRequest;
+use builder::{ClassCounts, Pick, ProgramAdvancesUsed};
+
+/// What a player brings to a round that only their own console knows in
+/// the original: the battle folder (shuffled at the round's init), what
+/// their save holds that the battle reads, and what their rules'
+/// systems take (EXE6's: the game version and what the save unlocks on the
+/// custom screen, in its systems' setup blocks).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PlayerSetup {
+    /// The shuffled battle folder.
+    pub folder: BattleFolder,
+    /// The joypad's auto-repeat beat (0-4) on the round's first tick; each
+    /// console counts its own. The simulation reads no key of the screen:
+    /// the player's layer does ([`layer::Layer`]), from here.
+    pub joypad_phase: u8,
+    /// What the player's console brings besides: its RNG (RNG1), which
+    /// ChpShufl's re-deal draws from (`crate::console`). In netplay it is
+    /// part of the setup the peers exchange.
+    pub console: ConsoleSetup,
+    /// What the player brings for the rules (their `setup` fields); none
+    /// given: their defaults (`setup_defaults`, the rest zero;
+    /// `PlayerSetup::set_fact` writes one by name).
+    pub rules: Option<saito_content_api::Block>,
+}
+
+impl Default for PlayerSetup {
+    fn default() -> PlayerSetup {
+        PlayerSetup {
+            folder: BattleFolder::empty(),
+            joypad_phase: 0,
+            console: ConsoleSetup::default(),
+            rules: None,
+        }
+    }
+}
+
+/// A result on its way over the link.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Sent {
+    pub result: CustomResult,
+    /// The tick it went out, and the tick its last word arrives.
+    pub sent_at: u32,
+    pub arrives: u32,
+}
+
+/// One player's custom-screen state through a round.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Side {
+    pub folder: BattleFolder,
+    pub round: RoundMemory,
+    pub program_advances: ProgramAdvancesUsed,
+    /// Chips sent this round, by class.
+    pub class_uses: ClassCounts,
+    /// The screen, from its opening until the next one opens.
+    pub screen: Option<Screen>,
+    /// The status bit the player's console sends: its custom screen is
+    /// open (BattleState+0x11 bit 2).
+    pub in_custom: bool,
+    /// The status bit 0 the player's console sends while its selection
+    /// runs: EXE4's screen's (BattleState +0x14, from the selection's start
+    /// until OK), which its custom screen's HP bug reads (the rule
+    /// `custom_drain`); EXE6's and EXE5's screens send none.
+    pub selecting: bool,
+    /// The hand and transformation built at OK, sent after the window
+    /// slides out (None: no chips picked).
+    pub built: Option<(Option<ChipHand>, TransformRequest)>,
+    pub sent: Option<Sent>,
+    /// The emotion the screen reads of its navi (its context's), which its
+    /// systems' hooks read too (`custom.player`), set while one runs.
+    pub emotion: Emotion,
+    /// The ticks the screen has counted toward the round's time limit
+    /// (saito's own, `RoundSetup::custom_screen_limit`): each it chooses
+    /// or is hidden, from its opening; none counted in a round without one.
+    pub clock: u16,
+}
+
+impl Side {
+    pub fn new(setup: &PlayerSetup) -> Side {
+        Side {
+            folder: setup.folder,
+            round: RoundMemory::default(),
+            program_advances: ProgramAdvancesUsed::default(),
+            class_uses: ClassCounts::default(),
+            screen: None,
+            in_custom: false,
+            selecting: false,
+            built: None,
+            sent: None,
+            emotion: Emotion::default(),
+            clock: 0,
+        }
+    }
+
+    /// The ticks left of the round's time limit `limit` while the screen
+    /// counts toward it (from its window's tick in until OK); none in a
+    /// round without one, or while the screen doesn't count.
+    pub fn time_left(&self, limit: Option<u16>) -> Option<u16> {
+        let limit = limit?;
+        self.screen.filter(|s| s.phase.counts_time()).map(|_| limit.saturating_sub(self.clock))
+    }
+}
+
+/// Both players' custom screens.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CustomScreens {
+    pub sides: [Side; 2],
+    /// Ticks since the screen opened.
+    pub ticks: u32,
+    /// Both results are in; the screen closes next tick.
+    pub committed: bool,
+    /// The custom gauge as the screens opened (what a console that keeps
+    /// it until its own send holds: `Battle::gauge_for`).
+    pub gauge_at_open: u16,
+}
+
+impl CustomScreens {
+    pub fn new(players: &[PlayerSetup; 2]) -> CustomScreens {
+        CustomScreens { sides: [Side::new(&players[0]), Side::new(&players[1])], ticks: 0, committed: false, gauge_at_open: 0 }
+    }
+}
+
+/// What a player's screen reads of the battle: the game data, their navi,
+/// and a few battle-wide facts.
+#[derive(Clone, Copy)]
+pub struct Context<'a> {
+    pub library: &'a dyn Library,
+    /// The player's navi stats.
+    pub stats: NaviStats,
+    pub emotion: Emotion,
+    /// The screen's number in the round (1 = first).
+    pub turn: u8,
+    /// Battle flag 0x40 (the own-gauges mode; never in a netbattle without chip gates).
+    pub own_gauges: bool,
+    /// Battle effects 0x200000 (random battles).
+    pub random_battle: bool,
+    /// The battle mode (the stage's).
+    pub battle_mode: u8,
+    /// The side's party, and the member its player asks to switch to this
+    /// tick (`Battle::switch_inputs`).
+    pub party: crate::party::Party,
+    pub switch_request: Option<u8>,
+    /// A netbattle's last turns (`sub_800A97A`; presentation).
+    pub late_turns: bool,
+    /// L is the screen's run key, as the original's is; not in a round whose
+    /// host took it (`HostKeys::run`).
+    pub run_key: bool,
+    /// The round's time limit, in ticks (saito's own,
+    /// `RoundSetup::custom_screen_limit`).
+    pub time_limit: Option<u16>,
+    /// The tick: a result sent now arrives 50 ticks later (50 words, one
+    /// a tick).
+    pub now: u32,
+}
+
+/// What a player's custom screen asks its side's rules
+/// (docs/design/rules-in-luau.md §4.4: their `custom` hooks). The battle
+/// answers ([`crate::battle::Battle`]'s side extras); a screen without one
+/// (the screen's own tests) gets no answers.
+pub trait Extras {
+    /// `custom.hand_size(side)`: how many chips the screen deals, as it
+    /// opens; none: the framework's rule.
+    fn hand_size(&mut self) -> Option<u8>;
+    /// The buttons on the screen `screen` (as it opens), in the order the
+    /// side's rules are listed: each that its `shown` says is.
+    fn buttons(&mut self, screen: &Screen) -> Vec<screen::ButtonPlace>;
+    /// A button's `state` (at the open and after each pick), if it has one.
+    fn button_state(&mut self, screen: &Screen, button: crate::content::ButtonHandle) -> Option<SlotState>;
+    /// A button's `pressed` (A on it), which may change the screen, on the
+    /// side's console (its RNG1).
+    fn button_pressed(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console, button: crate::content::ButtonHandle);
+    /// A button's `taken_back(side, place)` (its pick in place `place` of
+    /// the picks taken back: B, an `Unpick`, a `Release`), if it has one.
+    fn button_taken_back(&mut self, screen: &mut Screen, button: crate::content::ButtonHandle, place: u8);
+    /// `custom.deal(side)`: the screen deals, the folder not yet closed
+    /// up, on the side's console (its RNG1).
+    fn dealing(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console);
+    /// `custom.open(side)`: the screen opens.
+    fn opened(&mut self, screen: &mut Screen);
+    /// `custom.confirmed(side)`: OK built the hand.
+    fn confirmed(&mut self, screen: &mut Screen, folder: &mut BattleFolder);
+    /// A picked button's `hand_chip(side)` at OK: the chip it puts in the
+    /// hand in its place, if any (EXE4's soul).
+    fn button_hand_chip(&mut self, screen: &Screen, button: crate::content::ButtonHandle) -> Option<ChipHandle>;
+    /// `custom.chip_picked(side, chip)` and `custom.chip_taken_back(side,
+    /// chip, place)`: a chip of the hand picked, or its pick in place
+    /// `place` of the picks taken back.
+    fn chip_picked(&mut self, screen: &mut Screen, folder: &mut BattleFolder, chip: ChipHandle);
+    fn chip_taken_back(&mut self, screen: &mut Screen, chip: ChipHandle, place: u8);
+    /// A window's `update` (a tick of it): whether it stays up.
+    fn window_update(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console, window: crate::content::WindowHandle) -> bool;
+    /// `custom.choose_form(side, entry)`: the player chose entry `entry` of
+    /// the rules' form list (EXE6's Cross window's, `sub_8028A78`'s A).
+    fn choose_form(&mut self, screen: &mut Screen, folder: &mut BattleFolder, entry: u8);
+    /// `custom.unchoose_form(side)`: B with nothing picked, or the
+    /// player's `Unchoose`: whether the rules un-chose a form.
+    fn unchoose_form(&mut self, screen: &mut Screen, folder: &BattleFolder) -> bool;
+    /// `member_busy(side, member)`: whether the side's rules keep the screen
+    /// from switching to `member` now (EXE5 DS's 0x02004B80, its supports'
+    /// busy flags; they play the refusal).
+    fn member_busy(&mut self, member: u8) -> bool;
+}
+
+/// No systems: every question unanswered.
+pub struct NoExtras;
+
+impl Extras for NoExtras {
+    fn hand_size(&mut self) -> Option<u8> {
+        None
+    }
+
+    fn buttons(&mut self, _: &Screen) -> Vec<screen::ButtonPlace> {
+        Vec::new()
+    }
+
+    fn button_state(&mut self, _: &Screen, _: crate::content::ButtonHandle) -> Option<SlotState> {
+        None
+    }
+
+    fn button_pressed(&mut self, _: &mut Screen, _: &mut BattleFolder, _: &mut Console, _: crate::content::ButtonHandle) {}
+
+    fn button_taken_back(&mut self, _: &mut Screen, _: crate::content::ButtonHandle, _: u8) {}
+
+    fn dealing(&mut self, _: &mut Screen, _: &mut BattleFolder, _: &mut Console) {}
+    fn opened(&mut self, _: &mut Screen) {}
+
+    fn confirmed(&mut self, _: &mut Screen, _: &mut BattleFolder) {}
+
+    fn button_hand_chip(&mut self, _: &Screen, _: crate::content::ButtonHandle) -> Option<ChipHandle> {
+        None
+    }
+
+    fn chip_picked(&mut self, _: &mut Screen, _: &mut BattleFolder, _: ChipHandle) {}
+
+    fn chip_taken_back(&mut self, _: &mut Screen, _: ChipHandle, _: u8) {}
+
+    fn window_update(&mut self, _: &mut Screen, _: &mut BattleFolder, _: &mut Console, _: crate::content::WindowHandle) -> bool {
+        false
+    }
+
+    fn choose_form(&mut self, _: &mut Screen, _: &mut BattleFolder, _: u8) {}
+
+    fn unchoose_form(&mut self, _: &mut Screen, _: &BattleFolder) -> bool {
+        false
+    }
+
+    fn member_busy(&mut self, _: u8) -> bool {
+        false
+    }
+}
+
+/// Ticks a result takes to send: the link carries one of its words a tick
+/// (`sub_801FF18`), EXE6's 50 (a game's own: `Library::result_words`).
+pub const SEND_TICKS: u32 = 50;
+
+impl Side {
+    fn view<'a>(&'a self, ctx: &'a Context, regular_pending: bool) -> PlayerView<'a> {
+        PlayerView {
+            library: ctx.library,
+            stats: &ctx.stats,
+            emotion: ctx.emotion,
+            class_uses: &self.class_uses,
+            round: &self.round,
+            regular_pending,
+            own_gauges: ctx.own_gauges,
+            random_battle: ctx.random_battle,
+            battle_mode: ctx.battle_mode,
+            party: &ctx.party,
+            switch_request: ctx.switch_request,
+            late_turns: ctx.late_turns,
+            run_key: ctx.run_key,
+        }
+    }
+
+    /// The side's screen as its player's layer reads it ([`layer::Presented`]),
+    /// for a screen run outside the battle's own loop (exe6-compat's check of
+    /// the traces' screens): what it reads of the battle, `ctx`, and the
+    /// rules' form list (`Battle::form_list`). None: no screen.
+    pub fn presented<'a>(&'a self, ctx: &'a Context, form_list: Option<crate::rules::FormList>) -> Option<layer::Presented<'a>> {
+        Some(layer::Presented {
+            screen: self.screen.as_ref()?,
+            folder: &self.folder,
+            view: self.view(ctx, self.folder.regular_pending),
+            turn: ctx.turn,
+            time_left: self.time_left(ctx.time_limit),
+            form_list,
+        })
+    }
+
+    /// The custom screen opens (`sub_8026840`) on the player's console:
+    /// the status bit goes up and the player's screen deals. The round's
+    /// first screen forgets the previous round's Crosses and Beast Out.
+    pub fn open(&mut self, ctx: &Context, console: &mut Console) {
+        self.open_with(ctx, console, &mut NoExtras);
+    }
+
+    /// [`Side::open`], asking the side's rules.
+    pub fn open_with(&mut self, ctx: &Context, console: &mut Console, extras: &mut dyn Extras) {
+        self.emotion = ctx.emotion;
+        self.in_custom = true;
+        self.clock = 0;
+        self.built = None;
+        self.sent = None;
+        if ctx.turn == 1 {
+            self.round = RoundMemory::default();
+        }
+        let mut folder = self.folder;
+        let regular = folder.regular_pending;
+        let screen = Screen::open(&mut folder, &self.view(ctx, regular), ctx.turn, console, extras);
+        // sub_802A646: once the tag pair is among the chips a screen can
+        // deal, a re-deal no longer keeps it apart (BattleState+0x44).
+        if console.tag_pair.is_some_and(|t| t < screen.hand_size) {
+            console.tag_pair = None;
+        }
+        self.folder = folder;
+        self.screen = Some(screen);
+    }
+
+    /// One tick of the player's screen with their choice of the tick, on
+    /// their console. `damage`: a chip's damage for this player now
+    /// (`sub_80109A4`), for the hand built at OK.
+    pub fn tick(&mut self, ctx: &Context, choice: Option<ScreenChoice>, console: &mut Console, damage: impl Fn(ChipHandle) -> u16) -> Option<Request> {
+        self.tick_with(ctx, choice, console, damage, &mut NoExtras)
+    }
+
+    /// [`Side::tick`], asking the side's rules.
+    pub fn tick_with(
+        &mut self,
+        ctx: &Context,
+        choice: Option<ScreenChoice>,
+        console: &mut Console,
+        damage: impl Fn(ChipHandle) -> u16,
+        extras: &mut dyn Extras,
+    ) -> Option<Request> {
+        self.emotion = ctx.emotion;
+        let Some(mut screen) = self.screen else { return None };
+        let mut folder = self.folder;
+        let settling = screen.phase == Phase::Settling;
+        // The round's time limit (saito's own): the tick the screen has
+        // counted its last, it takes no choice and closes as if OK were
+        // pressed.
+        let counts = ctx.time_limit.is_some() && screen.phase.counts_time();
+        if counts {
+            self.clock = self.clock.saturating_add(1);
+        }
+        let time_up = counts && ctx.time_limit.is_some_and(|limit| self.clock >= limit);
+        let view = self.view(ctx, folder.regular_pending);
+        let request = if time_up {
+            screen.tick_time_up(&view, &mut folder, console, extras)
+        } else {
+            screen.tick(choice, &view, &mut folder, console, extras)
+        };
+        match request {
+            Some(Request::Confirm) => self.confirm(ctx, &mut screen, &mut folder, console, damage, extras),
+            Some(Request::Send) => {
+                // sub_8026DC4's first tick: sub_802A4FC counts the classes,
+                // sub_800B3A2 sends the hand, the navi's stats as they are
+                // now, and the transformation.
+                let (hand, transform) = self.built.clone().expect("a hand was built at OK");
+                if let Some(h) = &hand {
+                    builder::count_classes(h, &mut self.class_uses, ctx.library);
+                }
+                let result = CustomResult { hand, navi_stats: ctx.stats, transform };
+                self.sent = Some(Sent { result, sent_at: ctx.now, arrives: ctx.now + ctx.library.result_words() });
+            }
+            // (The battle counts a switch the screen took.)
+            Some(Request::Switched(_)) | None => {}
+        }
+        // The slide-out's first tick clears the status bit, or the send does
+        // (EXE4's 0x0801E986).
+        let cleared = match ctx.library.layout().status_until {
+            crate::content::StatusUntil::Closing => matches!(screen.phase, Phase::Closing { tick: 1 }),
+            crate::content::StatusUntil::Sending => request == Some(Request::Send),
+        };
+        if cleared {
+            self.in_custom = false;
+        }
+        // EXE4's selection says it runs from its first tick (its state 0,
+        // 0x08020348: the screen's settling tick) to OK (0x08020652); its
+        // description, SELECT's hiding and L's message (its player's layer's)
+        // leave it set.
+        if ctx.library.layout().status_until == crate::content::StatusUntil::Sending {
+            if settling {
+                self.selecting = true;
+            }
+            if request == Some(Request::Confirm) {
+                self.selecting = false;
+            }
+        }
+        self.screen = Some(screen);
+        self.folder = folder;
+        request
+    }
+
+    /// OK (`sub_8028D3A`): build the hand (`sub_8029110`), take the picked
+    /// chips out of the folder (`sub_80293F8`: each one also moves the
+    /// console's tag pair index down by one, while it has one), and turn
+    /// Beast Out or the Cross into a transformation (`sub_8029344`,
+    /// `sub_802937A`).
+    fn confirm(
+        &mut self,
+        ctx: &Context,
+        screen: &mut Screen,
+        folder: &mut BattleFolder,
+        console: &mut Console,
+        damage: impl Fn(ChipHandle) -> u16,
+        extras: &mut dyn Extras,
+    ) {
+        let view = self.view(ctx, folder.regular_pending);
+        let picks: Vec<Pick> = screen
+            .selection()
+            .iter()
+            .filter_map(|&slot| {
+                let kind = screen.slots[slot as usize].kind;
+                // (A picked button that puts a chip in the hand, in code A:
+                // EXE4's soul, its chip 0x160 + the soul, 0x0801F0A0.)
+                let chip = match kind {
+                    SlotKind::Button { button, .. } => FolderChip::new(extras.button_hand_chip(screen, button)?, crate::content::ChipCode(0)),
+                    _ => screen.chip_in(slot, folder)?,
+                };
+                let regular = matches!(kind, SlotKind::Chip { regular: true, .. });
+                // (What the rules' offer says of its pick: its marks, and
+                // whether it is listed.)
+                let offer = screen.offers[slot as usize].filter(|_| matches!(kind, SlotKind::Offered(_)));
+                let marks = screen.slots[slot as usize].marks | offer.map_or(0, |o| o.marks);
+                let button = matches!(kind, SlotKind::Button { .. });
+                let listed = !button && offer.is_none_or(|o| o.listed);
+                Some(Pick { chip: screen::checked(chip, &view), regular, marks, listed, coded: !button })
+            })
+            .collect();
+        let mut pa_used = self.program_advances;
+        let built = builder::build(&picks, ctx.turn, &mut pa_used, ctx.library, ctx.own_gauges, damage);
+        self.program_advances = pa_used;
+        for p in &picks {
+            // A link navi's own chip is spent for the round (the bit of
+            // its navi).
+            if let Some(navi) = ctx.library.own_chip_of(p.chip.id) {
+                self.round.navi_chips_used |= 1 << navi.0;
+            }
+        }
+        let mut transform = TransformRequest::NONE;
+        // What the side's rules note of the round (EXE6's: Beast Out or the
+        // Cross used; EXE5's: the soul given, 0x08024FF6, its form set now),
+        // then the form a pick of the rules holds (EXE6's Beast Out or Cross,
+        // EXE5's soul: with its turns and whether it is Chaos Unison).
+        extras.confirmed(screen, folder);
+        if screen.form.is_some() {
+            transform.form = screen.form;
+            transform.turns = screen.form_turns;
+            transform.alternate = screen.form_alternate;
+        }
+        // EXE5 DS's 0x0200BED8: the screen's navi, where it isn't the one on
+        // the field, is the turn's switch (the transform record's +4).
+        if let Some(stats) = screen.member.and_then(|m| ctx.party.member(m))
+            && stats.navi != ctx.stats.navi
+        {
+            transform.navi_switch = Some(stats.navi);
+        }
+        for &slot in screen.selection() {
+            // (A button picked in a chip's place takes the chip out of the
+            // folder there: EXE5's soul, 0x08025088.)
+            let slot = match screen.trade {
+                Some(t) if t.button == slot => t.chip,
+                _ => slot,
+            };
+            if let SlotKind::Chip { index, regular } = screen.slots[slot as usize].kind {
+                folder.take(index as usize);
+                if regular {
+                    folder.regular_pending = false;
+                }
+                // The folder closes up by one at the next opening: the
+                // pair's index follows (a byte; a pair at the hand's end
+                // can reach 0, which reads as no pair).
+                if let Some(t) = &mut console.tag_pair {
+                    *t = t.wrapping_sub(1);
+                }
+            }
+        }
+        // A chip a button holds leaves the folder too (EXE5's Arm Change,
+        // 0x080250C8: the Regular chip's flag stays as it is).
+        if let Some(SlotKind::Chip { index, .. }) = screen.hold.map(|h| screen.slots[h.chip as usize].kind) {
+            folder.take(index as usize);
+            if let Some(t) = &mut console.tag_pair {
+                *t = t.wrapping_sub(1);
+            }
+        }
+        screen.program_advance = built.program_advance;
+        let hand = (!screen.selection().is_empty()).then_some(built.hand);
+        self.built = Some((hand, transform));
+    }
+}
+
+impl Battle {
+    /// What side `side`'s screen reads of the battle (and its game data,
+    /// the battle's content).
+    fn custom_context<'a>(&self, side: u8, library: &'a dyn Library) -> Context<'a> {
+        Context { emotion: crate::kinds::player::emotion(self, side), ..self.custom_context_without_emotion(side, library) }
+    }
+
+    /// [`Battle::custom_context`] with the emotion left the default (the
+    /// game's normal), for a
+    /// caller that has the screen's own.
+    fn custom_context_without_emotion<'a>(&self, side: u8, library: &'a dyn Library) -> Context<'a> {
+        Context {
+            library,
+            stats: self.stats[side as usize],
+            emotion: Emotion::default(),
+            turn: self.round.turn,
+            own_gauges: self.round.flags & battle_flags::OWN_GAUGES != 0,
+            random_battle: self.setup.settings.effects & effects::RANDOM != 0,
+            battle_mode: self.round.mode_copy,
+            party: self.party[side as usize],
+            switch_request: self.switch_inputs[side as usize],
+            late_turns: self.late_turns(),
+            run_key: !self.setup.host_keys.run,
+            time_limit: self.setup.custom_screen_limit,
+            now: self.round.ticks,
+        }
+    }
+
+    /// The custom screen opens (`sub_8009338`'s first tick, `sub_8026840`).
+    pub(crate) fn open_custom_screens(&mut self) {
+        // Shared: the turn count, the gauge (a game that keeps it full until
+        // the send, EXE4's, empties it at the first: `restart_gauge`; each
+        // console its own at its own, `Battle::gauge_for`).
+        self.custom.gauge_at_open = self.gauge.value;
+        if self.content.rules().custom_screen.gauge_empties_at_open {
+            self.gauge.value = 0;
+            self.clear_flags(battle_flags::GAUGE_FULL | battle_flags::CUSTOM_REQUESTED);
+        }
+        self.gauge.enabled = false;
+        // sub_801DACC(0x30172): the chips' icons and window go.
+        self.chip_hud = Default::default();
+        self.round.turn += 1;
+        self.custom.ticks = 0;
+        self.custom.committed = false;
+        let content = self.content.clone();
+        for side in 0..2u8 {
+            let library: &crate::content::Content = &content;
+            let ctx = self.custom_context(side, library);
+            let mut s = self.custom.sides[side as usize].clone();
+            let mut console = self.consoles[side as usize];
+            s.open_with(&ctx, &mut console, &mut SideExtras { b: self, side, emotion: ctx.emotion });
+            self.custom.sides[side as usize] = s;
+            self.consoles[side as usize] = console;
+        }
+    }
+
+    /// One tick of both players' screens after the opening tick, then the
+    /// link: the fight resumes once both results are in.
+    pub(crate) fn tick_custom_screens(&mut self) {
+        self.custom.ticks += 1;
+        if self.custom.ticks == 10 && self.round.turn != 1 {
+            // The window has slid in: the NaviCust custom-HP bug bites
+            // (not on the round's first screen).
+            for side in 0..2 {
+                self.custom_hp_bug(side);
+            }
+        }
+        for side in 0..2u8 {
+            let content = self.content.clone();
+            let library: &crate::content::Content = &content;
+            let ctx = self.custom_context(side, library);
+            let mut s = self.custom.sides[side as usize].clone();
+            let mut console = self.consoles[side as usize];
+            // (A chip's damage now, for the hand built at OK: a formula's
+            // reads the battle, so those are read before the extras borrow
+            // it.)
+            let formulas: Vec<(ChipHandle, u16)> = content
+                .defs
+                .formula_chips
+                .iter()
+                .map(|&id| (id, crate::hand::chip_damage(self, Some(id), side)))
+                .collect();
+            let damage = |id: ChipHandle| match formulas.iter().find(|(c, _)| *c == id) {
+                Some(&(_, d)) => d,
+                None => content.chip(id).damage,
+            };
+            let choice = self.screen_choices[side as usize];
+            let request = s.tick_with(&ctx, choice, &mut console, damage, &mut SideExtras { b: self, side, emotion: ctx.emotion });
+            // What the screen asked of the sound driver, which only its
+            // player hears, in the order it asked. (Its layer's, the
+            // cursor's and the dark chip hover's, come after these: where
+            // they go among the tick's cues, `Battle::screen_cues_at`.)
+            if let Some(screen) = &s.screen {
+                for call in screen.look.drawn.calls() {
+                    match call {
+                        // (A sound some game hasn't plays none there:
+                        // `SoundRole::optional`.)
+                        look::ScreenCall::Sound(sound) => {
+                            if let Some(id) = self.screen_sound(sound) {
+                                self.play_sound_for(side, id);
+                            }
+                        }
+                        look::ScreenCall::Volume { music, screen } => {
+                            let [m, s] = self.content.rules().custom_screen.hover.players;
+                            self.play_sound_for(side, crate::sound::SoundCue::Volume { player: m, volume: music });
+                            self.play_sound_for(side, crate::sound::SoundCue::Volume { player: s, volume: screen });
+                        }
+                    }
+                }
+                self.screen_cues_at[side as usize] = Some(self.sound_cues_for(side).len());
+            }
+            self.custom.sides[side as usize] = s;
+            self.consoles[side as usize] = console;
+            if request == Some(Request::Send) {
+                // sub_8027D78 on the sending tick.
+                self.restart_gauge();
+            }
+            if let Some(Request::Switched(member)) = request {
+                // EXE5 DS's 0x0206394A: the emotion window and the HP box
+                // show the member's navi, or the side's navi again for a
+                // switch back to it (`sub_801E724`, `sub_801E0C8`).
+                let i = side as usize;
+                self.window_navis[i] = self.party[i].member(member).map(|s| s.navi).filter(|&n| n != self.stats[i].navi);
+                // EXE5 DS's 0x020639DE: the switch counts, and the navi's HP
+                // goes into its stats and its member's block.
+                let party = &mut self.party[side as usize];
+                party.switches = party.switches.wrapping_add(1);
+                if let Some(p) = self.player(side) {
+                    let hp = self.objects.get(p).hp;
+                    self.stats[side as usize].hp = hp;
+                    let party = &mut self.party[side as usize];
+                    let active = party.active;
+                    if let Some(m) = party.member_mut(active) {
+                        m.hp = hp;
+                    }
+                }
+            }
+        }
+        let now = self.round.ticks;
+        if self.custom.sides.iter().all(|s| s.sent.as_ref().is_some_and(|x| x.arrives <= now)) {
+            let results = self.custom.sides.each_ref().map(|s| s.sent.as_ref().expect("sent").result.clone());
+            self.install_exchange(results);
+            // Each side's rules, for a side with its navi (EXE4's dark chips'
+            // costs, 0x0801EA1E: the local side's, then the other's, each
+            // its own side's alone).
+            for side in 0..2 {
+                if self.player_actor(side).is_some() {
+                    self.notify_side(side, saito_content_api::RulesHook::CustomResult);
+                }
+            }
+            self.custom.committed = true;
+            // loc_8026E14: the consoles' chip icons are back
+            // (sub_801DA48(2)), and the chip window with them (`ChipHud`).
+            for hud in &mut self.chip_hud {
+                *hud = crate::hud::ChipHud { icons: true, window: true, from_close: true, ..*hud };
+            }
+        }
+    }
+
+    /// What side `side`'s custom screen reads of its player (its view):
+    /// their navi's stats, the emotion it reads, what they sent this round,
+    /// the battle's facts. For the player's layer (`layer::Layer`), which
+    /// reads the screen as the screen does.
+    pub fn screen_view(&self, side: u8) -> PlayerView<'_> {
+        let i = side as usize & 1;
+        let s = &self.custom.sides[i];
+        PlayerView {
+            library: &*self.content,
+            stats: &self.stats[i],
+            emotion: s.emotion,
+            class_uses: &s.class_uses,
+            round: &s.round,
+            regular_pending: s.folder.regular_pending,
+            own_gauges: self.round.flags & battle_flags::OWN_GAUGES != 0,
+            random_battle: self.setup.settings.effects & effects::RANDOM != 0,
+            battle_mode: self.round.mode_copy,
+            party: &self.party[i],
+            switch_request: self.switch_inputs[i],
+            late_turns: self.late_turns(),
+            run_key: !self.setup.host_keys.run,
+        }
+    }
+
+    /// The sound a custom screen's sound is in the content: its role's (a
+    /// role a game may leave unfilled plays none there), or the rules' own.
+    pub fn screen_sound(&self, sound: look::ScreenSound) -> Option<crate::SoundId> {
+        match sound.role() {
+            Some(role) if role.optional() => self.roles().try_sound(role),
+            Some(role) => Some(self.roles().sound(role)),
+            None => match sound {
+                look::ScreenSound::Rules(id) => Some(id),
+                _ => None,
+            },
+        }
+    }
+
+    /// The ticks left of side `side`'s custom screen's time limit while it
+    /// counts toward it (saito's own, `RoundSetup::custom_screen_limit`);
+    /// none in a round without one. Presentation: the countdown.
+    pub fn custom_time_left(&self, side: u8) -> Option<u16> {
+        self.custom.sides[side as usize & 1].time_left(self.setup.custom_screen_limit)
+    }
+
+    /// The custom gauge as `side`'s console holds it: the battle's, but in a
+    /// game whose screen keeps it until its own send (the rules'
+    /// `custom_screen.gauge_empties_at_open` false: EXE4's 0x0801E1B4), what
+    /// it was at the opening while that side's screen hasn't sent (the
+    /// battle's empties at the first send; nothing reads it until the fight
+    /// resumes, after both). Presentation (the HUD's gauge) and the
+    /// recordings' comparison.
+    pub fn gauge_for(&self, side: u8) -> u16 {
+        let s = &self.custom.sides[side as usize & 1];
+        let keeps = !self.content.rules().custom_screen.gauge_empties_at_open;
+        if keeps && self.round.mode == crate::battle::mode::CUSTOM && s.screen.is_some() && s.sent.is_none() {
+            self.custom.gauge_at_open
+        } else {
+            self.gauge.value
+        }
+    }
+
+    /// `sub_8027D78` (EXE4's 0x0801E1B4): the gauge starts over and runs,
+    /// unless it is the 15th screen or later, where the routine returns
+    /// before its `sub_801DF92` (0x080159B0): the gauge keeps its value and
+    /// its full flag (EXE4's, which empties it here, keeps it full through
+    /// the last turns; EXE6's and EXE5's emptied it as the screen opened).
+    pub(crate) fn restart_gauge(&mut self) {
+        if self.late_turns() {
+            return;
+        }
+        self.gauge.value = 0;
+        self.clear_flags(battle_flags::GAUGE_FULL | battle_flags::CUSTOM_REQUESTED);
+        self.gauge.enabled = true;
+    }
+}
+
+impl Battle {
+    /// Side `side`'s custom-screen extras (the rules' `custom` hooks),
+    /// for a screen run outside the battle's own loop (exe6-compat's check
+    /// of the traces' screens, which sets the side's stats and the turn
+    /// first).
+    pub fn custom_extras(&mut self, side: u8, emotion: Emotion) -> impl Extras + '_ {
+        SideExtras { b: self, side, emotion }
+    }
+}
+
+/// A side's custom screen's extras: the rules' `custom` hooks.
+struct SideExtras<'b> {
+    b: &'b mut Battle,
+    side: u8,
+    /// The emotion the screen reads (its context's).
+    emotion: Emotion,
+}
+
+impl SideExtras<'_> {
+    /// Run `f` with the side's screen (and folder) back in the battle, for
+    /// `custom.*` to reach, and take them back after.
+    fn with_screen<R>(&mut self, screen: &mut Screen, folder: Option<&mut BattleFolder>, f: impl FnOnce(&mut Battle) -> R) -> R {
+        self.with_screen_console(screen, folder, None, f)
+    }
+
+    /// [`SideExtras::with_screen`], with the side's console (its camera)
+    /// back in the battle too.
+    fn with_screen_console<R>(
+        &mut self,
+        screen: &mut Screen,
+        folder: Option<&mut BattleFolder>,
+        console: Option<&mut Console>,
+        f: impl FnOnce(&mut Battle) -> R,
+    ) -> R {
+        let side = self.side as usize & 1;
+        let (old_screen, old_folder, old_console, old_emotion) = (
+            self.b.custom.sides[side].screen,
+            self.b.custom.sides[side].folder,
+            self.b.consoles[side],
+            self.b.custom.sides[side].emotion,
+        );
+        self.b.custom.sides[side].screen = Some(*screen);
+        self.b.custom.sides[side].emotion = self.emotion;
+        if let Some(f) = &folder {
+            self.b.custom.sides[side].folder = **f;
+        }
+        if let Some(c) = &console {
+            self.b.consoles[side] = **c;
+        }
+        let r = f(self.b);
+        *screen = self.b.custom.sides[side].screen.expect("the screen stays");
+        if let Some(folder) = folder {
+            *folder = self.b.custom.sides[side].folder;
+        }
+        if let Some(console) = console {
+            *console = self.b.consoles[side];
+        }
+        self.b.custom.sides[side].screen = old_screen;
+        self.b.custom.sides[side].folder = old_folder;
+        self.b.consoles[side] = old_console;
+        self.b.custom.sides[side].emotion = old_emotion;
+        r
+    }
+}
+
+impl Extras for SideExtras<'_> {
+    fn hand_size(&mut self) -> Option<u8> {
+        self.b.rules_custom_hand_size(self.side)
+    }
+
+    fn buttons(&mut self, screen: &Screen) -> Vec<screen::ButtonPlace> {
+        let content = self.b.content.clone();
+        let mut screen = *screen;
+        let side = self.side;
+        let mut out = Vec::new();
+        for button in self.b.side_buttons(side) {
+            let shown = self.with_screen(&mut screen, None, |b| b.call_button(side, button, saito_content_api::RulesHook::ButtonShown));
+            if shown == saito_content_api::Value::Bool(true) {
+                let d = content.defs.button(button);
+                // The chip it shows, if it says (EXE5's capsules).
+                let chip = match d.chip {
+                    Some(_) => match self.with_screen(&mut screen, None, |b| b.call_button(side, button, saito_content_api::RulesHook::ButtonChip)) {
+                        saito_content_api::Value::Def(saito_content_api::Registry::Chip, id) => Some(ChipHandle(id)),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                out.push(screen::ButtonPlace { button, slot: d.slot, cells: d.cells, uses: d.uses, right: d.right, left: d.left, chip });
+            }
+        }
+        out
+    }
+
+    fn button_state(&mut self, screen: &Screen, button: crate::content::ButtonHandle) -> Option<SlotState> {
+        self.b.content.defs.button(button).state?;
+        let mut screen = *screen;
+        let side = self.side;
+        match self.with_screen(&mut screen, None, |b| b.call_button(side, button, saito_content_api::RulesHook::ButtonState)) {
+            saito_content_api::Value::Int(0) => Some(SlotState::Selectable),
+            saito_content_api::Value::Int(_) => Some(SlotState::Unavailable),
+            _ => None,
+        }
+    }
+
+    fn button_pressed(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console, button: crate::content::ButtonHandle) {
+        let side = self.side;
+        self.with_screen_console(screen, Some(folder), Some(console), |b| b.call_button(side, button, saito_content_api::RulesHook::ButtonPressed));
+    }
+
+    fn button_taken_back(&mut self, screen: &mut Screen, button: crate::content::ButtonHandle, place: u8) {
+        if self.b.content.defs.button(button).taken_back.is_none() {
+            return;
+        }
+        let side = self.side;
+        self.with_screen(screen, None, |b| b.call_button_taken_back(side, button, place));
+    }
+
+    fn dealing(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console) {
+        let side = self.side;
+        self.with_screen_console(screen, Some(folder), Some(console), |b| b.rules_call_custom(side, saito_content_api::RulesHook::CustomDeal));
+    }
+
+    fn opened(&mut self, screen: &mut Screen) {
+        let side = self.side;
+        self.with_screen(screen, None, |b| b.rules_call_custom(side, saito_content_api::RulesHook::CustomOpen));
+    }
+
+    fn confirmed(&mut self, screen: &mut Screen, folder: &mut BattleFolder) {
+        let side = self.side;
+        self.with_screen(screen, Some(folder), |b| b.rules_call_custom(side, saito_content_api::RulesHook::CustomConfirmed));
+    }
+
+    fn button_hand_chip(&mut self, screen: &Screen, button: crate::content::ButtonHandle) -> Option<ChipHandle> {
+        self.b.content.defs.button(button).hand_chip?;
+        let mut screen = *screen;
+        let side = self.side;
+        match self.with_screen(&mut screen, None, |b| b.call_button(side, button, saito_content_api::RulesHook::ButtonHandChip)) {
+            saito_content_api::Value::Def(saito_content_api::Registry::Chip, id) => Some(ChipHandle(id)),
+            _ => None,
+        }
+    }
+
+    fn chip_picked(&mut self, screen: &mut Screen, folder: &mut BattleFolder, chip: ChipHandle) {
+        let side = self.side;
+        self.with_screen(screen, Some(folder), |b| b.rules_call_custom_chip(side, saito_content_api::RulesHook::CustomChipPicked, chip));
+    }
+
+    fn chip_taken_back(&mut self, screen: &mut Screen, chip: ChipHandle, place: u8) {
+        let side = self.side;
+        self.with_screen(screen, None, |b| b.rules_call_chip_taken_back(side, chip, place));
+    }
+
+    fn window_update(&mut self, screen: &mut Screen, folder: &mut BattleFolder, console: &mut Console, window: crate::content::WindowHandle) -> bool {
+        let side = self.side;
+        self.with_screen_console(screen, Some(folder), Some(console), |b| b.call_window(side, window)) == saito_content_api::Value::Bool(true)
+    }
+
+    fn choose_form(&mut self, screen: &mut Screen, folder: &mut BattleFolder, entry: u8) {
+        let side = self.side;
+        self.with_screen(screen, Some(folder), |b| b.rules_call_custom_entry(side, saito_content_api::RulesHook::CustomChooseForm, entry));
+    }
+
+    fn unchoose_form(&mut self, screen: &mut Screen, folder: &BattleFolder) -> bool {
+        let side = self.side;
+        let mut folder = *folder;
+        self.with_screen(screen, Some(&mut folder), |b| b.rules_ask_custom(side, saito_content_api::RulesHook::CustomUnchooseForm))
+    }
+
+    fn member_busy(&mut self, member: u8) -> bool {
+        self.b.rules_member_busy(self.side, member)
+    }
+}
+
+impl Battle {
+    /// Run `f` on side `side`'s custom screen as a `custom.*` call does from
+    /// a custom hook: the screen and the folder out of the side (back after),
+    /// the side's view as the screen reads it, its console, and the side's
+    /// extras for what the screen asks in turn. None when no screen is open.
+    pub(crate) fn with_custom_screen<R>(
+        &mut self,
+        side: u8,
+        f: impl FnOnce(&mut Screen, &PlayerView, &mut BattleFolder, &mut Console, &mut dyn Extras) -> R,
+    ) -> Option<R> {
+        let i = side as usize & 1;
+        let mut screen = self.custom.sides[i].screen?;
+        let mut folder = self.custom.sides[i].folder;
+        let copy = self.custom.sides[i].clone();
+        let content = self.content.clone();
+        let library: &crate::content::Content = &content;
+        // (The emotion the screen reads, its own: a battle that checks the
+        // traces' screens alone has no navi to ask.)
+        let emotion = copy.emotion;
+        let ctx = Context { emotion, ..self.custom_context_without_emotion(side, library) };
+        let view = copy.view(&ctx, folder.regular_pending);
+        let mut console = self.consoles[i];
+        let r = f(&mut screen, &view, &mut folder, &mut console, &mut SideExtras { b: self, side, emotion });
+        self.custom.sides[i].screen = Some(screen);
+        self.custom.sides[i].folder = folder;
+        self.consoles[i] = console;
+        Some(r)
+    }
+}
+
+#[cfg(test)]
+mod tests;

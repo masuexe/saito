@@ -1,0 +1,3221 @@
+//! The custom screen as the original draws it on the local player's
+//! console (`sub_8026A28` and its states): the window on the HUD layer
+//! (BG3) with the chip under the cursor, the dealt chips and the picked
+//! ones; the cursor, the navi's emblem and the Regular chip's frame as
+//! sprites; the enemy names on BG0; and what the screen does to the rest
+//! of the picture (the HUD and the field move aside, Beast Out's fade).
+//!
+//! It draws from the engine's `Screen` and its presentation state
+//! (`Screen::look`), the side's own layer (`saito_battle::custom::Layer`:
+//! the cursor, the chip window, the window's counters and sprites, the dark
+//! chips' shade, SELECT's hiding, the form list), the content (chip names,
+//! codes, elements, damage) and the game's custom-screen graphics,
+//! composing the tile numbers the original's window map names: the tiles
+//! the battle loads at fixed places and the ones the screen copies in as it
+//! runs. A side drawn with no layer shows none of what the layer holds.
+//! docs/frontend.md §3.
+
+use crate::audit::Problems;
+use crate::compose::{Affine, Anchor, Fade, Layer, SpritePart};
+use crate::fonts;
+use crate::objects::SpriteList;
+use crate::textlayer::{Align, Plane, Rect, TextItem, TextSink};
+use crate::vfont::{Lettering, LetteringFont, Role};
+use saito_assets::letters::{HelpLetters, VersionLetters};
+use saito_assets::{Bundle, ButtonPictures, ButtonSets, CustomScreen, Hud, MapEntry, Palette, Picture, Tiles, VersionPictures};
+use saito_battle::{Battle, Content};
+use saito_battle::battle::{FadeMode, mode};
+use saito_battle::content::{ButtonView, ChipFlags, ChipTraits, VariableDamageShows, WindowView};
+use saito_battle::rules::Flight;
+use saito_battle::custom::layer::{HiddenStage, ListStage, Target};
+use saito_battle::custom::look::{ChipWindow, WindowLook};
+use saito_battle::custom::screen::{OK_SLOT, SPECIAL_SLOT};
+use saito_battle::custom::{ButtonCell, FolderChip, Layer as ScreenLayer, Phase, Screen, Side, SlotKind, SlotState};
+use saito_content_api::{ChipHandle, FormHandle, NaviHandle};
+
+/// The window: 15 columns of 20 rows at the HUD layer's top left.
+const COLUMNS: usize = 15;
+const ROWS: usize = 20;
+/// Where the screen's tiles go in the HUD layer's character block: the
+/// window frame from tile 1, the rest where the game loads them
+/// (`CustomScreen::layout`: EXE6's `CustomLayout::EXE6`, the chip window's
+/// name from 0x9B, EXE5's from 0x59).
+const WINDOW_TILE: u16 = CustomScreen::WINDOW_TILE;
+/// A chip picture's tiles (7x6).
+const PICTURE_TILES: u16 = CustomScreen::PICTURE_TILES as u16;
+/// The forms' names in the form list's window (9x2 each, EXE6's Cross
+/// window's, `byte_8029DF8`, from the layout's `form_names`).
+pub(crate) const FORM_NAME_TILES: usize = CustomScreen::FORM_NAME_TILES;
+/// The form list window's maps: three opening steps, then the window with
+/// one to five forms (EXE6's Cross window's).
+const FORM_LIST_OPENING_MAPS: usize = CustomScreen::FORM_LIST_OPENING_MAPS;
+/// The Program Advance animation's names (`sub_802B80C`): 9 cells of the
+/// 8x16 font from the chip window's picture's first tile (EXE6's 0xAB), 18
+/// tiles a name; a pick's code in its last cell; a name every 3 rows from
+/// row 5, a column right of the layer's scroll; the recipe's in palette 10,
+/// the others' in 13.
+const ADVANCE_NAME_CELLS: usize = 9;
+const ADVANCE_FIRST_ROW: i32 = 5;
+const LAYER_TILES: usize = 0x200;
+/// The window's background colors: what the original copies over cells
+/// the chip window leaves empty (`byte_802A6C0`, `byte_802A680`: solid 8
+/// and 7; a hidden slot's, the layout's `slot_blank`).
+const BLANK_8: u8 = 8;
+const BLANK_7: u8 = 7;
+/// The chip window's name: 8 cells, its pixels shifted to the window's
+/// colors from 8 (`sub_80284E2`).
+const NAME_CELLS: usize = 8;
+const NAME_SHIFT: u8 = 8;
+/// A code no chip has: the invalid chip's (blank in the slots).
+pub(crate) const NO_CODE: u8 = 0x1B;
+/// The slot code glyph an empty slot shows.
+const EMPTY_SLOT_CODE: u8 = 0x1B;
+/// The damage digits' '?' (`0xAAA` for Muramasa).
+const DIGIT_UNKNOWN: usize = 10;
+/// The enemy names' cells (`sub_801E574`: 9 a name, 4 names at most).
+const ENEMY_NAME_CELLS: usize = 9;
+/// The window's offset off the screen.
+const SLIDE: u32 = 0x78;
+/// The field and the sprites move down 1.5 pixels a tick of the slide
+/// (`sub_8026B04`: the camera's Y, 16.16).
+const CAMERA_STEP: i32 = 0x18000;
+const SLIDE_TICKS: i32 = 10;
+/// The sprite layer and bucket the screen's sprites go into (the raw OAM
+/// list `sub_8009FF8` fills: layer 1, bucket 0).
+const SPRITE_LAYER: usize = 1;
+
+/// The local player's custom screen while the battle is on the custom
+/// screen.
+/// Whether this custom mode's screens are open: on the mode's first tick
+/// they open (`sub_8026840`); until then a side's screen is the last one.
+pub(crate) fn screens_open(b: &Battle) -> bool {
+    b.round.mode == mode::CUSTOM && b.round.init != 0
+}
+
+pub fn local(b: &Battle) -> Option<(&Side, &Screen)> {
+    screen_of(b, b.setup.local_side)
+}
+
+/// How long each side's custom screen stays up yet, by side, as a rank (a
+/// screen of both draws the one that stays longer as the screen, the
+/// other's window leaving over it): none up or its result sent, 0; its
+/// window out, playing the Program Advance, 1; sliding out, 2 and the
+/// slide's ticks left; else (opening, choosing, hidden) past all of those.
+pub fn screens_left(b: &Battle) -> [u8; 2] {
+    [0u8, 1].map(|side| match screen_of(b, side).map(|(_, s)| s.phase) {
+        None | Some(Phase::Sending { .. }) => 0,
+        Some(Phase::ProgramAdvance { .. }) => 1,
+        Some(Phase::Closing { tick }) => 2 + (SLIDE_TICKS - tick as i32).max(0) as u8,
+        Some(_) => u8::MAX,
+    })
+}
+
+/// Side `side`'s custom screen while the battle is on the custom screen.
+pub fn screen_of(b: &Battle, side: u8) -> Option<(&Side, &Screen)> {
+    if !screens_open(b) {
+        return None;
+    }
+    let side = &b.custom.sides[side as usize & 1];
+    Some((side, side.screen.as_ref()?))
+}
+
+/// Each side's layer (`saito_battle::custom::Layer`), by side: what each
+/// player's own screen shows besides the battle's (none: a side drawn
+/// without it).
+pub type Layers<'a> = [Option<&'a ScreenLayer>; 2];
+
+/// The window's counters and sprites as `layer` drew them (none: as a
+/// screen starts them, nothing drawn).
+fn window_look(layer: Option<&ScreenLayer>) -> WindowLook {
+    layer.map_or_else(WindowLook::new, |l| l.look)
+}
+
+/// The console's first fade record as the screen shows it: the screen's
+/// fade, or its hover's where that started last (`Layer::fade`).
+fn first_record(s: &Screen, layer: Option<&ScreenLayer>) -> saito_battle::battle::Fade {
+    layer.map_or(s.fade, |l| l.fade(s))
+}
+
+/// Where the window is: the HUD layer's horizontal scroll (BG3HOFS) and
+/// the columns of the window map on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    pub scroll: u32,
+    /// Window columns on the layer: from..15.
+    pub from: usize,
+    pub to: usize,
+    /// Slide ticks the window has made in (0-10): the camera follows.
+    pub slid: i32,
+}
+
+impl Placement {
+    const IN: Placement = Placement { scroll: 0, from: 0, to: COLUMNS, slid: SLIDE_TICKS };
+    const OUT: Placement = Placement { scroll: SLIDE, from: 0, to: 0, slid: 0 };
+}
+
+/// Columns the slide in has copied after `k` ticks (`sub_8026B04`: one or
+/// two a tick, by bit 2 of the offset, from the right).
+fn copied_in(k: u32) -> usize {
+    (1..=k).map(|i| ((SLIDE - 12 * i) & 4) as usize / 4 + 1).sum::<usize>().min(COLUMNS)
+}
+
+/// Columns the slide out has cleared after `k` ticks (`sub_8026BF4`, from
+/// the left).
+fn cleared_out(k: u32) -> usize {
+    (1..=k).map(|i| ((12 * i) & 4) as usize / 4 ^ 1).map(|n| n + 1).sum::<usize>().min(COLUMNS)
+}
+
+/// The window's placement for a screen in this phase, and as its layer
+/// hides it (SELECT).
+pub fn placement(s: &Screen, layer: Option<&ScreenLayer>) -> Placement {
+    // SELECT: the tick after it takes the window off the layer and
+    // scrolls the layer out; a key brings it back.
+    if layer.and_then(|l| l.hidden()) == Some(HiddenStage::Waiting) {
+        return Placement { slid: SLIDE_TICKS, ..Placement::OUT };
+    }
+    match s.phase {
+        Phase::Opening { tick: 0 } => Placement { scroll: 0, from: COLUMNS, to: COLUMNS, slid: 0 },
+        Phase::Opening { tick } => {
+            let k = tick as u32;
+            Placement { scroll: SLIDE - 12 * k, from: COLUMNS - copied_in(k), to: COLUMNS, slid: tick as i32 }
+        }
+        Phase::Closing { tick } => {
+            let k = tick as u32;
+            Placement { scroll: 12 * k, from: cleared_out(k), to: COLUMNS, slid: SLIDE_TICKS - tick as i32 }
+        }
+        Phase::ProgramAdvance { .. } | Phase::Sending { .. } => Placement::OUT,
+        _ => Placement::IN,
+    }
+}
+
+/// How far the HUD's HP box and mugshot move right while the custom
+/// screen is up (the HUD's `+0x12` and the HP box at column 15 under the
+/// layer's scroll): 120 less the scroll, from the slide's first tick until
+/// the result is sent. On `side`'s console (`layer`, its layer).
+pub fn hud_shift(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> i32 {
+    let Some((_, s)) = screen_of(b, side) else { return 0 };
+    match s.phase {
+        Phase::Opening { tick: 0 } | Phase::ProgramAdvance { .. } | Phase::Sending { .. } => 0,
+        _ => SLIDE as i32 - placement(s, layer).scroll as i32,
+    }
+}
+
+/// The form whose face the emotion window shows while `side`'s screen is
+/// up (the Beast Out or Cross chosen there).
+pub fn face(b: &Battle, side: usize) -> Option<saito_content_api::FormHandle> {
+    if !screens_open(b) {
+        return None;
+    }
+    b.custom.sides[side & 1].screen.as_ref()?.look.face
+}
+
+/// The HUD layer's shake: in the screen's sub-screens that let it
+/// (`sub_80269E2`: Beast Out, the Cross window and a Cross's description
+/// from it, the scrap, the re-deal), the camera's jitter moves the HUD layer
+/// too (`sub_8030158`), in whole pixels. On `side`'s console (`layer`, its
+/// layer: the form list's).
+pub fn hud_jitter(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> (i32, i32) {
+    let Some((_, s)) = screen_of(b, side) else { return (0, 0) };
+    let shakes = matches!(s.phase, Phase::Window { .. } | Phase::Scrapping { .. } | Phase::Redealing { .. })
+        || layer.is_some_and(|l| l.list_stage().is_some() && s.phase == Phase::Choosing);
+    if !shakes {
+        return (0, 0);
+    }
+    let (x, y) = b.consoles[side as usize & 1].camera.jitter;
+    (x >> 16, y >> 16)
+}
+
+/// The custom gauge stays off a console's HUD (`side`'s) from the screen's
+/// opening until its own result is sent (HUD task 4: `sub_8026840` stops
+/// it, `sub_8027D78` starts it), even once the other player's result has
+/// restarted the battle's gauge.
+pub fn gauge_held(b: &Battle, side: u8) -> bool {
+    screen_of(b, side).is_some_and(|(_, s)| !matches!(s.phase, Phase::Sending { started: true }))
+}
+
+/// The camera's offset (16.16, added to its Y) while the window is in, on
+/// `side`'s console (`layer`, its layer).
+pub fn camera_y(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> i32 {
+    screen_of(b, side).map_or(0, |(_, s)| -CAMERA_STEP * placement(s, layer).slid)
+}
+
+/// The screen fade the local screen runs on the stage and the battle's
+/// objects (`off_8006040`): Beast Out's darkens background palettes 0-13
+/// (the stage and the HUD layer) and sprite palettes 0-10 half way (modes
+/// 0x64 and 0x60); the Program Advance's and a dark chip's background
+/// palettes 0-8 and sprite palettes 0-9 (0x14 and 0x10, 0x54 and 0x50); a
+/// Cross's choice whitens every palette (4, and 0 back). On `side`'s
+/// console (`layer`, its layer: the dark chip's hover runs the same record).
+pub fn fade(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> Option<Fade> {
+    let (_, s) = screen_of(b, side)?;
+    let f = first_record(s, layer);
+    let (shown, white) = match f.mode {
+        FadeMode::HalfOut | FadeMode::ProgramAdvance | FadeMode::Shade => (true, false),
+        // Back toward clear: once it gets there the original takes the
+        // palettes' transform off.
+        FadeMode::HalfOutBack | FadeMode::ProgramAdvanceBack | FadeMode::ShadeBack => (f.active, false),
+        FadeMode::EndToWhite => (true, true),
+        FadeMode::IntroFromWhite => (f.active, true),
+        _ => (false, false),
+    };
+    let n = (f.level >> 4).min(16) as u8;
+    (shown && n > 0).then_some(if white { Fade::White(n) } else { Fade::Black(n) })
+}
+
+/// The battle's objects' share of the screen's fade (a white fade is every
+/// sprite's: `sprite_fade`).
+pub fn object_fade(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> Option<Fade> {
+    fade(b, layer, side).filter(|f| !matches!(f, Fade::White(_)))
+}
+
+/// The screen's fade of every sprite palette: a Cross's choice's white.
+pub fn sprite_fade(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> Option<Fade> {
+    fade(b, layer, side).filter(|f| matches!(f, Fade::White(_)))
+}
+
+/// The second fade record's, which only a dark chip's hover runs (modes
+/// 0x5C and 0x58, the layer's): background palettes 9-13 (the window) and
+/// sprite palettes 10-13 (the screen's sprites). On `side`'s console
+/// (`layer`, its layer).
+pub fn window_fade(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> Option<Fade> {
+    screen_of(b, side)?;
+    let f = layer?.hover.window_fade;
+    let shown = match f.mode {
+        FadeMode::ShadeWindow => true,
+        FadeMode::ShadeWindowBack => f.active,
+        _ => false,
+    };
+    let n = (f.level >> 4).min(16) as u8;
+    (shown && n > 0).then_some(Fade::Black(n))
+}
+
+/// The HUD layer's fade: Beast Out's and a Cross's (its palettes are among
+/// the first record's), else the second record's. On `side`'s console
+/// (`layer`, its layer).
+pub fn hud_fade(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> Option<Fade> {
+    let (_, s) = screen_of(b, side)?;
+    match first_record(s, layer).mode {
+        FadeMode::HalfOut | FadeMode::HalfOutBack | FadeMode::EndToWhite | FadeMode::IntroFromWhite => fade(b, layer, side),
+        _ => window_fade(b, layer, side),
+    }
+}
+
+/// The custom screen's tiles of the HUD layer, by tile number.
+struct LayerTiles {
+    pixels: Vec<u8>,
+}
+
+impl LayerTiles {
+    fn new() -> LayerTiles {
+        LayerTiles { pixels: vec![0; LAYER_TILES * Tiles::TILE] }
+    }
+
+    /// Copy `tiles` to tile number `at` on.
+    fn put(&mut self, at: u16, tiles: &Tiles) {
+        let from = at as usize * Tiles::TILE;
+        let n = tiles.pixels.len().min(self.pixels.len().saturating_sub(from));
+        self.pixels[from..from + n].copy_from_slice(&tiles.pixels[..n]);
+    }
+
+    /// Copy tiles `first..first + n` of `tiles` to tile number `at` on.
+    fn put_part(&mut self, at: u16, tiles: &Tiles, first: usize, n: usize) {
+        let src = &tiles.pixels[(first * Tiles::TILE).min(tiles.pixels.len())..((first + n) * Tiles::TILE).min(tiles.pixels.len())];
+        self.put(at, &Tiles { pixels: src.to_vec() });
+    }
+
+    /// Fill `n` tiles from `at` with one color index.
+    fn fill(&mut self, at: u16, n: usize, index: u8) {
+        let from = at as usize * Tiles::TILE;
+        let to = (from + n * Tiles::TILE).min(self.pixels.len());
+        self.pixels[from..to].fill(index);
+    }
+
+    fn tile(&self, t: u16) -> &[u8] {
+        let from = (t as usize % LAYER_TILES) * Tiles::TILE;
+        &self.pixels[from..from + Tiles::TILE]
+    }
+}
+
+/// What the screen draws this frame, worked out once.
+struct View<'a> {
+    b: &'a Battle,
+    side: u8,
+    screen: &'a Screen,
+    /// The side's layer: the cursor, the chip window, the window's
+    /// counters and sprites, the hover, what it has up over the chips.
+    layer: Option<&'a ScreenLayer>,
+    assets: &'a CustomScreen,
+    /// The version pictures the side's buttons draw (`button_pictures`): the
+    /// player's version's, unless its navi is in a form of another version
+    /// (EXE6's Beast Out button: the other game's Cross's Beast). A button's
+    /// look is this version's own, if it has one.
+    buttons: &'a VersionPictures,
+    /// The letters of that version's lettered pictures (`button_letters`).
+    button_letters: &'a VersionLetters,
+    /// The navi's emblem's palette (`lookups::emblem`; zeros: it has no
+    /// emblem), which is sprite palette 11: the cursor's and the Regular
+    /// chip's frame's too (`sub_802812C`).
+    emblem_palette: Palette,
+    hud: &'a Hud,
+    /// The game's graphics: a chip's icon and picture are its game's.
+    graphics: crate::graphics::Graphics<'a>,
+}
+
+/// A button of the rules as the frontend draws it (docs/design/rules-in-luau.md
+/// §4.8): the game's look of the name its content registers it under
+/// (`ButtonPictures`: its tiles by set, which set a state shows, the cursor
+/// over it, its picture in the chip window), and its tiles a set, its
+/// cells' (the content's `cells`).
+#[derive(Clone, Copy)]
+struct ButtonLook<'a> {
+    pack: &'a ButtonPictures,
+    count: usize,
+}
+
+impl<'a> ButtonLook<'a> {
+    /// The first tile of the set a slot in state `state` shows.
+    fn set(&self, state: usize) -> usize {
+        self.count
+            * match self.pack.sets {
+                ButtonSets::Each => state,
+                ButtonSets::Other => (state != 0) as usize,
+                ButtonSets::Unavailable => (state == 1) as usize,
+            }
+    }
+
+    /// Its picture in the chip window, in the `palette`th of its palettes
+    /// (0: its own).
+    fn details(&self, palette: usize) -> Picture {
+        let own = self.pack.picture.palette;
+        let palette = if palette == 0 { own } else { self.pack.palettes.get(palette).copied().unwrap_or(own) };
+        Picture { palette, ..self.pack.picture.clone() }
+    }
+
+    fn cursor(&self) -> (i32, i32, CursorShape) {
+        cursor_at(&self.pack.cursor)
+    }
+}
+
+impl<'a> View<'a> {
+    /// The look of button `button`: the game's of its name (the Beast's
+    /// version's own first: `VersionPictures::buttons`). A name the game's graphics
+    /// has no look for is drawn as nothing (`lookups::button` says so); a
+    /// button that shows a chip (`Slot::face`: EXE5's capsules) is drawn as
+    /// that chip's slot whatever its name.
+    fn button_look(&self, button: saito_battle::content::ButtonHandle) -> Option<ButtonLook<'a>> {
+        let d = self.b.content.defs.button(button);
+        let pack = crate::lookups::button_of(self.assets, self.buttons, &d.name)?;
+        Some(ButtonLook { pack, count: pack.width as usize * pack.height as usize * d.cells.max(1) as usize })
+    }
+
+    /// What the special slot shows with no button in it: the hidden set of
+    /// a button its content registers there, if the game's look has one
+    /// (EXE6's Beast Out button's fourth; EXE5's soul button has none: the
+    /// window's fill, as its handler for no special button copies nothing
+    /// in, 0x080240D8).
+    fn hidden_special(&self) -> Option<(&'a ButtonPictures, usize, String)> {
+        self.b.content.defs.buttons.iter().filter(|d| d.slot == SPECIAL_SLOT).find_map(|d| {
+            let pack = crate::lookups::button_of(self.assets, self.buttons, &d.name)?;
+            Some((pack, pack.hidden? as usize, d.name.clone()))
+        })
+    }
+}
+
+/// Whether slot `slot` of the screen is a button that offers a form
+/// (`ButtonView::FormOffer`: EXE5's soul button).
+fn offers_form(b: &Battle, screen: &Screen, slot: u8) -> bool {
+    matches!(screen.slots[slot as usize].kind, SlotKind::Button { button, .. } if b.content.defs.button(button).view == Some(ButtonView::FormOffer))
+}
+
+/// What the window up on `screen` shows (its `view`), if one is up and has
+/// a view.
+fn window_view(b: &Battle, screen: &Screen) -> Option<WindowView> {
+    let Phase::Window { window, .. } = screen.phase else { return None };
+    b.content.defs.window(window).view
+}
+
+/// The game's look of the content's button with view `view` (by the
+/// button's name, the key of its look).
+fn view_look<'a>(v: &View<'a>, view: ButtonView) -> Option<&'a ButtonPictures> {
+    let d = v.b.content.defs.buttons.iter().find(|d| d.view == Some(view))?;
+    crate::lookups::button_of(v.assets, v.buttons, &d.name)
+}
+
+/// The icon of the form the button that offers a form (the view
+/// `form_offer`) offers or gave, if the special slot is that button: the
+/// game's `icons` of the button and the icon's first tile in them, the
+/// offer's place (`offer_icon`). (EXE5's soul button: the soul's icon,
+/// Chaos Unison's the 13th, 0x0802341C.)
+fn offered_icon<'a>(v: &View<'a>) -> Option<(&'a Tiles, usize)> {
+    if !offers_form(v.b, v.screen, SPECIAL_SLOT) {
+        return None;
+    }
+    let b = view_look(v, ButtonView::FormOffer)?;
+    let n = offer_icon(v.b, screen_navi(v.b, v.side, v.screen), v.b.offer(v.side)?);
+    (b.icons.len() >= 4 * (n + 1)).then_some((&b.icons, 4 * n))
+}
+
+/// The navi side `side`'s screen is for (its +0x10): the party member a
+/// switch on it took (EXE5 DS's state 0x40), else the side's navi.
+pub(crate) fn screen_navi(b: &Battle, side: u8, screen: &Screen) -> NaviHandle {
+    let i = side as usize & 1;
+    screen.member.and_then(|m| b.party[i].member(m)).map_or(b.stats[i].navi, |s| s.navi)
+}
+
+/// An offer's icon among its button's: the offered form's place in
+/// `navi`'s form list that holds it, from 1 (the list is in the icons'
+/// order: EXE5's and EXE4's souls, the original's soul numbers), and the
+/// form's alternate (`offer_chaos`) the one after the list's; 0, the empty
+/// icon, for no form or one none of the navi's lists holds.
+fn offer_icon(b: &Battle, navi: NaviHandle, offer: saito_battle::rules::Offer) -> usize {
+    match form_place(b, navi, offer.form) {
+        Some((_, len)) if offer.alternate => len + 1,
+        Some((place, _)) => place + 1,
+        None => 0,
+    }
+}
+
+/// Where `form` is among `navi`'s forms: its place in the first of the
+/// navi's form lists that holds it (from 0), and the list's length.
+fn form_place(b: &Battle, navi: NaviHandle, form: Option<FormHandle>) -> Option<(usize, usize)> {
+    let (place, list) = b.content.navi(navi).forms.as_ref()?.holding(form?)?;
+    Some((place, list.len()))
+}
+
+/// The flight of the offered form's icon (EXE5's soul choice, its state 9,
+/// 0x080232D0: the window whose view is `offer_flight`, at its step and
+/// count, `at`): the icon as a 16x16 sprite (sprite palette 13) over the
+/// picked column's cell after the picks (0x0802330C: y = 24 + 16 picks,
+/// x 0x60), drawn from the tick after it is loaded (0x08023360) through the
+/// white flashes, rising 2 pixels a tick for 8 ticks onto the first cell
+/// (0x0802337A), whitened by its flash (fades 0x34 and 0x30, the sprite
+/// palette's), until the form takes the first cell (0x080233E0). A screen
+/// whose windows are states of the choosing draws a state's sprites after
+/// its step, the icon from the tick it is loaded on (EXE4's soul choice,
+/// 0x08020DE2: steps 4 to 0x14).
+fn offered_flight<'a>(v: &View<'a>, at: Flight, problems: &mut Problems) -> Option<SpritePart<'a>> {
+    let (tiles, first) = offered_icon(v)?;
+    let form = v.b.offer(v.side)?.form;
+    flight(v, tiles, first, at, form, problems)
+}
+
+/// Why a console draws an offered form's flying icon otherwise than the
+/// frontend: the game draws every form's in its own version's outline, the
+/// frontend each form's in the form's version's (EXE5's souls).
+pub const OTHER_VERSIONS_ICON: &str = "an offered form's icon in its own version's outline (the console's ROM draws every one in the console's)";
+
+/// The row of the offer button's icon palettes that is `form`'s own
+/// version's, of the game's base version's (0) and then each other
+/// version's (`icon_palettes`, by name): the form's own `version` (EXE5's
+/// souls: Team ProtoMan's or Team Colonel's). No form, one of no version,
+/// or one of the base version: the base version's.
+fn icon_palette_row(b: &Battle, form: Option<FormHandle>, palettes: &[(String, [u16; 16])]) -> usize {
+    let version = form.and_then(|f| b.content.form(f).version.as_deref());
+    version.and_then(|v| palettes.iter().position(|(name, _)| name == v)).map_or(0, |i| i + 1)
+}
+
+/// EXE5's capsule's mix (its state 0x3C, 0x0802373A: the window whose view
+/// is `chip_flight`): the capsule's icon, its chip's (0x08023770: the chip
+/// records' icons are the table it loads from, 0x0874A738), flies to the
+/// last pick's cell as the soul's icon does to the first (the soul's
+/// choice's steps and sprite, 0x080254D8). The chip is the one the flight's
+/// button shows: which of the screen's buttons that show a chip, in the
+/// slots' order.
+fn capsule_flight<'a>(v: &View<'a>, graphics: &crate::graphics::Graphics<'a>, problems: &mut Problems) -> Option<SpritePart<'a>> {
+    if window_view(v.b, v.screen) != Some(WindowView::ChipFlight) {
+        return None;
+    }
+    let (button, at) = v.b.chip_flight(v.side)?;
+    let mut shown = v.screen.slots.iter().filter_map(|s| match s.kind {
+        SlotKind::Button { cell: ButtonCell::Right, .. } => None,
+        SlotKind::Button { .. } => s.face,
+        _ => None,
+    });
+    let chip = shown.nth((button as usize).checked_sub(1)?)?;
+    let (tiles, _) = crate::lookups::chip_icon(graphics, &v.b.content, chip, problems)?;
+    // (In the palette of the form the side is in: the capsules' soul's.)
+    let form = Some(v.b.stats[v.side as usize & 1].form);
+    flight(v, tiles, 0, at, form, problems)
+}
+
+/// The sprite of an icon's flight (EXE5's soul's choice and capsule's mix,
+/// 0x080254D8): the icon `first` of `tiles`, at the sequence's step and
+/// count (`at`), in the icons' palette of the button that offers a form:
+/// `form`'s own version's (`icon_palette_row`), where the game draws its
+/// console's version's, so on a console of another version (a recording's)
+/// it is a known difference.
+fn flight<'a>(v: &View<'a>, tiles: &'a Tiles, first: usize, at: Flight, form: Option<FormHandle>, problems: &mut Problems) -> Option<SpritePart<'a>> {
+    let screen = v.screen;
+    let after_step = v.b.content.rules().custom_screen.states_in_choosing;
+    let rise = match at.step {
+        4 if at.count > 0 || after_step => 0,
+        8 => 2 * at.count as i32,
+        12 | 16 | 20 => 16,
+        _ => return None,
+    };
+    let b = view_look(v, ButtonView::FormOffer)?;
+    // (The form's version's: Team Colonel's souls' outline is another color.)
+    let row = icon_palette_row(v.b, form, &b.icon_palettes);
+    let colors = row.checked_sub(1).and_then(|i| b.icon_palettes.get(i)).map_or(b.icon_palette, |(_, p)| *p);
+    // The row a console of the recording's version draws every icon in.
+    let console = v.graphics.version().map(|version| b.icon_palettes.iter().position(|(name, _)| name == version).map_or(0, |i| i + 1));
+    let f = first_record(screen, v.layer);
+    let palette = match f.mode {
+        saito_battle::battle::FadeMode::Flash | saito_battle::battle::FadeMode::FlashBack => {
+            let n = (f.level >> 4).min(16) as u8;
+            colors.map(|c| crate::compose::apply_fade(c, Fade::White(n)))
+        }
+        _ => colors,
+    };
+    let y = 24 + 16 * screen.selection().len() as i32 - rise;
+    if console.is_some_and(|console| console != row) {
+        problems.known(0x60, y, 16, 16, OTHER_VERSIONS_ICON);
+    }
+    Some(SpritePart {
+        x: 0x60,
+        y,
+        width: 16,
+        height: 16,
+        tiles,
+        first_tile: first,
+        hflip: false,
+        vflip: false,
+        palette,
+        priority: v.hud.layout.hud_priority,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: None,
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    })
+}
+
+impl View<'_> {
+    fn icon(&self, c: FolderChip, problems: &mut Problems) -> Option<&Tiles> {
+        crate::lookups::chip_icon(&self.graphics, &self.b.content, c.id, problems).map(|(icon, _)| icon)
+    }
+
+    /// Sprite palette 11, as the second fade record leaves it.
+    fn emblem_palette(&self) -> Palette {
+        self.faded(self.emblem_palette)
+    }
+
+    /// The cursor's and the Regular chip's frame's palette: the screen's
+    /// own (EXE4's sprite palette 13, `CustomScreen::cursor_palette`), else
+    /// the emblem's (sprite palette 11).
+    fn cursor_palette(&self) -> Palette {
+        self.assets.cursor_palette.map_or_else(|| self.emblem_palette(), |p| self.faded(p))
+    }
+
+    /// A sprite palette of the screen's, as the second fade record leaves
+    /// it.
+    fn faded(&self, p: Palette) -> Palette {
+        match window_fade(self.b, self.layer, self.side) {
+            Some(f) => p.map(|c| crate::compose::apply_fade(c, f)),
+            None => p,
+        }
+    }
+}
+
+/// A navi's forms of a version of its game: its form list named for the
+/// version, in the order its definition lists them (`NaviForms::listed`:
+/// EXE6's Crosses), the order of a version's names and colors.
+pub fn version_forms<'c>(c: &'c Content, navi: NaviHandle, version: &str) -> &'c [FormHandle] {
+    c.navi(navi).forms.as_ref().map_or(&[], |f| f.listed(version))
+}
+
+/// A form's name pictures and colors in the form list's window, by the
+/// form's own version (a Gregar Cross shows Gregar's name in any player's
+/// window): its version's custom-screen pictures (the form's `version`) and
+/// its number among that version's forms as `navi`, whose form it is, lists
+/// them (`version_forms`). Its name is `form_names`' 18 tiles from
+/// `18 * number` on the cursor's row (`18 * (number + 5)` on the others'),
+/// its colors `form_name_palettes[number]` (`[number + 5]` once used). None: a
+/// form of no version, or one the navi doesn't list.
+pub fn form_name_picture<'a>(c: &Content, a: &'a CustomScreen, navi: NaviHandle, form: FormHandle) -> Option<(&'a VersionPictures, usize)> {
+    let version = c.form(form).version.as_deref()?;
+    let number = version_forms(c, navi, version).iter().position(|&f| f == form)?;
+    Some((a.versioned.get(version), number))
+}
+
+/// The version pictures a side's buttons draw (a button's look, its picture
+/// in the chip window, its chip's): those of its navi's form's version when
+/// the form isn't the base form and has one (another's than the player's
+/// when their Crosses hold one of its), else the player's version's. (EXE6's
+/// Beast Out button: the Beast its navi goes into, or is in; rules/beast's
+/// rule, docs/engine/custom-screen.md §4.1.)
+pub fn button_pictures<'a>(b: &Battle, a: &'a CustomScreen, side: u8) -> &'a VersionPictures {
+    button_version(b, side).map_or(&a.versioned.base, |v| a.versioned.get(v))
+}
+
+/// The letters of the lettered pictures of the version `button_pictures`
+/// draws.
+fn button_letters<'a>(b: &Battle, a: &'a CustomScreen, side: u8) -> &'a VersionLetters {
+    let versioned = &a.letters.pictures.versioned;
+    button_version(b, side).map_or(&versioned.base, |v| versioned.get(v))
+}
+
+/// The version whose pictures a side's buttons draw (`button_pictures`):
+/// none, the base's.
+fn button_version(b: &Battle, side: u8) -> Option<&str> {
+    let side = side & 1;
+    let form = b.content.form(b.stats[side as usize].form);
+    match form.version.as_deref() {
+        Some(own) if !form.base => Some(own),
+        _ => version_name(b, side),
+    }
+}
+
+/// The version of their game a side's player brought, by the name the
+/// game's pack keeps a version's pictures under (`Versioned`):
+/// `PlayerFact::Version`'s (EXE6's Cybeast's, "gregar" or "falzar":
+/// `Battle::version`); none for a game whose players bring none.
+pub fn version_name(b: &Battle, side: u8) -> Option<&str> {
+    b.version(side)
+}
+
+/// The version a side's console is of, by that name: what the frontend
+/// says of the console (`Graphics::version`: a recording's), else the side's
+/// player's (`version_name`), else the base version of the game's graphics.
+pub fn console_version<'x, 'a: 'x>(b: &'x Battle, graphics: &crate::graphics::Graphics<'a>, side: u8) -> &'x str {
+    graphics.version().or_else(|| version_name(b, side)).unwrap_or(&graphics.bundle().custom.versioned.base_version)
+}
+
+/// The emblem's sprite (`sub_8029C08`): 4x4 tiles with a navi's emblem
+/// (2x2) in the middle four; empty for a navi with none.
+pub fn emblem_sprite(emblem: Option<&saito_assets::Emblem>) -> Tiles {
+    let mut t = Tiles { pixels: vec![0; 16 * Tiles::TILE] };
+    for (k, place) in [5usize, 6, 9, 10].into_iter().enumerate() {
+        if let Some(src) = emblem.and_then(|e| e.tiles.get(k)) {
+            t.pixels[place * Tiles::TILE..(place + 1) * Tiles::TILE].copy_from_slice(src);
+        }
+    }
+    t
+}
+
+/// Why a navi's emblem isn't the one the console shows, if it isn't: a
+/// console has no emblem for another version's link navi (a navi that says
+/// its `version`) and shows its own counterpart's picture in the navi's
+/// colors; the game's graphics have every navi's own (deliberately: docs/frontend.md).
+fn known_emblem(b: &Battle, graphics: &crate::graphics::Graphics, side: u8) -> Option<&'static str> {
+    let navi = b.content.navi(b.stats[side as usize & 1].navi);
+    let console = console_version(b, graphics, side);
+    navi.version.as_deref().is_some_and(|v| v != console).then_some("another version's link navi's emblem (its own)")
+}
+
+/// The window's map, the tiles and the palettes it draws with.
+struct Window {
+    map: [MapEntry; COLUMNS * ROWS],
+    tiles: LayerTiles,
+    palettes: [Palette; 16],
+    /// Why the chip window's picture isn't the one the console shows, if
+    /// it isn't: a known difference (`known_picture`).
+    picture_known: Option<&'static str>,
+    /// The chip window's picture's mark, where the caller names its chip
+    /// (`chip:KEY`, or a button's `button:NAME`: `Problems::marking`).
+    picture_mark: Option<String>,
+    /// The mark of what the chip window draws by the chip's record, where
+    /// the caller names it (`chip-window:KEY`): the cells drawn in the
+    /// frame's colors by class (palette 9), the picture's (10) and the
+    /// element's (11), and the damage's digits.
+    record_mark: Option<String>,
+    /// With the sharp text, the strings whose tiles were left blank for
+    /// the text layer: the chip window's name, and the Program Advance
+    /// animation's names by their place (each with the cells it has, and
+    /// the pick's code).
+    name: Option<(String, usize)>,
+    advance_names: Vec<Option<(String, usize, Option<String>)>>,
+    /// The chip window's picture's key among the lettered pictures
+    /// (`pictures.ok`, `pictures.redeal`), where it shows one; and in the
+    /// sharp HUD its words, each line where the picture's stands (from
+    /// its top left: `help_items`), its letters taken off its tiles.
+    help: Option<(String, Option<HelpLetters>)>,
+    help_lines: Vec<TextItem>,
+    /// The damage's digits' words, with the sharp HUD (their cells blank).
+    damage: Option<String>,
+    /// With the sharp HUD, the window's labels it shows (`letter_labels`):
+    /// each one's cells (their first column, row and how many columns) and
+    /// its words from the cells' top left, the letters taken off the tiles.
+    labels: Vec<(usize, usize, usize, TextItem)>,
+    /// The chip codes the window shows (the chip window's, the slots'):
+    /// each one's tiles (the first, how many), its letter, whether it is a
+    /// slot's and its glyph, for the sharp HUD to draw in the numbers'
+    /// font (`letter_codes`).
+    codes: Vec<(u16, u16, char, bool, usize)>,
+    /// The form list's names it shows: each one's first tile, its form and
+    /// the look of its name it shows (`letter_form_names`).
+    form_name_tiles: Vec<(u16, FormHandle, usize)>,
+    /// Where the blocks go among the layer's tile numbers (the game's).
+    layout: saito_assets::CustomLayout,
+    /// With the sharp HUD, the frames drawn as shapes (`shape_frames`):
+    /// each one's cells (their first column, row and how many columns) and
+    /// its item from the cells' top left; and the cells they stand in for,
+    /// whose tiles aren't drawn.
+    shapes: Vec<(usize, usize, usize, TextItem)>,
+    drawn_cells: Vec<bool>,
+    /// The cells (top left, as column and row) where an empty slot's box
+    /// was laid (the slots' and the picked column's), for the sharp HUD
+    /// to draw as shapes (`shape_frames`).
+    empty_icons: Vec<(usize, usize)>,
+    /// The first tiles of the empty slots' code plates (no letter), for
+    /// the sharp HUD to draw as shapes as the others' are.
+    blank_plates: Vec<u16>,
+    /// The buttons laid in the slots' run or at their places: each one's
+    /// first tile, how many, its name and the set it shows, for the
+    /// sharp HUD to draw as shapes.
+    buttons_laid: Vec<(u16, usize, String, usize)>,
+    /// Those buttons' tiles (the first, how many), for a mirrored window's
+    /// blocks (`upright`).
+    buttons: Vec<(u16, usize)>,
+    /// The element whose icon was laid without its frame (its family), for
+    /// the sharp HUD to draw the frame under it as a shape.
+    element_framed: Option<usize>,
+    /// The form list window's map it lays (`form_list_map`), if it lays one.
+    form_list: Option<usize>,
+}
+
+/// A slot's state as the original's byte holds it.
+fn state_number(s: SlotState) -> usize {
+    match s {
+        SlotState::Selectable => 0,
+        SlotState::Unavailable => 1,
+        SlotState::Selected => 2,
+    }
+}
+
+/// The tick of a form's choice the white fade is over and the form put
+/// on (EXE6's Cross, `sub_8027AAE`; rules/cross's `PUT_ON_TICK`): the
+/// window's map is the chips' again.
+const FORM_PUT_ON_TICK: u16 = 25;
+
+/// Where a form list's window is (EXE6's Cross window): the layer's, opening,
+/// up (or a form's description from it) and closing (`ListStage`), or the
+/// screen's window whose view is `form_chosen`, a form chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormListStage {
+    /// `sub_8027834`, 12 ticks.
+    Opening(u16),
+    /// `sub_802794A`, or a form's description from it.
+    Up,
+    /// `sub_802790C`, 6 ticks.
+    Closing(u16),
+    /// `sub_8027A58`, 34 ticks.
+    Chosen(u16),
+}
+
+/// The stage of the form list's window on screen `s` (with its side's
+/// layer), if one is up.
+pub fn form_list_stage(b: &Battle, s: &Screen, layer: Option<&ScreenLayer>) -> Option<FormListStage> {
+    match s.phase {
+        Phase::Window { window, tick } => match b.content.defs.window(window).view? {
+            WindowView::FormChosen => Some(FormListStage::Chosen(tick)),
+            WindowView::OfferFlight | WindowView::ChipFlight => None,
+        },
+        Phase::Choosing => Some(match layer?.list_stage()? {
+            ListStage::Opening(tick) => FormListStage::Opening(tick),
+            ListStage::Up(_) => FormListStage::Up,
+            ListStage::Closing(tick) => FormListStage::Closing(tick),
+        }),
+        _ => None,
+    }
+}
+
+/// The ticks each of the form list window's opening maps holds
+/// (`sub_8027834`).
+const FORM_LIST_STEP_TICKS: u16 = 3;
+
+/// The form list window's map the screen shows, if it shows one: its
+/// opening steps every 3 ticks (`sub_8027834`), then the window with its
+/// forms, until it closes (`sub_802790C`, 5 ticks) or the form chosen is
+/// put on (`sub_8027AAE`).
+fn form_list_map(v: &View) -> Option<usize> {
+    let stage = form_list_stage(v.b, v.screen, v.layer)?;
+    let count = v.b.form_list(v.side).map_or(0, |w| w.count);
+    let full = FORM_LIST_OPENING_MAPS + count.max(1) as usize - 1;
+    match stage {
+        FormListStage::Opening(tick) if tick >= FORM_LIST_STEP_TICKS => Some((tick / FORM_LIST_STEP_TICKS) as usize - 1),
+        FormListStage::Up | FormListStage::Closing(_) => Some(full),
+        FormListStage::Chosen(tick) if tick < FORM_PUT_ON_TICK => Some(full),
+        _ => None,
+    }
+}
+
+/// The form list window's panel as it opens, drawn between the original's
+/// steps (the smooth motion). The original's opening maps are one panel
+/// (EXE6's Cross window: its CROSSSELECT header, its bars) laid higher
+/// each step: from the tab's row (CROSSSELECT under the chip window), its
+/// header at rows 7, 3, then the window's top, every 3 ticks. The smooth
+/// motion moves it there at whole pixels every tick: on each step's first
+/// tick where the original lays it (the same picture as the original's
+/// map; on a mirrored seat its bars read upright, as the last step's do),
+/// between them as far on as the tick is. It is always at or above the
+/// original's panel, so what the original shows above that is what it
+/// rises over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rise {
+    /// How far down the panel's top is: the last opening map, which lays
+    /// it at the window's top, is drawn that far down.
+    top: i32,
+    /// Where it shows: the tab's columns, from `top` to the foot of the
+    /// tab's row (the panel goes on under the window's CHIP SELECT row).
+    rect: Rect,
+}
+
+impl Rise {
+    fn holds(&self, x: i32, y: i32) -> bool {
+        (self.rect.x..self.rect.x + self.rect.w).contains(&x) && (self.rect.y..self.rect.y + self.rect.h).contains(&y)
+    }
+
+    /// The parts of `r` the panel doesn't cover: above, below, left and
+    /// right of it (all of `r` where they don't meet).
+    fn outside(&self, r: Rect) -> Vec<Rect> {
+        let c = self.rect;
+        if r.intersect(c).is_empty() {
+            return vec![r];
+        }
+        let (top, foot) = (c.y.max(r.y), (c.y + c.h).min(r.y + r.h));
+        [
+            Rect::new(r.x, r.y, r.w, c.y - r.y),
+            Rect::new(r.x, c.y + c.h, r.w, r.y + r.h - (c.y + c.h)),
+            Rect::new(r.x, top, c.x - r.x, foot - top),
+            Rect::new(c.x + c.w, top, r.x + r.w - (c.x + c.w), foot - top),
+        ]
+        .into_iter()
+        .map(|p| p.intersect(r))
+        .filter(|p| !p.is_empty())
+        .collect()
+    }
+}
+
+/// Where the form list window's panel is on this tick of its opening,
+/// with the smooth motion (`Rise`): none before it moves or once the last
+/// step lays it at the window's top, nor for a game without the tab.
+fn form_list_rise(v: &View, place: Placement) -> Option<Rise> {
+    let FormListStage::Opening(tick) = form_list_stage(v.b, v.screen, v.layer)? else { return None };
+    let a = v.assets;
+    // The tab: the cells the window's map with it lays otherwise than the
+    // one without, in the first row they differ (CROSSSELECT's).
+    let (without, with) = (a.window_maps.first()?, a.window_maps.get(1)?);
+    let differs = |r: usize, c: usize| without.get(r * COLUMNS + c) != with.get(r * COLUMNS + c);
+    let tab_row = (0..ROWS).find(|&r| (0..COLUMNS).any(|c| differs(r, c)))?;
+    let c0 = (0..COLUMNS).find(|&c| differs(tab_row, c))?;
+    let c1 = (0..COLUMNS).rfind(|&c| differs(tab_row, c))? + 1;
+    // Each opening map's panel top: the row that lays the last map's top
+    // row in the tab's columns.
+    let last = a.form_list_maps.get(FORM_LIST_OPENING_MAPS - 1)?;
+    let top_row = |m: &[MapEntry]| (0..ROWS).find(|&r| (c0..c1).all(|c| m.get(r * COLUMNS + c).is_some_and(|e| Some(e) == last.get(c))));
+    // Where it is on each step's first tick: the tab's row before the first.
+    let mut steps = vec![(0, 8 * tab_row as i32)];
+    for k in 0..FORM_LIST_OPENING_MAPS {
+        steps.push((((k + 1) as u16 * FORM_LIST_STEP_TICKS) as i32, 8 * top_row(a.form_list_maps.get(k)?)? as i32));
+    }
+    let top = rise_top(&steps, tick as i32)?;
+    let (x, _) = Window::columns_at_place(c0, c1 - c0, place)?;
+    let foot = 8 * (tab_row as i32 + 1);
+    Some(Rise { top, rect: Rect::new(x, top, 8 * (c1 - c0) as i32, foot - top) })
+}
+
+/// Where a panel laid at `steps` (each a tick and its top on that tick, the
+/// ticks in order) is on tick `t`: as far on from one to the next as the
+/// tick is, to the nearest pixel; none before the first step's tick or
+/// from the last's.
+fn rise_top(steps: &[(i32, i32)], t: i32) -> Option<i32> {
+    if t >= steps.last()?.0 {
+        return None;
+    }
+    let &[(t0, y0), (t1, y1)] = steps.windows(2).find(|s| s[0].0 < t && t <= s[1].0)? else { return None };
+    Some((2 * (y0 * (t1 - t) + y1 * (t - t0)) + (t1 - t0)).div_euclid(2 * (t1 - t0)))
+}
+
+impl Window {
+    fn build(v: &View, text: &TextSink, problems: &mut Problems) -> Window {
+        Window::build_as(v, form_list_map(v), text, problems)
+    }
+
+    /// The window as the screen shows it, but with the form list window's
+    /// map `form_list` (none: the chips' window).
+    fn build_as(v: &View, form_list: Option<usize>, text: &TextSink, problems: &mut Problems) -> Window {
+        let a = v.assets;
+        let mut w = Window {
+            map: [MapEntry::default(); COLUMNS * ROWS],
+            tiles: LayerTiles::new(),
+            palettes: [[0; 16]; 16],
+            picture_known: None,
+            picture_mark: None,
+            record_mark: None,
+            name: None,
+            advance_names: Vec::new(),
+            help: None,
+            help_lines: Vec::new(),
+            damage: None,
+            labels: Vec::new(),
+            codes: Vec::new(),
+            form_name_tiles: Vec::new(),
+            layout: a.layout,
+            shapes: Vec::new(),
+            drawn_cells: vec![false; COLUMNS * ROWS],
+            empty_icons: Vec::new(),
+            blank_plates: Vec::new(),
+            buttons_laid: Vec::new(),
+            buttons: Vec::new(),
+            element_framed: None,
+            form_list,
+        };
+        // sub_8026840: the window's map, with the form list's tab (EXE6's
+        // Cross tab) or without; or the form list window's.
+        let (map, patches) = match form_list {
+            Some(i) => (a.form_list_maps.get(i), &a.form_list_patches),
+            // (A game without the tab has one map: EXE5.)
+            None => (a.window_maps.get(v.screen.look.form_list_tab as usize).or(a.window_maps.first()), &a.window_patches),
+        };
+        if let Some(m) = map {
+            for (cell, e) in w.map.iter_mut().zip(m) {
+                *cell = *e;
+            }
+        }
+        // Its patches, numbered on from their first tile.
+        let mut tile = patches.first_tile;
+        for p in &patches.patches {
+            for j in 0..p.height as u16 {
+                for i in 0..p.width as u16 {
+                    let n = if p.by_column { i * p.height as u16 + j } else { j * p.width as u16 + i };
+                    let (x, y) = (p.x as usize + i as usize, p.y as usize + j as usize);
+                    if x < COLUMNS && y < ROWS {
+                        w.map[y * COLUMNS + x] = MapEntry { tile: tile + n, hflip: false, vflip: false, palette: p.palette };
+                    }
+                }
+            }
+            tile += p.width as u16 * p.height as u16;
+        }
+        w.window_emblem(v);
+        w.tiles.put(WINDOW_TILE, &a.window_tiles);
+        w.tiles.put(w.layout.column_cells, &a.column_cells);
+        w.tiles.put(w.layout.turn_limit, &a.turn_limit);
+        w.tiles.put(w.layout.name_bar, &a.name_bar);
+        w.palettes[11] = a.icon_palette;
+        w.palettes[12] = a.gray_palette;
+        w.palettes[14] = a.other_palette;
+        w.palettes[13] = v.hud.hp_palettes[0];
+        w.chip_window(v, text, problems);
+        w.letter_help(v, text, problems);
+        w.slots(v, problems);
+        w.column(v, problems);
+        if form_list.is_some_and(|i| i >= FORM_LIST_OPENING_MAPS) {
+            w.form_names(v, problems);
+        }
+        if window_look(v.layer).turn_limit {
+            // sub_8029D34: "FINAL TURN", 7x2 at column 15, row 4 (past the
+            // window's columns: drawn on the layer apart).
+        }
+        w.letter_labels(v, text, problems);
+        w.letter_codes(v, text, problems);
+        w.letter_form_names(v, text, problems);
+        w.shape_frames(v, form_list, text, problems);
+        w
+    }
+
+    /// With the sharp HUD, the frames the game's graphics have drawings of drawn as
+    /// shapes (`saito_assets::shapes`): the window's map's (the drawings
+    /// of its cells, each where the cell is laid as the map says: a cell the
+    /// screen laid otherwise is drawn as its tiles, a problem), and the
+    /// picked column's cells, flipped as they are laid; each in the palette
+    /// its cells are drawn in.
+    fn shape_frames(&mut self, v: &View, form_list: Option<usize>, text: &TextSink, problems: &mut Problems) {
+        if !text.draws_shapes() {
+            return;
+        }
+        let a = v.assets;
+        let (drawing, map) = match form_list {
+            Some(i) => (a.shapes.form_list_maps.get(i), a.form_list_maps.get(i)),
+            None => {
+                let k = (v.screen.look.form_list_tab as usize).min(a.window_maps.len().saturating_sub(1));
+                (a.shapes.window_maps.get(k), a.window_maps.get(k))
+            }
+        };
+        if let (Some(Some(m)), Some(map)) = (drawing, map) {
+            for part in &m.parts {
+                let mut cells: Vec<[u8; 2]> = part
+                    .cells
+                    .iter()
+                    .copied()
+                    .filter(|&[c, r]| {
+                        let i = r as usize * COLUMNS + c as usize;
+                        let same = map.get(i).is_some_and(|e| *e == self.map[i]);
+                        if !same {
+                            problems.note(format!("the window's drawing {:?} stands in for cell ({c}, {r}), which the screen laid otherwise: drawn as its tiles", part.name));
+                        }
+                        same
+                    })
+                    .collect();
+                // (And its holes the screen lays plain in the color the
+                // drawing paints there: the chip window's box under a name
+                // on the text layer, its corner round across them.)
+                cells.extend(part.plain.iter().filter_map(|&([c, r], [p, k])| {
+                    let i = r as usize * COLUMNS + c as usize;
+                    let e = self.map.get(i)?;
+                    let plain = e.palette & 15 == p && self.tiles.tile(e.tile).iter().all(|&px| px == k);
+                    (plain && !self.drawn_cells[i]).then_some([c, r])
+                }));
+                if cells.is_empty() {
+                    continue;
+                }
+                for &[c, r] in &cells {
+                    self.drawn_cells[r as usize * COLUMNS + c as usize] = true;
+                }
+                let palettes = self.palettes;
+                // (Its words where it stands in for the cell their box's
+                // middle is in: on the drawing, over it.)
+                let u = saito_assets::shapes::Drawing::UNIT;
+                let ours = |t: &saito_assets::shapes::Words| {
+                    let [x, y, w, h] = t.rect.map(|v| v as f32 / u);
+                    let (c, r) = (((x + w / 2.0) / 8.0) as u8, ((y + h / 2.0) / 8.0) as u8);
+                    cells.contains(&[c, r])
+                };
+                let shown = saito_assets::shapes::Drawing { words: part.drawing.words.iter().filter(|t| ours(t)).cloned().collect(), ..Default::default() };
+                for item in crate::shapes::words(&shown, |p, c| palettes[p as usize & 15][c as usize & 15], text, &v.b.content, problems) {
+                    self.labels.push((0, 0, COLUMNS, item));
+                }
+                let mut d = crate::shapes::drawn(&part.drawing, |p, c| palettes[p as usize & 15][c as usize & 15], (false, false), None);
+                d.cells = Some(cells);
+                self.shapes.push((0, 0, COLUMNS, crate::shapes::item(d, (0, 0), (8 * COLUMNS as i32, 8 * ROWS as i32))));
+            }
+        }
+        // The empty slots' boxes, where `slots` and `column` laid them, each
+        // in its cells' palette.
+        if let Some(d) = &a.shapes.empty_icon {
+            for &(x, y) in &self.empty_icons {
+                if x + 1 >= COLUMNS || y + 1 >= ROWS {
+                    continue;
+                }
+                let palette = self.palettes[self.map[y * COLUMNS + x].palette as usize & 15];
+                let d = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+                self.shapes.push((x, y, 2, crate::shapes::item(d, (0, 0), (16, 16))));
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    self.drawn_cells[(y + dy) * COLUMNS + x + dx] = true;
+                }
+            }
+        }
+        // The buttons, each set's drawing over the cells its tiles were laid
+        // in (a block its drawing's size), its words over it.
+        for (first, count, name, set) in std::mem::take(&mut self.buttons_laid) {
+            let Some(d) = a.shapes.buttons.iter().find(|(n, _)| *n == name).and_then(|(_, sets)| sets.get(set)) else { continue };
+            let Some(block) = self.block(first..first + count as u16) else { continue };
+            if [8 * block.w, 8 * block.h] != [d.size[0] as usize, d.size[1] as usize] {
+                problems.note(format!("button {name:?}'s drawing is {}x{}, its cells {}x{}: drawn as its tiles", d.size[0], d.size[1], 8 * block.w, 8 * block.h));
+                continue;
+            }
+            let palette = self.palettes[block.palette as usize & 15];
+            for mut item in crate::shapes::words(d, |_, c| palette[c as usize & 15], text, &v.b.content, problems) {
+                item.rect = item.rect.offset(8 * block.col as i32, 8 * block.row as i32);
+                self.labels.push((0, 0, COLUMNS, item));
+            }
+            let drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+            self.shapes.push((block.col, block.row, block.w, crate::shapes::item(drawn, (0, 0), (8 * block.w as i32, 8 * block.h as i32))));
+            for c in block.col..block.col + block.w {
+                for r in block.row..block.row + block.h {
+                    self.drawn_cells[r * COLUMNS + c] = true;
+                }
+            }
+        }
+        // The element's icon's frame under its symbol, as `chip_details`
+        // laid it: kept off the symbol's pixels inside its ring, which stay
+        // the tiles' (the icon's own pixels of the frame, under the drawing).
+        if let (Some(d), Some(family)) = (&a.shapes.element_frame, self.element_framed.take())
+            && let Some(block) = self.block(self.layout.element..self.layout.element + 4)
+            && [8 * block.w, 8 * block.h] == [d.size[0] as usize, d.size[1] as usize]
+        {
+            let palette = self.palettes[block.palette as usize & 15];
+            let mut drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+            drawn.off = symbol_off(a, family);
+            self.shapes.push((block.col, block.row, block.w, crate::shapes::item(drawn, (0, 0), (8 * block.w as i32, 8 * block.h as i32))));
+        }
+        // The empty slots' code plates, as the others' (`letter_codes`).
+        if let Some(plate) = &a.shapes.slot_code {
+            for first in std::mem::take(&mut self.blank_plates) {
+                let Some(block) = self.block(first..first + 2) else { continue };
+                let palette = self.palettes[block.palette as usize & 15];
+                let d = crate::shapes::drawn(plate, |_, c| palette[c as usize & 15], (false, false), None);
+                self.shapes.push((block.col, block.row, block.w, crate::shapes::item(d, (0, 0), (8 * block.w as i32, 8 * block.h as i32))));
+                for c in block.col..block.col + block.w {
+                    for r in block.row..block.row + block.h {
+                        self.drawn_cells[r * COLUMNS + c] = true;
+                    }
+                }
+            }
+        }
+        // The picked column's cells, as `column` laid them.
+        if a.shapes.column_cells.len() >= 2 {
+            let [left, right] = self.layout.column_columns.map(usize::from);
+            for i in 0..5 {
+                let row = self.layout.column_row as usize + 2 * i;
+                for x in [left, right] {
+                    let e = self.map[row * COLUMNS + x];
+                    let Some(k) = e.tile.checked_sub(self.layout.column_cells).map(|k| k as usize / 2).filter(|&k| k < 2) else { continue };
+                    let palette = self.palettes[e.palette as usize & 15];
+                    let d = crate::shapes::drawn(&a.shapes.column_cells[k], |_, c| palette[c as usize & 15], (e.hflip, e.vflip), None);
+                    self.shapes.push((x, row, 1, crate::shapes::item(d, (0, 0), (8, 16))));
+                    self.drawn_cells[row * COLUMNS + x] = true;
+                    self.drawn_cells[(row + 1) * COLUMNS + x] = true;
+                }
+            }
+        }
+    }
+
+    /// The frames drawn as shapes (`shape_frames`) where the window shows
+    /// them, before the words on them.
+    fn shape_items(&self, text: &mut TextSink, place: Placement) {
+        for (col, row, w, item) in &self.shapes {
+            let Some((x, clip)) = self.columns_at(*col, *w, place) else { continue };
+            let rect = item.rect.offset(x, 8 * *row as i32);
+            text.push(Plane::Hud, TextItem { rect, clip: clip.intersect(rect), ..item.clone() });
+        }
+    }
+
+    /// With the sharp HUD, the chip codes the window shows (`codes`) in a
+    /// font of the game's codes (the user: "also the chip letters", then "you
+    /// should trace ABCDEFGHIJKLMNOPQRSTUVWXYZ* for the chip codes font like
+    /// you did digits"): the chip window's in Saito Chip Codes, the slots'
+    /// in Saito Slot Codes. Each code's cell with its letter taken off (the
+    /// game's `letters`), and the letter drawn in the box the picture's
+    /// letters fill, a glyph pixel a frame pixel across and the box's height
+    /// down, in its colors and its rim or shadow, where it stood.
+    fn letter_codes(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
+        if !text.draws_numbers() {
+            return;
+        }
+        let a = v.assets;
+        for (first, count, code, slot, glyph) in std::mem::take(&mut self.codes) {
+            let face = if slot { crate::numbers::Face::SlotCodes } else { crate::numbers::Face::ChipCodes };
+            if !face.font().covers(&code.to_string()) {
+                continue;
+            }
+            let set = if slot { &a.letters.slot_codes } else { &a.letters.codes };
+            let what = || format!("{} code {code:?}", if slot { "a slot's" } else { "the chip window's" });
+            let Some(look) = crate::lookups::letters(set.glyphs.get(glyph).and_then(Option::as_ref), what, problems) else { continue };
+            let Some(block) = self.block(first..first + count) else { continue };
+            self.tiles.put_part(first, &set.blank, 2 * glyph, 2);
+            let palette = self.palettes[block.palette as usize & 15];
+            let color = |c: u8| palette[c as usize & 15];
+            // (In the box all the set's codes fill, each where its font has
+            // it in its face.)
+            let Some([x, y, w, h]) = set.face.map(|f| f.map(f32::from)) else { continue };
+            let fitted = crate::numbers::Fitted {
+                glyphs: vec![(code, [x, y, w, h])],
+                set: crate::numbers::CODES.into(),
+                fill: look.fill.iter().map(|&c| color(c)).collect(),
+                rim: look.rim.map(color),
+                shadow: look.shadow.map(color),
+                face,
+                ids: Vec::new(),
+            };
+            let item = TextItem::fitted(fitted, Rect::new(0, 0, 8 * block.w as i32, 8 * block.h as i32));
+            self.labels.push((block.col, block.row, block.w, item));
+            // (A slot's code's plate drawn as shapes, where the game's graphics have
+            // its drawing, under the letter.)
+            if let Some(plate) = a.shapes.slot_code.as_ref().filter(|_| slot && text.draws_shapes()) {
+                let d = crate::shapes::drawn(plate, |_, c| palette[c as usize & 15], (false, false), None);
+                self.shapes.push((block.col, block.row, block.w, crate::shapes::item(d, (0, 0), (8 * block.w as i32, 8 * block.h as i32))));
+                for c in block.col..block.col + block.w {
+                    for r in block.row..block.row + block.h {
+                        self.drawn_cells[r * COLUMNS + c] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// With the sharp HUD, the form list's names (`form_name_tiles`: EXE6's
+    /// Crosses' on their bars, the user: "also ... the text in the cross
+    /// select screen") as text, where the strings have them (`crosses.FORM`,
+    /// the ROMs' short names): their letters (the outlines the bar's own
+    /// edge color draws apart from the bar, and what they enclose) taken
+    /// off the bar, each pixel the bar's color nearest it on its row, and the
+    /// words drawn in their look (their face's colors, a rim in the outline's
+    /// color) over their span, in one font for both languages
+    /// (`CROSS_NAME_FONT`, `CROSS_NAME_WEIGHT`), as wide and as tall as the
+    /// picture's letters. The Cross's face stays the picture's.
+    fn letter_form_names(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
+        if !text.draws_numbers() {
+            return;
+        }
+        for (first, form, look) in std::mem::take(&mut self.form_name_tiles) {
+            let key = format!("crosses.{}", saito_content_api::keys::local(&v.b.content.defs.form(form).key));
+            let Some(words) = text.strings.lettering(&v.b.content, &key) else { continue };
+            let Some(own) = v.b.content.form(form).version.as_deref().map(|version| v.assets.letters.pictures.versioned.get(version)) else { continue };
+            let what = || format!("form {key:?}'s name, look {look}");
+            let Some(found) = crate::lookups::letters(own.form_names.get(look).and_then(Option::as_ref), what, problems) else { continue };
+            let Some(block) = self.block(first..first + FORM_NAME_TILES as u16) else { continue };
+            let palette = self.palettes[block.palette as usize & 15];
+            let ([col0, col1], [row0, row1]) = (found.columns.map(usize::from), found.rows.map(usize::from));
+            // The face's color on each of its rows, the outline's.
+            let fill: Vec<u16> = found.fill.iter().map(|&c| palette[c as usize & 15]).collect();
+            let rim = Some(palette[found.rim as usize & 15]);
+            // One font for every language (the user: "i would prefer the same
+            // font for the cross names in en and jp", then "yes do that use
+            // murecho"; since, the bundled Noto Sans CJK, the text font: "you
+            // should use one unified font for all languages"), as wide and as
+            // tall as the picture's letters.
+            if !text.lettering_in(words, CROSS_NAME_FONT, || format!("form {key:?}'s name"), problems) {
+                continue;
+            }
+            // (Centered in the box all the names' letters take, every bar's
+            // alike, at the font's own width, narrowed only where wider than
+            // it: the user, "you should bounding box them to the longest one
+            // (e.g. tomahawk in japanese) and center align them in the same
+            // spot on each label, so you don't force the original metrics".)
+            let cap = (row1 + 1 - row0) as u8;
+            let [box0, box1] = v.assets.letters.form_name_box.unwrap_or([col0 as u8, col1 as u8]).map(i32::from);
+            let lettering = Lettering { weight: CROSS_NAME_WEIGHT, font: CROSS_NAME_FONT, ..Lettering::wide(row0 as u8, cap) };
+            let item = TextItem::new(words, Role::Lettering(lettering), Rect::new(box0, 0, box1 + 1 - box0, 8 * block.h as i32), fill[0], None);
+            let item = TextItem { align: Align::Center, ..item };
+            let item = TextItem { ink: Some(crate::textlayer::Ink { fill, rim, rim_width: crate::vfont::RIM, stepped: false }), ..item };
+            // (Its tiles with the letters taken off, the bar's own colors
+            // where they were.)
+            self.tiles.put_part(first, &own.form_names_blank, FORM_NAME_TILES * look, FORM_NAME_TILES);
+            self.labels.push((block.col, block.row, block.w, item));
+            // (The bar drawn as shapes where the game's graphics have its drawing, kept
+            // off its portrait's pixels, which stay the picture's.)
+            if let Some(d) = v.assets.shapes.form_name_bar.as_ref().filter(|d| text.draws_shapes() && [8 * block.w, 8 * block.h] == [d.size[0] as usize, d.size[1] as usize]) {
+                let (w, h) = (8 * block.w, 8 * block.h);
+                let tiles = own.form_name_portraits.pixels.get(FORM_NAME_TILES * look * 64..FORM_NAME_TILES * (look + 1) * 64);
+                let off = tiles.map(|t| {
+                    let mut off = vec![false; w * h];
+                    for (i, &p) in t.iter().enumerate() {
+                        let (k, j) = (i / 64, i % 64);
+                        let (x, y) = (8 * (k % block.w) + j % 8, 8 * (k / block.w) + j / 8);
+                        if p != 0 && x < w && y < h {
+                            off[y * w + x] = true;
+                        }
+                    }
+                    (w, off)
+                });
+                let mut drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+                drawn.off = off;
+                // (Its cells' tiles drawn still, for the portrait.)
+                self.shapes.push((block.col, block.row, block.w, crate::shapes::item(drawn, (0, 0), (w as i32, h as i32))));
+            }
+        }
+    }
+
+    /// With the sharp HUD, the window's labels its map shows (the game's
+    /// `labels`: BATTLE CHIP, CHIP SELECT...), where the strings have their
+    /// words (`window.NAME`) and the lettering font draws them: their
+    /// letters taken off the tiles (each letter pixel the window's own
+    /// color nearest it on its row), and the words in the lettering font in
+    /// the letters' look, where they stood.
+    fn letter_labels(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
+        let a = v.assets;
+        for (k, label) in a.labels.iter().enumerate() {
+            let words = text.strings.lettering(&v.b.content, &format!("window.{}", label.name));
+            let what = || format!("window label {:?}", label.name);
+            let Some(words) = words.filter(|w| text.lettering_in(w, LetteringFont::Numbers, what, problems)) else { continue };
+            let Some(found) = crate::lookups::letters(a.letters.labels.get(k).and_then(Option::as_ref), what, problems) else { continue };
+            let Some(block) = self.block(label.first..label.last + 1) else { continue };
+            if block.h != 1 {
+                continue;
+            }
+            let palette = self.palettes[block.palette as usize & 15];
+            // Its tiles with the letters taken off (the window's own colors
+            // where they were).
+            let n = (label.last + 1 - label.first) as usize;
+            self.tiles.put_part(label.first, &a.letters.window_blank, (label.first - WINDOW_TILE) as usize, n);
+            // Its words laid out as text in the numbers' font (the user:
+            // "pick bungee", then "the custom box fonts like BATTLE CHIP and
+            // CROSSSELECT are forcibly packed into the grid which makes it
+            // look really bad, instead of laid out naturally"): one run, the
+            // font's own spacing, its capitals as high as the picture's
+            // letters' ink, narrowed as a whole where it is wider than their
+            // columns, standing as they stand in the label's tiles; in their
+            // look.
+            // (Then the run as wide as their columns, the user: "BATTLE CHIP
+            // and CHIP SELECT and CROSS SELECT should be stretched to fill the
+            // frame": its ink from the first letter's ink to the last's, one
+            // factor for the whole run.)
+            let [row0, row1] = found.rows;
+            let natural = Lettering { font: LetteringFont::Numbers, ..Lettering::wide(row0, row1 + 1 - row0) };
+            let [from, to] = found.letters.span.map(i32::from);
+            let Some((ink0, ink1)) = text.ink_extent(words, Role::Lettering(natural), 10_000) else { continue };
+            let width = (100.0 * (to - from) as f32 / (ink1 - ink0).max(1.0)).round().clamp(25.0, 255.0) as u8;
+            let lettering = Lettering { width, ..natural };
+            let look = crate::lettering::Look { role: Role::Lettering(lettering), ..crate::lettering::Look::of(&found.letters, &palette, Lettering::wide) };
+            // (The box from where the first glyph's pen starts, so that its
+            // ink starts at the letters' first column.)
+            let scale = width as f32 / 100.0;
+            let pen = from - (ink0 * scale).round() as i32;
+            let item = look.item(words, Rect::new(pen, 0, to - pen + 8, 8), Align::Left);
+            self.labels.push((block.col, block.row, block.w, item));
+        }
+    }
+
+    /// The window's labels (`letter_labels`) where the window shows them.
+    fn label_items(&self, text: &mut TextSink, place: Placement) {
+        for (col, row, w, item) in &self.labels {
+            let Some((x, clip)) = self.columns_at(*col, *w, place) else { continue };
+            let rect = item.rect.offset(x, 8 * *row as i32);
+            text.push(Plane::Hud, TextItem { rect, clip, ..item.clone() });
+        }
+    }
+
+    /// The screen's own emblem on the window's map (EXE4's orb, 0x08020028),
+    /// in the frame its turn's step shows: the step the emblem was drawn
+    /// with this tick, else the screen's (0 at rest).
+    fn window_emblem(&mut self, v: &View) {
+        let Some(e) = &v.assets.window_emblem else { return };
+        self.tiles.put(e.first_tile, &e.tiles);
+        let look = window_look(v.layer);
+        let step = look.drawn.emblem.map_or(look.spin, |(_, spin)| spin);
+        let Some(frame) = e.frames.get(e.frame(step as usize)) else { return };
+        for (k, entry) in frame.iter().enumerate() {
+            let (x, y) = (e.x as usize + k % e.width as usize, e.y as usize + k / e.width.max(1) as usize);
+            if x < COLUMNS && y < ROWS {
+                self.map[y * COLUMNS + x] = *entry;
+            }
+        }
+    }
+
+    /// A button's cells at its own place on the window's map
+    /// (`ButtonPictures::place`: EXE4's UNITE button, 0x0801FF14), its set
+    /// `set`'s tiles from the place's first tile.
+    fn placed_button(&mut self, b: &ButtonPictures, p: saito_assets::ButtonPlace, set: usize) {
+        let n = b.width as usize * b.height as usize;
+        self.tiles.put_part(p.first_tile, &b.tiles, n * set, n);
+        for k in 0..n {
+            let (x, y) = (p.x as usize + k % b.width as usize, p.y as usize + k / b.width.max(1) as usize);
+            if x < COLUMNS && y < ROWS {
+                self.map[y * COLUMNS + x] = MapEntry { tile: p.first_tile + k as u16, hflip: false, vflip: false, palette: p.palette };
+            }
+        }
+    }
+
+    /// The Program Advance animation's names on the layer (`sub_802B80C`:
+    /// the picks', one every 8 ticks; `sub_802B8E0`: the recipe's taken
+    /// off; `sub_802B920`: the Program Advance's in their place at 16
+    /// ticks, all taken off at 96), as (name, row, palette) with each
+    /// name's tiles copied in, and palette 10's colors.
+    fn program_advance(&mut self, v: &View, text: &TextSink, problems: &mut Problems) -> Vec<(usize, i32, u8)> {
+        use saito_battle::custom::screen::ProgramAdvanceStep as S;
+        let s = v.screen;
+        let (Phase::ProgramAdvance { anim }, Some(pa)) = (s.phase, s.program_advance) else { return Vec::new() };
+        if pa.len == 0 {
+            return Vec::new();
+        }
+        // (The picks as the animation lists them: every one the hand holds,
+        // a unison's soul chip too, which the selection leaves out.)
+        let picks: Vec<_> = pa.names.iter().flatten().copied().collect();
+        let in_recipe = |k: usize| (pa.start as usize..(pa.start + pa.len) as usize).contains(&k);
+        let row = |k: usize| ADVANCE_FIRST_ROW + 3 * k as i32;
+        let palette = |k: usize| if in_recipe(k) { 10 } else { 13 };
+        let shown: Vec<usize> = match anim.step {
+            S::Names => (0..picks.len().min((anim.timer as usize).div_ceil(8))).collect(),
+            S::Pause => (0..picks.len()).collect(),
+            S::Result => (0..picks.len()).filter(|&k| !in_recipe(k)).collect(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for k in shown {
+            let n = picks[k];
+            self.put_advance_text(v, k, n.chip, text.strings.chip_name(&v.b.content, n.chip), n.code.map(|c| c.0), text, problems);
+            out.push((k, row(k), palette(k)));
+        }
+        if matches!(anim.step, S::Result) && anim.timer >= 0x10 {
+            let k = pa.start as usize;
+            let name = text.strings.chip_name(&v.b.content, pa.chip);
+            self.put_advance_text(v, k, pa.chip, name, None, text, problems);
+            out.push((k, row(k), 10));
+        }
+        if let Some(c) = v.assets.advance_name_colors.get(v.screen.look.pa_palette as usize) {
+            self.palettes[10][..4].copy_from_slice(c);
+        }
+        out
+    }
+
+    /// A name (chip `chip`'s, and a pick's code in its last cell) into name
+    /// `k`'s tiles; with the sharp HUD blank tiles, and the words for the
+    /// text layer.
+    #[allow(clippy::too_many_arguments)]
+    fn put_advance_text(
+        &mut self,
+        v: &View,
+        k: usize,
+        chip: ChipHandle,
+        name: &str,
+        code: Option<u8>,
+        text: &TextSink,
+        problems: &mut Problems,
+    ) {
+        let mut glyphs = crate::lookups::advance_name(v.hud, chip, name, problems);
+        let letter = code.map(|code| if code < 26 { char::from(b'A' + code).to_string() } else { "*".to_string() });
+        let at = self.layout.art + (2 * ADVANCE_NAME_CELLS * k) as u16;
+        if text.takes(name, Role::Cell) && letter.as_deref().is_none_or(|l| text.takes(l, Role::Cell)) {
+            // (The name's box: the cells before the code's, which nothing
+            // else uses.)
+            let cells = ADVANCE_NAME_CELLS - 1;
+            self.tiles.put(at, &fonts::cell_text(v.hud, &[], ADVANCE_NAME_CELLS, 0));
+            if self.advance_names.len() <= k {
+                self.advance_names.resize(k + 1, None);
+            }
+            self.advance_names[k] = Some((name.to_string(), cells, letter));
+            return;
+        }
+        glyphs.resize(ADVANCE_NAME_CELLS, 0);
+        if let Some(letter) = letter
+            && let Some(&g) = fonts::cell_glyphs(v.hud, &letter).0.first()
+        {
+            glyphs[ADVANCE_NAME_CELLS - 1] = g;
+        }
+        self.tiles.put(at, &fonts::cell_text(v.hud, &glyphs, ADVANCE_NAME_CELLS, 0));
+    }
+
+    /// `sub_802794A`: the offered forms' names (`sub_8029D94`: the one
+    /// under the cursor in its own look) over the form list window's map,
+    /// and palette 10 the form under the cursor's (`sub_8029EAC`: a used
+    /// one's darker).
+    fn form_names(&mut self, v: &View, problems: &mut Problems) {
+        let Some(w) = v.b.form_list(v.side) else { return };
+        // (The entry under the list's cursor: the layer's.)
+        let cursor = v.layer.map_or(0, |l| l.list_cursor) as usize;
+        // Each form's name and colors are its own version's (a player's
+        // Crosses can hold another's: docs/engine/custom-screen.md §4.1).
+        let navi = v.b.stats[v.side as usize].navi;
+        let mut picture = |slot: usize| crate::lookups::form_name(v.assets, &v.b.content, navi, w.forms[slot]?, problems);
+        for slot in 0..w.count.min(5) as usize {
+            let Some((own, number)) = picture(slot) else { continue };
+            let name = number + if slot == cursor { 0 } else { 5 };
+            let at = self.layout.form_names + (FORM_NAME_TILES * slot) as u16;
+            self.tiles.put_part(at, &own.form_names, FORM_NAME_TILES * name, FORM_NAME_TILES);
+            if let Some(form) = w.forms[slot] {
+                self.form_name_tiles.push((at, form, name));
+            }
+            let [x0, y0] = self.layout.form_names_at.map(usize::from);
+            for i in 0..FORM_NAME_TILES {
+                let (x, y) = (x0 + i % 9, y0 + 2 * slot + i / 9);
+                self.map[y * COLUMNS + x] = MapEntry { tile: at + i as u16, hflip: false, vflip: false, palette: 10 };
+            }
+        }
+        let c = cursor;
+        if let Some((own, number)) = picture(c) {
+            let index = number + if w.marked[c] { 5 } else { 0 };
+            if let Some(p) = own.form_name_palettes.get(index) {
+                self.palettes[10] = *p;
+            }
+        }
+    }
+
+    /// `sub_8028476`: the chip window shows what it was last drawn for: a
+    /// chip's name, picture, code, element and damage (`sub_80284E2`), or
+    /// a button's picture (`sub_80286D4`, `sub_802871C`, `sub_80287A4`,
+    /// `sub_802877C`) with the window's colors where the chip's details
+    /// go.
+    fn chip_window(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
+        let a = v.assets;
+        // (As the layer last drew it; none: nothing drawn.)
+        let cw = v.layer.map_or(ChipWindow::default(), |l| l.chip_window);
+        // Palette 11's colors from 10 are the last chip's element's.
+        if let Some(c) = cw.last_chip {
+            let family = v.b.content.chip(c.id).family.0 as usize;
+            if let Some(colors) = a.element_colors.get(family) {
+                self.palettes[11][10..].copy_from_slice(colors);
+            }
+        }
+        let slot = cw.slot.min(SPECIAL_SLOT);
+        let blank_details = |w: &mut Window, picture: &Picture| {
+            // sub_80287D2: the name's cells and the window's colors.
+            w.tiles.fill(w.layout.name, 2 * NAME_CELLS, BLANK_8);
+            w.palettes[9] = a.frame_palettes.first().copied().unwrap_or([0; 16]);
+            w.tiles.put(w.layout.art, &picture.tiles);
+            w.palettes[10] = picture.palette;
+            // sub_802869E
+            w.tiles.fill(w.layout.code, 2, w.layout.detail_blank);
+            w.blank_element(a);
+            w.tiles.fill(w.layout.digits, 6, w.layout.detail_blank);
+        };
+        // (Drawn for nothing, the pointer away: the window empty, its frame
+        // in the standard colors, its ground where the picture goes.)
+        if cw.empty {
+            let standard = a.frame_palettes.first().copied().unwrap_or([0; 16]);
+            let ground = Picture { tiles: Tiles { pixels: vec![BLANK_8; a.pictures.ok.tiles.pixels.len()] }, palette: standard };
+            blank_details(self, &ground);
+            return;
+        }
+        match v.screen.slots[slot as usize].kind {
+            SlotKind::Chip { .. } | SlotKind::Offered(_) => {
+                let Some(c) = cw.last_chip else { return };
+                self.chip_details(v, c, text, problems);
+            }
+            SlotKind::Ok => {
+                let (p, key) = if cw.picks == 0 { (&a.pictures.ok, "ok") } else { (&a.pictures.ok_picked, "ok-picked") };
+                blank_details(self, p);
+                let letters = if cw.picks == 0 { &a.letters.pictures.ok } else { &a.letters.pictures.ok_picked };
+                self.help = Some((format!("pictures.{key}"), letters.clone()));
+            }
+            SlotKind::Button { button, .. } => {
+                if let Some(chip) = v.screen.slots[slot as usize].face {
+                    // EXE5's capsules (0x08024422): the chip's name and
+                    // picture alone; the frame's colors stay the last
+                    // drawn.
+                    self.chip_name_and_art(v, chip, text, problems);
+                    self.palettes[9] = self.frame_palette(v, cw.framed, problems);
+                    // sub_802869E
+                    self.tiles.fill(self.layout.code, 2, self.layout.detail_blank);
+                    self.blank_element(a);
+                    self.tiles.fill(self.layout.digits, 6, self.layout.detail_blank);
+                } else if let Some(look) = v.button_look(button) {
+                    // (EXE5's soul button, 0x08024540: its picture in its
+                    // first palette, a Chaos Unison's in its second, the
+                    // slot's +6, whatever its state.)
+                    let palette = if offers_form(v.b, v.screen, cw.slot) {
+                        v.b.offer(v.side).map_or(0, |o| o.alternate as usize)
+                    } else {
+                        0
+                    };
+                    blank_details(self, &look.details(palette));
+                    let name = saito_content_api::keys::local(&v.b.content.defs.button(button).name);
+                    // (The letters of the picture the look's is: the
+                    // version's own button's, else the game's.)
+                    let pack_name = &v.b.content.defs.button(button).name;
+                    let letters = if v.buttons.button(pack_name).is_some() { v.button_letters.button(pack_name) } else { a.letters.pictures.button(pack_name) };
+                    self.help = Some((format!("pictures.{name}"), letters.cloned()));
+                    // (The button's picture is marked where the caller
+                    // names the button: `button:NAME`.)
+                    let what = format!("button:{name}");
+                    if problems.wants(&what) {
+                        self.picture_mark = Some(what);
+                    }
+                    if look.pack.uses_digit {
+                        // 0x080245C8: the uses left (the button's first
+                        // cell's, +4) as the window was drawn, over the
+                        // damage's last cell.
+                        self.tiles.put_part(self.layout.digits + 4, &a.digits, 2 * (cw.uses as usize).min(9), 2);
+                    }
+                }
+            }
+            SlotKind::Empty | SlotKind::Hidden => {}
+        }
+    }
+
+    /// `sub_802869E`'s element cells, blank (a screen whose element icon is
+    /// a sprite has none: EXE4's, `CustomScreen::element_sprite`).
+    fn blank_element(&mut self, a: &CustomScreen) {
+        if a.element_sprite.is_none() {
+            self.tiles.fill(self.layout.element, 4, BLANK_7);
+        }
+    }
+
+    /// `sub_80284E2`: a chip's name (8 cells of the 8x16 font in the
+    /// window's colors), its picture and palette, the window's colors by
+    /// the chip's class, its code, its element's icon (and colors), and
+    /// its damage if it shows, right-aligned in three cells: "???" for a
+    /// chip that hides it as an A (`ChipTraits::HIDES_DAMAGE_AS_A`), and
+    /// for a chip of `damage_shown_variable` where the game's rule says so
+    /// (`custom_screen.variable_damage_shows`: EXE4's 0x0801FCE2).
+    fn chip_details(&mut self, v: &View, c: FolderChip, text: &TextSink, problems: &mut Problems) {
+        let a = v.assets;
+        let data = v.b.content.chip(c.id);
+        let what = format!("chip-window:{}", saito_content_api::keys::local(&v.b.content.defs.chip(c.id).key));
+        if problems.wants(&what) {
+            self.record_mark = Some(what);
+        }
+        self.chip_name_and_art(v, c.id, text, problems);
+        // The frame's colors by class, a dark chip's (of the first
+        // three classes) dark; the code's glyph, the element's icon.
+        self.palettes[9] = self.frame_palette(v, Some(c), problems);
+        let code = c.code.0.min(NO_CODE) as usize;
+        self.tiles.put_part(self.layout.code, &a.codes, 2 * code, 2);
+        if let Some(letter) = code_letter(c.code.0) {
+            self.codes.push((self.layout.code, 2, letter, false, code));
+        }
+        let family = data.family.0 as usize;
+        if family < a.element_colors.len() {
+            // (The frame with the icon over it, as the game's; in the
+            // sharp HUD, where the game's graphics draw the frame, the symbol on
+            // the frame's ground, the frame's drawing over it but for the
+            // symbol: `shape_frames`. The ground fills the square round the
+            // ring, as the window's own panel round it.)
+            let framed = text.draws_shapes() && a.shapes.element_frame.is_some() && !a.element_frame.is_empty();
+            if let Some(symbol) = framed.then(|| element_symbol(a, family)).flatten() {
+                self.tiles.put(self.layout.element, &symbol);
+            } else if let Some(icon) = a.element_icon(family) {
+                self.tiles.put(self.layout.element, &icon);
+            }
+            self.element_framed = framed.then_some(family);
+        }
+        let shows = data.flags.0 & (ChipFlags::HAS_DAMAGE | ChipFlags::DAMAGE_SHOWN_VARIABLE) != 0;
+        let digits: Vec<usize> = if !shows {
+            Vec::new()
+        } else if (data.traits.has(ChipTraits::HIDES_DAMAGE_AS_A) && c.code.0 == 0)
+            || (data.flags.0 & ChipFlags::DAMAGE_SHOWN_VARIABLE != 0
+                && v.b.content.rules().custom_screen.variable_damage_shows == VariableDamageShows::QuestionMarks)
+        {
+            // (The trait: the original compares the whole chip word,
+            // number and code, with Muramasa's number: only an A matches.)
+            vec![DIGIT_UNKNOWN; 3]
+        } else {
+            let damage = saito_battle::hand::chip_damage(v.b, Some(c.id), v.side);
+            damage.min(999).to_string().bytes().map(|d| (d - b'0') as usize).collect()
+        };
+        // With the sharp HUD the digits in the lettering font (`damage_item`),
+        // their cells blank.
+        let words: String = digits.iter().map(|&d| if d == DIGIT_UNKNOWN { '?' } else { char::from(b'0' + d as u8) }).collect();
+        if !words.is_empty()
+            && text.draws_numbers()
+            && crate::numbers::font().covers(&words)
+            && crate::lookups::letters(a.letters.digits.as_ref(), || "the chip window's damage digits".into(), problems).is_some()
+        {
+            self.tiles.fill(self.layout.digits, 6, self.layout.detail_blank);
+            self.damage = Some(words);
+            return;
+        }
+        let blanks = 3 - digits.len();
+        self.tiles.fill(self.layout.digits, 2 * blanks, self.layout.detail_blank);
+        for (i, &d) in digits.iter().enumerate() {
+            self.tiles.put_part(self.layout.digits + 2 * (blanks + i) as u16, &a.digits, 2 * d, 2);
+        }
+    }
+
+    /// The frame's colors (palette 9) for the chip that last set them: by
+    /// its class, a dark chip's (of the first three classes) dark; the
+    /// standard ones for none (OK's and a button's picture, `sub_80287D2`).
+    fn frame_palette(&self, v: &View, c: Option<FolderChip>, problems: &mut Problems) -> Palette {
+        let a = v.assets;
+        let frame = c.map_or(0, |c| crate::lookups::chip_window(a, &v.b.content, c.id, c.code.0, problems));
+        a.frame_palettes.get(frame).copied().unwrap_or([0; 16])
+    }
+
+    /// A chip's name (8 cells of the 8x16 font in the window's colors) and
+    /// its picture and palette: `sub_80284E2`'s first part, and all a
+    /// button's chip shows (EXE5's capsules, 0x08024422).
+    fn chip_name_and_art(&mut self, v: &View, chip: ChipHandle, text: &TextSink, problems: &mut Problems) {
+        let c = chip;
+        let data = v.b.content.chip(c);
+        let name = text.strings.chip_name(&v.b.content, c);
+        let glyphs = crate::lookups::chip_name(v.hud, &v.b.content, c, name, problems);
+        if text.takes(name, Role::FittedCell) {
+            // The name's cells in the window's color, the words on the
+            // text layer in all eight of them (nothing follows the name).
+            self.tiles.put(self.layout.name, &fonts::cell_text(v.hud, &[], NAME_CELLS, NAME_SHIFT));
+            self.name = Some((name.to_string(), NAME_CELLS));
+        } else {
+            self.tiles.put(self.layout.name, &fonts::cell_text(v.hud, &glyphs, NAME_CELLS, NAME_SHIFT));
+        }
+        // (The button chip's picture is its button's: EXE6's BeastOut's, the
+        // Beast's the navi goes into.)
+        let beast_out = v.b.roles().try_chip(saito_battle::content::ChipRole::ButtonChip) == Some(c);
+        // A chip whose palette no ROM holds has its definition's
+        // (`art_palette`). A version's own chip's picture is its own ROM's:
+        // a console of the other version shows its counterpart's. (The
+        // picture is marked where the caller names its chip: `chip:KEY`.)
+        let art = if beast_out {
+            view_look(v, ButtonView::ChipPicture).map(|b| (&b.picture, None))
+        } else {
+            crate::lookups::chip_art(&v.graphics, &v.b.content, c, problems).map(|art| (&art.picture, Some(art)))
+        };
+        if let Some((p, art)) = art {
+            self.tiles.put(self.layout.art, &p.tiles);
+            self.palettes[10] = if beast_out { p.palette } else { data.art_palette.unwrap_or(p.palette) };
+            let console_version = console_version(v.b, &v.graphics, v.side);
+            self.picture_known = match art {
+                Some(a) if a.version.as_deref().is_some_and(|g| g != console_version) => Some(crate::lookups::OTHER_VERSIONS_ART),
+                _ => None,
+            };
+            let what = format!("chip:{}", saito_content_api::keys::local(&v.b.content.defs.chip(c).key));
+            if art.is_some() && problems.wants(&what) {
+                self.picture_mark = Some(what);
+            }
+        }
+    }
+
+    /// `sub_8028250`: each slot's tiles, from tile 0xE1 on, as its kind
+    /// takes them; and `sub_80283C8`: the chip slots' icon palettes by
+    /// their state.
+    fn slots(&mut self, v: &View, problems: &mut Problems) {
+        let a = v.assets;
+        let mut at = self.layout.slots;
+        for (s, slot) in v.screen.slots.iter().enumerate() {
+            let state = state_number(slot.state);
+            match slot.kind {
+                SlotKind::Chip { .. } | SlotKind::Offered(_) => {
+                    let Some(c) = v.screen.look.slot_chips[s] else { continue };
+                    if v.screen.look.slot_picked[s] {
+                        self.tiles.put(at, &a.empty_icon);
+                        self.empty_icon_at(s);
+                    } else if let Some(icon) = v.icon(c, problems) {
+                        self.tiles.put(at, icon);
+                    }
+                    // sub_8028214: the code's glyph; the special codes
+                    // show blank.
+                    match c.code.0 {
+                        0x1B | 0x1C => self.tiles.fill(at + 4, 2, self.layout.slot_blank),
+                        code => {
+                            self.tiles.put_part(at + 4, &a.slot_codes, 2 * code.min(EMPTY_SLOT_CODE) as usize, 2);
+                            if let Some(letter) = code_letter(code) {
+                                self.codes.push((at + 4, 2, letter, true, code.min(EMPTY_SLOT_CODE) as usize));
+                            }
+                        }
+                    }
+                    at += 6;
+                }
+                SlotKind::Ok | SlotKind::Button { cell: ButtonCell::Right, .. } => {}
+                SlotKind::Button { button, .. } => {
+                    if let Some(chip) = slot.face {
+                        // A button that shows a chip (EXE5's capsules,
+                        // 0x08024114): a chip's slot, its icon the empty
+                        // one once it is used, its code blank.
+                        if slot.state == SlotState::Selected {
+                            self.tiles.put(at, &a.empty_icon);
+                            self.empty_icon_at(s);
+                        } else if let Some((icon, _)) = crate::lookups::chip_icon(&v.graphics, &v.b.content, chip, problems) {
+                            self.tiles.put(at, icon);
+                        }
+                        self.tiles.fill(at + 4, 2, self.layout.slot_blank);
+                        at += 6;
+                    } else if crate::lookups::button(a, v.buttons, &v.b.content, button, problems).is_some()
+                        && let Some(look) = v.button_look(button)
+                    {
+                        let name = v.b.content.defs.button(button).name.clone();
+                        let set = look.set(state) / look.count.max(1);
+                        match look.pack.place {
+                            // (At its own place: EXE4's UNITE button.)
+                            Some(p) => {
+                                self.placed_button(look.pack, p, set);
+                                let n = look.pack.width as usize * look.pack.height as usize;
+                                self.buttons_laid.push((p.first_tile, n, name, set));
+                                self.buttons.push((p.first_tile, n));
+                            }
+                            // (The slots after it start past its tiles; the
+                            // special slot is the last.)
+                            None => {
+                                self.tiles.put_part(at, &look.pack.tiles, look.set(state), look.count);
+                                self.buttons_laid.push((at, look.count, name, set));
+                                self.buttons.push((at, look.count));
+                                at += look.count as u16;
+                            }
+                        }
+                    }
+                }
+                SlotKind::Empty => {
+                    self.tiles.put(at, &a.empty_icon);
+                    self.empty_icon_at(s);
+                    self.tiles.put_part(at + 4, &a.slot_codes, 2 * EMPTY_SLOT_CODE as usize, 2);
+                    self.blank_plates.push(at + 4);
+                    at += 6;
+                }
+                // (The special slot's button's hidden look, if it has one;
+                // else the window's fill, as a hidden slot's.)
+                SlotKind::Hidden if s as u8 == SPECIAL_SLOT => match v.hidden_special() {
+                    Some((b, set, name)) => {
+                        let n = b.width as usize * b.height as usize;
+                        match b.place {
+                            Some(p) => {
+                                self.placed_button(b, p, set);
+                                self.buttons_laid.push((p.first_tile, n, name, set));
+                                self.buttons.push((p.first_tile, n));
+                            }
+                            None => {
+                                self.tiles.put_part(at, &b.tiles, n * set, n);
+                                self.buttons_laid.push((at, n, name, set));
+                                self.buttons.push((at, n));
+                            }
+                        }
+                    }
+                    None => self.tiles.fill(at, 6, self.layout.slot_blank),
+                },
+                SlotKind::Hidden => {
+                    self.tiles.fill(at, 6, self.layout.slot_blank);
+                    at += 6;
+                }
+            }
+        }
+        // The icons' palettes (the 2x2 icon cells of slots 0-9).
+        for s in 0..10usize {
+            let slot = v.screen.slots[s];
+            // (The empty icon in the game's graphics' palette for it: EXE4's 9.)
+            let empty = self.layout.empty_palette.unwrap_or(11);
+            let palette = match slot.kind {
+                SlotKind::Empty => empty,
+                SlotKind::Chip { .. } | SlotKind::Offered(_) if slot.state == SlotState::Unavailable => 12,
+                SlotKind::Chip { .. } | SlotKind::Offered(_) if v.screen.look.slot_picked[s] => empty,
+                SlotKind::Chip { .. } | SlotKind::Offered(_) => 11,
+                SlotKind::Ok => continue,
+                // (A button's chip: a chip's, 0x08024200.)
+                SlotKind::Button { .. } if slot.face.is_some() => {
+                    if slot.state == SlotState::Unavailable {
+                        12
+                    } else {
+                        11
+                    }
+                }
+                _ => 9,
+            };
+            let (x, y) = slot_cell(s);
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                self.map[(y + dy) * COLUMNS + x + dx].palette = palette;
+            }
+        }
+    }
+
+    /// Slot `s`'s icon cells (the first ten slots': `slots`' palettes'),
+    /// where its empty box was laid.
+    fn empty_icon_at(&mut self, s: usize) {
+        if s < HAND_SLOTS {
+            self.empty_icons.push(slot_cell(s));
+        }
+    }
+
+    /// The window's parts that read, each the box of its cells on the
+    /// screen as the window is at `place` (a block of `seat::Mirror`, moved
+    /// whole where the window is mirrored): the chip window (its runs, the
+    /// layout's tiles from the name's to the slots', with the box they are
+    /// drawn in: its rows and a row about them (none under it where a
+    /// label stands there), the window's columns but
+    /// its edge's before the picked column's, moved as the box, which is in
+    /// the middle of those columns, mirrors), or the form list's bars in
+    /// its place (EXE6's Cross window: its Crosses' faces and names upright
+    /// as the chip window's picture and name, in the box about them, which
+    /// mirrors), the hand (the slots' cells),
+    /// the buttons, OK (the cells its cursor's corners go about), the
+    /// labels (their letters' columns, where the graphics say them: EXE6's
+    /// CROSSSELECT tab's cells hold its arrow too, which mirrors), the
+    /// picked column's icons and the screen's own emblem. A part within one
+    /// before it goes with that one. Each part but the labels and the chip
+    /// window goes where what it draws mirrors (`ink`), as the frame about
+    /// it, mirrored pixel by pixel, has it.
+    fn upright(&self, v: &View, place: Placement) -> Vec<crate::seat::Block> {
+        let l = &self.layout;
+        // (Where the cells are as the window slides: its columns past the
+        // screen's left edge left of it, not wrapped as the layer wraps
+        // them, which the screen shows only once they are in.)
+        let rect = |[c0, r0, c1, r1]: [usize; 4]| Rect::new(8 * c0 as i32 - place.scroll as i32, 8 * r0 as i32, 8 * (c1 - c0) as i32, 8 * (r1 - r0) as i32);
+        let mut out: Vec<crate::seat::Block> = Vec::new();
+        let tiles_box = |tiles: std::ops::Range<u16>| self.block(tiles).map(|b| [b.col, b.row, b.col + b.w, b.row + b.h]);
+        // (A part laid in its cells with a margin of the frame about it is
+        // the box of what it draws, `ink`, which goes where its pixels
+        // mirror; the margin is the frame's, mirrored pixel by pixel.)
+        let inked = |cells: [usize; 4]| {
+            let r = rect(cells);
+            crate::seat::Block::whole(self.ink(cells).map_or(r, |[a, b]| Rect::new(r.x + a, r.y, b - a, r.h)))
+        };
+        if self.form_list.is_some() {
+            let [x0, y0] = l.form_names_at.map(usize::from);
+            let bars = [x0, y0, x0 + CustomScreen::FORM_NAME_COLUMNS, y0 + 2 * saito_battle::custom::screen::FORM_LIST_ENTRIES];
+            out.push(inked(bars));
+        } else if let Some([_, r0, _, r1]) = tiles_box(l.name..l.slots) {
+            // (The row under it, but where a label stands there: EXE6's
+            // CROSSSELECT tab, whose arrow mirrors with the frame.)
+            let labelled = v.assets.labels.iter().filter_map(|label| tiles_box(label.first..label.last + 1)).any(|[_, row, _, _]| row == r1);
+            let (r0, r1, right) = (r0.saturating_sub(1), (r1 + usize::from(!labelled)).min(ROWS), l.column_columns[0] as usize);
+            out.push(crate::seat::Block { area: rect([1, r0, right, r1]), frame: rect([0, r0, right, r1]) });
+        }
+        let mut boxes: Vec<crate::seat::Block> = Vec::new();
+        let (x0, y0) = slot_cell(0);
+        let (x1, y1) = slot_cell(HAND_SLOTS - 1);
+        boxes.push(inked([x0, y0, x1 + 2, y1 + 3]));
+        boxes.extend(self.buttons.iter().filter_map(|&(first, n)| tiles_box(first..first + n as u16)).map(inked));
+        boxes.push(inked(cursor_cells(&l.ok_cursor)));
+        for (k, label) in v.assets.labels.iter().enumerate() {
+            let Some(cells) = tiles_box(label.first..label.last + 1) else { continue };
+            let r = rect(cells);
+            boxes.push(crate::seat::Block::whole(match v.assets.letters.labels.get(k).and_then(Option::as_ref) {
+                Some(found) if cells[3] - cells[1] == 1 => {
+                    let [from, to] = found.letters.span.map(i32::from);
+                    Rect::new(r.x + from, r.y, to - from, r.h)
+                }
+                _ => r,
+            }));
+        }
+        boxes.extend(tiles_box(l.column_icons..l.column_icons + 4 * 5).map(inked));
+        if let Some(e) = &v.assets.window_emblem {
+            boxes.push(inked([e.x as usize, e.y as usize, e.x as usize + e.width as usize, e.y as usize + e.height as usize]));
+        }
+        for b in boxes {
+            let (mx, my) = (b.area.x + b.area.w / 2, b.area.y + b.area.h / 2);
+            if !out.iter().any(|o| (o.area.x..o.area.x + o.area.w).contains(&mx) && (o.area.y..o.area.y + o.area.h).contains(&my)) {
+                out.push(b);
+            }
+        }
+        out
+    }
+
+    /// The color the window's map draws at pixel (x, y) of the window (none:
+    /// a clear pixel).
+    fn color_at(&self, x: usize, y: usize) -> Option<u16> {
+        let e = self.map[(y / 8) * COLUMNS + x / 8];
+        let (tx, ty) = (if e.hflip { 7 - x % 8 } else { x % 8 }, if e.vflip { 7 - y % 8 } else { y % 8 });
+        let index = self.tiles.tile(e.tile)[ty * 8 + tx];
+        (index != 0).then(|| self.palettes[e.palette as usize & 15][index as usize])
+    }
+
+    /// What the window's map draws in cells `[c0, r0, c1, r1]` (the first
+    /// column and row, one past the last): its columns but those at either
+    /// side that only carry on what is above or below the cells (one color
+    /// top to bottom, the pixel's over or under them: the ground they are
+    /// laid on, a line of the frame through them), as pixels from the cells'
+    /// left; none where all do. A part laid in its cells with a margin of
+    /// the frame (OK's cells about it, 1 pixel to its left and none to its
+    /// right; EXE6's Beast Out button's, with the picked column's edge) is
+    /// the box of what it draws.
+    fn ink(&self, [c0, r0, c1, r1]: [usize; 4]) -> Option<[i32; 2]> {
+        let (rows, x0, x1) = (8 * r0..8 * r1.min(ROWS), 8 * c0, 8 * c1.min(COLUMNS));
+        let about = [rows.start.checked_sub(1), Some(rows.end).filter(|&y| y < 8 * ROWS)];
+        let margin = |x: usize| {
+            let c = self.color_at(x, rows.start);
+            rows.clone().all(|y| self.color_at(x, y) == c) && about.iter().flatten().any(|&y| self.color_at(x, y) == c)
+        };
+        let a = (x0..x1).find(|&x| !margin(x))?;
+        let b = (x0..x1).rev().find(|&x| !margin(x))? + 1;
+        Some([(a - x0) as i32, (b - x0) as i32])
+    }
+
+    /// The picked chips' column: the icons the screen copied in
+    /// (`sub_80281D4`), and the cells' frames (`sub_8029CD4`).
+    fn column(&mut self, v: &View, problems: &mut Problems) {
+        let a = v.assets;
+        let picks = v.screen.selection();
+        for i in 0..5usize {
+            let at = self.layout.column_icons + 4 * i as u16;
+            let icon = match v.screen.look.column[i] {
+                Some(c) => v.icon(c, problems).map(|t| (t, 0)),
+                // The offered form, given for a chip: its icon (EXE5's
+                // soul's, 0x0802341C).
+                None if picks.get(i) == Some(&SPECIAL_SLOT) => offered_icon(v),
+                None => None,
+            };
+            if icon.is_none() {
+                self.empty_icons.push((self.layout.column_columns[0] as usize + 1, self.layout.column_row as usize + 2 * i));
+            }
+            let (tiles, first) = icon.unwrap_or((&a.empty_icon, 0));
+            self.tiles.put_part(at, tiles, first, 4);
+            let filled = (i < picks.len() || v.screen.look.column_kept == Some(i as u8)) as u16;
+            let tile = self.layout.column_cells + 2 * filled;
+            let [left, right] = self.layout.column_columns.map(usize::from);
+            let row = self.layout.column_row as usize + 2 * i;
+            for (x, hflip) in [(left, false), (right, true)] {
+                self.map[row * COLUMNS + x] = MapEntry { tile, hflip, vflip: false, palette: 9 };
+                self.map[(row + 1) * COLUMNS + x] = MapEntry { tile: tile + 1, hflip, vflip: false, palette: 9 };
+            }
+            // (An empty cell's icon in the empty icon's palette, where the
+            // pack has one: EXE4's 0x0801FB6E.)
+            if let Some(p) = self.layout.empty_palette.filter(|_| filled == 0) {
+                for (x, y) in [(left + 1, row), (left + 2, row), (left + 1, row + 1), (left + 2, row + 1)] {
+                    self.map[y * COLUMNS + x].palette = p;
+                }
+            }
+        }
+    }
+
+    /// Draw window columns `from..to` on the layer, scrolled (but the cells
+    /// drawn as shapes: `shape_frames`).
+    fn draw(&self, layer: &mut Layer, place: Placement) {
+        self.draw_where(layer, place, 0, |_, _| true);
+    }
+
+    /// [`draw`](Self::draw) `dy` pixels down, only the pixels whose places
+    /// on the screen `keep` keeps.
+    fn draw_where(&self, layer: &mut Layer, place: Placement, dy: i32, keep: impl Fn(i32, i32) -> bool) {
+        for y in 0..ROWS {
+            for x in place.from..place.to {
+                if self.drawn_cells[y * COLUMNS + x] {
+                    continue;
+                }
+                let e = self.map[y * COLUMNS + x];
+                let Some(px) = screen_x(x as i32, place.scroll) else { continue };
+                let past_ranged = e.palette & 15 >= 14;
+                layer.draw_tile_where(self.tiles.tile(e.tile), &self.palettes[e.palette as usize & 15], past_ranged, px, 8 * y as i32 + dy, e.hflip, e.vflip, &keep);
+            }
+        }
+    }
+
+    /// The chip window's picture, where it shows, as a known difference.
+    fn known_picture(&self, place: Placement, why: &'static str, problems: &mut Problems) {
+        self.known_tiles(place, self.layout.art..self.layout.art + PICTURE_TILES, why, problems);
+    }
+
+    /// The icons of the other version's chips (`lookups::other_versions_icon`)
+    /// in the slots and the picked chips' column, where they show, as known
+    /// differences.
+    fn known_icons(&self, v: &View, place: Placement, problems: &mut Problems) {
+        let other = |c: FolderChip| crate::lookups::other_versions_icon(&v.graphics, v.b, c.id);
+        for (s, slot) in v.screen.slots.iter().enumerate().take(10) {
+            let shown = matches!(slot.kind, SlotKind::Chip { .. } | SlotKind::Offered(_)) && !v.screen.look.slot_picked[s];
+            if shown && v.screen.look.slot_chips[s].is_some_and(other) {
+                // (The slot's 2x2 icon cells: `slots`.)
+                let first = self.map[(13 + 3 * (s / 5)) * COLUMNS + 1 + 2 * (s % 5)].tile;
+                self.known_tiles(place, first..first + 4, crate::lookups::OTHER_VERSIONS_ART, problems);
+            }
+        }
+        for i in 0..5usize {
+            if v.screen.look.column[i].is_some_and(other) {
+                let first = self.layout.column_icons + 4 * i as u16;
+                self.known_tiles(place, first..first + 4, crate::lookups::OTHER_VERSIONS_ART, problems);
+            }
+        }
+    }
+
+    /// The chips' icons in the slots and the picked chips' column, where
+    /// they show, marked for the caller that asks for a chip's
+    /// (`lookups::chip_icon_mark`).
+    fn mark_icons(&self, v: &View, place: Placement, problems: &mut Problems) {
+        if problems.marking.is_empty() {
+            return;
+        }
+        let mut cells: Vec<(u16, String)> = Vec::new();
+        for (s, slot) in v.screen.slots.iter().enumerate().take(10) {
+            let shown = matches!(slot.kind, SlotKind::Chip { .. } | SlotKind::Offered(_)) && !v.screen.look.slot_picked[s];
+            if let (true, Some(c)) = (shown, v.screen.look.slot_chips[s]) {
+                // (The slot's 2x2 icon cells: `slots`.)
+                cells.push((self.map[(13 + 3 * (s / 5)) * COLUMNS + 1 + 2 * (s % 5)].tile, crate::lookups::chip_icon_mark(&v.b.content, c.id)));
+            }
+        }
+        for i in 0..5usize {
+            if let Some(c) = v.screen.look.column[i] {
+                cells.push((self.layout.column_icons + 4 * i as u16, crate::lookups::chip_icon_mark(&v.b.content, c.id)));
+            }
+        }
+        for (first, what) in cells {
+            if problems.wants(&what)
+                && let Some(rect) = self.tiles_rect(place, first..first + 4)
+            {
+                problems.mark(rect, what);
+            }
+        }
+    }
+
+    /// The window's cells that show `tiles` of its block, where they show,
+    /// as a known difference.
+    fn known_tiles(&self, place: Placement, tiles: std::ops::Range<u16>, why: &'static str, problems: &mut Problems) {
+        if let Some([x0, y0, x1, y1]) = self.tiles_rect(place, tiles) {
+            problems.known(x0, y0, x1 - x0, y1 - y0, why);
+        }
+    }
+
+    /// Where the window's cells that show `tiles` of its block are, on the
+    /// screen (none: none shows).
+    /// The rectangles of the layer's cells on screen that `drawn` picks
+    /// (by their map entry), a run of neighbors in a row each.
+    fn cells_rects(&self, place: Placement, drawn: impl Fn(&MapEntry) -> bool) -> Vec<[i32; 4]> {
+        let mut out = Vec::new();
+        for y in 0..ROWS {
+            let mut run: Option<[i32; 4]> = None;
+            for x in place.from..place.to {
+                let px = screen_x(x as i32, place.scroll).filter(|_| drawn(&self.map[y * COLUMNS + x]));
+                match (px, run.as_mut()) {
+                    (Some(px), Some(r)) if r[2] == px => r[2] = px + 8,
+                    (Some(px), _) => {
+                        out.extend(run.take());
+                        run = Some([px, 8 * y as i32, px + 8, 8 * y as i32 + 8]);
+                    }
+                    (None, _) => out.extend(run.take()),
+                }
+            }
+            out.extend(run);
+        }
+        out.into_iter()
+            .map(|[x0, y0, x1, y1]| [x0.max(0), y0, x1.min(240), y1])
+            .filter(|r| r[0] < r[2])
+            .collect()
+    }
+
+    fn tiles_rect(&self, place: Placement, tiles: std::ops::Range<u16>) -> Option<[i32; 4]> {
+        let mut rect: Option<[i32; 4]> = None;
+        for y in 0..ROWS {
+            for x in place.from..place.to {
+                if !tiles.contains(&self.map[y * COLUMNS + x].tile) {
+                    continue;
+                }
+                let Some(px) = screen_x(x as i32, place.scroll) else { continue };
+                let py = 8 * y as i32;
+                rect = Some(match rect {
+                    None => [px, py, px + 8, py + 8],
+                    Some(r) => [r[0].min(px), r[1].min(py), r[2].max(px + 8), r[3].max(py + 8)],
+                });
+            }
+        }
+        let [x0, y0, x1, y1] = rect?;
+        let (x0, x1) = (x0.max(0), x1.min(240));
+        (x0 < x1).then_some([x0, y0, x1, y1])
+    }
+
+    /// Draw a tile of the layer's character block at a cell of the layer.
+    fn cell(&self, layer: &mut Layer, e: MapEntry, col: i32, row: i32, scroll: u32) {
+        if let Some(px) = screen_x(col, scroll) {
+            let past_ranged = e.palette & 15 >= 14;
+            layer.draw_tile_past(self.tiles.tile(e.tile), &self.palettes[e.palette as usize & 15], past_ranged, px, 8 * row, e.hflip, e.vflip);
+        }
+    }
+
+    /// The chip window's name on the text layer (the sharp text): over the
+    /// name's cells where the window's map puts them, in their palette's
+    /// colors from 8 (`NAME_SHIFT`), cut to the window's columns on the
+    /// layer.
+    fn name_item(&self, text: &mut TextSink, place: Placement) {
+        let Some((name, cells)) = &self.name else { return };
+        let Some(i) = self.map.iter().position(|e| e.tile == self.layout.name) else { return };
+        let (col, row) = (i % COLUMNS, i / COLUMNS);
+        let palette = &self.palettes[self.map[i].palette as usize & 15];
+        let shift = NAME_SHIFT as usize;
+        // The cells the window shows, and where: the string sits where its
+        // last shown cell puts it (sliding in, its first cells are still
+        // past the screen's left edge, which the layer wraps to its right).
+        let shown: Vec<(usize, i32)> =
+            (col..col + cells).filter(|c| (place.from..place.to).contains(c)).filter_map(|c| Some((c, screen_x(c as i32, place.scroll)?))).collect();
+        let Some(&(last, last_x)) = shown.last() else { return };
+        let x = last_x - 8 * (last - col) as i32;
+        let along: Vec<i32> = shown.iter().filter(|&&(c, px)| px == x + 8 * (c - col) as i32).map(|&(_, px)| px).collect();
+        let (Some(&x0), Some(&x1)) = (along.first(), along.last()) else { return };
+        let item = TextItem::new(name.as_str(), Role::FittedCell, Rect::new(x, 8 * row as i32, 8 * *cells as i32, 16), palette[1 + shift], Some(palette[2 + shift]));
+        let clip = Rect::new(x0, 0, x1 + 8 - x0, crate::compose::HEIGHT as i32);
+        let past_ranged = self.map[i].palette & 15 >= 14;
+        text.push(Plane::Hud, TextItem { clip, past_ranged, ..item });
+    }
+
+    /// Where columns `col..col + cells` of the window are on the screen: the
+    /// first's place (sliding in, past the screen's left edge, which the
+    /// layer wraps to its right), and a clip to those it shows.
+    fn columns_at(&self, col: usize, cells: usize, place: Placement) -> Option<(i32, Rect)> {
+        Self::columns_at_place(col, cells, place)
+    }
+
+    /// [`columns_at`](Self::columns_at) of any window.
+    fn columns_at_place(col: usize, cells: usize, place: Placement) -> Option<(i32, Rect)> {
+        let shown: Vec<(usize, i32)> =
+            (col..col + cells).filter(|c| (place.from..place.to).contains(c)).filter_map(|c| Some((c, screen_x(c as i32, place.scroll)?))).collect();
+        let &(last, last_x) = shown.last()?;
+        let x = last_x - 8 * (last - col) as i32;
+        let along: Vec<i32> = shown.iter().filter(|&&(c, px)| px == x + 8 * (c - col) as i32).map(|&(_, px)| px).collect();
+        let (&x0, &x1) = (along.first()?, along.last()?);
+        Some((x, Rect::new(x0, 0, x1 + 8 - x0, crate::compose::HEIGHT as i32)))
+    }
+
+    /// The window's cells that show `tiles` of its block (a picture, the
+    /// damage's digits), where the map puts them.
+    fn block(&self, tiles: std::ops::Range<u16>) -> Option<Block> {
+        let cells: Vec<(usize, usize, MapEntry)> =
+            self.map.iter().enumerate().filter(|(_, e)| tiles.contains(&e.tile)).map(|(i, e)| (i % COLUMNS, i / COLUMNS, *e)).collect();
+        let (col, row) = (cells.iter().map(|c| c.0).min()?, cells.iter().map(|c| c.1).min()?);
+        let w = cells.iter().map(|c| c.0).max()? + 1 - col;
+        let h = cells.iter().map(|c| c.1).max()? + 1 - row;
+        let palette = cells[0].2.palette;
+        Some(Block { col, row, w, h, palette })
+    }
+
+    /// With the sharp HUD, the chip window's lettered picture's words
+    /// (`help`), if the strings have them for its title and its words and
+    /// the lettering font draws them: each line of the picture (`lettering::
+    /// lines`) the words' line in its place and its color, the title's
+    /// bold and narrowed as the game's display letters, and the picture's
+    /// letters taken off its tiles, each pixel its panel's or its frame's
+    /// color, as the window fills a blank name cell with its own. The
+    /// picture stays where the lines don't match the words'.
+    fn letter_help(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
+        let Some((key, letters)) = self.help.clone() else { return };
+        let line = |part: &str| text.strings.lettering(&v.b.content, &format!("{key}.{part}"));
+        let (Some(title), Some(words)) = (line("title"), line("words")) else { return };
+        let what = || format!("the chip window's picture {key:?}");
+        if !text.lettering_in(&format!("{title}\n{words}"), LetteringFont::Display, what, problems) {
+            return;
+        }
+        let Some(found) = crate::lookups::letters(letters.as_ref(), what, problems) else { return };
+        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let palette = self.palettes[block.palette as usize & 15];
+        let wanted: Vec<(&str, bool)> = title.lines().map(|l| (l, true)).chain(words.lines().map(|l| (l, false))).collect();
+        if found.lines.len() != wanted.len() {
+            problems.note(format!("{}: {} lines of letters, its words {}, so it stays a picture", what(), found.lines.len(), wanted.len()));
+            return;
+        }
+        // (Its tiles with the letters taken off: its panel's or its
+        // frame's color where they were.)
+        self.tiles.put(self.layout.art, &found.blank);
+        // (Drawn as shapes where the game's graphics have its drawing: the language's
+        // own, else the game's.)
+        if text.draws_shapes() {
+            let name = key.trim_start_matches("pictures.");
+            let own = format!("{name}-{}", v.hud.language());
+            let find = |n: &str| v.assets.shapes.pictures.iter().find(|(k, _)| k == n).map(|(_, d)| d);
+            if let Some(d) = find(&own).or_else(|| find(name)).filter(|d| [8 * block.w, 8 * block.h] == [d.size[0] as usize, d.size[1] as usize]) {
+                let drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+                self.shapes.push((block.col, block.row, block.w, crate::shapes::item(drawn, (0, 0), (8 * block.w as i32, 8 * block.h as i32))));
+                for c in block.col..block.col + block.w {
+                    for r in block.row..block.row + block.h {
+                        self.drawn_cells[r * COLUMNS + c] = true;
+                    }
+                }
+            }
+        }
+        self.help_lines = found
+            .lines
+            .iter()
+            .zip(wanted)
+            .map(|(line, (words, title))| {
+                let (top, baseline) = (line.top as i32, line.baseline as i32);
+                let cap = (baseline - top).clamp(1, 16) as u8;
+                let lettering = if title { Lettering::wide(0, cap) } else { Lettering { weight: HELP_WEIGHT, ..Lettering::wide(0, cap) } };
+                let rect = Rect::new(line.span[0] as i32, top, line.span[1] as i32 - line.span[0] as i32, cap as i32 + 2);
+                let color = palette[line.color as usize & 15] & 0x7FFF;
+                TextItem { align: Align::Center, ..TextItem::new(words, Role::Lettering(lettering), rect, color, None) }
+            })
+            .collect();
+    }
+
+    /// The help picture's lines (`letter_help`) where the window shows them.
+    fn help_items(&self, text: &mut TextSink, place: Placement) {
+        if self.help_lines.is_empty() {
+            return;
+        }
+        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
+        let past_ranged = block.palette & 15 >= 14;
+        for item in &self.help_lines {
+            let rect = item.rect.offset(x, 8 * block.row as i32);
+            text.push(Plane::Hud, TextItem { rect, clip, past_ranged, ..item.clone() });
+        }
+    }
+
+    /// The damage's digits in the numbers' font (the sharp HUD's:
+    /// `damage`), in their glyphs' look, laid as every number is
+    /// (`numbers::laid`), ending where the original's last digit does.
+    fn damage_item(&self, v: &View, text: &mut TextSink, place: Placement) {
+        let Some(words) = &self.damage else { return };
+        let Some(block) = self.block(self.layout.digits..self.layout.digits + 6) else { return };
+        let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
+        let Some(digits) = v.assets.letters.digits.as_ref() else { return };
+        let set = crate::numbers::NumberSet::of(digits, &self.palettes[block.palette as usize & 15]);
+        let end = crate::numbers::picture_span(&set, x + 8 * block.w as i32 - crate::numbers::CELL, 1).1;
+        let Some((items, _)) = crate::numbers::laid(text, &[(words.clone(), &set)], 8 * block.row as i32, crate::numbers::Anchor::Right(end)) else { return };
+        let past_ranged = block.palette & 15 >= 14;
+        for item in items {
+            text.push(Plane::Hud, TextItem { clip, past_ranged, ..item });
+        }
+    }
+}
+
+/// Where words stand in their box, as the picture's letters stand in theirs.
+pub(crate) fn align_of(a: saito_assets::letters::TextAlign) -> Align {
+    match a {
+        saito_assets::letters::TextAlign::Left => Align::Left,
+        saito_assets::letters::TextAlign::Center => Align::Center,
+        saito_assets::letters::TextAlign::Right => Align::Right,
+    }
+}
+
+/// A chip code's letter: A to Z, then `*` (none for the special codes past
+/// it).
+fn code_letter(code: u8) -> Option<char> {
+    match code {
+        0..26 => Some(char::from(b'A' + code)),
+        26 => Some('*'),
+        _ => None,
+    }
+}
+
+/// The font of the form list's names (EXE6's Crosses'), in both languages,
+/// and its weight.
+pub(crate) const CROSS_NAME_FONT: LetteringFont = LetteringFont::Text;
+const CROSS_NAME_WEIGHT: u16 = 900;
+
+/// The weight of the help pictures' words (their title's is the display
+/// lettering's): the game's small letters are thin.
+const HELP_WEIGHT: u16 = 500;
+
+/// Cells of the window's map that show a block of its tiles: their first
+/// column and row, how many columns and rows they span, and their palette
+/// (the first's).
+struct Block {
+    col: usize,
+    row: usize,
+    w: usize,
+    h: usize,
+    palette: u8,
+}
+
+/// Where a column of the 256-pixel layer is on the screen, scrolled, as a
+/// signed place (past the left edge is negative).
+fn layer_x(col: i32, scroll: u32) -> i32 {
+    let px = (8 * col - scroll as i32).rem_euclid(256);
+    if px >= 240 { px - 256 } else { px }
+}
+
+/// Where a column of the 256-pixel layer shows, scrolled: what scrolls off
+/// the left comes back on the right, past the screen's edge.
+fn screen_x(col: i32, scroll: u32) -> Option<i32> {
+    let px = (8 * col - scroll as i32).rem_euclid(256);
+    match px {
+        248.. => Some(px - 256),
+        240.. => None,
+        _ => Some(px),
+    }
+}
+
+/// The enemy names (`sub_801E574` renders them, HUD task 13 shows them):
+/// on the round's first screen, once the window is in, until it slides out
+/// or hides. Each name's 9 cells of the 8x16 font on BG0 end at column 30,
+/// on a bar on the HUD layer (`sub_801E4F4`: its slanted end, then a cell
+/// a glyph).
+fn names_shown(b: &Battle, s: &Screen, layer: Option<&ScreenLayer>) -> bool {
+    b.round.turn == 1
+        && layer.and_then(|l| l.hidden()) != Some(HiddenStage::Waiting)
+        && !matches!(s.phase, Phase::Opening { .. } | Phase::Closing { tick: 1.. } | Phase::ProgramAdvance { .. } | Phase::Sending { .. })
+}
+
+/// Returns the names' box on the screen (their cells to its right edge).
+fn draw_names(v: &View, w: &Window, hud_layer: &mut Layer, names_layer: &mut Layer, text: &mut TextSink, problems: &mut Problems) -> Rect {
+    let side = (v.side ^ 1) as usize;
+    let other = v.b.stats[side].navi;
+    // (Its variant name when its side's rules ask: EXE5's Hub Style in a link
+    // battle, 0x0801AE3A's NameID 0xEA.)
+    let variant = if v.b.looks[side].name_variant { text.strings.navi_variant_name(&v.b.content, other) } else { None };
+    let name = variant.unwrap_or_else(|| text.strings.navi_name(&v.b.content, other));
+    let glyphs = crate::lookups::navi_name(v.hud, other, variant.is_some(), name, problems);
+    // (On the text layer as wide as the name is, which still ends at column
+    // 30: right-aligned in its cells.)
+    let len = if text.takes(name, Role::FittedCell) { fonts::box_cells(text, name, glyphs.len(), Role::FittedCell) } else { glyphs.len() };
+    let name_col = 0x1E - len as i32;
+    let palette = &w.palettes[13];
+    // The bar: the slanted end, then one cell a glyph (eight at most; a
+    // ninth glyph has bar cells from column 21 on, no end). In the enhanced
+    // mode drawn as shapes where the game's graphics have its drawings, under the name.
+    let bar = |tile: u16| MapEntry { tile, hflip: false, vflip: false, palette: 13 };
+    let cells = len.min(8);
+    let mut col = 0x1D - cells as i32;
+    let drawn = (text.draws_shapes() && v.assets.shapes.name_bar.len() >= 2).then_some(&v.assets.shapes.name_bar);
+    let piece = |text: &mut TextSink, d: &saito_assets::shapes::Drawing, col: i32| {
+        let item = crate::shapes::item(crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None), (layer_x(col, 0), 0), (8, 16));
+        text.push(Plane::Hud, item);
+    };
+    if len < ENEMY_NAME_CELLS {
+        match drawn {
+            Some(d) => piece(text, &d[0], col),
+            None => {
+                w.cell(hud_layer, bar(w.layout.name_bar), col, 0, 0);
+                w.cell(hud_layer, bar(w.layout.name_bar + 1), col, 1, 0);
+            }
+        }
+        col += 1;
+    }
+    let n = if len < ENEMY_NAME_CELLS { len } else { ENEMY_NAME_CELLS };
+    for k in 0..n as i32 {
+        match drawn {
+            Some(d) => piece(text, &d[1], col + k),
+            None => {
+                w.cell(hud_layer, bar(w.layout.name_bar + 2), col + k, 0, 0);
+                w.cell(hud_layer, bar(w.layout.name_bar + 3), col + k, 1, 0);
+            }
+        }
+    }
+    fonts::layer_text(text, Plane::Bg0, names_layer, v.hud, name, &glyphs, ENEMY_NAME_CELLS, palette, (8 * name_col, 0), (Role::FittedCell, Align::Right));
+    Rect::new(8 * name_col, 0, crate::compose::WIDTH as i32 - 8 * name_col, 16)
+}
+
+/// The cursor's corners (`sub_8028820`): where its slot's frame is
+/// (`jt_802886C`'s routines, less 3) and the four 8x8 corners in each of
+/// its two frames (`byte_80288B0` and the others: y, x, flips). OK's and a
+/// button's are the game's (`CustomLayout::ok_cursor`,
+/// `ButtonPictures::cursor`: EXE5's sit otherwise).
+#[derive(Clone, Copy)]
+struct CursorShape {
+    corners: [[(i32, i32, bool, bool); 4]; 2],
+}
+
+const CHIP_CURSOR: CursorShape = CursorShape {
+    corners: [
+        [(0, 0, false, false), (0, 0xE, true, false), (0xE, 0xE, true, true), (0xE, 0, false, true)],
+        [(1, 1, false, false), (1, 0xC, true, false), (0xC, 0xC, true, true), (0xC, 1, false, true)],
+    ],
+};
+
+/// The slots of the hand (`slots`' first ten: two rows of five), and where
+/// slot `s`'s cells start (its icon's top left; its code under it, two rows
+/// in all and a row apart from the next).
+const HAND_SLOTS: usize = 10;
+
+fn slot_cell(s: usize) -> (usize, usize) {
+    (1 + 2 * (s % 5), 13 + 3 * (s / 5))
+}
+
+/// The cells a cursor at `p` goes about (its corners sit 3 pixels out from
+/// the place's edges), to the nearest cell edges: their first column and
+/// row, one past their last.
+fn cursor_cells(p: &saito_assets::CursorPlace) -> [usize; 4] {
+    let (x, y, shape) = cursor_at(p);
+    shape_box(x, y, &shape).map(|v| (v / 8) as usize)
+}
+
+/// The box of cells a cursor of `shape` at `(x, y)` goes about, in pixels
+/// (`cursor_cells`'s): left, top, right, bottom.
+fn shape_box(x: i32, y: i32, shape: &CursorShape) -> [i32; 4] {
+    let corners = &shape.corners[0];
+    let xs = corners.iter().map(|c| x - 3 + c.1);
+    let ys = corners.iter().map(|c| y - 3 + c.0);
+    let edge = |v: i32| 8 * (v + 4).div_euclid(8).max(0);
+    let (x0, x1) = (xs.clone().min().unwrap_or(0) + 3, xs.max().unwrap_or(0) + 8 - 3);
+    let (y0, y1) = (ys.clone().min().unwrap_or(0) + 3, ys.max().unwrap_or(0) + 8 - 3);
+    [edge(x0), edge(y0), edge(x1), edge(y1)]
+}
+
+/// Where a pointer finds what it can do on a side's screen (its layer's
+/// `Target`s), in the original's 240 by 160 pixels, from where the screen
+/// draws its cursor and those parts: each slot the cursor goes to, a chip's
+/// whole cell edge to edge (a button in the slots' run too), OK and a
+/// button at a place of its own about its cursor's cells (a button two
+/// cells wide halved); the column's picks; the form list's tab (the window
+/// label its rules name, where the window's map shows it) and, while its
+/// window is up, its entries and its exit label (the rules' too) alone,
+/// each entry's row as wide as the exit label (the window's frame either
+/// side with it), so that a click on none of them is off the window. None
+/// while the window isn't at rest.
+fn targets(v: &View, w: &Window, place: Placement) -> Vec<(Target, Rect)> {
+    let mut out = Vec::new();
+    if place.scroll != 0 || place.from != 0 || place.to != COLUMNS {
+        return out;
+    }
+    let a = v.assets;
+    let rect = |[x0, y0, x1, y1]: [i32; 4]| Rect::new(x0, y0, x1 - x0, y1 - y0);
+    let rules = v.b.content.rules().custom_screen.form_list.as_ref();
+    // (A window label the rules name, where the window's map shows it: the
+    // box of its tiles' cells.)
+    let label = |name: Option<&str>| {
+        let name = name?;
+        let drawn = a.labels.iter().filter(|l| l.name == name).filter_map(|l| w.tiles_rect(place, l.first..l.last + 1));
+        drawn.reduce(|r, s| [r[0].min(s[0]), r[1].min(s[1]), r[2].max(s[2]), r[3].max(s[3])]).map(rect)
+    };
+    if let Some(r) = label(rules.and_then(|r| r.tab.as_deref())) {
+        out.push((Target::FormTab, r));
+    }
+    if let Some(stage) = v.layer.and_then(|l| l.list_stage()) {
+        if let (ListStage::Up(_), Some(list)) = (stage, v.b.form_list(v.side)) {
+            let [x0, y0] = w.layout.form_names_at.map(i32::from);
+            let exit = label(rules.and_then(|r| r.exit.as_deref()));
+            let (left, width) = exit.map_or((8 * x0, 8 * 9), |r| (r.x, r.w));
+            for k in 0..list.count.min(5) {
+                out.push((Target::Form(k), Rect::new(left, 8 * (y0 + 2 * k as i32), width, 16)));
+            }
+            if let Some(r) = exit {
+                out.push((Target::FormExit, r));
+            }
+        }
+        return out;
+    }
+    for (s, slot) in v.screen.slots.iter().enumerate() {
+        if slot.kind.is_absent() {
+            continue;
+        }
+        let (x, y, shape, chip) = cursor_place(v, a, s as u8);
+        let own_place = match slot.kind {
+            SlotKind::Button { button, .. } => v.button_look(button).is_some_and(|l| l.pack.place.is_some()),
+            _ => false,
+        };
+        let r = if chip || (s < HAND_SLOTS && !own_place) {
+            let (x, y) = (16 * (s % 5) as i32 + 8, 0x68 + 0x18 * (s / 5) as i32);
+            [x, y, x + 16, y + 24]
+        } else {
+            let [x0, y0, x1, y1] = shape_box(x, y, &shape);
+            let mid = (x0 + x1) / 2;
+            match slot.kind {
+                SlotKind::Button { cell: ButtonCell::Left, .. } => [x0, y0, mid, y1],
+                SlotKind::Button { cell: ButtonCell::Right, .. } => [mid, y0, x1, y1],
+                _ => [x0, y0, x1, y1],
+            }
+        };
+        out.push((Target::Slot(s as u8), rect(r)));
+    }
+    let [left, right] = w.layout.column_columns.map(i32::from);
+    let row = w.layout.column_row as i32;
+    for k in 0..v.screen.selection().len().min(5) {
+        out.push((Target::Pick(k as u8), Rect::new(8 * left, 8 * (row + 2 * k as i32), 8 * (right + 1 - left), 16)));
+    }
+    out
+}
+
+/// The cursor at a place the graphics give (OK's, a button's).
+fn cursor_at(p: &saito_assets::CursorPlace) -> (i32, i32, CursorShape) {
+    let corners = p.corners.map(|frame| frame.map(|(y, x, h, v)| (y as i32, x as i32, h, v)));
+    (p.x as i32, p.y as i32, CursorShape { corners })
+}
+
+/// `sub_80289E4`: the form list window's cursor, a box around the form
+/// under it: four corners, then seven edge pieces above and below
+/// (`byte_8028A30`: y, x, flips), in sprite palette 14.
+fn form_list_cursor_parts<'a>(v: &View, a: &'a CustomScreen, frame: u8) -> Vec<SpritePart<'a>> {
+    let cursor = v.layer.map_or(0, |l| l.list_cursor);
+    let (x, y) = (5, 5 + 16 * cursor as i32);
+    let corners = [(2, 3, false, false), (2, 0x43, true, false), (0xC, 0x43, true, true), (0xC, 3, false, true)];
+    let edges = (0..7).map(|i| (2, 0xB + 8 * i, false, false)).chain((0..7).map(|i| (0xC, 0xB + 8 * i, false, true)));
+    let pieces = corners.into_iter().map(|c| (c, 0)).chain(edges.map(|e| (e, 1)));
+    let palette = a.form_list_cursor_palette;
+    pieces
+        .map(|((dy, dx, hflip, vflip), edge)| SpritePart {
+            x: x + dx,
+            y: y + dy,
+            width: 8,
+            height: 8,
+            tiles: &a.form_list_cursor,
+            first_tile: 2 * (frame as usize & 1) + edge,
+            hflip,
+            vflip,
+            palette,
+            priority: v.hud.layout.hud_priority,
+            alpha: None,
+            mosaic: None,
+            vscale: None,
+            affine: None,
+            fade: None,
+            clip: None,
+            anchor: crate::compose::Anchor::CENTER,
+        })
+        .collect()
+}
+
+/// Where the cursor is drawn on slot `slot`, and its shape: a chip's
+/// (the slot's cell, `true`), or OK's or a button's own.
+fn cursor_place(v: &View, a: &CustomScreen, slot: u8) -> (i32, i32, CursorShape, bool) {
+    let s = v.screen;
+    let chip = || {
+        let (col, row) = ((slot % 5) as i32, (slot / 5) as i32);
+        (16 * col + 8, 0x68 + 0x18 * row, CHIP_CURSOR, true)
+    };
+    match s.slots[slot as usize].kind {
+        SlotKind::Chip { .. } | SlotKind::Offered(_) | SlotKind::Empty | SlotKind::Hidden => chip(),
+        SlotKind::Ok => {
+            let (x, y, shape) = cursor_at(&a.layout.ok_cursor);
+            (x, y, shape, false)
+        }
+        // (A button that shows a chip: a chip's cursor, 0x080246B8.)
+        SlotKind::Button { .. } if s.slots[slot as usize].face.is_some() => chip(),
+        // (A button the game's graphics have no look for: a chip's cursor on its slot.)
+        SlotKind::Button { button, .. } => match v.button_look(button) {
+            Some(look) => {
+                let (x, y, shape) = look.cursor();
+                (x, y, shape, false)
+            }
+            None => chip(),
+        },
+    }
+}
+
+/// Where the cursor is drawn on pick `k` (the pointer's place, the layer's
+/// `pick_cursor`): a chip's cursor about the pick's icon in its column cell
+/// (the cell's frame on its left and right, the icon between).
+fn pick_cursor_place(a: &CustomScreen, k: u8) -> (i32, i32, CursorShape) {
+    let [left, _] = a.layout.column_columns.map(i32::from);
+    let row = a.layout.column_row as i32;
+    (8 * (left + 1), 8 * (row + 2 * k as i32), CHIP_CURSOR)
+}
+
+fn cursor_parts<'a>(v: &View, a: &'a CustomScreen, frame: u8) -> Vec<SpritePart<'a>> {
+    let slot = v.layer.map_or(0, |l| l.cursor);
+    let pick = v.layer.and_then(|l| l.pick_cursor).filter(|&k| (k as usize) < v.screen.selection().len());
+    let (x, y, shape) = match pick {
+        Some(k) => pick_cursor_place(a, k),
+        None => {
+            let (x, y, shape, _) = cursor_place(v, a, slot);
+            (x, y, shape)
+        }
+    };
+    let palette = v.cursor_palette();
+    // Queued last corner first (`sub_8028820`).
+    shape.corners[frame as usize & 1]
+        .iter()
+        .rev()
+        .map(|&(dy, dx, hflip, vflip)| SpritePart {
+            x: x - 3 + dx,
+            y: y - 3 + dy,
+            width: 8,
+            height: 8,
+            tiles: &a.cursor,
+            first_tile: frame as usize & 1,
+            hflip,
+            vflip,
+            palette,
+            priority: v.hud.layout.hud_priority,
+            alpha: None,
+            mosaic: None,
+            vscale: None,
+            affine: None,
+            fade: None,
+            clip: None,
+            anchor: crate::compose::Anchor::CENTER,
+        })
+        .collect()
+}
+
+/// Sixteen blank tiles (a 32x32 part's): the parts drawn as shapes stand
+/// in, so the sprite limit counts theirs.
+static BLANK_TILES: std::sync::LazyLock<Tiles> = std::sync::LazyLock::new(|| Tiles { pixels: vec![0; 16 * Tiles::TILE] });
+
+/// With the sharp HUD, parts that have a drawing (`drawings`, by the
+/// part's first tile over `per`, the tiles a drawing is) drawn as shapes:
+/// each part blank in its place,
+/// its drawing flipped as it is and in its palette on the text layer as
+/// deep as it (`tags`, by the parts' places in the queue from `at`).
+fn drawn_parts<'a>(parts: Vec<SpritePart<'a>>, drawings: &[saito_assets::shapes::Drawing], per: usize, text: &mut TextSink, tags: &mut Vec<Option<u32>>, at: usize) -> Vec<SpritePart<'a>> {
+    tags.resize(at, None);
+    if !text.draws_shapes() || drawings.is_empty() {
+        tags.resize(at + parts.len(), None);
+        return parts;
+    }
+    parts
+        .into_iter()
+        .map(|part| match drawings.get(part.first_tile / per.max(1)).filter(|_| part.first_tile % per.max(1) == 0) {
+            Some(d) => {
+                let tag = text.tag();
+                tags.push(Some(tag));
+                let (x, y) = (part.x, part.y);
+                let palette = part.palette;
+                let drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (part.hflip, part.vflip), None);
+                text.push(Plane::Sprite(tag), crate::shapes::item(drawn, (x, y), (part.width as i32, part.height as i32)));
+                SpritePart { tiles: &BLANK_TILES, first_tile: 0, ..part }
+            }
+            None => {
+                tags.push(None);
+                part
+            }
+        })
+        .collect()
+}
+
+/// The emblem (`sub_8029C08`): a 32x32 affine sprite with the navi's
+/// emblem in its middle, over the picked column, at the window's offset;
+/// nudged while it spins; turned and scaled by its matrix.
+fn emblem_part<'a>(v: &View, tiles: &'a Tiles, x_slide: u32, spin: u8) -> SpritePart<'a> {
+    let mut x = 0x57 - x_slide as i32;
+    // (0xFC: four rows above the screen's top, as the hardware wraps it.)
+    let mut y = -4;
+    if (2..=6).contains(&spin) {
+        y -= 1;
+        if (3..=4).contains(&spin) {
+            y -= 1;
+        }
+    }
+    if (5..=0xB).contains(&spin) {
+        x += 1;
+    } else if (2..=3).contains(&spin) {
+        x -= 1;
+    }
+    let (angle, scale) = window_look(v.layer).emblem_matrix;
+    let sine = &v.b.game_rules().sine;
+    let at = |i: usize| sine.get(i % 256).copied().unwrap_or(0) as i32;
+    let (sin, cos) = (at(angle as usize), at(angle as usize + 64));
+    // sub_802FE7A: the angle's sine and cosine times a quarter of the
+    // scale, over 16.
+    let q = scale as i32 >> 2;
+    let m = |v: i32| (v * q) >> 4;
+    SpritePart {
+        x,
+        y,
+        width: 32,
+        height: 32,
+        tiles,
+        first_tile: 0,
+        hflip: false,
+        vflip: false,
+        palette: v.emblem_palette(),
+        priority: v.hud.layout.hud_priority,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: Some(Affine { pa: m(cos), pb: m(sin), pc: m(-sin), pd: m(cos), double: false }),
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    }
+}
+
+/// Element icon `family`'s symbol (its pixels inside the frame's ring:
+/// `CustomScreen::element_inside`) on the frame's ground, its tiles.
+fn element_symbol(a: &CustomScreen, family: usize) -> Option<Tiles> {
+    let (ground, _) = a.element_outside()?;
+    let inside = a.element_inside()?;
+    let icon = a.elements.pixels.get(4 * family * Tiles::TILE..4 * (family + 1) * Tiles::TILE)?;
+    Some(Tiles { pixels: icon.iter().zip(&inside).map(|(&p, &i)| if i && p != 0 { p } else { ground }).collect() })
+}
+
+/// Element icon `family`'s pixels (16x16, row by row) its frame's drawing
+/// over it is kept off: its symbol's, inside the frame's ring
+/// (`CustomScreen::element_inside`).
+fn symbol_off(a: &CustomScreen, family: usize) -> Option<(usize, Vec<bool>)> {
+    let inside = a.element_inside()?;
+    let t = a.elements.pixels.get(4 * family * Tiles::TILE..4 * (family + 1) * Tiles::TILE)?;
+    let mut off = vec![false; 4 * Tiles::TILE];
+    for (i, &p) in t.iter().enumerate() {
+        let (k, j) = (i / 64, i % 64);
+        let (x, y) = (8 * (k % 2) + j % 8, 8 * (k / 2) + j / 8);
+        off[16 * y + x] = p != 0 && inside[i];
+    }
+    Some((16, off))
+}
+
+/// The chip window's element icon as a sprite (EXE4's, 0x0801EECC: 16x16
+/// in its own palette, at the window's left edge less its scroll while the
+/// scroll is 40 or less), on the ticks the screen's states draw it (the
+/// look's `drawn.element`: the slide in, the chips' state, a description or
+/// a message over them; not the tick a key leaves the choosing, nor while
+/// SELECT hides the window): the last chip's element's.
+fn element_part<'a>(v: &View, a: &'a CustomScreen, place: Placement) -> Option<SpritePart<'a>> {
+    let e = a.element_sprite?;
+    let layer = v.layer?;
+    if !layer.look.drawn.element || place.scroll > ELEMENT_SHOWN_TO {
+        return None;
+    }
+    let c = layer.chip_window.last_chip?;
+    let family = v.b.content.chip(c.id).family.0 as usize;
+    if a.elements.len() < 4 * (family + 1) {
+        return None;
+    }
+    Some(SpritePart {
+        x: e.x as i32 - place.scroll as i32,
+        y: e.y as i32,
+        width: 16,
+        height: 16,
+        tiles: &a.elements,
+        first_tile: 4 * family,
+        hflip: false,
+        vflip: false,
+        palette: v.faded(e.palette),
+        priority: v.hud.layout.hud_priority,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: None,
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    })
+}
+
+/// The element sprite's parts with their tags (`tags`, as `drawn_parts`):
+/// the frame with the icon in front of it, as the game's sprite; in the
+/// sharp HUD, where the game's graphics draw the frame, the icon alone with the
+/// frame drawn over it as a shape as deep as it, kept off the symbol's
+/// pixels inside its ring, the window's panel showing round the ring.
+fn framed_element<'a>(part: SpritePart<'a>, a: &'a CustomScreen, text: &mut TextSink, tags: &mut Vec<Option<u32>>, at: usize) -> Vec<SpritePart<'a>> {
+    tags.resize(at, None);
+    let family = part.first_tile / 4;
+    let frame = a.shapes.element_frame.as_ref().filter(|d| text.draws_shapes() && d.size == [16, 16] && !a.element_frame.is_empty());
+    let Some(d) = frame else {
+        let under = (!a.element_frame.is_empty()).then(|| SpritePart { tiles: &a.element_frame, first_tile: 0, ..part.clone() });
+        let parts: Vec<SpritePart<'a>> = under.into_iter().chain([part]).collect();
+        tags.resize(at + parts.len(), None);
+        return parts;
+    };
+    let tag = text.tag();
+    tags.push(Some(tag));
+    let (x, y) = (part.x, part.y);
+    let palette = part.palette;
+    let mut drawn = crate::shapes::drawn(d, |_, c| palette[c as usize & 15], (false, false), None);
+    drawn.off = symbol_off(a, family);
+    text.push(Plane::Sprite(tag), crate::shapes::item(drawn, (x, y), (16, 16)));
+    vec![part]
+}
+
+/// The window's scroll past which the element sprite isn't drawn
+/// (0x0801EECC).
+const ELEMENT_SHOWN_TO: u32 = 40;
+
+/// The Regular chip's frame (`sub_802899C`): a 32x32 sprite around the
+/// first slot.
+/// The chip a button holds, over the button (EXE5's Arm Change, 0x080254F4):
+/// its icon as a 16x16 sprite where the button's look says, in sprite
+/// palette 10 (the HUD's icons').
+fn held_part<'a>(v: &View, graphics: &crate::graphics::Graphics<'a>, problems: &mut Problems) -> Option<SpritePart<'a>> {
+    let h = v.screen.hold?;
+    let SlotKind::Button { button, .. } = v.screen.slots[h.button as usize].kind else { return None };
+    let (x, y) = v.button_look(button)?.pack.held_at.map(|(x, y)| (x as i32, y as i32))?;
+    let chip = v.screen.look.slot_chips[h.chip as usize]?;
+    let (tiles, palette) = crate::lookups::chip_icon(graphics, &v.b.content, chip.id, problems)?;
+    Some(SpritePart {
+        x,
+        y,
+        width: 16,
+        height: 16,
+        tiles,
+        first_tile: 0,
+        hflip: false,
+        vflip: false,
+        palette: *palette,
+        priority: v.hud.layout.hud_priority,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: None,
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    })
+}
+
+fn regular_part<'a>(v: &View, a: &'a CustomScreen) -> SpritePart<'a> {
+    SpritePart {
+        x: a.layout.regular.0 as i32,
+        y: a.layout.regular.1 as i32,
+        width: 32,
+        height: 32,
+        tiles: &a.regular,
+        first_tile: 16 * (window_look(v.layer).regular_frame as usize & 1),
+        hflip: false,
+        vflip: false,
+        palette: v.cursor_palette(),
+        priority: v.hud.layout.hud_priority,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: None,
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    }
+}
+
+/// Draw `seat`'s player's custom screen as its console draws it: the window
+/// on the HUD layer, the enemy names on the names layer (BG0), the sprites
+/// into `list`. `emblem` holds the emblem sprite's tiles (`emblem_sprite`)
+/// and `emblem_palette` the emblem's palette (`lookups::emblem`); the
+/// strings and lettering go to `text`. Where the seat mirrors (the right
+/// of a screen of both), it is drawn in the `scratch` layers as its console
+/// draws it and put in the right half by a `seat::Mirror`: the frame
+/// mirrored, the parts that read moved whole (`Window::upright`, the
+/// Program Advance's names, the late turns' block, the enemy names), its
+/// sprites in their console's fade of them (`sprite_fade`, which the
+/// frame's sprites' isn't); a window sliding in or out drawn whole and slid
+/// as its console's, the other way. `layer` is the seat's side's (none:
+/// drawn without the cursor and what else the layer holds).
+#[allow(clippy::too_many_arguments)]
+pub fn draw<'a>(
+    b: &'a Battle,
+    layer: Option<&'a ScreenLayer>,
+    assets: &'a Bundle,
+    graphics: &crate::graphics::Graphics<'a>,
+    emblem: &'a Tiles,
+    emblem_palette: Palette,
+    (seat, sprite_fade): (crate::seat::Seat, Fade),
+    smooth: crate::smooth::Smooth,
+    (out_hud, out_names): (&mut Layer, &mut Layer),
+    (scratch_hud, scratch_names): (&mut Layer, &mut Layer),
+    list: &mut SpriteList<'a>,
+    text: &mut TextSink,
+    problems: &mut Problems,
+) -> Vec<(Target, Rect)> {
+    let Some((_, screen)) = screen_of(b, seat.side) else { return Vec::new() };
+    let a = &assets.custom;
+    if !crate::lookups::custom_graphics(a, problems) {
+        return Vec::new();
+    }
+    let side = seat.side & 1;
+    let mirrored = seat.mirrored();
+    if mirrored {
+        scratch_hud.clear();
+        scratch_names.clear();
+    }
+    // (The window, and what goes beside it, keep to the left edge, as the
+    // original docks it; its names to the right edge. On the right of a
+    // screen of both, the other edges: `Seat::edge`.)
+    crate::hud::keep_to(seat, Anchor::TOP_LEFT, (&mut *out_hud, &mut *out_names), list, text);
+    crate::hud::keep_to(seat, Anchor::TOP_LEFT, (&mut *scratch_hud, &mut *scratch_names), list, text);
+    let mark = text.mark();
+    let (hud_layer, names_layer): (&mut Layer, &mut Layer) = if mirrored { (&mut *scratch_hud, &mut *scratch_names) } else { (&mut *out_hud, &mut *out_names) };
+    // (The parts that read beside the window's own, for the mirror.)
+    let mut upright: Vec<crate::seat::Block> = Vec::new();
+    let v = View {
+        b,
+        side,
+        screen,
+        layer,
+        assets: a,
+        buttons: button_pictures(b, a, side),
+        button_letters: button_letters(b, a, side),
+        emblem_palette,
+        hud: &assets.hud,
+        graphics: graphics.clone(),
+    };
+    let place = placement(screen, layer);
+    // (Where it mirrors, a sliding window is drawn whole where it comes to
+    // rest and put where it is by the mirror: the mirrored window slides in
+    // and out whole, its columns the console hasn't shown yet nearest the
+    // middle, where they come in.)
+    let (place, slide) = match place {
+        Placement { scroll, from, to, slid } if mirrored && from < to && scroll != 0 => (Placement { scroll: 0, from: 0, to, slid }, scroll as i32),
+        _ => (place, 0),
+    };
+    let mut w = Window::build(&v, text, problems);
+    let advance_names = w.program_advance(&v, text, problems);
+    // (With the smooth motion, the form list window's panel as it opens,
+    // over the window the original shows: `Rise`. What it notes of its map
+    // is noted on the ticks the original shows that map.)
+    let rise = if smooth.on { form_list_rise(&v, place) } else { None };
+    let panel = rise.map(|r| (r, Window::build_as(&v, Some(FORM_LIST_OPENING_MAPS - 1), text, &mut Problems::default())));
+    match &panel {
+        Some((r, p)) => {
+            w.draw_where(hud_layer, place, 0, |x, y| !r.holds(x, y));
+            p.draw_where(hud_layer, place, r.top, |x, y| r.holds(x, y));
+        }
+        None => w.draw(hud_layer, place),
+    }
+    // (What a pointer finds where, on a seat that shows its own console's
+    // screen as it is.)
+    let found = if mirrored { Vec::new() } else { targets(&v, &w, place) };
+    if let Some(why) = w.picture_known {
+        w.known_picture(place, why, problems);
+    }
+    if let Some(what) = w.record_mark.take() {
+        // (A console whose record of the chip is another, the US release's
+        // placeholder of a chip it cut, draws these otherwise: its class's
+        // and element's colors, no picture, no damage.)
+        let digits = w.layout.digits..w.layout.digits + 6;
+        let (jx, jy) = hud_jitter(b, layer, side);
+        for [x0, y0, x1, y1] in w.cells_rects(place, |e| matches!(e.palette & 15, 9..=11) || digits.contains(&e.tile)) {
+            problems.mark([x0 - jx, y0 - jy, x1 - jx, y1 - jy], what.clone());
+        }
+    }
+    if let Some(what) = w.picture_mark.take() {
+        let tiles = w.layout.art..w.layout.art + PICTURE_TILES;
+        if let Some([x0, y0, x1, y1]) = w.tiles_rect(place, tiles) {
+            // (Where the layer's shake leaves it: a button's window shakes
+            // the layer, `hud_jitter`.)
+            let (jx, jy) = hud_jitter(b, layer, side);
+            problems.mark([x0 - jx, y0 - jy, x1 - jx, y1 - jy], what);
+        }
+    }
+    w.known_icons(&v, place, problems);
+    w.mark_icons(&v, place, problems);
+    let items = text.mark();
+    w.shape_items(text, place);
+    w.name_item(text, place);
+    w.help_items(text, place);
+    w.damage_item(&v, text, place);
+    w.label_items(text, place);
+    if let Some((r, p)) = &panel {
+        // (The window's items but where the panel covers them; then the
+        // panel's, down with it, where it shows.)
+        text.rework_since(items, |plane, item| match plane {
+            Plane::Hud if !item.clip.intersect(item.rect).intersect(r.rect).is_empty() => r.outside(item.clip).into_iter().map(|clip| TextItem { clip, ..item.clone() }).collect(),
+            _ => vec![item],
+        });
+        let items = text.mark();
+        p.shape_items(text, place);
+        p.name_item(text, place);
+        p.help_items(text, place);
+        p.damage_item(&v, text, place);
+        p.label_items(text, place);
+        text.rework_since(items, |_, item| {
+            let clip = item.clip.offset(0, r.top).intersect(r.rect);
+            if clip.is_empty() { Vec::new() } else { vec![TextItem { rect: item.rect.offset(0, r.top), clip, ..item }] }
+        });
+    }
+    // The Program Advance's names, a column right of the layer's scroll
+    // (`sub_802BA18`), each 9x2 cells column by column.
+    let col = (place.scroll >> 3) as i32 + 1;
+    for (k, row, palette) in advance_names {
+        upright.push(crate::seat::Block::whole(Rect::new(layer_x(col, place.scroll), 8 * row, 8 * ADVANCE_NAME_CELLS as i32, 16)));
+        let first = w.layout.art + (2 * ADVANCE_NAME_CELLS * k) as u16;
+        for i in 0..2 * ADVANCE_NAME_CELLS as u16 {
+            let e = MapEntry { tile: first + i, hflip: false, vflip: false, palette };
+            w.cell(hud_layer, e, col + (i / 2) as i32, row + (i % 2) as i32, place.scroll);
+        }
+        // With the sharp HUD, the name and the code on the text layer.
+        if let Some(Some((name, cells, code))) = w.advance_names.get(k) {
+            let colors = &w.palettes[palette as usize & 15];
+            let at = |c: i32, n: usize| Rect::new(layer_x(col + c, place.scroll), 8 * row, 8 * n as i32, 16);
+            let past_ranged = palette & 15 >= 14;
+            text.push(Plane::Hud, TextItem { past_ranged, ..TextItem::new(name.as_str(), Role::Cell, at(0, *cells), colors[1], Some(colors[2])) });
+            if let Some(code) = code {
+                let last = ADVANCE_NAME_CELLS as i32 - 1;
+                text.push(Plane::Hud, TextItem { past_ranged, ..TextItem::new(code.as_str(), Role::Cell, at(last, 1), colors[1], Some(colors[2])) });
+            }
+        }
+    }
+    // (Beside the window, over the field: not for a window leaving over
+    // the other console's screen; in its half, where the other player's
+    // window is beside it, none of it shows.)
+    let look = window_look(layer);
+    if look.turn_limit && place.to == COLUMNS && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
+        // sub_8029D34: 7x2 at column 15, row 4, in the layout's palette. In
+        // the sharp HUD its words in the lettering font, in its look,
+        // and its cells with the letters taken off (its own ground).
+        upright.push(crate::seat::Block::whole(Rect::new(layer_x(15, place.scroll), 4 * 8, 7 * 8, 16)));
+        let palette = w.palettes[w.layout.turn_limit_palette as usize & 15];
+        let found = a.letters.turn_limit.as_ref();
+        if let Some((words, look)) = crate::hud::lettered_word(b, text, "turn-limit", found.map(|f| &f.letters), &palette, Lettering::display, problems) {
+            // (Its cells with the letters taken off: its own ground.)
+            if let Some(f) = found {
+                w.tiles.put(w.layout.turn_limit, &f.blank);
+            }
+            let past_ranged = w.layout.turn_limit_palette & 15 >= 14;
+            text.push(Plane::Hud, TextItem { past_ranged, ..look.in_place(words, (layer_x(15, place.scroll), 4 * 8), 16) });
+        }
+        for i in 0..14u16 {
+            let e = MapEntry { tile: w.layout.turn_limit + i, hflip: false, vflip: false, palette: w.layout.turn_limit_palette };
+            w.cell(hud_layer, e, 15 + (i % 7) as i32, 4 + (i / 7) as i32, place.scroll);
+        }
+    }
+    // (A screen without the names' bar draws no names: EXE4's. Nor a
+    // window leaving over the other console's screen; in its half, beside
+    // the other player's window, they don't show.)
+    if names_shown(b, screen, layer) && !a.name_bar.is_empty() && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
+        crate::hud::keep_to(seat, Anchor::TOP_RIGHT, (&mut *hud_layer, &mut *names_layer), list, text);
+        upright.push(crate::seat::Block::whole(draw_names(&v, &w, hud_layer, names_layer, text, problems)));
+        crate::hud::keep_to(seat, Anchor::TOP_LEFT, (&mut *hud_layer, &mut *names_layer), list, text);
+    }
+    // The sprites, as their routines queue them (each in front of the
+    // one before).
+    let drawn = look.drawn;
+    let mut queue: Vec<SpritePart<'a>> = Vec::new();
+    // (Parts drawn as shapes with the sharp HUD, each queued with its
+    // tag: `drawn_parts`.)
+    let mut tags: Vec<Option<u32>> = Vec::new();
+    // (Each sprite's parts, for the mirror to place as one.)
+    let mut sprites: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut from = 0;
+    let mut sprite_ends = |queue: &Vec<SpritePart<'a>>| {
+        if queue.len() > from {
+            sprites.push(from..queue.len());
+            from = queue.len();
+        }
+    };
+    // Where the screen's states are the choosing's, its tick queues the
+    // Regular chip's frame before the state's own sprites (EXE4's
+    // 0x0801E3FC, then 0x0801E41E: the cursor is over the frame); else
+    // after the cursor (EXE6's `sub_8026CCC`).
+    let regular_first = b.content.rules().custom_screen.states_in_choosing;
+    // (The Regular chip's frame: as shapes where the game's graphics have its drawings,
+    // by its frame, 16 tiles each.)
+    if drawn.regular && regular_first {
+        let parts = drawn_parts(vec![regular_part(&v, a)], &a.shapes.regular, 16, text, &mut tags, queue.len());
+        queue.extend(parts);
+        sprite_ends(&queue);
+    }
+    // The offered form's flying icon (EXE5's soul choice's: its state 9's
+    // routines draw it before the screen's others).
+    if window_view(b, screen) == Some(WindowView::OfferFlight)
+        && let Some(at) = b.offer_flight(v.side)
+    {
+        queue.extend(offered_flight(&v, at, problems));
+        sprite_ends(&queue);
+    }
+    // Its capsule's mix's (state 0x3C's).
+    queue.extend(capsule_flight(&v, graphics, problems));
+    sprite_ends(&queue);
+    if let Some(frame) = drawn.cursor {
+        let parts = drawn_parts(cursor_parts(&v, a, frame), &a.shapes.cursor, 1, text, &mut tags, queue.len());
+        queue.extend(parts);
+        sprite_ends(&queue);
+    }
+    // (Not once the rising form list panel reaches it.)
+    let covered = |p: &SpritePart| rise.is_some_and(|r| !Rect::new(p.x, p.y, p.width as i32, p.height as i32).intersect(r.rect).is_empty());
+    if let Some(part) = element_part(&v, a, place).filter(|p| !covered(p)) {
+        let parts = framed_element(part, a, text, &mut tags, queue.len());
+        queue.extend(parts);
+        sprite_ends(&queue);
+    }
+    // (A screen with an emblem of its own draws it on the window's map.)
+    if let Some((x, spin)) = drawn.emblem.filter(|_| a.window_emblem.is_none()) {
+        let part = emblem_part(&v, emblem, x, spin);
+        if let Some(why) = known_emblem(b, graphics, side) {
+            // (Where the sprite is.)
+            problems.known(part.x, part.y, 32, 32, why);
+        }
+        queue.push(part);
+        sprite_ends(&queue);
+    }
+    if drawn.regular && !regular_first {
+        let parts = drawn_parts(vec![regular_part(&v, a)], &a.shapes.regular, 16, text, &mut tags, queue.len());
+        queue.extend(parts);
+        sprite_ends(&queue);
+    }
+    if drawn.held {
+        queue.extend(held_part(&v, graphics, problems));
+        sprite_ends(&queue);
+    }
+    if let Some(frame) = drawn.form_list_cursor {
+        let parts = drawn_parts(form_list_cursor_parts(&v, a, frame), &a.shapes.form_list_cursor, 1, text, &mut tags, queue.len());
+        queue.extend(parts);
+        sprite_ends(&queue);
+    }
+    if mirrored {
+        // The window as its console draws it, put in the right half: the
+        // layers' pixels, the sprites (each as one; the items of a sprite
+        // drawn as shapes with it), the text items.
+        let mut blocks = w.upright(&v, place);
+        if let Some((r, p)) = &panel {
+            // (The window's but where the panel covers them, after the
+            // panel's, down with it, where it shows.)
+            let window = blocks.into_iter().flat_map(|b| r.outside(b.area).into_iter().map(move |area| crate::seat::Block { area, frame: b.frame }));
+            let risen = p.upright(&v, place).into_iter().filter_map(|b| {
+                let area = b.area.offset(0, r.top).intersect(r.rect);
+                (!area.is_empty()).then_some(crate::seat::Block { area, frame: b.frame.offset(0, r.top) })
+            });
+            blocks = risen.chain(window).collect();
+        }
+        upright.splice(0..0, blocks);
+        let mirror = crate::seat::Mirror::new(upright).slid(slide);
+        mirror.layer(scratch_hud, out_hud);
+        mirror.layer(scratch_names, out_names);
+        let before: Vec<i32> = queue.iter().map(crate::seat::part_x).collect();
+        for range in sprites {
+            mirror.group(&mut queue[range]);
+        }
+        for part in &mut queue {
+            part.fade = Some(sprite_fade);
+        }
+        let moved: Vec<(u32, i32)> =
+            queue.iter().zip(&before).enumerate().filter_map(|(k, (p, &x))| Some((tags.get(k).copied().flatten()?, crate::seat::part_x(p) - x))).collect();
+        text.rework_since(mark, |plane, item| match plane {
+            Plane::Sprite(tag) => {
+                let dx = moved.iter().find(|(t, _)| *t == tag).map_or(0, |&(_, dx)| dx);
+                let clip = if item.clip == Rect::SCREEN { item.clip } else { item.clip.offset(dx, 0) };
+                vec![TextItem { rect: item.rect.offset(dx, 0), clip, ..item }]
+            }
+            _ => mirror.item(item),
+        });
+    }
+    for (k, part) in queue.into_iter().enumerate() {
+        list.insert_tagged(SPRITE_LAYER, 0, vec![part], tags.get(k).copied().flatten());
+    }
+    let _ = OK_SLOT;
+    crate::hud::keep_to(seat, Anchor::CENTER, (&mut *out_hud, &mut *out_names), list, text);
+    crate::hud::keep_to(seat, Anchor::CENTER, (&mut *scratch_hud, &mut *scratch_names), list, text);
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OK's cells, from where its cursor's corners go about it (EXE5's:
+    /// at (88, 112), 3 pixels out): columns 11 to 13, rows 14 to 16.
+    #[test]
+    fn a_cursors_corners_go_about_its_cells() {
+        let p = saito_assets::CursorPlace { x: 88, y: 112, corners: [[(2, 1, false, false), (2, 22, true, false), (20, 22, true, true), (20, 1, false, true)]; 2] };
+        assert_eq!(cursor_cells(&p), [11, 14, 14, 17]);
+        assert_eq!((slot_cell(0), slot_cell(HAND_SLOTS - 1)), ((1, 13), (9, 16)));
+    }
+
+    #[test]
+    fn the_cross_windows_panel_rises_every_tick_through_the_originals_steps() {
+        // EXE6's: from the tab's row (88) to rows 7, 3 and 0, every 3 ticks.
+        let steps = [(0, 88), (3, 56), (6, 24), (9, 0)];
+        let tops: Vec<Option<i32>> = (0..12).map(|t| rise_top(&steps, t)).collect();
+        assert_eq!(tops, [None, Some(77), Some(67), Some(56), Some(45), Some(35), Some(24), Some(16), Some(8), None, None, None]);
+    }
+
+    #[test]
+    fn what_the_rising_panel_leaves_of_a_box_is_the_box_but_the_panel() {
+        let rise = Rise { top: 45, rect: Rect::new(0, 45, 88, 51) };
+        let held = |r: Rect, x: i32, y: i32| (r.x..r.x + r.w).contains(&x) && (r.y..r.y + r.h).contains(&y);
+        for r in [Rect::new(0, 0, 120, 160), Rect::new(20, 30, 100, 20), Rect::new(-8, 90, 40, 20), Rect::new(90, 0, 30, 40)] {
+            let parts = rise.outside(r);
+            for y in -10..170 {
+                for x in -10..130 {
+                    let n = parts.iter().filter(|p| held(**p, x, y)).count();
+                    assert_eq!(n, usize::from(held(r, x, y) && !rise.holds(x, y)), "{r:?} at ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_window_slides_in_and_out_a_column_or_two_a_tick() {
+        let ins: Vec<usize> = (1..=10).map(copied_in).collect();
+        assert_eq!(ins, [2, 3, 5, 6, 8, 9, 11, 12, 14, 15]);
+        let outs: Vec<usize> = (1..=10).map(cleared_out).collect();
+        assert_eq!(outs, [1, 3, 4, 6, 7, 9, 10, 12, 13, 15]);
+    }
+}

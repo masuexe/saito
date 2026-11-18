@@ -1,0 +1,864 @@
+// A ruleset's page (docs/design/app-ui.md §2.59): what may be played, one category at a time. The lobby and the
+// build editor open it over themselves (app.slint shows it in their place while `RulesetView.open`, as another
+// screen would be, the screen's Rust half going on); its Rust half is src/rulesets/page.rs, which the screen that
+// opened it hands its controls to (their names begin `rules.`, a scope of the focus's). The ruleset's name is the
+// header's title, a field that renames it where the ruleset can be changed (docs/design/app-ui.md §2.74).
+//
+// In the body's units: a row of Version exclusives and, at the right, DUPLICATE and DELETE; under it two panels, as the
+// build editor's are: the categories (a list, 300 wide), and the chosen one's (its toolbar, the search with ALLOW
+// ALL and ALLOW NONE, a version's quick choices under them, over its items in as many columns as the panel holds);
+// the reserved line at the foot. The user: "why are the buttons on the ruleset editor transparent? i also feel like
+// the layout is so weird" (a control's raised fill is drawn for a panel, and there was none). On a phone one column,
+// no panels: Version exclusives (its word over its control), the buttons, the category as a select, the head, the
+// items. Held sideways (docs/design/app-ui.md §2.103) the categories are tabs in the header's row after the name, as
+// the build editor's are; the row is Version exclusives' control (its two words say it) and the buttons, compact;
+// under it the category's panel the body's width, its search on its header line.
+
+import { Theme, I18n } from "theme.slint";
+import { Nav, Focusable, NavKind } from "nav.slint";
+import { Shell, Page, PadButton, Hint } from "shell.slint";
+import { Arrive } from "motion.slint";
+import { Button, ButtonKind, Field, Seg, Select, Label, Value, Message, ListView, ScrollPage, PanelBack, RowTouch, RowBack, Pill, AllNone, TabBar, Tab } from "widgets.slint";
+import { VersionTag, VersionMark } from "build.slint";
+
+// A category in the list: its name, and how much it allows.
+export struct RulesetCategory {
+    name: string,
+    note: string,
+}
+
+// An item of the category shown: its picture (a chip's icon, a navi's or a form's face; none of a program or a
+// card), its name, the version it is one's own (its name and color; none), and whether the ruleset allows it. In a
+// category in sections (`RulesetView.sections`), its section and its place in it.
+export struct RulesetItem {
+    picture: image,
+    name: string,
+    note: string,
+    tone: color,
+    allowed: bool,
+    section: int,
+    slot: int,
+}
+
+// A version's section of a category of forms (Crosses, Souls, Beast Out), as the Navi tab has them: its version's
+// name and color, how many items come before it (stacked, on a phone) and how many it has, and whether its ALL and
+// NONE would change anything.
+export struct RulesetSection {
+    name: string,
+    tone: color,
+    start: int,
+    count: int,
+    all: bool,
+    none: bool,
+}
+
+// A row of a paired category's list of keys (the Party page's navis, whose programs a ruleset holds back for each
+// alone: `RulesetView.paired`): All (`all`: what is held back for every key), or a key's: its picture, its whole name,
+// whether its category allows it, what it holds back for it alone or that it isn't allowed (`note`, in the error red);
+// a version's head over it (its name and color; none), and how many heads come before it and over it (`heads`).
+export struct RulesetKey {
+    all: bool,
+    picture: image,
+    name: string,
+    allowed: bool,
+    note: string,
+    head: string,
+    tone: color,
+    heads: int,
+}
+
+// An item of the key chosen (a program of the navi chosen, or of every navi): its name, whether it is allowed there,
+// and whether every key's ban holds it back (`inherited`: its box dashed, `note` saying so).
+export struct RulesetProgram {
+    name: string,
+    allowed: bool,
+    inherited: bool,
+    note: string,
+}
+
+// A quick choice of the category's version-own items: a version's (its name and color: `version`), or All.
+export struct RulesetChoice {
+    text: string,
+    version: bool,
+    tone: color,
+    chosen: bool,
+}
+
+// What the page shows: src/rulesets/page.rs sets these.
+export global RulesetView {
+    in property <bool> open;
+    // Where Back goes (LOBBY, EDITOR), and the ruleset's name in the header (a field that renames it where it can be
+    // changed) with PRESET as its tag for a preset.
+    in property <string> back;
+    in property <string> name;
+    in property <bool> preset;
+    // It can be changed (the player's own; not a preset, not the host's ruleset viewed), and deleted.
+    in property <bool> editable;
+    in property <bool> deletable;
+    // Version exclusives: 0 one version's alone in a build, 1 the versions' mixed.
+    in property <int> versions;
+    in property <[RulesetCategory]> categories;
+    // The same, as a phone held sideways has them: tabs in the header (their names, set in capitals by the tab bar).
+    in property <[Tab]> tabs;
+    in property <int> category;
+    in property <[RulesetChoice]> choices;
+    in property <string> search;
+    in property <[RulesetItem]> items;
+    // The category's items in a section a version, in place of its quick choices (none: one grid); the most any has.
+    in property <[RulesetSection]> sections;
+    in property <int> section-rows;
+    // Whether the category's ALL and NONE would change anything.
+    in property <bool> category-all;
+    in property <bool> category-none;
+    // A category with another kept per its items within it (the Party page: its navis, and their programs, every
+    // navi's and each one's own): its keys at the left in place of the grid (`keys`, the one chosen `key`), the chosen
+    // one's items beside them (`programs`, under `programs-title` and `programs-note`).
+    in property <bool> paired;
+    in property <[RulesetKey]> keys;
+    in property <int> key;
+    in property <[RulesetProgram]> programs;
+    in property <string> programs-title;
+    in property <string> programs-note;
+    // (The head's note of a paired category: its own count, and its inner category's bans.)
+    in property <string> head-note;
+    // The reserved line: why something can't be changed here, in the error red; or quietly, a note.
+    in property <string> message;
+    in property <bool> message-quiet;
+    // ---- Words the app asks for.
+    // (The quick choice of every version's own items: Both, beside the category's ALL.)
+    out property <string> both-word: @tr("Both");
+    out property <string> lobby-word: I18n.upper(@tr("Lobby"));
+    out property <string> editor-word: I18n.upper(@tr("Editor"));
+    out property <string> preset-word: I18n.upper(@tr("Preset"));
+    out property <string> fixed-preset: @tr("A preset can't be changed. Duplicate it to make your own.");
+    out property <string> fixed-viewed: @tr("This is your opponent's choice. Duplicate it to make your own.");
+    public pure function allowed(n: int, of: int) -> string {
+        if n == of {
+            return @tr("All allowed");
+        }
+        if n == 0 {
+            return @tr("None allowed");
+        }
+        return @tr("{} of {} allowed", n, of);
+    }
+    // A paired category's words: how much it allows and how many of its inner category's items it holds back, in the
+    // categories' list (`navis`) and in its head; a key's own bans, one not allowed, the row of every key, its items'
+    // title, an item every key's ban holds back; the page's count.
+    public pure function paired-note(n: int, of: int, bans: int) -> string {
+        if n == of && bans == 0 {
+            return @tr("All allowed");
+        }
+        if bans == 0 {
+            return @tr("{} of {} navis", n, of);
+        }
+        return @tr("{} of {} navis, {n} program ban" | "{} of {} navis, {n} program bans" % bans, n, of);
+    }
+    public pure function paired-head(n: int, of: int, bans: int) -> string {
+        if bans == 0 {
+            return root.allowed(n, of);
+        }
+        return @tr("{} of {} allowed, {n} program ban" | "{} of {} allowed, {n} program bans" % bans, n, of);
+    }
+    public pure function banned-count(n: int) -> string {
+        return n == 0 ? "" : @tr("{} banned", n);
+    }
+    out property <string> not-allowed-word: @tr("Not allowed");
+    out property <string> all-keys-word: @tr("All navis");
+    out property <string> all-keys-title: @tr("Programs for all navis");
+    public pure function key-title(name: string) -> string {
+        return @tr("{}'s programs", name);
+    }
+    out property <string> inherited-note: @tr("Banned for all navis");
+    public pure function paired-status(keys: int, items: int) -> string {
+        return I18n.join([@tr("{n} navi" | "{n} navis" % keys), @tr("{n} program" | "{n} programs" % items)]);
+    }
+    // What the system's file dialogs say they ask for.
+    out property <string> ruleset-files: @tr("Ruleset files");
+    public pure function delete-title(name: string) -> string {
+        return @tr("Delete {}?", name);
+    }
+}
+
+// A category's row: its name, and how much it allows under it.
+component CategoryRow inherits Rectangle {
+    in property <RulesetCategory> line;
+    in property <int> nav-index;
+    in property <bool> chosen;
+    RowBack {
+        chosen: root.chosen;
+        hover: touch.has-hover;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Value {
+        x: 12px;
+        y: 3px;
+        width: parent.width - 24px;
+        height: 18px;
+        text: root.line.name;
+        font-weight: 600;
+    }
+
+    Text {
+        x: 12px;
+        y: 21px;
+        width: parent.width - 24px;
+        height: 16px;
+        text: root.line.note;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    touch := RowTouch {
+        nav: "rules.categories";
+        nav-index: root.nav-index;
+    }
+}
+
+// An allow box: checked (allowed), or empty; dashed where something else holds the item back (`inherited`).
+component Check inherits Rectangle {
+    in property <bool> on;
+    in property <bool> inherited;
+    width: 16px;
+    height: 16px;
+    background: root.on ? Theme.cursor : root.inherited ? transparent : Theme.inset;
+    border-width: root.inherited ? 0px : 1px;
+    border-color: root.on ? Theme.cursor : Theme.line;
+    Path {
+        width: 10px;
+        height: 8px;
+        visible: root.on;
+        stroke: Theme.action-ink;
+        stroke-width: 2px;
+        commands: "M 1 4 L 3.75 6.75 L 9 1.25";
+    }
+
+    // (The dashes: three along each side.)
+    for d in (root.inherited ? 12 : 0): Rectangle {
+        property <int> side: floor(d / 3);
+        property <length> along: Math.mod(d, 3) * 6px;
+        x: self.side == 0 ? self.along : self.side == 1 ? self.along : self.side == 2 ? 0px : root.width - 1px;
+        y: self.side == 0 ? 0px : self.side == 1 ? root.height - 1px : self.along;
+        width: self.side < 2 ? 4px : 1px;
+        height: self.side < 2 ? 1px : 4px;
+        background: Theme.dim;
+    }
+}
+
+// An item's cell, as tall as the build editor's lists' rows (`Theme.list-row`) and laid out as the Navi tab's forms'
+// rows: a check mark (allowed or not), its picture at its own size (a chip's icon, a navi's or a form's face), its
+// name, the version it is one's own. Each is focused itself (a grid's cell: Up and Down a row, Left and Right a
+// cell).
+component ItemRow inherits Rectangle {
+    in property <RulesetItem> line;
+    in property <int> nav-index;
+    property <length> picture-height: Theme.handheld ? 32px : 16px;
+    Rectangle {
+        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Check {
+        x: 8px;
+        y: (parent.height - 16px) / 2;
+        on: root.line.allowed;
+    }
+
+    picture := Image {
+        x: 32px;
+        y: (parent.height - self.height) / 2;
+        width: 2 * root.picture-height;
+        height: root.picture-height;
+        source: root.line.picture;
+        image-rendering: pixelated;
+        image-fit: contain;
+        opacity: root.line.allowed ? 1 : 0.45;
+    }
+
+    Text {
+        x: picture.x + picture.width + 8px;
+        width: max(0px, parent.width - self.x - note.width - 16px);
+        text: root.line.name;
+        color: root.line.allowed ? Theme.text : Theme.dim;
+        font-family: Theme.body;
+        font-size: Theme.handheld ? 14px : 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (The version's tag, as the build editor's rows have it; none in a version's section, which says it.)
+    note := VersionMark {
+        x: parent.width - self.width - 10px;
+        y: (parent.height - self.height) / 2;
+        tag: { text: root.line.note, tone: root.line.tone };
+    }
+
+    touch := Focusable {
+        nav: "rules.items";
+        nav-index: root.nav-index;
+    }
+}
+
+// A row of the keys' list (the Party page's navis): its version's head over it where it is the first of the version's,
+// then, as the item cells are, its allow box (none on the row of every key), its face, its whole name and its note at
+// the right (its own bans' count, or Not allowed). The row chosen is tinted with its bar, as a chosen category's.
+component KeyRow inherits Rectangle {
+    in property <RulesetKey> line;
+    in property <int> nav-index;
+    in property <bool> chosen;
+    property <length> picture-height: Theme.handheld ? 32px : 16px;
+    RowBack {
+        chosen: root.chosen;
+        hover: touch.has-hover;
+    }
+
+    if !root.line.all: Check {
+        x: 8px;
+        y: (parent.height - 16px) / 2;
+        on: root.line.allowed;
+    }
+
+    picture := Image {
+        x: 32px;
+        y: (parent.height - self.height) / 2;
+        width: root.line.all ? 0px : 2 * root.picture-height;
+        height: root.picture-height;
+        source: root.line.picture;
+        image-rendering: pixelated;
+        image-fit: contain;
+        opacity: root.line.allowed ? 1 : 0.45;
+    }
+
+    Text {
+        x: root.line.all ? 8px : picture.x + picture.width + 8px;
+        width: max(0px, parent.width - self.x - note.width - 16px);
+        text: root.line.name;
+        color: root.line.allowed ? Theme.text : Theme.dim;
+        font-family: Theme.body;
+        font-size: Theme.handheld ? 14px : 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    note := Text {
+        x: parent.width - self.width - 12px;
+        width: self.preferred-width;
+        text: root.line.note;
+        color: Theme.bad;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+
+    touch := Focusable {
+        nav: "rules.pair.keys";
+        nav-index: root.nav-index;
+    }
+}
+
+// An item of the key chosen: its allow box (dashed where every key's ban holds it back), its name, why it is held back
+// where that isn't its own.
+component ProgramRow inherits Rectangle {
+    in property <RulesetProgram> line;
+    in property <int> nav-index;
+    Rectangle {
+        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Check {
+        x: 0px;
+        y: (parent.height - 16px) / 2;
+        on: root.line.allowed;
+        inherited: root.line.inherited;
+    }
+
+    Text {
+        x: 42px;
+        width: max(0px, parent.width - self.x - note.width - 12px);
+        text: root.line.name;
+        color: root.line.allowed ? Theme.text : Theme.dim;
+        font-family: Theme.body;
+        font-size: Theme.handheld ? 14px : 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    note := Text {
+        x: parent.width - self.width;
+        width: self.preferred-width;
+        text: root.line.note;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+
+    touch := Focusable {
+        nav: "rules.pair.programs";
+        nav-index: root.nav-index;
+    }
+}
+
+// A category's quick choices of its versions' own items (each version's alone, or all of them), as small words in its
+// panel's header line, as ALL and NONE are: a version's in its color where it is what is allowed, else muted; All
+// in the cursor's color where it is; hairlines between. Each takes a little more than its line, and nothing moves.
+component VersionPicks inherits Rectangle {
+    property <length> pad: 6px;
+    property <length> reach: Theme.handheld ? 6px : 2px;
+    height: 16px;
+    width: words.preferred-width;
+    words := HorizontalLayout {
+        alignment: end;
+        for choice[i] in RulesetView.choices: Rectangle {
+            width: word.preferred-width + 2 * root.pad + (i > 0 ? 1px : 0px);
+            Rectangle {
+                x: 0;
+                y: 3px;
+                width: 1px;
+                height: 10px;
+                visible: i > 0;
+                background: Theme.line;
+            }
+
+            word := Text {
+                x: (i > 0 ? 1px : 0px) + root.pad;
+                width: self.preferred-width;
+                text: I18n.upper(choice.text);
+                color: hit.has-hover && RulesetView.editable ? Theme.cursor : choice.chosen ? (choice.version ? choice.tone : Theme.cursor) : RulesetView.editable ? Theme.muted : Theme.dim;
+                font-family: Theme.display;
+                font-size: 10px;
+                font-weight: Theme.display-bold;
+                letter-spacing: 0.8px;
+                vertical-alignment: center;
+            }
+
+            hit := Focusable {
+                y: -root.reach;
+                height: 16px + 2 * root.reach;
+                nav: "rules.set";
+                nav-index: i;
+                enabled: RulesetView.editable;
+            }
+        }
+    }
+}
+
+export component RulesetPage inherits Page {
+    property <[Hint]> page-hints: [
+        { key: "↑↓←→", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Allow or not") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+    ];
+    // The row of Version exclusives and the buttons; under it the two panels (on a phone, the category's select and
+    // the head over the items, no panels).
+    property <length> list-width: 300px;
+    property <length> pad: 16px;
+    property <length> panel-y: Theme.phone ? 228px : Theme.sideways ? 48px : 64px;
+    property <length> foot: 26px;
+    property <length> panel-height: self.body-height - root.panel-y - root.foot;
+    property <length> right-x: Theme.handheld ? 0px : root.list-width + 24px;
+    property <length> right-width: self.body-width - root.right-x;
+    // In the right panel (a phone's body): the toolbar's rows, then the items.
+    property <length> inner-x: Theme.phone ? 0px : root.right-x + root.pad;
+    property <length> inner-width: Theme.phone ? root.right-width : root.right-width - 2 * root.pad;
+    // Each panel's header line, as the build editor's panes have theirs: its title, what it holds, its small words
+    // at its right end. Under the category's, the search; under that, the items. (Sideways the search is on the line,
+    // between what it holds and its small words, all in the search's 40.)
+    property <length> line-y: Theme.phone ? root.panel-y : Theme.sideways ? root.panel-y + 24px : root.panel-y + 14px;
+    // (On a phone the line's small words are a line of their own under it: beside them, what the line says had no
+    // room, "11 of 12 allowed, 4 program bans" cut to "1…".)
+    property <length> picks-y: Theme.phone ? root.line-y + 24px : root.line-y;
+    property <length> search-y: Theme.sideways ? root.panel-y + 12px : root.picks-y + 30px;
+    property <length> search-x: Theme.sideways ? root.inner-x + root.note-width + 12px : root.inner-x;
+    property <length> note-width: 184px;
+    property <length> items-y: root.search-y + 52px;
+    // (Where the header line's words begin: what the line says ends before them.)
+    property <length> words-x: RulesetView.choices.length > 0 ? version-picks.x : category-picks.x;
+    property <length> items-bottom: Theme.phone ? root.panel-y + root.panel-height : root.panel-y + root.panel-height - root.pad;
+    // The items' cells: as many columns as `cell-min` wide fit (one on a phone), `gap` apart.
+    property <length> cell-min: 260px;
+    property <length> gap: 12px;
+    property <int> columns: Theme.phone ? 1 : max(1, floor((items.view-width + root.gap) / (root.cell-min + root.gap)));
+    // (Sideways the categories are the header's tabs: `TabBar` takes them as tabs.)
+    property <[Tab]> tabs: RulesetView.tabs;
+    property <length> cell-width: (items.view-width - (root.columns - 1) * root.gap) / root.columns;
+    property <length> pitch: Theme.list-row + Theme.list-gap;
+    // In sections: each a column on a desktop (its head over its items), stacked on a phone.
+    property <bool> sectioned: RulesetView.sections.length > 0;
+    property <length> section-head: 28px;
+    property <length> section-width: (items.view-width - (RulesetView.sections.length - 1) * root.gap) / max(1, RulesetView.sections.length);
+    // Paired (the Party page): the keys' list at the left (`key-width`, a version's head `head` over its first), a rule,
+    // the chosen key's items beside it in two columns (`program-width` apart); on a phone the keys, then the items in
+    // one column under them.
+    property <length> key-width: Theme.sideways ? 260px : 300px;
+    property <length> head: 22px;
+    property <int> key-heads: RulesetView.keys.length > 0 ? RulesetView.keys[RulesetView.keys.length - 1].heads : 0;
+    property <length> keys-height: RulesetView.keys.length * root.pitch + root.key-heads * root.head;
+    property <length> programs-x: Theme.phone ? 0px : root.key-width + 40px;
+    property <length> programs-y: Theme.phone ? root.keys-height + 16px : 0px;
+    // (Sideways one column of them beside the keys, as wide as the page leaves.)
+    property <length> program-width: Theme.phone ? pair.view-width : Theme.sideways ? max(0px, pair.view-width - root.programs-x) : 255px;
+    property <int> program-columns: Theme.handheld ? 1 : 2;
+    // (The ruleset's name, a field where it can be renamed: the user, "you should just be able to edit the build
+    // name/ruleset name from the edit screen in the header". The game, locked, as the build editor shows it.)
+    title: RulesetView.name;
+    title-nav: RulesetView.editable ? "rules.name" : "";
+    title-most: Theme.sideways ? 152px : 10000px;
+    back: RulesetView.back;
+    game: !Theme.phone;
+    tag: { text: RulesetView.preset ? RulesetView.preset-word : "", tone: Theme.muted };
+    hints: root.page-hints;
+    status: RulesetView.paired ? RulesetView.paired-status(RulesetView.keys.length - 1, RulesetView.programs.length) : @tr("{n} item" | "{n} items" % RulesetView.items.length);
+
+    // (The page's parts arrive as a screen's do, one after another: the row, the categories, the category's head,
+    // its items.)
+    // (Sideways, the categories as the header's tabs, as the build editor's are.)
+    TabBar {
+        x: root.header-room-x;
+        y: root.header-top + (Theme.header - self.height) / 2;
+        width: root.header-room-width;
+        visible: Theme.sideways;
+        nav: Theme.sideways ? "rules.tab" : "";
+        tabs: root.tabs;
+        chosen: RulesetView.category;
+        headed: true;
+        upper: true;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Arrive {
+        order: 0;
+        // ---- The row: Version exclusives, IMPORT, EXPORT, DUPLICATE and DELETE.
+        // (Whether a build keeps to one version's own things, as a cartridge does, or may mix the versions': the user,
+        // "versions: one per build is weird wording, you should make it more understandable". On a phone the word is
+        // over the control, which the width wouldn't hold beside it.)
+        versions-label := Label {
+            x: 0px;
+            y: 0px;
+            width: self.preferred-width;
+            height: Theme.phone ? 16px : 40px;
+            visible: !Theme.sideways;
+            text: I18n.upper(@tr("Version exclusives"));
+        }
+
+        Seg {
+            x: Theme.phone || Theme.sideways ? 0px : versions-label.x + versions-label.width + 12px;
+            y: Theme.phone ? 20px : Theme.sideways ? 0px : versions-label.y + 2px;
+            nav: "rules.versions";
+            first: I18n.upper(@tr("One version"));
+            second: I18n.upper(@tr("Mix versions"));
+            chosen: RulesetView.versions;
+            enabled: RulesetView.editable;
+        }
+
+        delete := Button {
+            x: root.body-width - self.width;
+            y: Theme.phone ? 76px : Theme.sideways ? 2px : 0px;
+            width: self.natural-width;
+            compact: Theme.sideways;
+            visible: RulesetView.deletable;
+            nav: "rules.delete";
+            text: I18n.upper(@tr("Delete"));
+            kind: ButtonKind.ghost;
+            danger: true;
+            enabled: RulesetView.deletable;
+        }
+
+        duplicate := Button {
+            x: RulesetView.deletable ? delete.x - 8px - self.width : root.body-width - self.width;
+            y: delete.y;
+            width: self.natural-width;
+            compact: Theme.sideways;
+            nav: "rules.duplicate";
+            text: I18n.upper(@tr("Duplicate"));
+        }
+
+        // (A file of the ruleset shown, written where the player says; and a file read in as their own, shown in its
+        // place, as a duplicate is. On a phone a row of their own under the others.)
+        export := Button {
+            x: Theme.phone ? root.body-width - self.width : duplicate.x - 8px - self.width;
+            y: Theme.phone ? delete.y + 48px : delete.y;
+            width: self.natural-width;
+            compact: Theme.sideways;
+            nav: "rules.export";
+            text: I18n.upper(@tr("verb" => "Export"));
+        }
+
+        Button {
+            x: export.x - 8px - self.width;
+            y: export.y;
+            width: self.natural-width;
+            compact: Theme.sideways;
+            nav: "rules.import";
+            text: I18n.upper(@tr("verb" => "Import"));
+        }
+    }
+
+    Arrive {
+        order: 1;
+        // ---- The categories: a list in its panel, or on a phone a select (sideways the header's tabs).
+        if !Theme.handheld: PanelBack {
+            x: 0;
+            y: root.panel-y;
+            width: root.list-width;
+            height: root.panel-height;
+        }
+
+        if !Theme.handheld: Label {
+            x: root.pad;
+            y: root.line-y;
+            width: self.preferred-width;
+            height: 16px;
+            text: I18n.upper(@tr("Categories"));
+        }
+
+        if !Theme.handheld: categories := ListView {
+            x: 8px;
+            y: root.search-y;
+            width: root.list-width - 16px;
+            height: root.panel-y + root.panel-height - 8px - self.y;
+            nav: "rules.categories";
+            count: RulesetView.categories.length;
+            row-height: 40px;
+            chosen: RulesetView.category;
+            for slot in categories.shown: CategoryRow {
+                property <int> at: categories.first + slot;
+                y: self.at * categories.pitch;
+                width: categories.row-width;
+                height: categories.row-height;
+                line: RulesetView.categories[self.at];
+                nav-index: self.at;
+                chosen: self.at == RulesetView.category;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Select {
+            x: 0;
+            y: root.panel-y - 52px;
+            width: root.body-width;
+            visible: Theme.phone;
+            focusable: Theme.phone;
+            nav: "rules.category";
+            value: RulesetView.categories[RulesetView.category].name;
+        }
+    }
+
+    Arrive {
+        order: 2;
+        // ---- The category's panel and its toolbar: the search, ALLOW ALL and ALLOW NONE; under them the quick
+        // choices, where the category has versions' own items.
+        if !Theme.phone: PanelBack {
+            x: root.right-x;
+            y: root.panel-y;
+            width: root.right-width;
+            height: root.panel-height;
+        }
+
+        // (The category's name, how much of it is allowed; at the line's right end its versions' quick choices, then ALL
+        // and NONE: small words, as the build editor's are.)
+        // (A phone's select over the line names the category: the line has what it allows alone.)
+        category-title := Label {
+            x: root.inner-x;
+            y: root.line-y;
+            width: Theme.phone ? self.preferred-width : min(self.preferred-width, root.words-x - 16px - self.x);
+            height: 16px;
+            visible: !Theme.handheld;
+            text: I18n.upper(RulesetView.categories[RulesetView.category].name);
+            color: Theme.cursor;
+        }
+
+        Text {
+            x: Theme.handheld ? root.inner-x : category-title.x + category-title.width + 12px;
+            y: root.line-y;
+            width: Theme.phone ? root.inner-width : Theme.sideways ? root.note-width : max(0px, root.words-x - 12px - self.x);
+            height: 16px;
+            text: RulesetView.paired ? RulesetView.head-note : RulesetView.categories[RulesetView.category].note;
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        category-picks := AllNone {
+            x: root.inner-x + root.inner-width - self.width + 6px;
+            y: root.picks-y;
+            all-nav: "rules.all";
+            none-nav: "rules.none";
+            set: RulesetView.editable ? 0 : -1;
+            all: RulesetView.category-all;
+            none: RulesetView.category-none;
+        }
+
+        version-picks := VersionPicks {
+            x: category-picks.x - 12px - self.width;
+            y: root.picks-y;
+            visible: RulesetView.choices.length > 0;
+        }
+
+        Field {
+            x: root.search-x;
+            y: root.search-y;
+            width: Theme.sideways ? max(0px, root.words-x - 12px - self.x) : root.inner-width;
+            nav: "rules.search";
+            text: RulesetView.search;
+            placeholder: @tr("Search");
+        }
+    }
+
+    Arrive {
+        order: 3;
+        // ---- The items: a page of cells, as many to a row as fit.
+        items := ScrollPage {
+            x: root.inner-x;
+            y: root.items-y;
+            width: root.inner-width;
+            height: root.items-bottom - root.items-y;
+            visible: !RulesetView.paired;
+            nav: "rules.items";
+            content-height: !root.sectioned ? max(0px, ceil(RulesetView.items.length / root.columns) * root.pitch - Theme.list-gap)
+                : Theme.phone ? RulesetView.sections.length * root.section-head + RulesetView.items.length * root.pitch
+                : root.section-head + RulesetView.section-rows * root.pitch;
+            // (A section's head: its version's name in its color, its ALL and NONE at the right end.)
+            for section[k] in RulesetView.sections: Rectangle {
+                x: Theme.phone ? 0px : k * (root.section-width + root.gap);
+                y: Theme.phone ? k * root.section-head + section.start * root.pitch : 0px;
+                width: Theme.phone ? items.view-width : root.section-width;
+                height: root.section-head;
+                Text {
+                    x: 8px;
+                    width: max(0px, picks.x - 8px - self.x);
+                    text: section.name;
+                    color: section.tone;
+                    font-family: Theme.display;
+                    font-size: 10px;
+                    font-weight: Theme.display-bold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                picks := AllNone {
+                    x: parent.width - self.width - 2px;
+                    y: (parent.height - self.height) / 2;
+                    all-nav: "rules.items.all";
+                    none-nav: "rules.items.none";
+                    set: RulesetView.editable ? k : -1;
+                    all: section.all;
+                    none: section.none;
+                }
+            }
+
+            for line[i] in RulesetView.items: ItemRow {
+                x: !root.sectioned ? Math.mod(i, root.columns) * (root.cell-width + root.gap) : Theme.phone ? 0px : line.section * (root.section-width + root.gap);
+                y: !root.sectioned ? floor(i / root.columns) * root.pitch
+                    : Theme.phone ? (line.section + 1) * root.section-head + (RulesetView.sections[line.section].start + line.slot) * root.pitch
+                    : root.section-head + line.slot * root.pitch;
+                width: !root.sectioned ? root.cell-width : Theme.phone ? items.view-width : root.section-width;
+                height: Theme.list-row;
+                line: line;
+                nav-index: i;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        // ---- Paired (the Party page): the keys, a rule, the chosen key's items.
+        pair := ScrollPage {
+            x: root.inner-x;
+            y: root.items-y;
+            width: root.inner-width;
+            height: root.items-bottom - root.items-y;
+            visible: RulesetView.paired;
+            nav: "rules.pair";
+            content-height: Theme.phone ? root.programs-y + 30px + RulesetView.programs.length * root.pitch : max(root.keys-height, 30px + ceil(RulesetView.programs.length / root.program-columns) * root.pitch);
+            for line[i] in RulesetView.keys: Rectangle {
+                x: 0;
+                y: i * root.pitch + line.heads * root.head;
+                width: Theme.phone ? pair.view-width : root.key-width;
+                height: Theme.list-row;
+                if line.head != "": Text {
+                    x: 8px;
+                    y: -root.head + 6px;
+                    height: 14px;
+                    text: I18n.upper(line.head);
+                    color: line.tone;
+                    font-family: Theme.display;
+                    font-size: 10px;
+                    font-weight: Theme.display-bold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                }
+
+                KeyRow {
+                    line: line;
+                    nav-index: i;
+                    chosen: i == RulesetView.key;
+                }
+            }
+
+            if !Theme.phone: Rectangle {
+                x: root.key-width + 16px;
+                y: 0px;
+                width: 1px;
+                height: pair.height - 10px;
+                background: Theme.line;
+            }
+
+            programs-title := Text {
+                x: root.programs-x;
+                y: root.programs-y + 6px;
+                width: self.preferred-width;
+                height: 14px;
+                text: I18n.upper(RulesetView.programs-title);
+                color: Theme.muted;
+                font-family: Theme.display;
+                font-size: 10px;
+                font-weight: Theme.display-bold;
+                letter-spacing: 1.6px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: programs-title.x + programs-title.width + 12px;
+                y: programs-title.y;
+                width: self.preferred-width;
+                height: programs-title.height;
+                text: RulesetView.programs-note;
+                color: Theme.muted;
+                font-family: Theme.body;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            for line[i] in RulesetView.programs: ProgramRow {
+                x: root.programs-x + Math.mod(i, root.program-columns) * root.program-width;
+                y: root.programs-y + 30px + floor(i / root.program-columns) * root.pitch;
+                width: root.program-width - 16px;
+                height: Theme.list-row;
+                line: line;
+                nav-index: i;
+            }
+        }
+
+        Message {
+            x: 0;
+            y: root.body-height - 18px;
+            width: root.body-width;
+            height: 18px;
+            text: RulesetView.message;
+            tone: RulesetView.message-quiet ? Theme.muted : Theme.bad;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+}

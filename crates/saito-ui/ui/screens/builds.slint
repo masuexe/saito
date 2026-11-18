@@ -1,0 +1,228 @@
+// Builds (docs/design/app-ui.md §6): a build's editor, opened from Play (its EDIT) or Practice (its EDIT). The
+// builds themselves, + NEW BUILD (and its FROM A SAVE FILE…), and the chosen build's overview with EDIT and its
+// menu of DUPLICATE and DELETE are Play's (play.slint).
+//
+// The editor: the build's name in the header, a field that renames it (docs/design/app-ui.md §2.74); a tab bar, and
+// at its right end the ruleset the build is made for; and under it the tab chosen, which says what the build's
+// problems are where they are, the ruleset's among them (docs/design/app-ui.md §2.66). Each tab is one file in builds/ (its view, the global its Rust module sets,
+// and its component, which is given its place here) and one Rust module in src/screens/builds/; docs/app.md §8 says
+// how a tab is added and what it is given. Its Rust half is src/screens/builds/mod.rs.
+
+import { Theme, I18n } from "../theme.slint";
+import { Nav } from "../nav.slint";
+import { Shell, Page, PadButton, Hint } from "../shell.slint";
+import { TabBar, Tab, Rule, Label, Select, Button } from "../widgets.slint";
+import { Tween } from "../motion.slint";
+import { VersionTag } from "../build.slint";
+import { NaviView, NaviTab, NaviOverlay } from "builds/navi.slint";
+import { FolderView, FolderTab, FolderOverlay } from "builds/folder.slint";
+import { NavicustView, NavicustTab, NavicustOverlay } from "builds/navicust.slint";
+import { PatchCardsView, PatchCardsTab, PatchCardsOverlay } from "builds/patch_cards.slint";
+import { AutoBattleView, AutoBattleTab, AutoBattleOverlay } from "builds/auto_battle.slint";
+import { PartyView, PartyTab, PartyOverlay } from "builds/party.slint";
+
+// Each tab's view reaches the app through here (app.slint exports what this file does).
+export { NaviView, FolderView, NavicustView, PatchCardsView, AutoBattleView, PartyView }
+
+// The editor's tabs, in the bar's order. A game has those its builds have something for (auto battle data and a
+// party: some games').
+export enum EditorTab {
+    navi,
+    party,
+    folder,
+    navicust,
+    patch-cards,
+    auto-battle,
+}
+
+// What Builds shows: src/screens/builds/mod.rs sets these.
+export global BuildsView {
+    // Back goes to Practice, which opened the editor; else to Play: the header says so.
+    in property <bool> to-practice;
+    in property <string> name;
+    // The ruleset the build is made for, by its name: the build is marked against it, and what it has against the build
+    // (an item it doesn't allow, a mix of versions) is said in the strip of each item it is about (docs/design/app-ui.md
+    // §2.66). `ruleset-missing`: the one it names is no longer there (the player's own, deleted), which the select says
+    // after its name, the build marked against the game's first preset.
+    in property <string> ruleset;
+    in property <bool> ruleset-missing;
+    in property <[Tab]> tabs;
+    // The tab chosen: its place in the bar, and which it is. `tab-way` is the way it was reached (-1 from the
+    // right): its body arrives from that side.
+    in property <int> tab;
+    in property <EditorTab> shown;
+    in property <int> tab-way: 1;
+    // ---- Words the app asks for.
+    out property <[string]> tab-names: [I18n.upper(@tr("Navi")), I18n.upper(@tr("Party")), I18n.upper(@tr("Folder")), I18n.upper(@tr("NaviCust")), I18n.upper(@tr("Patch cards")), I18n.upper(@tr("Auto battle"))];
+    // A tab's CLEAR's dialog's button (docs/design/app-ui.md §2.71).
+    out property <string> clear-word: I18n.upper(@tr("Clear"));
+}
+
+// The editor's body: the tab chosen, arriving from the way it was reached each time it changes. A tab is here by
+// its `if`, which holds the tab alone: one clock moves the five (an `Arrive` around each tab was copied into
+// each `if`).
+component EditorBody inherits Rectangle {
+    property <EditorTab> shown: BuildsView.shown;
+    property <int> seq;
+    changed shown => {
+        root.seq += 1;
+    }
+    tw := Tween {
+        seq: root.seq;
+    }
+
+    Rectangle {
+        x: (1 - tw.t) * BuildsView.tab-way * 24px;
+        opacity: tw.t;
+        if BuildsView.shown == EditorTab.navi: NaviTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if BuildsView.shown == EditorTab.folder: FolderTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if BuildsView.shown == EditorTab.navicust: NavicustTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if BuildsView.shown == EditorTab.patch-cards: PatchCardsTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if BuildsView.shown == EditorTab.auto-battle: AutoBattleTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if BuildsView.shown == EditorTab.party: PartyTab {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+}
+
+export component BuildsScreen inherits Page {
+    // The tab bar's place, and the tab's under it (the bar is flush under the header). On a phone held sideways the
+    // bar is in the header's row after the name's box, 160 wide (docs/design/app-ui.md §2.103), and the tab has the
+    // whole body.
+    property <length> bar-y: Theme.phone ? -8px : -16px;
+    property <length> tab-y: Theme.phone ? 44px : Theme.sideways ? 0px : 40px;
+    property <length> tab-height: self.body-height - root.tab-y + (Theme.handheld ? 0px : 8px);
+    title: BuildsView.name;
+    title-nav: "name";
+    title-most: Theme.sideways ? 152px : 10000px;
+    back: BuildsView.to-practice ? I18n.upper(@tr("Practice")) : I18n.upper(@tr("Play"));
+    // (A phone's header leaves the game out. A build has no version: docs/design/versions.md §3.3.)
+    game: !Theme.phone;
+    hints: BuildsView.shown == EditorTab.navi ? NaviView.hints : BuildsView.shown == EditorTab.folder ? FolderView.hints : BuildsView.shown == EditorTab.navicust ? NavicustView.hints : BuildsView.shown == EditorTab.patch-cards ? PatchCardsView.hints : BuildsView.shown == EditorTab.party ? PartyView.hints : AutoBattleView.hints;
+    status: BuildsView.shown == EditorTab.navi ? NaviView.status : BuildsView.shown == EditorTab.folder ? FolderView.status : BuildsView.shown == EditorTab.navicust ? NavicustView.status : BuildsView.shown == EditorTab.patch-cards ? PatchCardsView.status : BuildsView.shown == EditorTab.party ? PartyView.status : AutoBattleView.status;
+
+    // The tab bar, flush under the header, and the tab chosen.
+    Rule {
+        x: -Theme.margin;
+        y: root.bar-y + 39px;
+        width: root.body-width + 2 * Theme.margin;
+        visible: !Theme.sideways;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // (At the bar's right end on a desktop, the ruleset the build is made for, and EDIT: its page; then past a divider
+    // PRACTICE, straight into a practice battle with the build, whose EXIT comes back here (none where the editor was
+    // opened from Practice, whose Back goes back to it). A phone has them on the Navi tab, upright or sideways.)
+    property <bool> practice: !BuildsView.to-practice;
+    property <length> practice-width: root.practice ? 16px + 1px + 16px + practice-button.width : 0px;
+    property <length> ruleset-width: Theme.handheld ? 0px : ruleset-label.width + 12px + 176px + 8px + rules-edit.width + root.practice-width + 16px;
+    tab-bar := TabBar {
+        x: Theme.phone ? -8px : Theme.sideways ? root.header-room-x : 0px;
+        y: Theme.sideways ? root.header-top + (Theme.header - self.height) / 2 : root.bar-y;
+        width: Theme.sideways ? root.header-room-width : root.body-width + (Theme.phone ? 16px : 0px) - root.ruleset-width;
+        nav: "tab";
+        tabs: BuildsView.tabs;
+        chosen: BuildsView.tab;
+        headed: Theme.sideways;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    ruleset-label := Label {
+        x: root.body-width - root.ruleset-width + 16px;
+        y: root.bar-y;
+        width: self.preferred-width;
+        height: 36px;
+        visible: !Theme.handheld;
+        text: I18n.upper(@tr("Ruleset"));
+    }
+
+    Select {
+        x: ruleset-label.x + ruleset-label.width + 12px;
+        y: root.bar-y;
+        width: 176px;
+        height: 36px;
+        visible: !Theme.handheld;
+        focusable: !Theme.handheld;
+        nav: "ruleset";
+        value: BuildsView.ruleset;
+        note: BuildsView.ruleset-missing ? @tr("(missing)") : "";
+    }
+
+    rules-edit := Button {
+        x: root.body-width - root.practice-width - self.width;
+        y: root.bar-y;
+        // (As tall as the ruleset's select beside them: the user, "make the buttons next to dropdowns the same height".)
+        height: 36px;
+        width: self.natural-width;
+        compact: true;
+        visible: !Theme.handheld;
+        nav: Theme.handheld ? "" : "ruleset-edit";
+        text: I18n.upper(@tr("Edit"));
+    }
+
+    Rectangle {
+        x: rules-edit.x + rules-edit.width + 16px;
+        y: root.bar-y + 8px;
+        width: 1px;
+        height: 20px;
+        visible: !Theme.handheld && root.practice;
+        background: Theme.line;
+    }
+
+    practice-button := Button {
+        x: root.body-width - self.width;
+        y: root.bar-y;
+        // (As tall as the ruleset's select beside them: the user, "make the buttons next to dropdowns the same height".)
+        height: 36px;
+        width: self.natural-width;
+        compact: true;
+        visible: !Theme.handheld && root.practice;
+        nav: !Theme.handheld && root.practice ? "practice" : "";
+        text: I18n.upper(@tr("Practice"));
+    }
+
+    EditorBody {
+        x: 0;
+        y: root.tab-y;
+        width: root.body-width;
+        height: root.tab-height;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}
+
+// What opens over the editor: on a phone the Navi tab's, the Folder's, the NaviCust's, the Patch cards', the Auto battle
+// and the Party tab's sheets. It covers the whole window, over the screen and under the shell's own dialogs; empty, it
+// takes no clicks.
+export component BuildsOverlay inherits Rectangle {
+    if BuildsView.shown == EditorTab.navi && NaviView.sheet: NaviOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.navicust && NavicustView.sheet: NavicustOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.folder && FolderView.sheet: FolderOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.patch-cards && PatchCardsView.sheet: PatchCardsOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.auto-battle && AutoBattleView.sheet: AutoBattleOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.party && PartyView.sheet: PartyOverlay {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}

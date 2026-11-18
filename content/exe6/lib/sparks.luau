@@ -1,0 +1,88 @@
+--!strict
+-- Hit sparks: what shows where a hit lands (`collision:set_hit_effect`).
+
+local chip_destruction_spark_sprite = asset.sprite("chip-destruction-spark")
+local explosion_sprite = asset.sprite("explosion")
+local hit_marker_sprite = asset.sprite("hit-marker")
+local hit_sparks_sprite = asset.sprite("hit-sparks")
+local hit_sprite = asset.sprite("hit")
+local impact_sprite = asset.sprite("impact")
+local pink_flash_sprite = asset.sprite("pink-flash")
+local spark_0e_sprite = asset.sprite("spark-0e")
+
+local sparks = {}
+
+-- By element (null, fire, aqua, elec, wood, and 5), the spark
+-- `sub_801A146` gives an attack of that element (hit effects 0 to 5).
+local BY_ELEMENT: { [number]: Spark } = {
+    [0] = new.spark { sprite = hit_sparks_sprite, anim = 0, palette = 0, steps = 4 },
+    [1] = new.spark { sprite = hit_sparks_sprite, anim = 2, palette = 0, steps = 15 },
+    [2] = new.spark { sprite = hit_sparks_sprite, anim = 3, palette = 0, steps = 11 },
+    [3] = new.spark { sprite = hit_sparks_sprite, anim = 4, palette = 0, steps = 12 },
+    [4] = new.spark { sprite = hit_sparks_sprite, anim = 5, palette = 0, steps = 13 },
+    [5] = new.spark { sprite = pink_flash_sprite, anim = 0, palette = 0, steps = 10 },
+}
+
+-- The element sparks by name (hit effects 1 to 4), for hits that name
+-- theirs rather than take their element's.
+sparks.fire, sparks.aqua, sparks.elec, sparks.wood = BY_ELEMENT[1], BY_ELEMENT[2], BY_ELEMENT[3], BY_ELEMENT[4]
+
+-- The plain hit (spark 0) and the charged shot's (5), as named sparks.
+sparks.plain = BY_ELEMENT[0]
+sparks.charged = BY_ELEMENT[5]
+
+-- The element sparks by name (hit effects 1 to 3: a flame's, a bubble
+-- star's, a thunder ball's).
+sparks.fire = BY_ELEMENT[1]
+sparks.aqua = BY_ELEMENT[2]
+sparks.elec = BY_ELEMENT[3]
+
+-- A cannon's impact (spark 7: the cannons, AirShot).
+sparks.impact = new.spark { sprite = impact_sprite, anim = 0, palette = 0, steps = 19 }
+
+-- A breaking hit (spark 0x0A: the break family's shots, a thrown obstacle,
+-- JustcOne's fist, a rock; GroundMan's drill and rocks, DustMan's junk,
+-- BigHook's flames).
+sparks.breaking = new.spark { sprite = hit_sparks_sprite, anim = 1, palette = 0, steps = 8 }
+
+-- The chip destruction hit spark (spark 9: the chip destruction shot's).
+sparks.chip_destruction = new.spark { sprite = chip_destruction_spark_sprite, anim = 0, palette = 0, steps = 15 }
+
+-- A blast (spark 0x0B: GigaCan's shot).
+sparks.blast = new.spark { sprite = explosion_sprite, anim = 0, palette = 0, steps = 22 }
+
+-- A bat's impact (spark 0x0D: BatCan's shot).
+sparks.bat = new.spark { sprite = hit_marker_sprite, anim = 1, palette = 0, steps = 18 }
+
+-- The element sparks by name (hit effects 1 to 3), for hits that name
+-- theirs rather than take their element's.
+sparks.fire, sparks.aqua, sparks.elec = BY_ELEMENT[1], BY_ELEMENT[2], BY_ELEMENT[3]
+
+-- The wood spark (hit effect 4): the boomerang's, the lances'.
+sparks.wood = BY_ELEMENT[4]
+
+-- The erase beams' spark (hit effect 0x0C).
+sparks.erase = new.spark { sprite = pink_flash_sprite, anim = 0, palette = 2, steps = 10 }
+
+-- A heavy hit's (hit effect 6): Magnum's shot, the beasts' claws and bites,
+-- the flying shot's arrows, VDoll's curse, JudgeMan's books.
+sparks.heavy = new.spark { sprite = hit_sparks_sprite, anim = 8, palette = 0, steps = 4 }
+
+-- `sub_801A146`: the spark of an attack of `element` (its primary
+-- element, the low nibble).
+function sparks.of_element(element: number): Spark
+    local e = bit32.band(element, 0xF)
+    local s = BY_ELEMENT[e]
+    if not s then
+        error(string.format("sub_801A146: element %d has no hit spark", e))
+    end
+    return s
+end
+
+-- The rest of the original's sparks (gen-content).
+-- Spark 0x08.
+sparks.guard = new.spark { sprite = hit_sprite, anim = 0, palette = 0, steps = 9 }
+-- Spark 0x0E.
+sparks.uninstall = new.spark { sprite = spark_0e_sprite, anim = 0, palette = 0, steps = 22 }
+
+return sparks

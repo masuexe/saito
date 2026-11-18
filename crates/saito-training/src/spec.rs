@@ -1,0 +1,285 @@
+//! The observation's layout (docs/design/training-ai.md §3): its token
+//! sets in a fixed order, each a count of tokens of a width of features
+//! (named, in order) and of name ids, and the spec's hash, which a network's
+//! weights carry so that an observation changed since they were trained
+//! can't play them.
+//!
+//! Each set's features are listed once here, as `name: width`; the encoder
+//! writes them by those names (`general::gauge` is the gauge's place in the
+//! general token), and `spec()` lists them for the trainer.
+
+use crate::names;
+
+/// A set's features, their places in its token, and its width.
+macro_rules! features {
+    ($(#[$doc:meta])* $set:ident { $($field:ident: $w:expr),* $(,)? }) => {
+        $(#[$doc])*
+        #[allow(non_upper_case_globals)]
+        pub mod $set {
+            /// Each feature's name and width, in order.
+            pub const FIELDS: &[(&str, usize)] = &[$((stringify!($field), $w)),*];
+            /// The token's width.
+            pub const WIDTH: usize = 0 $(+ $w)*;
+            features!(@at 0usize; $($field: $w),*);
+        }
+    };
+    (@at $at:expr; $field:ident: $w:expr $(, $rest:ident: $rw:expr)*) => {
+        pub const $field: usize = $at;
+        features!(@at $at + $w; $($rest: $rw),*);
+    };
+    (@at $at:expr;) => {};
+}
+
+features! {
+    /// The one general token: the round's phase, the gauge and turn, both
+    /// navis' HP as the viewer's HUD shows them, its own navi's charge and
+    /// stats, the telops, the custom screen's state, the reaction delay.
+    general {
+        phase: 4,
+        screen_phase: 4,
+        gauge: 2,
+        turn: 3,
+        battle_time: 1,
+        own_hp: 3,
+        other_hp: 4,
+        own_charge: 7,
+        other_charge: 4,
+        own_stats: 8,
+        chips_left: 3,
+        telops: 8,
+        used_chip: 2,
+        delay: 1,
+        probe: 8,
+        screen: 6,
+        navis: 3,
+    }
+}
+
+/// How many attack-log ticks a panel token holds (§5): the last ones, the
+/// newest first.
+pub const LOG_TICKS: usize = 8;
+
+features! {
+    /// A panel of the playable 3 × 6, from the viewer's side (its own area
+    /// on the left): its place, its type's rule, its owners (now, at the
+    /// round's start, whether stolen), its state (cracked, shown, the hole's
+    /// and the type's timers, a blink, the blink of a stolen panel going
+    /// back), what is on it, and the attacks presented on it in the last
+    /// ticks.
+    panels {
+        place: 2,
+        rule: 12,
+        owner: 3,
+        state: 6,
+        highlight: 1,
+        on_it: 7,
+        attacked: 2 * super::LOG_TICKS,
+    }
+}
+
+features! {
+    /// A chip token's fingerprint (`fingerprint`, §3): what the chip did in
+    /// its game's sandbox, the user on its front column's middle panel:
+    /// by the target's panel (1 to 3 columns ahead, the row above, level,
+    /// below), whether it hit, the damage, the first hit's tick; the
+    /// statuses it started on the target (by the engine's status timer); the
+    /// user's HP and barrier gained; the panels whose type changed (in the
+    /// user's area, the other's) and whose owner changed (taken for the
+    /// user, lost, the other side's front column taken); the objects it left
+    /// (how many, the user's, the other's, the longest-lived's ticks); the
+    /// run's ticks; which panels' type and owner changed; and the
+    /// conditioned runs' damage as a ratio to the plain run's (/4, whether
+    /// run): by status, by the three panel types farthest from 1 (named by
+    /// the token's ids), with the user's front column stolen, with the front
+    /// line advanced (and those two's damage).
+    fingerprint {
+        positions: 27,
+        statuses: 9,
+        user: 2,
+        panels: 2,
+        owners: 3,
+        left: 4,
+        duration: 1,
+        changed: 18,
+        owner_changed: 18,
+        status_ratios: 9,
+        status_conditioned: 9,
+        kind_ratios: 3,
+        kind_conditioned: 3,
+        stolen: 3,
+        advanced: 3,
+    }
+}
+
+/// The fingerprint block's width.
+pub const FINGERPRINT: usize = fingerprint::WIDTH;
+
+features! {
+    /// An object the viewer sees.
+    objects {
+        pool: 3,
+        class: 5,
+        side: 3,
+        player: 2,
+        panel: 4,
+        offset: 3,
+        velocity: 3,
+        facing: 1,
+        hp: 4,
+        damage: 1,
+        element: 10,
+        collision: 12,
+        region: 18,
+        status: 21,
+        timers: 9,
+        barrier: 2,
+        actor: 6,
+        action: 11,
+        anim: 1,
+    }
+}
+
+features! {
+    /// A chip: of its own hand in the fight (next first), and the other
+    /// side's last used chip as its telop showed it (the chips set); or a
+    /// slot of its custom screen, a chip or the screen's OK and the rules'
+    /// buttons (the slots set, of the same features: what the screen's
+    /// pointer points at).
+    chips {
+        role: 3,
+        hand_place: 1,
+        slot: 12,
+        facts: 6 + 5 + 27 + 4 + 8 + 3 + 8 + 6 + 5 + 9 + 4 + 3,
+        in_hand: 5,
+        on_screen: 9 + 3 + 4,
+        pointer: 3,
+        would_be: 4,
+        used: 4,
+        fingerprint: super::FINGERPRINT,
+    }
+}
+
+features! {
+    /// A scalar of the viewer's side's rules' state or its navi's stats of
+    /// its game's own.
+    rules {
+        source: 2,
+        ty: 6,
+        value: 4,
+        place: 2,
+    }
+}
+
+features! {
+    /// A form: the viewer's navi's, the other's as it shows, and those a
+    /// form window offers.
+    forms {
+        role: 3,
+        window: 4,
+        facts: 6 + 4 + 5,
+    }
+}
+
+/// A token set's layout.
+#[derive(Clone, Copy, Debug)]
+pub struct Set {
+    pub name: &'static str,
+    /// Tokens (at most).
+    pub count: usize,
+    pub width: usize,
+    /// Name ids per token, and what each pair is.
+    pub ids: usize,
+    pub id_names: &'static [&'static str],
+    pub fields: &'static [(&'static str, usize)],
+}
+
+/// The sets' places in [`SETS`].
+pub const GENERAL: usize = 0;
+pub const PANELS: usize = 1;
+pub const OBJECTS: usize = 2;
+pub const CHIPS: usize = 3;
+pub const SLOTS: usize = 4;
+pub const RULES: usize = 5;
+pub const FORMS: usize = 6;
+
+/// The chips set: the hand's tokens, then the other's used chip.
+pub const HAND_TOKENS: usize = 6;
+pub const USED_TOKEN: usize = HAND_TOKENS;
+/// The slots set: a token a custom screen slot, in the screen's order.
+pub const SLOT_TOKENS: usize = saito_battle::custom::screen::SLOTS;
+
+/// A chip token's names: the chip's (a button's), and its fingerprint's:
+/// the type most of its changed panels turned to, the kind of the object it
+/// left longest, the three panel types its conditions are of.
+pub const CHIP_IDS: &[&str] = &["chip", "changes_to", "leaves", "kind_1", "kind_2", "kind_3"];
+
+/// The sets, in the order the bridge and the trainer keep them (their names
+/// name the trainer's weights: Python identifiers, no keyword).
+pub const SETS: [Set; 7] = [
+    Set { name: "general", count: 1, width: general::WIDTH, ids: 4, id_names: &["own_navi", "other_navi"], fields: general::FIELDS },
+    Set { name: "panels", count: 18, width: panels::WIDTH, ids: 2, id_names: &["type"], fields: panels::FIELDS },
+    Set { name: "objects", count: 48, width: objects::WIDTH, ids: 6, id_names: &["kind", "identity", "action"], fields: objects::FIELDS },
+    Set { name: "chips", count: HAND_TOKENS + 1, width: chips::WIDTH, ids: 12, id_names: CHIP_IDS, fields: chips::FIELDS },
+    Set { name: "slots", count: SLOT_TOKENS, width: chips::WIDTH, ids: 12, id_names: CHIP_IDS, fields: chips::FIELDS },
+    Set { name: "rules", count: 96, width: rules::WIDTH, ids: 4, id_names: &["field", "value"], fields: rules::FIELDS },
+    Set { name: "forms", count: 12, width: forms::WIDTH, ids: 2, id_names: &["form"], fields: forms::FIELDS },
+];
+
+/// Joint fight actions: a direction (none, up, down, toward, away) × A ×
+/// B (§4.1).
+pub const FIGHT_ACTIONS: usize = 20;
+
+/// The keys the key probe presses on a custom screen (§4.2), whose flags
+/// the global token holds (`general::probe`).
+pub const PROBED_KEYS: [&str; 7] = ["up", "down", "left", "right", "a", "b", "start"];
+
+/// The entries of the rules' form list a custom screen action may choose,
+/// after the 12 slots (§4.2: EXE6's Crosses).
+pub const FORM_ENTRIES: usize = saito_battle::custom::screen::FORM_LIST_ENTRIES;
+
+/// Custom screen actions: a slot, or an entry of the form list.
+pub const SCREEN_ACTIONS: usize = SLOT_TOKENS + FORM_ENTRIES;
+
+/// The layout as text, which the spec's hash is of: every set's name,
+/// count, width, ids and features in order, the actions, and the names'
+/// hash.
+pub fn text() -> String {
+    let mut out = format!("saito observation\nnames {} buckets {}\nfight actions {FIGHT_ACTIONS}\nscreen actions {SCREEN_ACTIONS} form entries {FORM_ENTRIES}\nprobed keys {}\n", names::DESCRIPTION, names::BUCKETS, PROBED_KEYS.join(","));
+    out += &format!("chips: hand {HAND_TOKENS} used 1; slots {SLOT_TOKENS}\n");
+    for s in SETS {
+        out += &format!("set {} count {} width {} ids {} ({})\n", s.name, s.count, s.width, s.ids, s.id_names.join(","));
+        for (name, w) in s.fields {
+            out += &format!("  {name} {w}\n");
+        }
+    }
+    out += "fingerprint\n";
+    for (name, w) in fingerprint::FIELDS {
+        out += &format!("  {name} {w}\n");
+    }
+    out
+}
+
+/// The spec's hash: FNV-1a 64 of [`text`], in hex.
+pub fn hash() -> String {
+    names::text_hash(&text())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_sets_fields_fill_its_width() {
+        for s in SETS {
+            assert_eq!(s.fields.iter().map(|(_, w)| w).sum::<usize>(), s.width, "{}", s.name);
+            assert_eq!(s.id_names.len() * 2, s.ids, "{}: two ids a name", s.name);
+        }
+        assert_eq!(general::navis + 3, general::WIDTH);
+        for s in SETS {
+            assert!(s.name.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{}", s.name);
+        }
+        assert_eq!(chips::fingerprint + FINGERPRINT, chips::WIDTH);
+        assert_eq!(fingerprint::positions + 27, fingerprint::statuses);
+        assert_eq!(hash().len(), 16);
+    }
+}

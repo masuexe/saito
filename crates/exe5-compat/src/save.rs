@@ -1,0 +1,492 @@
+//! An EXE5 save file (the .sav an emulator keeps), and what saito reads of
+//! it for a player's setup: the version, the navi operated, the equipped
+//! folder with its Regular chip, the light/dark value, the souls it has, its
+//! NaviCust (the list, the compression flags, whether the compile leaves
+//! the HP), its patch cards, its auto battle data and its SP navi deletion
+//! times.
+//!
+//! The file holds the save image at 0x100: 0x7C14 bytes, the game's EWRAM
+//! from 0x02000000 as the game saves it (an address's offset in the image
+//! is its offset from 0x02000000), each byte XORed with the low byte of the
+//! mask word at 0x1A34 (the word itself stored plain). The word at 0x1A30
+//! is 0 in a save the game wrote; the game's name is at 0x29E0; the word at
+//! 0x29DC is the checksum: the image's bytes summed, less the checksum's
+//! own, plus 0x72 for Team ProtoMan and 0x18 for Team Colonel. (The format
+//! as reference save support reads it; reference raw netplay saves are such an
+//! image, unmasked: [`Save::from_image`].)
+//!
+//! The event flags are at 0x029F8 (the toolkit's +0x44: 0x02002940, the
+//! game state's block, + 0xB8; flag `f` is bit `0x80 >> (f & 7)` of byte
+//! `f >> 3`), MegaMan's NaviStats at 0x52A8 (0x60 bytes: the light/dark
+//! value at +0x44), the NaviCust's list at 0x4D6C (25 parts of 8 bytes) and
+//! its grid at 0x4D48, the patch cards' count at 0x79A0 and their list at
+//! 0x79D0 (a byte each: the card, bit 7 switched off), the area at 0x2944
+//! (the game state's +4: the cyberworld's from 0x80), the key items' counts
+//! at 0x3DB0 (the toolkit's +0x50, a byte an item: ExpMemry's, item 0x61,
+//! is the NaviCust board's expansions), the auto battle data at 0x554C
+//! (the toolkit's +0x78: seven blocks of 0xE0 bytes, the player's the
+//! first; docs/design/exe5-map.md §15.9), the folders at 0x2DF4 (three of
+//! 30 halfwords: the chip in the low 9 bits, the code above; MegaMan's
+//! NaviStats +0x2D the one equipped, +0x2E the Regular chip of each, an entry
+//! from 0, 30 and on none), the navi operated at 0x2941 (the game state's
+//! +1: 0 MegaMan, a team navi by number). The team navis' NaviStats blocks
+//! follow MegaMan's (0x60 bytes each: a version's six navis in its souls'
+//! order, 0x0801165C by navi number); the story sets their HP as it sets
+//! event flags from 0x300 on, whose count is the team navis' level too.
+//! The SP navi deletion times are at 0x2670 (22 halfwords of frames, a slot
+//! each: an SP chip's slot is its chip record's +0x1A less 0x3E9). A new
+//! game fills them with 0xFFFF (0x080092E0), a fight's end keeps a better
+//! time there (0x08028CC6, JP 0x08028C82), and a battle reads its copy at
+//! 0x0203E560 (0x08009A14 copies them).
+
+use crate::Version;
+
+/// Where the image starts in the file, and its size.
+const IMAGE_START: usize = 0x100;
+pub const IMAGE_SIZE: usize = 0x7C14;
+/// The mask word, the shift word, the checksum and the game's name.
+const MASK: usize = 0x1A34;
+const SHIFT: usize = 0x1A30;
+const CHECKSUM: usize = 0x29DC;
+const GAME_NAME: usize = 0x29E0;
+const EVENT_FLAGS: usize = 0x29F8;
+/// MegaMan's NaviStats, and the light/dark value in it.
+const NAVI_STATS: usize = 0x52A8;
+const LIGHT_DARK: usize = 0x44;
+/// The NaviCust's list (`NAVICUST_PARTS` parts of 8 bytes), the patch cards'
+/// count and list, the area.
+const NAVICUST: usize = 0x4D6C;
+const CARD_COUNT: usize = 0x79A0;
+const CARDS: usize = 0x79D0;
+const AREA: usize = 0x2944;
+/// The navi operated, the folders, and a NaviStats block's equipped folder
+/// and Regular chips.
+const NAVI: usize = 0x2941;
+const FOLDERS: usize = 0x2DF4;
+const FOLDER_SIZE: usize = 30;
+const EQUIPPED_FOLDER: usize = 0x2D;
+const REGULAR_CHIPS: usize = 0x2E;
+/// The SP navi deletion times (frames), by slot.
+const SP_TIMES: usize = 0x2670;
+pub const SP_SLOTS: usize = 22;
+/// The key items' counts (a byte an item, which 0x0803C120 reads), and
+/// ExpMemry among them: the NaviCust board's expansions, which the NaviCust
+/// screen reads as it opens (0x08132928) to pick its board (0x0813F138).
+const KEY_ITEMS: usize = 0x3DB0;
+pub const EXP_MEMORY: u8 = 0x61;
+
+/// The story's progress flags (event flags from here on, set in order as
+/// the story moves on): a team navi's level is how many of the first
+/// `MAX_NAVI_LEVEL` are set before the first clear one (0x0800EBE0, which
+/// the battle's init exchange sends).
+pub const STORY_FLAGS: u16 = 0x300;
+pub const MAX_NAVI_LEVEL: u8 = 6;
+
+/// The player's auto battle data: the first of seven blocks, which a
+/// battle's end writes from what the save has learned (0x0802C540) and a
+/// battle's start sends (0x08009B64).
+const AUTO_BATTLE: usize = 0x554C;
+/// The block's size, its places (a halfword each), and its pattern records
+/// (16 bytes each from +0x58: `dx`, `dy`, five chip places, the score).
+/// Between them, at +0x54, a count that only the send writes; after the
+/// records, eight bytes nothing reads.
+pub const AUTO_BATTLE_SIZE: usize = 0xE0;
+pub const AUTO_BATTLE_PLACES: usize = 42;
+pub const AUTO_BATTLE_PATTERNS: usize = 8;
+pub const AUTO_BATTLE_PATTERN_CHIPS: usize = 5;
+const AUTO_BATTLE_COUNT: usize = 0x54;
+const AUTO_BATTLE_RECORDS: usize = 0x58;
+/// An empty place (of the block's 42, or of a record's five), and what
+/// marks a place of the 42 as a pattern record's number.
+pub const AUTO_BATTLE_EMPTY: u16 = 0xFFFF;
+pub const AUTO_BATTLE_PATTERN: u16 = 0x8000;
+
+/// A pattern record of an auto battle data block, as it is: its place
+/// from a target (signed bytes), its five chip places (each a chip's
+/// number, 0, or 0xFFFF, empty: as written the AI reads them to the
+/// first 0xFFFF, and on past the fifth; no battle gets to that read,
+/// docs/design/exe5-map.md §15.9) and its score (the word at +12).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoBattlePattern {
+    pub dx: i8,
+    pub dy: i8,
+    pub chips: [u16; AUTO_BATTLE_PATTERN_CHIPS],
+    pub score: u32,
+}
+
+impl AutoBattlePattern {
+    /// The record in `bytes`.
+    pub fn read(bytes: &[u8; 16]) -> AutoBattlePattern {
+        let chips = std::array::from_fn(|k| u16::from_le_bytes([bytes[2 + k * 2], bytes[3 + k * 2]]));
+        let score = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        AutoBattlePattern { dx: bytes[0] as i8, dy: bytes[1] as i8, chips, score }
+    }
+
+    /// The record's bytes.
+    pub fn bytes(&self) -> [u8; 16] {
+        let mut out = [0; 16];
+        (out[0], out[1]) = (self.dx as u8, self.dy as u8);
+        for (k, chip) in self.chips.iter().enumerate() {
+            out[2 + k * 2..4 + k * 2].copy_from_slice(&chip.to_le_bytes());
+        }
+        out[12..].copy_from_slice(&self.score.to_le_bytes());
+        out
+    }
+}
+
+/// An auto battle data block by number, as it is but for its count and its
+/// last eight bytes: its 42 places in order, each a chip's number, 0,
+/// 0x8000 with a pattern record's number (from 0), or 0xFFFF (empty), and
+/// its eight pattern records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoBattleBlock {
+    pub places: [u16; AUTO_BATTLE_PLACES],
+    pub patterns: [AutoBattlePattern; AUTO_BATTLE_PATTERNS],
+}
+
+impl AutoBattleBlock {
+    /// The block in `bytes` (0xE0 of them).
+    pub fn read(bytes: &[u8]) -> Result<AutoBattleBlock, String> {
+        if bytes.len() != AUTO_BATTLE_SIZE {
+            return Err(format!("an auto battle data block is {AUTO_BATTLE_SIZE:#x} bytes, not {:#x}", bytes.len()));
+        }
+        let half = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+        let pattern = |i: usize| {
+            let at = AUTO_BATTLE_RECORDS + i * 16;
+            AutoBattlePattern::read(bytes[at..at + 16].try_into().expect("a record of the block"))
+        };
+        Ok(AutoBattleBlock { places: std::array::from_fn(|i| half(i * 2)), patterns: std::array::from_fn(pattern) })
+    }
+
+    /// The block's bytes as a save holds them: its count 0xFFFFFFFF (the
+    /// send writes it) and its last eight bytes 0xFF.
+    pub fn bytes(&self) -> [u8; AUTO_BATTLE_SIZE] {
+        let mut out = [0xFF; AUTO_BATTLE_SIZE];
+        for (i, place) in self.places.iter().enumerate() {
+            out[i * 2..i * 2 + 2].copy_from_slice(&place.to_le_bytes());
+        }
+        out[AUTO_BATTLE_COUNT..AUTO_BATTLE_RECORDS].fill(0xFF);
+        for (i, p) in self.patterns.iter().enumerate() {
+            out[AUTO_BATTLE_RECORDS + i * 16..AUTO_BATTLE_RECORDS + (i + 1) * 16].copy_from_slice(&p.bytes());
+        }
+        out
+    }
+}
+
+/// The NaviCust list's room.
+pub const NAVICUST_PARTS: usize = 25;
+/// A part is compressed by its event flag (this + the part id, which the
+/// shape's lookup, 0x0813EEFC, tests).
+pub const COMPRESSED_FLAG: u16 = 0x1EC0;
+/// The flag that keeps the NaviCust's HP routine (0x0803C13C) from running,
+/// as the cyberworld does.
+pub const KEEPS_HP_FLAG: u16 = 0x10B2;
+
+/// The soul button (Soul Unison, event flag 0), and Chaos Unison (0x236:
+/// the soul button's check of a dark chip, 0x08024B7E).
+pub const SOUL_UNISON_FLAG: u16 = 0;
+pub const CHAOS_UNISON_FLAG: u16 = 0x236;
+/// EXE5's souls by number (1 to 12, NaviStats +0x2C).
+pub const SOULS: std::ops::RangeInclusive<u8> = 1..=12;
+
+/// An EXE5 save, its image unmasked.
+pub struct Save {
+    image: Box<[u8]>,
+    version: Version,
+    japanese: bool,
+}
+
+impl std::fmt::Debug for Save {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Save").field("version", &self.version).field("japanese", &self.japanese).finish_non_exhaustive()
+    }
+}
+
+/// A save's equipped folder, by the original's numbers: its 30 chips (each
+/// `code << 9 | chip`) and its Regular chip (an entry, from 0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveFolder {
+    pub chips: [u16; FOLDER_SIZE],
+    pub regular: Option<u8>,
+}
+
+impl Save {
+    /// The save in `file` (a .sav's bytes), checked: its game's name, the
+    /// shift word and the checksum.
+    pub fn read(file: &[u8]) -> Result<Save, String> {
+        let mut image: Box<[u8]> = file
+            .get(IMAGE_START..IMAGE_START + IMAGE_SIZE)
+            .ok_or_else(|| format!("an EXE5 save is {:#x} bytes or more, not {:#x}", IMAGE_START + IMAGE_SIZE, file.len()))?
+            .into();
+        let mask_word: [u8; 4] = image[MASK..MASK + 4].try_into().expect("four bytes");
+        for b in image.iter_mut() {
+            *b ^= mask_word[0];
+        }
+        image[MASK..MASK + 4].copy_from_slice(&mask_word);
+        let save = Save::from_image(&image)?;
+        let word = |at: usize| u32::from_le_bytes(save.image[at..at + 4].try_into().expect("four bytes"));
+        let sum: u32 = save.image.iter().map(|&b| b as u32).sum::<u32>() - save.image[CHECKSUM..CHECKSUM + 4].iter().map(|&b| b as u32).sum::<u32>();
+        let expected = sum
+            + match save.version {
+                Version::Protoman => 0x72,
+                Version::Colonel => 0x18,
+            };
+        if word(CHECKSUM) != expected {
+            return Err(format!("the save's checksum is {:#x}, its bytes give {expected:#x}: a damaged save", word(CHECKSUM)));
+        }
+        Ok(save)
+    }
+
+    /// A save image, unmasked (reference raw netplay saves): its game's name
+    /// and the shift word checked, not its checksum.
+    pub fn from_image(image: &[u8]) -> Result<Save, String> {
+        let image: Box<[u8]> = image.get(..IMAGE_SIZE).ok_or_else(|| format!("an EXE5 save image is {IMAGE_SIZE:#x} bytes, not {:#x}", image.len()))?.into();
+        let word = |at: usize| u32::from_le_bytes(image[at..at + 4].try_into().expect("four bytes"));
+        if word(SHIFT) != 0 {
+            return Err(format!("the save's shift word is {:#x}, not 0: not a save the game wrote", word(SHIFT)));
+        }
+        let (version, japanese) = match &image[GAME_NAME..GAME_NAME + 20] {
+            b"REXE5TOB 20041006 US" => (Version::Protoman, false),
+            b"REXE5TOK 20041006 US" => (Version::Colonel, false),
+            b"REXE5TOB 20041104 JP" => (Version::Protoman, true),
+            b"REXE5TOK 20041104 JP" => (Version::Colonel, true),
+            name => return Err(format!("not an EXE5 save (its game is {:?})", String::from_utf8_lossy(name))),
+        };
+        Ok(Save { image, version, japanese })
+    }
+
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn japanese(&self) -> bool {
+        self.japanese
+    }
+
+    /// Event flag `flag`.
+    pub fn event_flag(&self, flag: u16) -> bool {
+        self.image[EVENT_FLAGS + (flag >> 3) as usize] & (0x80 >> (flag & 7)) != 0
+    }
+
+    /// MegaMan's light/dark value (NaviStats +0x44: 0 to 1000).
+    pub fn light_dark(&self) -> u16 {
+        u16::from_le_bytes([self.image[NAVI_STATS + LIGHT_DARK], self.image[NAVI_STATS + LIGHT_DARK + 1]])
+    }
+
+    /// The souls the save has, by number, as the soul button checks them
+    /// (0x08024B28): those of its version whose event flag is set (the
+    /// other version's never, whatever the flags say).
+    pub fn souls(&self) -> Vec<u8> {
+        SOULS.filter(|&n| self.version.soul_flag(n).is_some_and(|f| self.event_flag(f))).collect()
+    }
+
+    /// The save has Soul Unison (the button) and Chaos Unison.
+    pub fn soul_unison(&self) -> bool {
+        self.event_flag(SOUL_UNISON_FLAG)
+    }
+
+    pub fn chaos_unison(&self) -> bool {
+        self.event_flag(CHAOS_UNISON_FLAG)
+    }
+
+    /// The unmasked image.
+    pub fn image(&self) -> &[u8] {
+        &self.image
+    }
+
+    /// MegaMan's NaviStats block.
+    pub fn navi_stats(&self) -> [u8; crate::codec::NAVI_STATS] {
+        self.image[NAVI_STATS..NAVI_STATS + crate::codec::NAVI_STATS].try_into().expect("a NaviStats block")
+    }
+
+    /// The team navis' level (0 to 6): the story's flags set from the
+    /// first, up to the first clear one (0x0800EBE0).
+    pub fn navi_level(&self) -> u8 {
+        (0..MAX_NAVI_LEVEL).take_while(|&k| self.event_flag(STORY_FLAGS + k as u16)).count() as u8
+    }
+
+    /// The NaviStats block of navi `number` (0 MegaMan's; 1 to 6 Team
+    /// ProtoMan's navis, 7 to 12 Team Colonel's: 0x0801165C's block for
+    /// it), if the save's version has the navi.
+    pub fn team_navi_stats(&self, number: u8) -> Option<[u8; crate::codec::NAVI_STATS]> {
+        let block = match (self.version, number) {
+            (_, 0) => 0,
+            (Version::Protoman, 1..=6) => number as usize,
+            (Version::Colonel, 7..=12) => number as usize - 6,
+            _ => return None,
+        };
+        let at = NAVI_STATS + crate::codec::NAVI_STATS * block;
+        Some(self.image[at..at + crate::codec::NAVI_STATS].try_into().expect("a NaviStats block"))
+    }
+
+    /// The navi operated: 0 MegaMan, else a team navi by number (1 to 6 Team
+    /// ProtoMan's, 7 to 12 Team Colonel's).
+    pub fn navi(&self) -> u8 {
+        self.image[NAVI]
+    }
+
+    /// The equipped folder (MegaMan's block's), with its Regular chip.
+    pub fn folder(&self) -> SaveFolder {
+        let stats = self.navi_stats();
+        let folder = (stats[EQUIPPED_FOLDER] as usize).min(2);
+        let at = FOLDERS + folder * FOLDER_SIZE * 2;
+        let chips = std::array::from_fn(|i| u16::from_le_bytes([self.image[at + i * 2], self.image[at + i * 2 + 1]]));
+        let regular = Some(stats[REGULAR_CHIPS + folder]).filter(|&r| (r as usize) < FOLDER_SIZE);
+        SaveFolder { chips, regular }
+    }
+
+    /// The NaviCust's list (`trace::navicust` reads it).
+    pub fn navicust_list(&self) -> &[u8] {
+        &self.image[NAVICUST..NAVICUST + NAVICUST_PARTS * 8]
+    }
+
+    /// The SP navi deletion times, by slot (frames; 0xFFFF never
+    /// deleted, a new game's).
+    pub fn sp_times(&self) -> [u16; SP_SLOTS] {
+        std::array::from_fn(|i| u16::from_le_bytes([self.image[SP_TIMES + 2 * i], self.image[SP_TIMES + 2 * i + 1]]))
+    }
+
+    /// The player's auto battle data: what a navi in auto battle plays from
+    /// this save.
+    pub fn auto_battle(&self) -> AutoBattleBlock {
+        AutoBattleBlock::read(&self.image[AUTO_BATTLE..AUTO_BATTLE + AUTO_BATTLE_SIZE]).expect("a block of the image")
+    }
+
+    /// How many of key item `item` the save has.
+    pub fn key_item(&self, item: u8) -> u8 {
+        self.image[KEY_ITEMS + item as usize]
+    }
+
+    /// The NaviCust board's expansions: the ExpMemry the save has (none a
+    /// 4x4 board, one 5x4, two 5x5; a finished save has both).
+    pub fn expansions(&self) -> u8 {
+        self.key_item(EXP_MEMORY)
+    }
+
+    /// Whether the NaviCust compresses part `part` (its event flag).
+    pub fn compressed(&self, part: u8) -> bool {
+        self.event_flag(COMPRESSED_FLAG + part as u16)
+    }
+
+    /// Whether the original's compile leaves this save's HP (its ending
+    /// outside the real world's, which the engine's rules don't have:
+    /// content/exe5/rules/navicust): the save is in the cyberworld (its
+    /// area from 0x80), or has flag 0x10B2. What verify's compile test
+    /// goes by for the bytes that ending wrote.
+    pub fn cyberworld(&self) -> bool {
+        self.image[AREA] >= 0x80 || self.event_flag(KEEPS_HP_FLAG)
+    }
+
+    /// The patch cards installed, in order: each card's number and whether
+    /// it is switched on.
+    pub fn patch_cards(&self) -> Vec<(u8, bool)> {
+        let n = self.image[CARD_COUNT] as usize;
+        self.image[CARDS..CARDS + n.min(0x30)].iter().map(|&b| (b & 0x7F, b & 0x80 == 0)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A made-up image of `version`: its name, the soul flags `flags` set,
+    /// the light/dark value `value`.
+    fn image(version: Version, flags: &[u16], value: u16) -> Vec<u8> {
+        let mut image = vec![0u8; IMAGE_SIZE];
+        let name: &[u8; 20] = match version {
+            Version::Protoman => b"REXE5TOB 20041006 US",
+            Version::Colonel => b"REXE5TOK 20041006 US",
+        };
+        image[GAME_NAME..GAME_NAME + 20].copy_from_slice(name);
+        for &f in flags {
+            image[EVENT_FLAGS + (f >> 3) as usize] |= 0x80 >> (f & 7);
+        }
+        image[NAVI_STATS + LIGHT_DARK..NAVI_STATS + LIGHT_DARK + 2].copy_from_slice(&value.to_le_bytes());
+        image
+    }
+
+    /// A save's auto battle data is the first block at 0x554C, read as it
+    /// is: its places by number, and each pattern record's place, five chip
+    /// places (a chip's number, 0 or 0xFFFF) and score; and written back,
+    /// the same bytes.
+    #[test]
+    fn a_saves_auto_battle_data_is_its_first_block() {
+        let mut image = image(Version::Colonel, &[], 500);
+        // Two blocks: the player's, and the next (which nothing reads).
+        image[AUTO_BATTLE..AUTO_BATTLE + 2 * AUTO_BATTLE_SIZE].fill(0xFF);
+        let put = |image: &mut [u8], at: usize, halves: &[u16]| {
+            for (i, h) in halves.iter().enumerate() {
+                image[AUTO_BATTLE + at + i * 2..AUTO_BATTLE + at + i * 2 + 2].copy_from_slice(&h.to_le_bytes());
+            }
+        };
+        put(&mut image, 6, &[0x51, 0x51, 0, 0xA2]);
+        put(&mut image, 66, &[0x8000, 0x8001]);
+        put(&mut image, 82, &[0x157]);
+        // Record 0: 3 columns short, 1 row down, chips 0xC9 and 0x28, score 7.
+        image[AUTO_BATTLE + 0x58..AUTO_BATTLE + 0x5A].copy_from_slice(&[0xFD, 0x01]);
+        put(&mut image, 0x5A, &[0xC9, 0x28]);
+        put(&mut image, 0x64, &[7, 0]);
+        // Record 1: a full one, a 0 among its chips, its score a long word.
+        image[AUTO_BATTLE + 0x68..AUTO_BATTLE + 0x6A].copy_from_slice(&[0xFF, 0xFE]);
+        put(&mut image, 0x6A, &[1, 2, 0, 4, 5, 0x000A, 0x0001]);
+        // Record 2: zeroed, as the game's write leaves one its learning hasn't filled.
+        image[AUTO_BATTLE + 0x78..AUTO_BATTLE + 0x88].fill(0);
+        put(&mut image, AUTO_BATTLE_SIZE, &[0x99]);
+        let block = Save::from_image(&image).unwrap().auto_battle();
+        let mut places = [0xFFFFu16; AUTO_BATTLE_PLACES];
+        (places[3], places[4], places[5], places[6], places[33], places[34], places[41]) = (0x51, 0x51, 0, 0xA2, 0x8000, 0x8001, 0x157);
+        assert_eq!(block.places, places);
+        let none = AUTO_BATTLE_EMPTY;
+        assert_eq!(block.patterns[0], AutoBattlePattern { dx: -3, dy: 1, chips: [0xC9, 0x28, none, none, none], score: 7 });
+        assert_eq!(block.patterns[1], AutoBattlePattern { dx: -1, dy: -2, chips: [1, 2, 0, 4, 5], score: 0x0001_000A });
+        assert_eq!(block.patterns[2], AutoBattlePattern { dx: 0, dy: 0, chips: [0; 5], score: 0 });
+        assert_eq!(block.patterns[3], AutoBattlePattern { dx: -1, dy: -1, chips: [none; 5], score: 0xFFFF_FFFF });
+        assert_eq!(block.bytes()[..], image[AUTO_BATTLE..AUTO_BATTLE + AUTO_BATTLE_SIZE]);
+        assert_eq!(AutoBattleBlock::read(&block.bytes()), Ok(block));
+        assert!(AutoBattleBlock::read(&[0; 4]).is_err());
+    }
+
+    /// A save's souls are its version's whose flags are set: flags 2 to 7
+    /// are Team ProtoMan's souls 1 to 6, 8 to 0x0D Team Colonel's 7 to 12,
+    /// and a version never has the other's.
+    #[test]
+    fn a_saves_souls_are_its_versions() {
+        let all: Vec<u16> = (0..=13).chain([CHAOS_UNISON_FLAG]).collect();
+        let s = Save::from_image(&image(Version::Protoman, &all, 1000)).unwrap();
+        assert_eq!(s.souls(), [1, 2, 3, 4, 5, 6]);
+        assert!(s.soul_unison() && s.chaos_unison());
+        assert_eq!(s.light_dark(), 1000);
+        let s = Save::from_image(&image(Version::Colonel, &[0, 9, 13], 0)).unwrap();
+        assert_eq!(s.souls(), [8, 12]);
+        assert!(!s.chaos_unison());
+        assert_eq!(s.light_dark(), 0);
+    }
+
+    /// The NaviCust board's expansions are the save's ExpMemry (key item
+    /// 0x61's count).
+    #[test]
+    fn a_saves_expansions_are_its_exp_memory() {
+        let mut img = image(Version::Protoman, &[], 500);
+        assert_eq!(Save::from_image(&img).unwrap().expansions(), 0);
+        img[0x3DB0 + 0x61] = 2;
+        img[0x3DB0 + 0x60] = 9;
+        let s = Save::from_image(&img).unwrap();
+        assert_eq!((s.expansions(), s.key_item(0x60)), (2, 9));
+    }
+
+    /// A .sav: the image at 0x100, masked, with its checksum; a damaged one
+    /// is refused.
+    #[test]
+    fn a_save_file_unmasks_and_checks() {
+        let mut img = image(Version::Colonel, &[0, 8], 480);
+        img[MASK..MASK + 4].copy_from_slice(&[0x5A, 1, 2, 3]);
+        let sum: u32 = img.iter().map(|&b| b as u32).sum::<u32>() + 0x18;
+        img[CHECKSUM..CHECKSUM + 4].copy_from_slice(&sum.to_le_bytes());
+        let mut file = vec![0u8; IMAGE_START];
+        file.extend(img.iter().enumerate().map(|(i, &b)| if (MASK..MASK + 4).contains(&i) { b } else { b ^ 0x5A }));
+        let s = Save::read(&file).unwrap();
+        assert_eq!((s.version(), s.souls(), s.light_dark()), (Version::Colonel, vec![7], 480));
+        file[IMAGE_START + 0x10] ^= 1;
+        assert!(Save::read(&file).unwrap_err().contains("checksum"));
+    }
+}

@@ -1,0 +1,55 @@
+[package]
+name = "saito-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Plays saito battles for a host app to show: loads a game, runs a set live or over the network, and gives its frames and sound. A library with no window, audio device or command line in it (saito is the app over it, saito-tools the command line)"
+
+[dependencies]
+# Threads (a Web Worker in a browser) and the locks they share.
+saito-threads = { path = "../saito-threads" }
+# Time: std's natively, the browser's `performance.now()` there (std's panics).
+web-time = "1"
+saito-battle = { path = "../saito-battle" }
+# The drawing: a battle into frames.
+saito-render = { path = "../saito-render" }
+saito-assets = { path = "../saito-assets" }
+# The battle's sound as samples (`BattleAudio`), for the host's own output:
+# without `playback`, which is the audio device (cpal).
+saito-audio = { path = "../saito-audio", default-features = false }
+# Live play against another player: rollback (getgud) over the rennet
+# protocol, on UDP.
+saito-netplay = { path = "../saito-netplay" }
+# A game's content and strings, and the check of its assets against it.
+saito-content = { path = "../saito-content" }
+# A game's assets (graphics, sound, their index), extracted from its ROMs by its content's recipe as it loads.
+saito-extract = { path = "../saito-extract" }
+# A match: the setup a set is played from, checked; live play's random pick
+# of one; how a set goes on.
+saito-match = { path = "../saito-match" }
+# The replay file a set is recorded to and played back from.
+saito-replay = { path = "../saito-replay" }
+# The handles the engine names content by (a chip in a hand).
+saito-content-api = { path = "../saito-content-api" }
+m4a.workspace = true
+# The netplay handshake's commitment (`lobby`): SHA-256 of what a peer
+# reveals, so neither picks its half of the seed or its side after seeing
+# the other's.
+sha2 = "0.10"
+# What the background pool's extraction of another game couldn't do: the host's log.
+log = "0.4"
+
+[features]
+# What tests of a set played back are made from (`testing`), for the tests
+# of the crates over this one.
+testing = []
+
+[dev-dependencies]
+saito-battle = { path = "../saito-battle", features = ["test-content"] }
+# A folder of no ROMs, for the loading's failures.
+tempfile = "3"
+saito-match = { path = "../saito-match", features = ["testing"] }
+# A set played over WebRTC links that drop and come back (the library
+# itself has no transport), met through a signaling server in process.
+saito-rtc = { path = "../saito-rtc" }
+saito-signaling = { path = "../saito-signaling", features = ["testing"] }

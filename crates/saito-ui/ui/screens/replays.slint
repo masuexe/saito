@@ -1,0 +1,1927 @@
+// Replays (docs/design/app-ui.md §6): the selected game's replays, newest first, with the selected one beside
+// them; the viewer, the picture filling the window with its controls over it (and the popup of the play queue's
+// entries up next), the bar's preview under the pointer, and its export mode (the range's handles on the bar, its
+// buttons in the transport, the export's options over it). On a phone the list is the page, the selected replay opens
+// as a sheet from the bottom, and the viewer's controls are stacked under the picture. Its Rust half is
+// src/screens/replays.rs.
+
+import { Theme, I18n } from "../theme.slint";
+import { Nav, NavKind, Focusable } from "../nav.slint";
+import { Shell, Page, PadButton, Picture, PartyHud } from "../shell.slint";
+import { Cut, Label, Note, Value, Mono, Button, ButtonKind, Field, Select, Seg, ListView, RowBack, RowTouch, PanelBack, Bar, ScrollPage, TabBar, Reach } from "../widgets.slint";
+import { Arrive, Tween, Pulse } from "../motion.slint";
+import { BuildSheet, BuildOverview } from "../build.slint";
+import { InputDisplay } from "../inputs.slint";
+import { PartyStrip } from "battle.slint";
+
+// A replay's row in the list.
+export struct ReplayRow {
+    // When it was played: the day, and the time of day.
+    day: string,
+    time: string,
+    opponent: string,
+    // The score, and how it went for the player who recorded it: 0 not known (yet, or it wasn't finished), 1
+    // won, 2 lost, 3 drawn.
+    score: string,
+    tone: int,
+    length: string,
+    // Why it can't be played, in place of the opponent, the score and the length.
+    reason: string,
+}
+
+// Where an export is.
+export enum ExportState {
+    idle,
+    running,
+    done,
+    canceled,
+    failed,
+}
+
+// What Replays shows: src/screens/replays.rs sets these.
+export global ReplaysView {
+    // ---- The list ----
+    in property <[ReplayRow]> rows;
+    // The folder has been read (until then nothing is said of it), and how many replays of the game it has.
+    in property <bool> listed;
+    in property <int> count;
+    // The row whose replay is shown beside the list, or -1.
+    in property <int> chosen: -1;
+    // There are replays of more than one kind to tell apart: the filter shows. 0 all, 1 online.
+    in property <bool> kinds;
+    in property <int> kind;
+    in property <string> search;
+    // The tab shown: 0 the replays, 1 the play queue (docs/design/app-ui.md §2.91).
+    in property <int> tab;
+
+    // ---- The play queue: the Queue tab's list, and the viewer's while it plays ----
+    // Its entries as the list's rows (a missing one's `reason` says so), and the one chosen in the Queue tab.
+    in property <[ReplayRow]> queue;
+    in property <int> queue-chosen: -1;
+    // The viewer plays the queue: its entries up next (after the replay watched, while that is still its head),
+    // and whether one of them plays.
+    in property <bool> queued;
+    in property <[ReplayRow]> up-next;
+    in property <bool> has-next;
+    // The popup of the entries up next is open, by the queue's button: its place in the window, its width, and the
+    // rows it has room for (more scroll).
+    in property <bool> up-next-open;
+    in property <length> up-next-x;
+    in property <length> up-next-y;
+    in property <length> up-next-width;
+    in property <int> up-next-rows: 1;
+
+    // ---- The selected replay (in the Queue tab, the entry chosen) ----
+    in property <bool> selected;
+    // It plays here (else `reason` says why not).
+    in property <bool> playable;
+    in property <string> left-name;
+    in property <string> right-name;
+    in property <string> played;
+    in property <string> result;
+    in property <int> result-tone;
+    in property <string> length;
+    in property <string> reason;
+    // Its still is in the picture.
+    in property <bool> still;
+    // A phone: the selected replay's sheet is open.
+    in property <bool> detail;
+
+    // ---- The viewer ----
+    in property <bool> watching;
+    in property <string> title;
+    in property <string> when;
+    // Where it is (where the bar is held, while it is dragged), 0 to 1; how far it is indexed, which no seek
+    // passes, 0 to 1; each later round's start, 0 to 1.
+    in property <float> position;
+    in property <float> indexed;
+    in property <[float]> marks;
+    in property <string> time;
+    in property <string> total;
+    in property <int> round: 1;
+    in property <int> rounds: 1;
+    in property <bool> playing;
+    // The playback speed's badge by the buttons: "2×", or nothing at 1× (docs/design/app-ui.md §2.96).
+    in property <string> speed;
+    // The bar's preview (docs/design/app-ui.md §2.96): the battle at the time under the pointer (or, until it is
+    // drawn, the nearest drawn), whether there is one yet, and the time under the pointer.
+    in property <image> thumb;
+    in property <bool> thumb-shown;
+    in property <string> thumb-time;
+    // Both builds may be shown (the match's setups were open), and are: the console shown's player's at the
+    // left, the other's at the right.
+    in property <bool> builds-open;
+    in property <bool> builds-shown;
+    in property <BuildSheet> left-build;
+    in property <BuildSheet> right-build;
+    // The input display is on (both players' buttons over the picture: the console shown's player's over the
+    // other's), and the buttons each holds (the GBA's bits).
+    in property <bool> inputs;
+    in property <int> held-shown;
+    in property <int> held-other;
+    // The other console's picture is on, small in the corner of the one shown: its image (a texture of its own,
+    // written in place), and its place and size in the picture's room, on the display's pixels.
+    in property <bool> inset-on;
+    in property <image> inset;
+    in property <length> inset-x;
+    in property <length> inset-y;
+    in property <length> inset-width;
+    in property <length> inset-height;
+    // A party battle's parties, as a battle shows its player's beside it (`PartyStrip`): the console shown's side's,
+    // and the other side's while its picture is on in the corner (each not shown where its side has no partners).
+    in property <PartyHud> party;
+    in property <PartyHud> other-party;
+    // The viewer's controls are shown over the picture (docs/design/app-ui.md §2.90): the app says when (an input
+    // lately, paused or at the end, a setting taken, the builds, the export, the ⋯ menu or the popup up next open;
+    // always on a phone). The pointer resting on the transport holds them too.
+    in property <bool> hud: true;
+    // Whether the queue's next replay starts by itself at the end of one (Autoplay next, remembered).
+    in property <bool> autoplay: true;
+
+    // ---- The viewer's export mode (docs/design/app-ui.md §2.96) ----
+    in property <bool> exporting;
+    in property <string> export-size;
+    in property <int> export-view;
+    // 0 the console of the view alone, 1 both on one screen, 2 both side by side.
+    in property <int> export-sides;
+    // The range as the Range's list says it (with its length), and its start and end as times.
+    in property <string> export-part;
+    in property <string> export-range;
+    // The range's handles on the bar, 0 to 1.
+    in property <float> range-start;
+    in property <float> range-end: 1;
+    in property <string> export-path;
+    in property <ExportState> export-state;
+    in property <float> export-progress;
+    in property <int> export-round: 1;
+    in property <int> export-rounds: 1;
+    in property <string> export-error;
+
+    // ---- Words the Rust half asks for ----
+    out property <[string]> months: [@tr("Jan"), @tr("Feb"), @tr("Mar"), @tr("Apr"), @tr("May"), @tr("Jun"), @tr("Jul"), @tr("Aug"), @tr("Sep"), @tr("Oct"), @tr("Nov"), @tr("Dec")];
+    out property <string> p1: @tr("P1");
+    out property <string> p2: @tr("P2");
+    // (The side menu's third: both players on one screen, the side shown's at the left.)
+    out property <string> both: @tr("sides" => "Both");
+    // Over a build's player's name: the recorder's, the other's.
+    out property <string> you: I18n.upper(@tr("You"));
+    out property <string> opponent: I18n.upper(@tr("Opponent"));
+    out property <string> delete-title: @tr("Delete replay?");
+    out property <string> delete: I18n.upper(@tr("Delete"));
+    out property <string> cancel: I18n.upper(@tr("Cancel"));
+    // What the system's save dialog calls the file.
+    out property <string> video-kind: @tr("MP4 video");
+    // The menu of a replay (a right click on its row; WATCH's arrow has the second and third), and of a queue entry.
+    out property <string> watch-word: I18n.upper(@tr("Watch"));
+    out property <string> add-word: I18n.upper(@tr("Add to queue"));
+    out property <string> start-word: I18n.upper(@tr("Play next"));
+    out property <string> export-word: I18n.upper(@tr("verb" => "Export video"));
+    // (In the browser its files are the page's: the replay is downloaded.)
+    out property <string> file-word: Theme.web || Theme.phone-app ? I18n.upper(@tr("Save replay")) : I18n.upper(@tr("Show file"));
+    out property <string> from-here-word: I18n.upper(@tr("Watch from here"));
+    out property <string> up-word: I18n.upper(@tr("Move up"));
+    out property <string> down-word: I18n.upper(@tr("Move down"));
+    out property <string> remove-word: I18n.upper(@tr("Remove"));
+    out property <string> clear-title: @tr("Clear the queue?");
+    out property <string> clear: I18n.upper(@tr("Clear"));
+    // The viewer's ⋯ menu (docs/design/app-ui.md §2.95, §2.96): the sides (`p1`, `p2`), what may be over the picture,
+    // the playback speed (the speed set at its right; it opens the four, their own signs) and the export
+    // (`export-word`).
+    out property <string> builds-word: I18n.upper(@tr("Builds"));
+    out property <string> inputs-word: I18n.upper(@tr("Input display"));
+    out property <string> inset-word: I18n.upper(@tr("Other side's picture"));
+    out property <string> speed-word: I18n.upper(@tr("Playback speed"));
+    // (The ⋯ menu's row for the side shown, P1, P2 or Both at its right: it opens the three in its place.)
+    out property <string> side-word: I18n.upper(@tr("Player"));
+    pure public function replay-count(n: int) -> string {
+        return @tr("{n} replay" | "{n} replays" % n);
+    }
+    // A queue entry whose file is gone.
+    pure public function missing(file: string) -> string {
+        return @tr("Missing: {}", file);
+    }
+    // A day of a month (`month` from 0), and with its year.
+    pure public function day(month: int, day: int) -> string {
+        return @tr("date" => "{0} {1}", months[month], day);
+    }
+    pure public function full-day(month: int, day: int, year: int) -> string {
+        return @tr("date" => "{0} {1}, {2}", months[month], day, year);
+    }
+    pure public function versus(left: string, right: string) -> string {
+        return @tr("{} vs {}", left, right);
+    }
+    // A row's score: how it went as a letter, and the rounds won and lost.
+    pure public function score(tone: int, won: int, lost: int) -> string {
+        if tone == 1 {
+            return @tr("score" => "W {}–{}", won, lost);
+        }
+        if tone == 2 {
+            return @tr("score" => "L {}–{}", won, lost);
+        }
+        return @tr("score" => "D {}–{}", won, lost);
+    }
+    // The same in words.
+    pure public function result-of(tone: int, won: int, lost: int) -> string {
+        if tone == 1 {
+            return @tr("Won {}–{}", won, lost);
+        }
+        if tone == 2 {
+            return @tr("Lost {}–{}", won, lost);
+        }
+        if tone == 3 {
+            return @tr("Draw {}–{}", won, lost);
+        }
+        return @tr("Not finished · {}–{}", won, lost);
+    }
+    // A part of a replay to export, with its length.
+    pure public function whole(length: string) -> string {
+        return @tr("Whole match · {}", length);
+    }
+    pure public function round-part(round: int, length: string) -> string {
+        return @tr("Round {} · {}", round, length);
+    }
+    // The range of the player's own, between the handles where they put them.
+    pure public function custom-part(length: string) -> string {
+        return @tr("Custom · {}", length);
+    }
+    // A round's chapter in an exported video.
+    pure public function chapter(round: int) -> string {
+        return @tr("Round {}", round);
+    }
+}
+
+// ---- The list -------------------------------------------------------------------------------------------
+
+// A replay's row: the date, the opponent, the score and the length, each in a column of its own width.
+// `compact` (the viewer's popup up next): the day alone in a narrower column, as a phone's.
+component ReplayRowView inherits Rectangle {
+    in property <ReplayRow> replay;
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <bool> compact;
+    property <bool> narrow: Theme.phone || root.compact;
+    property <length> date-width: root.narrow ? 76px : 124px;
+    property <length> score-width: Theme.handheld ? 56px : 76px;
+    property <length> length-width: 44px;
+    property <length> rest: self.width - 36px - root.date-width;
+    property <bool> plays: root.replay.reason == "";
+    RowBack {
+        hover: touch.has-hover;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Text {
+        x: 12px;
+        width: root.date-width;
+        // (A missing queue entry has no day.)
+        text: root.narrow || root.replay.day == "" ? root.replay.day : root.replay.day + " · " + root.replay.time;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Value {
+        x: 24px + root.date-width;
+        width: root.rest - root.score-width - root.length-width - 24px;
+        text: root.plays ? @tr("vs {}", root.replay.opponent) : "";
+    }
+
+    Mono {
+        x: parent.width - 24px - root.length-width - root.score-width;
+        width: root.score-width;
+        text: root.plays ? root.replay.score : "";
+        color: root.replay.tone == 1 ? Theme.good : root.replay.tone == 2 ? Theme.bad : Theme.muted;
+    }
+
+    Mono {
+        x: parent.width - 12px - root.length-width;
+        width: root.length-width;
+        text: root.plays ? root.replay.length : "";
+        color: Theme.muted;
+        font-size: 12px;
+        font-weight: 500;
+        horizontal-alignment: right;
+    }
+
+    Text {
+        x: 24px + root.date-width;
+        width: root.rest;
+        text: root.replay.reason;
+        color: Theme.bad;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        wrap: Theme.phone ? word-wrap : no-wrap;
+        overflow: elide;
+    }
+
+    // (A right click opens its menu, but the popup's.)
+    touch := RowTouch {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        menu: !root.compact;
+    }
+}
+
+// A square button with a drawn sign in place of a word (`icon`: a path in a box of 16): the transport's, WATCH's
+// arrow, a queue entry's MOVE UP and MOVE DOWN. It presses as a `Button` does, and unavailable it is drawn as one is:
+// no fill, its edge and its sign dim, the main action's amber too (the user: "the yellow arrow button isn't correctly
+// disabled on replays that cannot be played").
+component IconButton inherits Rectangle {
+    in property <string> nav;
+    in property <string> icon;
+    // The main action: amber.
+    in property <bool> main;
+    in property <bool> enabled: true;
+    // What it shows is on (BUILDS): its edge in the cursor's cyan.
+    in property <bool> lit;
+    // A count over its top right corner (the queue's up next), or nothing.
+    in property <string> badge;
+    property <int> presses;
+    property <int> key-press: Nav.press-seq;
+    property <bool> down: hit.pressed || reach.pressed;
+    property <length> dip: press.v > 0.4 ? 1px : 0px;
+    width: 40px;
+    height: Theme.handheld ? 44px : 40px;
+    press := Pulse {
+        seq: root.presses;
+    }
+
+    Cut {
+        y: root.dip;
+        cut: 7px;
+        background: !root.enabled ? transparent : root.main ? (hit.has-hover ? Theme.action.brighter(12%) : Theme.action) : (hit.has-hover ? Theme.raised-hover : Theme.raised);
+        line: !root.enabled ? Theme.dim : root.main ? Theme.action : (root.lit ? Theme.cursor : Theme.line);
+    }
+
+    Cut {
+        y: root.dip;
+        cut: 7px;
+        background: #ffffff;
+        line: transparent;
+        opacity: press.v * 0.38;
+    }
+
+    Path {
+        y: (parent.height - self.height) / 2 + root.dip;
+        width: 16px;
+        height: 16px;
+        commands: root.icon;
+        fill: !root.enabled ? Theme.dim : root.main ? Theme.action-ink : Theme.text;
+        viewbox-width: 16;
+        viewbox-height: 16;
+    }
+
+    Rectangle {
+        x: parent.width - self.width + 6px;
+        y: -6px;
+        width: max(18px, badge-text.preferred-width + 8px);
+        height: 18px;
+        visible: root.badge != "";
+        background: Theme.cursor;
+        badge-text := Text {
+            text: root.badge;
+            color: Theme.action-ink;
+            font-family: Theme.mono;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // (A phone's tap reaches past its 40 across to 44.)
+    reach := Reach {
+        box-width: root.width;
+        box-height: root.height;
+        enabled: root.enabled;
+        nav: root.nav;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        enabled: root.enabled;
+    }
+
+    changed key-press => {
+        if hit.focused {
+            root.presses += 1;
+        }
+    }
+    changed down => {
+        if root.down {
+            root.presses += 1;
+        }
+    }
+}
+
+// A fact of the selected replay: what it is, and its value; `stacked`, what it is over its value (a phone's pane held
+// sideways, beside the still).
+component Fact inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tone: Theme.text;
+    in property <bool> stacked;
+    height: root.stacked ? 32px : 20px;
+    Text {
+        x: 0;
+        y: 0;
+        width: root.stacked ? parent.width : 108px;
+        height: root.stacked ? 14px : parent.height;
+        text: root.value == "" ? "" : root.label;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: root.stacked ? 12px : 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: root.stacked ? 0px : 120px;
+        y: root.stacked ? 14px : 0px;
+        width: parent.width - self.x;
+        height: root.stacked ? 18px : parent.height;
+        text: root.value;
+        color: root.tone;
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// What is said of the selected replay under its still: who played, when, how it went, how long it was; or why
+// it can't be played. (`stacked`: beside the still, each fact's word over its value.)
+component Facts inherits Rectangle {
+    in property <bool> stacked;
+    property <length> pitch: root.stacked ? 34px : 28px;
+    property <length> first: root.stacked ? 28px : 36px;
+    HorizontalLayout {
+        x: 0;
+        y: 0;
+        height: 24px;
+        spacing: 6px;
+        alignment: start;
+        Value {
+            text: ReplaysView.left-name;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Value {
+            text: ReplaysView.right-name == "" ? "" : @tr("vs");
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 400;
+        }
+
+        Value {
+            text: ReplaysView.right-name;
+            font-size: 16px;
+            font-weight: 700;
+        }
+    }
+
+    Fact {
+        x: 0;
+        y: root.first;
+        width: root.width;
+        label: @tr("Played");
+        value: ReplaysView.played;
+        stacked: root.stacked;
+    }
+
+    Fact {
+        x: 0;
+        y: root.first + root.pitch;
+        width: root.width;
+        label: @tr("Result");
+        value: ReplaysView.result;
+        tone: ReplaysView.result-tone == 1 ? Theme.good : ReplaysView.result-tone == 2 ? Theme.bad : Theme.text;
+        stacked: root.stacked;
+    }
+
+    Fact {
+        x: 0;
+        y: root.first + 2 * root.pitch;
+        width: root.width;
+        label: @tr("Length");
+        value: ReplaysView.length;
+        stacked: root.stacked;
+    }
+
+    Note {
+        x: 0;
+        y: root.stacked ? root.first : 64px;
+        width: root.width;
+        height: root.stacked ? root.height - root.first : 48px;
+        text: ReplaysView.reason;
+        color: Theme.bad;
+        vertical-alignment: top;
+    }
+}
+
+// WATCH's arrow: a triangle pointing down, at the menu it opens.
+global Signs {
+    out property <string> arrow: "M 3.5 6 L 12.5 6 L 8 11 Z";
+}
+
+// The selected replay, beside the list: its still, what is said of it, and what can be done with it. On a phone held
+// sideways (docs/design/app-ui.md §2.103) the still is smaller with the facts beside it, and the buttons are rows under
+// them, each its row's width or half of it: WATCH and its arrow, EXPORT VIDEO, then SHOW FILE and DELETE (a queue
+// entry's WATCH FROM HERE with MOVE UP and MOVE DOWN, then REMOVE).
+component DetailPanel inherits Rectangle {
+    property <bool> beside: Theme.sideways;
+    property <length> pad: root.beside ? 14px : 16px;
+    property <length> inner: root.width - 2 * root.pad;
+    property <length> still-width: root.beside ? floor(root.inner * 0.6 / 1px) * 1px : 480px;
+    property <length> still-height: root.beside ? root.still-width * 2 / 3 : 320px;
+    // (Sideways: the buttons' rows, from the still's foot.)
+    property <length> row-1: root.pad + root.still-height + 12px;
+    property <length> row-2: root.row-1 + 44px + 8px;
+    property <length> row-3: root.row-2 + 40px + 8px;
+    property <length> half: (root.inner - 8px) / 2;
+    // (The desktop's: a row of them over DELETE at the foot.)
+    property <length> buttons-y: root.height - 108px;
+    PanelBack { }
+
+    Picture {
+        x: root.pad;
+        y: root.pad;
+        width: root.still-width;
+        height: root.still-height;
+        ground: Theme.inset;
+    }
+
+    // (No still of it, yet or at all: the box alone.)
+    Rectangle {
+        x: root.pad;
+        y: root.pad;
+        width: root.still-width;
+        height: root.still-height;
+        visible: !ReplaysView.still;
+        background: Theme.inset;
+    }
+
+    Facts {
+        x: root.beside ? root.pad + root.still-width + 12px : 16px;
+        y: root.beside ? root.pad - 4px : 352px;
+        width: root.beside ? root.inner - root.still-width - 12px : parent.width - 32px;
+        height: root.beside ? root.still-height + 4px : 112px;
+        visible: ReplaysView.selected;
+        stacked: root.beside;
+    }
+
+    // (A replay's: WATCH and its arrow, the other ways to watch it (a split button: ADD TO QUEUE, PLAY NEXT), EXPORT VIDEO, SHOW FILE; apart, DELETE. Hidden in the Queue tab, and passed by.)
+    watch := Button {
+        x: root.pad;
+        y: root.beside ? root.row-1 : root.buttons-y;
+        width: root.beside ? root.inner - 2px - watch-more.width : self.natural-width;
+        height: root.beside ? 44px : 40px;
+        visible: ReplaysView.tab == 0;
+        nav: "watch";
+        text: I18n.upper(@tr("Watch"));
+        kind: ButtonKind.main;
+        square: true;
+        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+    }
+
+    watch-more := IconButton {
+        x: watch.x + watch.width + 2px;
+        y: watch.y;
+        visible: ReplaysView.tab == 0;
+        nav: "watch-more";
+        icon: Signs.arrow;
+        main: true;
+        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+    }
+
+    export := Button {
+        x: root.beside ? root.pad : watch-more.x + watch-more.width + 12px;
+        y: root.beside ? root.row-2 : root.buttons-y;
+        width: root.beside ? root.inner : self.natural-width;
+        visible: ReplaysView.tab == 0;
+        nav: "export";
+        text: I18n.upper(@tr("verb" => "Export video"));
+        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+    }
+
+    Button {
+        x: root.beside ? root.pad : export.x + export.width + 12px;
+        y: root.beside ? root.row-3 : root.buttons-y;
+        width: root.beside ? root.half : self.natural-width;
+        visible: ReplaysView.tab == 0;
+        nav: "file";
+        text: ReplaysView.file-word;
+        enabled: ReplaysView.tab == 0 && ReplaysView.selected;
+    }
+
+    Button {
+        x: root.beside ? root.pad + root.half + 8px : parent.width - 16px - self.width;
+        y: root.beside ? root.row-3 : parent.height - 56px;
+        width: root.beside ? root.half : self.natural-width;
+        visible: ReplaysView.tab == 0;
+        nav: "delete";
+        text: I18n.upper(@tr("Delete"));
+        kind: ButtonKind.ghost;
+        danger: true;
+        enabled: ReplaysView.tab == 0 && ReplaysView.selected;
+    }
+
+    // (A queue entry's: WATCH FROM HERE, MOVE UP and MOVE DOWN; apart, REMOVE, which leaves its file be.)
+    watch-from := Button {
+        x: root.pad;
+        y: root.beside ? root.row-1 : root.buttons-y;
+        width: root.beside ? root.inner - 2 * (40px + 12px) : self.natural-width;
+        height: root.beside ? 44px : 40px;
+        visible: ReplaysView.tab == 1;
+        nav: "watch-from";
+        text: I18n.upper(@tr("Watch from here"));
+        kind: ButtonKind.main;
+        enabled: ReplaysView.tab == 1 && ReplaysView.playable;
+    }
+
+    move-up := IconButton {
+        x: watch-from.x + watch-from.width + 12px;
+        y: watch-from.y;
+        visible: ReplaysView.tab == 1;
+        nav: "move-up";
+        icon: "M 8 3 L 13.5 11 L 2.5 11 Z";
+        enabled: ReplaysView.tab == 1 && ReplaysView.queue-chosen > 0;
+    }
+
+    IconButton {
+        x: move-up.x + move-up.width + 12px;
+        y: watch-from.y;
+        visible: ReplaysView.tab == 1;
+        nav: "move-down";
+        icon: "M 2.5 5 L 13.5 5 L 8 13 Z";
+        enabled: ReplaysView.tab == 1 && ReplaysView.queue-chosen >= 0 && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
+    }
+
+    Button {
+        x: root.beside ? root.pad : parent.width - 16px - self.width;
+        y: root.beside ? root.row-2 : parent.height - 56px;
+        width: root.beside ? root.inner : self.natural-width;
+        visible: ReplaysView.tab == 1;
+        nav: "remove";
+        text: I18n.upper(@tr("Remove"));
+        kind: ButtonKind.ghost;
+        enabled: ReplaysView.tab == 1 && ReplaysView.selected;
+    }
+}
+
+// The same on a phone: a sheet from the bottom, opened by a tap on a row. Its controls' names begin `sheet.`.
+component DetailSheet inherits Rectangle {
+    property <bool> queue: ReplaysView.tab == 1;
+    property <length> inner: self.width - 32px;
+    property <length> still-height: self.inner * 2 / 3;
+    arrive := Tween {
+        duration: Theme.quick;
+    }
+
+    TouchArea {
+        clicked => {
+            Nav.activate("sheet.close", 0);
+        }
+    }
+
+    Rectangle {
+        background: Theme.shade;
+        opacity: arrive.t;
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - self.height + (1 - arrive.t) * 24px;
+        height: root.still-height + 344px;
+        opacity: arrive.t;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.line;
+        TouchArea { }
+
+        Picture {
+            x: 16px;
+            y: 16px;
+            width: root.inner;
+            height: root.still-height;
+            ground: Theme.inset;
+        }
+
+        Rectangle {
+            x: 16px;
+            y: 16px;
+            width: root.inner;
+            height: root.still-height;
+            visible: !ReplaysView.still;
+            background: Theme.inset;
+        }
+
+        Facts {
+            x: 16px;
+            y: root.still-height + 28px;
+            width: root.inner;
+            height: 112px;
+        }
+
+        // (A replay's actions, or in the Queue tab the entry's: the other's are hidden and passed by. WATCH has its
+        // arrow at its right, as beside the list.)
+        Button {
+            x: 16px;
+            y: root.still-height + 148px;
+            width: root.inner - 42px;
+            visible: !root.queue;
+            nav: "sheet.watch";
+            text: I18n.upper(@tr("Watch"));
+            kind: ButtonKind.main;
+            square: true;
+            enabled: !root.queue && ReplaysView.playable;
+        }
+
+        IconButton {
+            x: 16px + root.inner - self.width;
+            y: root.still-height + 148px;
+            visible: !root.queue;
+            nav: "sheet.watch-more";
+            icon: Signs.arrow;
+            main: true;
+            enabled: !root.queue && ReplaysView.playable;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 196px;
+            width: root.inner;
+            visible: !root.queue;
+            nav: "sheet.export";
+            text: I18n.upper(@tr("verb" => "Export video"));
+            enabled: !root.queue && ReplaysView.playable;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 244px;
+            width: root.inner;
+            visible: !root.queue;
+            nav: "sheet.file";
+            text: ReplaysView.file-word;
+            enabled: !root.queue;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 292px;
+            width: root.inner;
+            visible: !root.queue;
+            nav: "sheet.delete";
+            text: I18n.upper(@tr("Delete"));
+            kind: ButtonKind.ghost;
+            danger: true;
+            enabled: !root.queue;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 148px;
+            width: root.inner;
+            visible: root.queue;
+            nav: "sheet.watch-from";
+            text: I18n.upper(@tr("Watch from here"));
+            kind: ButtonKind.main;
+            enabled: root.queue && ReplaysView.playable;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 196px;
+            width: root.inner;
+            visible: root.queue;
+            nav: "sheet.move-up";
+            text: I18n.upper(@tr("Move up"));
+            enabled: root.queue && ReplaysView.queue-chosen > 0;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 244px;
+            width: root.inner;
+            visible: root.queue;
+            nav: "sheet.move-down";
+            text: I18n.upper(@tr("Move down"));
+            enabled: root.queue && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 292px;
+            width: root.inner;
+            visible: root.queue;
+            nav: "sheet.remove";
+            text: I18n.upper(@tr("Remove"));
+            kind: ButtonKind.ghost;
+            enabled: root.queue;
+        }
+    }
+}
+
+// The list's page: the tabs, Replays and Queue, over the list of each (docs/design/app-ui.md §2.91), with the
+// replay chosen beside it. The Replays tab has the search and the filter over its list; the Queue tab WATCH (from
+// its start) and CLEAR over the queue. The other tab's parts are hidden and passed by.
+component ListPage inherits Page {
+    property <bool> queue: ReplaysView.tab == 1;
+    // (On a phone held sideways, docs/design/app-ui.md §2.103: the tabs in the header's row after the title, the list
+    // at the left and the replay's panel beside it.)
+    property <length> list-width: Theme.phone ? self.body-width : Theme.sideways ? (self.body-width - 12px) / 2 + 24px : 600px;
+    // (The tabs, then the filter at the search's right; on a phone under it.)
+    property <length> top: Theme.sideways ? 0px : 52px;
+    property <length> filter-room: ReplaysView.kinds && !Theme.phone ? (Theme.sideways ? kind.width + 8px : 232px) : 0px;
+    property <length> list-top: root.top + (ReplaysView.kinds && Theme.phone && !root.queue ? 96px : 52px);
+    title: I18n.upper(@tr("Replays"));
+    back: I18n.upper(@tr("Menu"));
+    status: !ReplaysView.listed ? "" : root.queue ? ReplaysView.replay-count(ReplaysView.queue.length) : ReplaysView.replay-count(ReplaysView.count);
+    hints: !root.queue ? [
+        { key: "↑↓", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Watch") },
+        { key: "E", pad: PadButton.north, text: @tr("Export") },
+        { key: "Del", pad: Shell.pad-delete, text: @tr("Delete") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Change game") },
+    ] : [
+        { key: "↑↓", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Watch from here") },
+        { key: "Del", pad: Shell.pad-delete, text: @tr("Remove") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Change game") },
+    ];
+    Arrive {
+        order: 0;
+        TabBar {
+            x: Theme.phone ? -8px : Theme.sideways ? root.header-room-x : 0px;
+            y: Theme.sideways ? root.header-top + (Theme.header - self.height) / 2 : 0px;
+            width: Theme.sideways ? root.header-room-width : root.list-width + (Theme.phone ? 16px : 0px);
+            headed: Theme.sideways;
+            nav: "tab";
+            // (The Queue tab only while the queue holds something.)
+            tabs: ReplaysView.queue.length > 0 ? [{ text: I18n.upper(@tr("Replays")), enabled: true, flagged: false }, { text: I18n.upper(@tr("Queue")), enabled: true, flagged: false }] : [{ text: I18n.upper(@tr("Replays")), enabled: true, flagged: false }];
+            chosen: ReplaysView.tab;
+        }
+
+        Field {
+            x: 0;
+            y: root.top;
+            width: root.list-width - root.filter-room;
+            visible: !root.queue;
+            enabled: !root.queue;
+            nav: "search";
+            text: ReplaysView.search;
+            placeholder: @tr("Search by opponent");
+        }
+
+        // (Hidden, not under an `if`: a small part, docs/app.md §14.)
+        kind := Seg {
+            x: Theme.phone ? 0px : root.list-width - self.width;
+            y: root.top + (Theme.phone ? 50px : 2px);
+            visible: ReplaysView.kinds && !root.queue;
+            enabled: ReplaysView.kinds && !root.queue;
+            nav: "kind";
+            first: I18n.upper(@tr("All"));
+            second: I18n.upper(@tr("Online"));
+            chosen: ReplaysView.kind;
+        }
+
+        // The Queue tab's: WATCH, from the first entry that plays; and CLEAR, which asks.
+        HorizontalLayout {
+            x: 0;
+            y: root.top;
+            width: root.list-width;
+            height: 40px;
+            spacing: 12px;
+            alignment: start;
+            visible: root.queue;
+            Button {
+                nav: "watch-queue";
+                text: I18n.upper(@tr("Watch"));
+                kind: ButtonKind.main;
+                enabled: root.queue && ReplaysView.queue.length > 0;
+            }
+
+            Button {
+                nav: "clear";
+                text: I18n.upper(@tr("Clear"));
+                kind: ButtonKind.ghost;
+                danger: true;
+                enabled: root.queue && ReplaysView.queue.length > 0;
+            }
+        }
+
+        queue-list := ListView {
+            x: 0;
+            y: root.list-top;
+            width: root.list-width;
+            height: root.body-height - root.list-top;
+            visible: root.queue;
+            nav: "queue";
+            count: root.queue ? ReplaysView.queue.length : 0;
+            chosen: ReplaysView.queue-chosen;
+            for slot in queue-list.shown: ReplayRowView {
+                property <int> at: queue-list.first + slot;
+                x: 0;
+                y: self.at * queue-list.pitch;
+                width: queue-list.row-width;
+                height: queue-list.row-height;
+                replay: ReplaysView.queue[self.at];
+                nav: queue-list.nav;
+                nav-index: self.at;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Note {
+            x: 12px;
+            y: root.list-top;
+            width: root.list-width - 24px;
+            height: 44px;
+            visible: root.queue;
+            text: !ReplaysView.listed || ReplaysView.queue.length > 0 ? "" : @tr("The queue is empty. Add replays to it with the arrow beside Watch.");
+        }
+
+        list := ListView {
+            x: 0;
+            y: root.list-top;
+            width: root.list-width;
+            height: root.body-height - root.list-top;
+            visible: !root.queue;
+            nav: "list";
+            count: root.queue ? 0 : ReplaysView.rows.length;
+            chosen: ReplaysView.chosen;
+            for slot in list.shown: ReplayRowView {
+                property <int> at: list.first + slot;
+                x: 0;
+                y: self.at * list.pitch;
+                width: list.row-width;
+                height: list.row-height;
+                replay: ReplaysView.rows[self.at];
+                nav: list.nav;
+                nav-index: self.at;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Note {
+            x: 12px;
+            y: root.list-top;
+            width: root.list-width - 24px;
+            height: 44px;
+            visible: !root.queue;
+            text: !ReplaysView.listed || ReplaysView.rows.length > 0 ? "" : (ReplaysView.count == 0 ? @tr("No replays yet. Every online match is recorded.") : @tr("No replays found."));
+        }
+    }
+
+    Arrive {
+        order: 1;
+        if !Theme.phone: DetailPanel {
+            x: Theme.sideways ? root.list-width + 12px : 624px;
+            y: 0;
+            width: root.body-width - self.x;
+            height: root.body-height;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+}
+
+// ---- The viewer -----------------------------------------------------------------------------------------
+
+// The bar: where the replay is, with a mark where each later round begins, and how far it is indexed (a fill in the
+// line color under the lit part, as a video player shows what it has loaded). A click or a drag goes there, up to
+// that fill's end (the picture follows a drag in steps, and lands where it is let go); taken (Enter), Left and Right
+// go five seconds.
+// The pointer over it shows a preview of the battle at the time under it, above it (docs/design/app-ui.md §2.96).
+// In the export mode the range is a band in the code color between two handles, brackets taller than the playhead
+// (`export.handle`, 0 the start, 1 the end, to the app; no control of the focus's: the keys set them where the viewer
+// is); the pointer pressed within 8 of one drags it (the nearer), anywhere else the bar.
+component SeekBar inherits Rectangle {
+    property <length> at: self.width * clamp(ReplaysView.position, 0, 1);
+    property <bool> range: ReplaysView.exporting;
+    property <length> from: self.width * clamp(ReplaysView.range-start, 0, 1);
+    property <length> to: self.width * clamp(ReplaysView.range-end, 0, 1);
+    // What the pointer holds: 0 nothing, 1 the bar, 2 the start's handle, 3 the end's.
+    property <int> held;
+    height: 24px;
+    // (The bar's place, which the preview and the ⋯ menu go by. The viewer's keys are its own: no focus comes here.)
+    Focusable {
+        nav: "seek";
+        kind: NavKind.stepper;
+    }
+
+    Rectangle {
+        y: 10px;
+        height: 4px;
+        background: Theme.raised;
+    }
+
+    // (Once the whole replay is indexed, the whole bar.)
+    Rectangle {
+        x: 0;
+        y: 10px;
+        width: root.width * clamp(ReplaysView.indexed, 0, 1);
+        height: 4px;
+        background: Theme.line;
+    }
+
+    Rectangle {
+        x: root.from;
+        y: 8px;
+        width: root.to - root.from;
+        height: 8px;
+        visible: root.range;
+        background: Theme.code.with-alpha(0.35);
+    }
+
+    // (What is lit keeps its size, and is cut where the replay is: a glow drawn anew each tick would cost.)
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.at;
+        clip: true;
+        Rectangle {
+            x: 0;
+            y: 10px;
+            width: root.width;
+            height: 4px;
+            background: Theme.cursor;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: Theme.glow;
+        }
+    }
+
+    for mark in ReplaysView.marks: Rectangle {
+        x: root.width * mark - 1px;
+        y: 4px;
+        width: 2px;
+        height: 16px;
+        background: Theme.text;
+    }
+
+    Rectangle {
+        x: root.at - 4px;
+        y: 2px;
+        width: 8px;
+        height: 20px;
+        background: Theme.text;
+    }
+
+    // (The start's opens to the right, the end's to the left, each its upright on its tick.)
+    Path {
+        x: root.from - 5.5px;
+        y: -2px;
+        width: 10px;
+        height: 28px;
+        visible: root.range;
+        commands: "M 4 0 H 10 V 3 H 7 V 25 H 10 V 28 H 4 Z";
+        fill: Theme.code;
+        viewbox-width: 10;
+        viewbox-height: 28;
+    }
+
+    Path {
+        x: root.to - 4.5px;
+        y: -2px;
+        width: 10px;
+        height: 28px;
+        visible: root.range;
+        commands: "M 0 0 H 6 V 28 H 0 V 25 H 3 V 3 H 0 Z";
+        fill: Theme.code;
+        viewbox-width: 10;
+        viewbox-height: 28;
+    }
+
+    // (A phone's reaches 10 over and under the bar: 44 tall.)
+    drag := TouchArea {
+        y: Theme.handheld ? -10px : 0px;
+        height: root.height + (Theme.handheld ? 20px : 0px);
+        // (The handle the pointer is on: within 8 of one, the nearer; two at one place, by the side it is on.)
+        property <length> to-start: abs(self.mouse-x - root.from);
+        property <length> to-end: abs(self.mouse-x - root.to);
+        property <int> grip: !root.range || min(self.to-start, self.to-end) > 8px ? 1 : (self.to-start < self.to-end || (self.to-start == self.to-end && self.mouse-x < root.from)) ? 2 : 3;
+        mouse-cursor: self.grip >= 2 ? MouseCursor.ew-resize : MouseCursor.default;
+        function place() -> int {
+            return round(clamp(self.mouse-x / self.width, 0, 1) * 10000);
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.held = self.grip;
+                if root.held == 1 {
+                    Nav.point("seek", 0);
+                    Nav.choose("seek", 0, self.place());
+                } else {
+                    Nav.point("export.handle", root.held - 2);
+                    Nav.choose("export.handle", root.held - 2, self.place());
+                }
+            } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) && root.held > 0 {
+                if root.held == 1 {
+                    Nav.choose("seek", 1, self.place());
+                } else {
+                    Nav.choose("export.handle-done", root.held - 2, self.place());
+                }
+                root.held = 0;
+            }
+        }
+        moved => {
+            if self.pressed && root.held == 1 {
+                Nav.choose("seek", 0, self.place());
+            } else if self.pressed && root.held >= 2 {
+                Nav.choose("export.handle", root.held - 2, self.place());
+            }
+        }
+        changed has-hover => {
+            Nav.choose("seek-hover", self.has-hover ? 1 : 0, self.place());
+        }
+        changed mouse-x => {
+            if self.has-hover {
+                Nav.choose("seek-hover", 1, self.place());
+            }
+        }
+    }
+
+    // The preview, above the bar at the pointer (kept over the bar's length): the battle at the time under it, the
+    // frame itself in size, and that time under it. Until its own is drawn, the nearest drawn shows; until one is,
+    // the box alone. (A phone has no pointer over the bar.)
+    Rectangle {
+        property <length> middle: max(121px, min(drag.mouse-x, root.width - 121px));
+        x: self.middle - 121px;
+        y: -self.height - 12px;
+        width: 242px;
+        height: 188px;
+        visible: drag.has-hover && !Theme.handheld;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
+        Rectangle {
+            x: 1px;
+            y: 1px;
+            width: 240px;
+            height: 160px;
+            background: Theme.inset;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                visible: ReplaysView.thumb-shown;
+                source: ReplaysView.thumb;
+                image-fit: fill;
+            }
+        }
+
+        Mono {
+            x: 0;
+            y: 161px;
+            width: parent.width;
+            height: 26px;
+            text: ReplaysView.thumb-time;
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// The buttons of the transport (docs/design/app-ui.md §2.94): to the round's start, play or pause, the next round.
+// (A frame is stepped by the keys alone: comma and period.)
+component TransportButtons inherits Rectangle {
+    IconButton {
+        x: 0;
+        nav: "round-start";
+        icon: "M 3 3 h 2 v 10 h -2 Z M 13 3 L 6.5 8 L 13 13 Z";
+    }
+
+    IconButton {
+        x: 52px;
+        nav: "play";
+        icon: ReplaysView.playing ? "M 4 3 h 3 v 10 h -3 Z M 9 3 h 3 v 10 h -3 Z" : "M 5 2.5 L 13 8 L 5 13.5 Z";
+        main: true;
+    }
+
+    IconButton {
+        x: 104px;
+        nav: "next-round";
+        icon: "M 3 3 L 9.5 8 L 3 13 Z M 11 3 h 2 v 10 h -2 Z";
+    }
+}
+
+// The transport at the foot of the picture (docs/design/app-ui.md §2.94, §2.95, §2.96): the time, the bar, the
+// length; then the buttons, the speed's badge while it isn't 1×, and the round shown, and at the right, while the
+// queue plays, its button with the count up next, and ⋯ (its menu: the side watched from, what is over the picture,
+// the playback speed, the export). In the export mode the round shown gives way to SET START HERE, SET END HERE, the
+// Range's list and the range's times, with CANCEL and EXPORT before the queue's and ⋯. On a phone the bar, then the
+// buttons with the queue's and ⋯ at the right; in the export mode, under them, the two HERE, the Range, then CANCEL
+// and EXPORT, each row across the transport. The times are in boxes of their own width, so the bar keeps its length
+// as the clock runs. (One component for both: what differs is placed by `phone`, docs/app.md §14; the export mode's
+// controls are hidden and passed by outside it.)
+component Transport inherits Rectangle {
+    property <bool> phone: Theme.phone;
+    property <bool> exporting: ReplaysView.exporting;
+    property <bool> can-change: root.exporting && ReplaysView.export-state != ExportState.running;
+    property <length> edge: root.phone ? 12px : 16px;
+    property <length> clock: root.phone ? 44px : 48px;
+    property <length> buttons-y: root.phone ? 48px : 52px;
+    // (Where the round shown begins, after the speed's badge; a phone's export rows, each 52 under the last.)
+    property <length> after-buttons: root.edge + 156px + (ReplaysView.speed == "" ? 0px : speed.width + 10px);
+    property <length> phone-row: root.buttons-y + 56px;
+    property <length> half: (root.width - 2 * root.edge - 8px) / 2;
+    property <length> right-end: ReplaysView.queued ? queue.x : more.x;
+    PanelBack { }
+
+    Mono {
+        x: root.edge;
+        y: root.edge;
+        width: root.clock;
+        height: 24px;
+        text: ReplaysView.time;
+        font-size: root.phone ? 12px : 13px;
+    }
+
+    SeekBar {
+        x: root.edge + root.clock + (root.phone ? 8px : 12px);
+        y: root.edge;
+        width: parent.width - 2 * self.x;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Mono {
+        x: parent.width - root.edge - root.clock;
+        y: root.edge;
+        width: root.clock;
+        height: 24px;
+        text: ReplaysView.total;
+        font-size: root.phone ? 12px : 13px;
+        horizontal-alignment: right;
+    }
+
+    TransportButtons {
+        x: root.edge;
+        y: root.buttons-y;
+        width: 144px;
+        height: Theme.handheld ? 44px : 40px;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // The speed, while it isn't 1×: a small badge in the cursor's color (the ⋯ menu's PLAYBACK SPEED sets it).
+    speed := Rectangle {
+        x: root.edge + 156px;
+        y: root.buttons-y + (root.phone ? 12px : 10px);
+        width: speed-text.preferred-width + 12px;
+        height: 20px;
+        visible: ReplaysView.speed != "";
+        border-width: 1px;
+        border-color: Theme.cursor;
+        speed-text := Text {
+            text: ReplaysView.speed;
+            color: Theme.cursor;
+            font-family: Theme.mono;
+            font-size: 12px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: root.after-buttons + 12px;
+        y: root.buttons-y;
+        width: max(0px, root.right-end - 12px - self.x);
+        height: 40px;
+        visible: !root.phone && !root.exporting;
+        text: @tr("Round {} of {}", ReplaysView.round, ReplaysView.rounds);
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // ⋯: the menu of the side watched from, both builds, the input display, the other side's picture, the speed and
+    // the export (the app's, `Shell::pick_marked`). (Three dots, as Play's build's ⋯.)
+    more := IconButton {
+        x: parent.width - root.edge - self.width;
+        y: root.buttons-y;
+        nav: "more";
+        icon: "M 1 6.5 h 3 v 3 h -3 Z M 6.5 6.5 h 3 v 3 h -3 Z M 12 6.5 h 3 v 3 h -3 Z";
+    }
+
+    // The queue's button, while it plays: the count up next over it, which opens the popup of them (and in it the
+    // next and Autoplay next). (Hidden, passed by. Three lines, a triangle by the last: a list to play.)
+    queue := IconButton {
+        x: more.x - 12px - self.width;
+        y: root.buttons-y;
+        visible: ReplaysView.queued;
+        nav: "up-next";
+        icon: "M 1 3 h 14 v 2 h -14 Z M 1 7 h 14 v 2 h -14 Z M 1 11 h 8 v 2 h -8 Z M 10.5 10 L 15 12.5 L 10.5 15 Z";
+        enabled: ReplaysView.queued;
+        lit: ReplaysView.up-next-open;
+        badge: ReplaysView.queued ? "\{ReplaysView.up-next.length}" : "";
+    }
+
+    // ---- The export mode's (docs/design/app-ui.md §2.96) ----
+
+    // The range's start and end where the replay is shown.
+    start-here := Button {
+        x: root.phone ? root.edge : root.after-buttons + 12px;
+        y: root.phone ? root.phone-row : root.buttons-y;
+        width: root.phone ? root.half : self.natural-width;
+        visible: root.exporting;
+        nav: "export.start-here";
+        text: I18n.upper(@tr("Set start here"));
+        enabled: root.can-change;
+    }
+
+    end-here := Button {
+        x: root.phone ? root.edge + root.half + 8px : start-here.x + start-here.width + 12px;
+        y: start-here.y;
+        width: root.phone ? root.half : self.natural-width;
+        visible: root.exporting;
+        nav: "export.end-here";
+        text: I18n.upper(@tr("Set end here"));
+        enabled: root.can-change;
+    }
+
+    // The Range's list: the whole match, each round, the last range of the player's own; and the range's times.
+    Select {
+        x: root.phone ? root.edge : end-here.x + end-here.width + 12px;
+        y: root.phone ? root.phone-row + 52px : root.buttons-y;
+        width: root.phone ? root.width - 2 * root.edge : max(120px, times.x - 12px - self.x);
+        visible: root.exporting;
+        nav: "export.part";
+        value: ReplaysView.export-part;
+        enabled: root.can-change;
+    }
+
+    times := Mono {
+        x: cancel.x - 16px - self.width;
+        y: root.buttons-y;
+        width: 100px;
+        height: 40px;
+        visible: root.exporting && !root.phone;
+        text: ReplaysView.export-range;
+        color: Theme.code;
+        font-size: 12px;
+        horizontal-alignment: right;
+    }
+
+    // CANCEL leaves the export mode (stops an export under way; CLOSE once one is saved); EXPORT starts one.
+    cancel := Button {
+        x: root.phone ? root.edge : go.x - 12px - self.width;
+        y: root.phone ? root.phone-row + 104px : root.buttons-y;
+        width: root.phone ? root.half : self.natural-width;
+        visible: root.exporting;
+        nav: "export.cancel";
+        text: ReplaysView.export-state == ExportState.done ? I18n.upper(@tr("Close")) : I18n.upper(@tr("Cancel"));
+        enabled: root.exporting;
+    }
+
+    go := Button {
+        x: root.phone ? root.edge + root.half + 8px : root.right-end - 12px - self.width;
+        y: cancel.y;
+        width: root.phone ? root.half : self.natural-width;
+        visible: root.exporting;
+        nav: "export.go";
+        text: I18n.upper(@tr("verb" => "Export"));
+        kind: ButtonKind.main;
+        enabled: root.can-change;
+    }
+}
+
+// Where the video is saved: Enter asks for another place in the system's dialog.
+component PathBox inherits Rectangle {
+    in property <string> nav;
+    in property <string> value;
+    in property <bool> enabled: true;
+    height: 40px;
+    Rectangle {
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: hit.has-hover && root.enabled ? Theme.muted : Theme.line;
+    }
+
+    Value {
+        x: 12px;
+        width: parent.width - 48px;
+        text: root.value;
+        color: root.enabled ? Theme.text : Theme.dim;
+        font-weight: 400;
+    }
+
+    Text {
+        x: parent.width - 32px;
+        width: 20px;
+        text: "…";
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        enabled: root.enabled;
+    }
+}
+
+// The export mode's options (docs/design/app-ui.md §2.96), in a panel over the transport (on a phone under it): Size,
+// View (the viewer's side, which the export follows), Sides and Save as in a row (on a phone, three); under them the
+// bar and its line, which says what to do with the handles, then how far the export is, that it is saved, or what
+// went wrong.
+component ExportOptions inherits Rectangle {
+    property <bool> phone: Theme.phone;
+    property <bool> busy: ReplaysView.export-state == ExportState.running;
+    property <length> edge: root.phone ? 12px : 16px;
+    property <length> label: root.phone ? 84px : size-label.preferred-width;
+    property <length> line-y: root.phone ? 168px : 68px;
+    PanelBack { }
+
+    size-label := Value {
+        x: root.edge;
+        y: root.edge;
+        width: root.label;
+        height: 40px;
+        text: @tr("Size");
+    }
+
+    size := Select {
+        x: size-label.x + size-label.width + 12px;
+        y: root.edge;
+        width: root.phone ? root.width - root.edge - self.x : 220px;
+        nav: "export.size";
+        value: ReplaysView.export-size;
+        enabled: !root.busy;
+    }
+
+    view-label := Value {
+        x: root.phone ? root.edge : size.x + size.width + 24px;
+        y: root.phone ? root.edge + 52px : root.edge;
+        width: root.phone ? root.label : self.preferred-width;
+        height: 40px;
+        text: @tr("Player");
+    }
+
+    view := Seg {
+        x: view-label.x + view-label.width + 12px;
+        y: view-label.y + 2px;
+        nav: "export.view";
+        first: ReplaysView.p1;
+        second: ReplaysView.p2;
+        chosen: ReplaysView.export-view;
+        enabled: !root.busy;
+    }
+
+    // (Both: on one screen, the view's console's field, its player's pieces at the left; side by side: the view's
+    // console at the left, heard first, and the other's at the right.)
+    sides-label := Value {
+        x: view.x + view.width + 24px;
+        y: view-label.y;
+        width: self.preferred-width;
+        height: 40px;
+        text: @tr("Sides");
+    }
+
+    sides := Seg {
+        x: sides-label.x + sides-label.width + 12px;
+        y: view.y;
+        nav: "export.sides";
+        first: @tr("sides" => "One");
+        second: @tr("sides" => "Both");
+        third: @tr("sides" => "Side by side");
+        chosen: ReplaysView.export-sides;
+        enabled: !root.busy;
+    }
+
+    // (Not in a browser, which asks where each time, nor on a phone, which hands the video over once made.)
+    path-label := Value {
+        visible: !Theme.web && !Theme.phone-app;
+        x: root.phone ? root.edge : sides.x + sides.width + 24px;
+        y: root.phone ? root.edge + 104px : root.edge;
+        width: root.phone ? root.label : self.preferred-width;
+        height: 40px;
+        text: @tr("Save as");
+    }
+
+    PathBox {
+        visible: !Theme.web && !Theme.phone-app;
+        x: path-label.x + path-label.width + 12px;
+        y: path-label.y;
+        width: max(80px, root.width - root.edge - self.x);
+        nav: "export.path";
+        value: ReplaysView.export-path;
+        enabled: !root.busy && !Theme.web && !Theme.phone-app;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Bar {
+        x: root.edge;
+        y: root.line-y;
+        width: root.width - 2 * root.edge;
+        value: ReplaysView.export-state == ExportState.done ? 1 : (root.busy ? ReplaysView.export-progress : 0);
+        smooth: false;
+    }
+
+    Note {
+        x: root.edge;
+        y: root.line-y + 8px;
+        width: root.width - 2 * root.edge;
+        height: 20px;
+        text: root.busy ? @tr("Exporting round {} of {} · {}%", ReplaysView.export-round, ReplaysView.export-rounds, round(ReplaysView.export-progress * 100)) : ReplaysView.export-state == ExportState.done ? @tr("Saved.") : ReplaysView.export-state == ExportState.canceled ? @tr("Export canceled.") : ReplaysView.export-state == ExportState.failed ? ReplaysView.export-error : @tr("Drag the handles on the bar to choose the part to export.");
+        color: ReplaysView.export-state == ExportState.failed ? Theme.bad : ReplaysView.export-state == ExportState.done ? Theme.good : Theme.muted;
+        font-size: 12px;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+}
+
+// The viewer: the picture fills the window (the largest whole multiple of the frame that fits, as a match's), and
+// the page (the header, the transport, the footer) is over it, shown while `ReplaysView.hud` says or the pointer
+// rests on the transport, fading in and out (docs/design/app-ui.md §2.90). A click on the picture plays or pauses.
+// On a phone the picture has the window's width under the header and the page is always shown, the transport
+// under the picture.
+component ViewerPage inherits Rectangle {
+    property <bool> phone: Theme.phone;
+    property <bool> shown: ReplaysView.hud || controls.has-hover;
+    // (On a phone, where the page's parts are, in the body's coordinates.)
+    property <length> phone-top: 28px;
+    property <length> phone-transport: root.phone-top + root.width * 2 / 3 + 12px;
+    room := Picture {
+        x: 0;
+        y: root.phone ? Theme.header + 16px + root.phone-top : 0px;
+        width: root.width;
+        height: root.phone ? root.width * 2 / 3 : root.height;
+        ground: root.phone ? Theme.inset : transparent;
+    }
+
+    // (While the page is hidden the pointer is too, over the picture and around it.)
+    TouchArea {
+        mouse-cursor: root.shown ? MouseCursor.default : MouseCursor.none;
+    }
+
+    TouchArea {
+        x: room.x + Shell.picture-x;
+        y: room.y + Shell.picture-y;
+        width: Shell.picture-width;
+        height: Shell.picture-height;
+        mouse-cursor: root.shown ? MouseCursor.default : MouseCursor.none;
+        clicked => {
+            Nav.activate("play", 0);
+        }
+    }
+
+    // Over the picture, each while it is on (and there throughout, shown by `visible`: an `if` would be a
+    // component of its own): the other console's picture in the bottom right corner of the one shown, a line
+    // around it; and the input display in its top right corner, under the line the battle's own text takes there
+    // (its top 20 rows), as Practice's is. Both are placed by the picture's room (`Picture`: in the window's
+    // coordinates, as this page's are), take no clicks, and are under the page: the transport is over them while
+    // it is shown.
+    Rectangle {
+        visible: ReplaysView.inset-on && Shell.picture-shown;
+        x: Shell.picture-room-x + ReplaysView.inset-x - 1px;
+        y: Shell.picture-room-y + ReplaysView.inset-y - 1px;
+        width: ReplaysView.inset-width + 2px;
+        height: ReplaysView.inset-height + 2px;
+        border-width: 1px;
+        border-color: Theme.line;
+        Image {
+            x: 1px;
+            y: 1px;
+            width: ReplaysView.inset-width;
+            height: ReplaysView.inset-height;
+            source: ReplaysView.inset;
+            image-rendering: pixelated;
+        }
+    }
+
+    // (The parties: the console shown's side's on the field's foot at the picture's right, where nothing of the battle
+    // is drawn, as a battle's is (the user: "in replays the team switcher is on the left but in game the team switcher
+    // is on the right"), left of the other console's picture where that is on; the other side's over that picture.)
+    property <length> picture-right: Shell.picture-room-x + Shell.picture-x + Shell.picture-width;
+    property <length> picture-bottom: Shell.picture-room-y + Shell.picture-y + Shell.picture-height;
+    property <length> foot: Shell.picture-height * 10 / Shell.picture-rows;
+    PartyStrip {
+        x: (ReplaysView.inset-on ? min(root.picture-right - 16px, Shell.picture-room-x + ReplaysView.inset-x - 12px) : root.picture-right - 16px) - self.width;
+        y: root.picture-bottom - root.foot + max(0px, (root.foot - self.height) / 2);
+        visible: ReplaysView.party.shown && Shell.picture-shown && !root.phone;
+        party: ReplaysView.party;
+    }
+
+    other-strip := PartyStrip {
+        x: Shell.picture-room-x + ReplaysView.inset-x + ReplaysView.inset-width - self.width;
+        y: Shell.picture-room-y + ReplaysView.inset-y - self.height - 4px;
+        visible: ReplaysView.other-party.shown && ReplaysView.inset-on && Shell.picture-shown && !root.phone;
+        party: ReplaysView.other-party;
+    }
+
+    InputDisplay {
+        visible: ReplaysView.inputs && Shell.picture-shown;
+        x: Shell.picture-room-x + Shell.picture-x + Shell.picture-width - self.width - 12px;
+        y: Shell.picture-room-y + Shell.picture-y + Shell.picture-height * 20 / Shell.picture-rows + 8px;
+        held-top: ReplaysView.held-shown;
+        held-bottom: ReplaysView.held-other;
+    }
+
+    page := Page {
+        opacity: root.shown ? 1 : 0;
+        animate opacity {
+            duration: Theme.brisk;
+            easing: ease-out;
+        }
+        title: root.phone ? I18n.upper(@tr("Replay")) : ReplaysView.title;
+        back: I18n.upper(@tr("Replays"));
+        status: @tr("{n} round" | "{n} rounds" % ReplaysView.rounds);
+        // (The viewer's keys are its own, none moving a focus (docs/design/app-ui.md §2.100): the arrows seek, M and
+        // START open the ⋯ menu, B and Select show both builds where they may be. In the export mode the brackets
+        // and the shoulders set the range's ends, and Back leaves the mode.)
+        hints: ReplaysView.exporting ? [
+            { key: "Space", pad: PadButton.north, text: @tr("Play or pause") },
+            { key: "←", key2: "→", pad: PadButton.move, text: @tr("Seek") },
+            { key: ",", key2: ".", text: @tr("Step a frame") },
+            { key: "[", key2: "]", pad: PadButton.shoulders, text: @tr("Set start or end") },
+            { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Cancel") },
+        ] : ReplaysView.builds-open ? [
+            { key: "Space", pad: Shell.pad-a, text: @tr("Play or pause") },
+            { key: "←", key2: "→", pad: PadButton.move, text: @tr("Seek") },
+            { key: ",", key2: ".", text: @tr("Step a frame") },
+            { key: "[", key2: "]", pad: PadButton.shoulders, text: @tr("Previous or next round") },
+            { key: "B", pad: PadButton.select, text: @tr("Builds") },
+            { key: "M", pad: PadButton.start, text: @tr("Menu") },
+            { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+        ] : [
+            { key: "Space", pad: Shell.pad-a, text: @tr("Play or pause") },
+            { key: "←", key2: "→", pad: PadButton.move, text: @tr("Seek") },
+            { key: ",", key2: ".", text: @tr("Step a frame") },
+            { key: "[", key2: "]", pad: PadButton.shoulders, text: @tr("Previous or next round") },
+            { key: "M", pad: PadButton.start, text: @tr("Menu") },
+            { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+        ];
+        Arrive {
+            order: 0;
+            // (A phone's header has room for a word: who is playing is said here.)
+            Value {
+                x: 0;
+                y: 0;
+                height: 20px;
+                text: root.phone ? ReplaysView.title : "";
+            }
+        }
+
+        Arrive {
+            order: 1;
+            // (The export mode's options: over the transport, 12 from it; on a phone under it. The mode holds the
+            // page shown.)
+            if ReplaysView.exporting: ExportOptions {
+                x: 0;
+                y: root.phone ? controls.y + controls.height + 12px : controls.y - 12px - self.height;
+                width: page.body-width;
+                height: root.phone ? 208px : 108px;
+            }
+            // (A touch under the transport: the pointer resting on it holds the page.)
+            controls := TouchArea {
+                x: 0;
+                y: root.phone ? root.phone-transport : page.body-height - self.height;
+                width: page.body-width;
+                height: root.phone ? (ReplaysView.exporting ? 260px : 104px) : 108px;
+                Transport {
+                    width: parent.width;
+                    height: parent.height;
+
+                    Rectangle { }  // (Copied in: docs/app.md §14.)
+                }
+            }
+        }
+
+    }
+}
+
+export component ReplaysScreen inherits Rectangle {
+    if !ReplaysView.watching: ListPage {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if ReplaysView.watching: ViewerPage {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}
+
+// Both builds over the viewer, while BUILDS is on: the console shown's player's over the picture's left side, the
+// other's over its right, as a match shows them, each the narrow sheet a player's panel in a match is, in the
+// color of its side of the picture (the shown console's is red, at the left). On a phone they are one under the
+// other in a page that scrolls. They end 12 over the transport, which stays uncovered (docs/design/app-ui.md
+// §2.95: its ⋯ is how BUILDS is unchecked), as do the header (Back) and the footer: on a desktop 12 under the
+// header to 12 over the transport (the page's body ends 24 over the footer, the transport 108 tall at its foot; in
+// the export mode, 12 over its options, 108 tall and 12 over the transport); on
+// a phone over the picture, from the header to 12 over the transport (under the picture: the body's 16, the
+// picture's 28 over it and 12 under it). They are a scope of their own (`builds.`): each sheet is a control, and a
+// press or a click on them or between them puts them away (as do the ⋯ menu's BUILDS, B, Select and Esc).
+component ViewerBuilds inherits Rectangle {
+    property <length> top: Theme.header + (Theme.phone ? 0px : 12px);
+    property <length> foot: Theme.phone ? Theme.header + 44px + self.width * 2 / 3 : self.height - Theme.footer - (Theme.sideways ? 12px : 24px) - 108px - 12px - (ReplaysView.exporting ? 120px : 0px);
+    // (Sideways each half the page, less the gap between them: the narrow sheet, one column of stats and chips.)
+    property <length> sheet-width: Theme.phone ? page.view-width : Theme.sideways ? (page.view-width - 12px) / 2 : 430px;
+    Rectangle {
+        y: root.top;
+        height: root.foot - root.top;
+        visible: Theme.phone;
+        background: Theme.shade;
+    }
+
+    page := ScrollPage {
+        x: Theme.margin;
+        y: root.top + (Theme.phone ? 16px : 0px);
+        width: parent.width - 2 * Theme.margin + (Theme.phone ? 0px : 12px);
+        height: max(0px, root.foot - self.y);
+        nav: "builds.";
+        // (Each as tall as the parts of its build make it: the page the taller.)
+        content-height: Theme.phone ? left.sheet-height + 16px + right.sheet-height : max(left.sheet-height, right.sheet-height);
+        // (A click between them puts them away too.)
+        TouchArea {
+            width: page.view-width;
+            height: page.content-height;
+            clicked => {
+                Nav.activate("builds.sheet", 0);
+            }
+        }
+
+        left := BuildOverview {
+            x: 0;
+            y: 0;
+            width: root.sheet-width;
+            height: self.sheet-height;
+            build: ReplaysView.left-build;
+            side: 1;
+        }
+
+        right := BuildOverview {
+            x: Theme.phone ? 0px : page.view-width - self.width;
+            y: Theme.phone ? left.sheet-height + 16px : 0px;
+            width: root.sheet-width;
+            height: self.sheet-height;
+            build: ReplaysView.right-build;
+            side: 2;
+        }
+
+        Focusable {
+            x: left.x;
+            y: left.y;
+            width: left.width;
+            height: left.height;
+            nav: "builds.sheet";
+            nav-index: 0;
+        }
+
+        Focusable {
+            x: right.x;
+            y: right.y;
+            width: right.width;
+            height: right.height;
+            nav: "builds.sheet";
+            nav-index: 1;
+        }
+    }
+}
+
+// The play queue's entries up next, over the viewer, by the queue's button (docs/design/app-ui.md §2.92, §2.94):
+// NEXT (the replay watched skipped, as N) and Autoplay next, its switch at the right with its words; then UP NEXT
+// and how many, then their rows (the day alone; a missing one says so), a few at once and the rest scrolled. Enter or
+// a click on a row watches it (the ones before it passed). A scope of its own (`upnext.`): Esc, B, a click outside
+// it or the button again close it.
+component UpNextPopup inherits Rectangle {
+    TouchArea {
+        clicked => {
+            Nav.activate("upnext.close", 0);
+        }
+    }
+
+    Rectangle {
+        x: ReplaysView.up-next-x;
+        y: ReplaysView.up-next-y;
+        width: ReplaysView.up-next-width;
+        height: 96px + ReplaysView.up-next-rows * Theme.row + 8px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #000000a0;
+        TouchArea { }
+
+        next := Button {
+            x: 16px;
+            y: 12px;
+            nav: "upnext.next";
+            compact: true;
+            text: I18n.upper(@tr("Next"));
+            enabled: ReplaysView.has-next;
+        }
+
+        Value {
+            x: next.x + next.width + 12px;
+            y: autoplay.y;
+            width: max(0px, autoplay.x - 12px - self.x);
+            height: autoplay.height;
+            text: @tr("Autoplay next");
+            horizontal-alignment: right;
+        }
+
+        // (A switch: its knob a triangle at the right while on, a square at the left while off.)
+        autoplay := IconButton {
+            x: parent.width - 16px - self.width;
+            y: Theme.handheld ? 10px : 8px;
+            nav: "upnext.autoplay";
+            icon: ReplaysView.autoplay ? "M 1 4 h 14 v 8 h -14 Z M 2.5 5.5 v 5 h 11 v -5 Z M 9 6.5 L 12.5 8 L 9 9.5 Z" : "M 1 4 h 14 v 8 h -14 Z M 2.5 5.5 v 5 h 11 v -5 Z M 3.5 6.5 h 3 v 3 h -3 Z";
+            lit: ReplaysView.autoplay;
+        }
+
+        Rectangle {
+            x: 16px;
+            y: 63px;
+            width: parent.width - 32px;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        Label {
+            x: 16px;
+            y: 68px;
+            width: parent.width - 132px;
+            height: 24px;
+            text: I18n.upper(@tr("Up next"));
+            color: Theme.cursor;
+        }
+
+        Text {
+            x: parent.width - 116px;
+            y: 68px;
+            width: 100px;
+            height: 24px;
+            text: ReplaysView.replay-count(ReplaysView.up-next.length);
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        list := ListView {
+            x: 4px;
+            y: 96px;
+            width: parent.width - 8px;
+            height: ReplaysView.up-next-rows * Theme.row;
+            nav: "upnext.row";
+            count: ReplaysView.up-next.length;
+            gap: 0px;
+            for slot in list.shown: ReplayRowView {
+                property <int> at: list.first + slot;
+                x: 0;
+                y: self.at * list.pitch;
+                width: list.row-width;
+                height: list.row-height;
+                replay: ReplaysView.up-next[self.at];
+                nav: list.nav;
+                nav-index: self.at;
+                compact: true;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Note {
+            x: 16px;
+            y: 96px;
+            width: parent.width - 32px;
+            height: Theme.row;
+            visible: ReplaysView.up-next.length == 0;
+            text: @tr("Nothing else is in the queue.");
+        }
+    }
+}
+
+// What opens over Replays: both builds over the viewer and the popup up next, and a phone's sheet of the selected
+// replay. (The export is the viewer's own mode since docs/design/app-ui.md §2.96, not a dialog.) It covers the whole
+// window, over the screen and under the shell's own dialogs and its menus; empty, it takes no clicks.
+export component ReplaysOverlay inherits Rectangle {
+    if ReplaysView.watching && ReplaysView.builds-shown: ViewerBuilds {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if ReplaysView.watching && ReplaysView.up-next-open: UpNextPopup {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if Theme.phone && ReplaysView.detail && !ReplaysView.watching: DetailSheet {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}

@@ -1,0 +1,1958 @@
+// What every screen sits in: the state the app shows (`Shell`), the header and the footer, the page a menu
+// screen is laid out on, the ground behind it, the cursor over it, and the dialog and the list of choices that
+// open over a screen.
+
+import { Theme, Audit, Look, PatternKind, I18n } from "theme.slint";
+import { Nav, NavKind, Focusable } from "nav.slint";
+import { Cut, Label, Note, Value, Mono, Bar, Button, ButtonKind, Stepper, Field, Chevron, ArrowLeft, ArrowRight, RowBack, RowTouch, ListView, ScrollPage, Pill, Reach } from "widgets.slint";
+import { Tween, Pulse, Shake } from "motion.slint";
+import { VersionTag } from "build.slint";
+
+// The screens a player goes between (Practice's has no page: its battle fills the window). Loading, the two cards
+// before a battle and the battle are states of the shell over them (`Shell.loading`, `Shell.versus`,
+// `Shell.battle`).
+export enum Screen {
+    menu,
+    play,
+    practice,
+    builds,
+    replays,
+    settings,
+}
+
+// What a battle on screen is, which says whose menu Start opens.
+export enum BattleKind {
+    none,
+    practice,
+    online,
+    replay,
+}
+
+// A pad's button in a key hint.
+export enum PadButton {
+    none,
+    // The D-pad or the stick.
+    move,
+    south,
+    east,
+    west,
+    north,
+    shoulders,
+    start,
+    select,
+}
+
+// A key hint: the key's cap (and a second one), the pad's button, and what they do.
+export struct Hint {
+    key: string,
+    key2: string,
+    pad: PadButton,
+    text: string,
+}
+
+// A menu row's marks (`Shell.picker-marks`: the replay viewer's ⋯): `check`, a check at its right (a switch that
+// is on, or the one chosen of a set); `dim`, it can't be chosen now (the app refuses it, the menu staying open);
+// `line`, a line over it, the first of a group; `value`, what a row that opens a choice of its own has chosen, at its
+// right in the muted color (the viewer's PLAYBACK SPEED: "1×").
+export struct PickMark {
+    check: bool,
+    dim: bool,
+    line: bool,
+    value: string,
+}
+
+export struct DialogButton {
+    text: string,
+    kind: ButtonKind,
+    danger: bool,
+}
+
+// A side's card on the screen before a battle: who (YOU, OPPONENT, DUMMY), their name, and what they bring (their
+// build's name). An opponent's online says their name alone.
+export struct VersusCard {
+    role: string,
+    name: string,
+    build: string,
+    navi: string,
+    progress: float,
+}
+
+// The link panel's figures (`LinkPanel`, battle.slint), which the connection's corner opens in an online match:
+// the jitter in ms (-1: none measured yet); the loss in tenths of a percent; the input delay, the last rollback's
+// depth, the deepest, the skew and the lead in frames; the rollbacks and the frames waited, counted; the
+// datagrams sent and received and their KB; the reconnects; and the round trip's last ten seconds as a graph:
+// its line and the area under it (paths in a box 99 wide and 100 tall, the newest sample at the right, a gap
+// where the link was down), and the round trip at its top in ms.
+export struct LinkFigures {
+    jitter: int,
+    loss: int,
+    input-delay: int,
+    rollbacks: int,
+    last-rollback: int,
+    deepest-rollback: int,
+    skew: int,
+    lead: int,
+    waits: int,
+    sent: int,
+    sent-kb: int,
+    received: int,
+    received-kb: int,
+    reconnects: int,
+    graph: string,
+    graph-area: string,
+    graph-top: int,
+}
+
+// A party battle's party, as the original shows it on its other screen (EXE5 DS's bottom screen, its party panel:
+// docs/design/exe5ds-map.md §4.2), shown beside the battle where the player's side has partners: each member's face and
+// HP (`down`: none left), the member on the field (`active`, its place in `members`), the members the switches' two
+// buttons name (`left`, `right`: their places, -1 none: EXE5 DS's Y and X), the switches made this round and the
+// round's limit, and the two switches' controls as bound (as the footer's hints show a control).
+export struct PartyMember {
+    face: image,
+    hp: int,
+    max-hp: int,
+}
+
+export struct PartyHud {
+    shown: bool,
+    members: [PartyMember],
+    active: int,
+    left: int,
+    right: int,
+    switches: int,
+    limit: int,
+    left-key: Hint,
+    right-key: Hint,
+}
+
+// A ground behind the menus (`Backdrop`): a game's look, and the side it sweeps in from over the grounds before it
+// (-1 the left, 1 the right; 0 it is there at once).
+export struct Ground {
+    look: Look,
+    from: int,
+}
+
+// The paths the grounds' patterns are drawn with, each over the window and one of its tiles more each way: the
+// hexagons, the isometric grid's lines, and the starfield's three layers of dots (the white, the fainter white,
+// the brighter in the pattern's color). The app draws them for the window's size (`look.rs`).
+export struct PatternPaths {
+    hexagons: string,
+    isometric-grid: string,
+    stars: string,
+    far-stars: string,
+    bright-stars: string,
+}
+
+// A device without the Legacy Collection looks for a computer nearby that has it, which sends it (src/nearby.rs;
+// docs/app.md §17, "From a computer nearby"): what the loading screen's note says of it.
+export enum NearbyState {
+    // Not looking (the collection is found, or the system can't look: a browser).
+    none,
+    // Looking, its first seconds.
+    looking,
+    // Nothing found for a while: what to check.
+    not-found,
+    // A computer found is asked: its player is to choose Send.
+    asking,
+    // The copies coming in: the bar.
+    receiving,
+    // The computer's player chose Not now.
+    declined,
+    // The computer has another version of saito.
+    other-version,
+    // The computer couldn't be reached, or the transfer broke off: it is asked again.
+    unreachable,
+    // The computer is sending to another device: it is asked again.
+    busy,
+    // What the computer sent can't be played from.
+    unusable,
+    // The system doesn't let saito look on the local network (iOS: the player said no).
+    not-allowed,
+}
+
+export global Shell {
+    // What an update of the app says in the footer, in place of the screen's status (src/updates.rs): that it
+    // failed. Empty: nothing.
+    in property <string> updating;
+    // The loading screen's line while the app's update is checked for or downloaded as the app starts, in place of
+    // the game's (src/updates.rs; empty: none), and whether it is the check (no percentage then).
+    in property <string> update-line;
+    in property <bool> update-checking;
+    in property <Screen> screen;
+    // The screen shown is leaving for another: its body slides and fades for the theme's `leave`, and then the
+    // other is shown. (A press meanwhile cuts it short.)
+    in property <bool> leaving;
+
+    // The selected game: its name as shown (EXE6), and whether the header offers to change it. A screen locks
+    // it where the game can't change (inside a build, the lobby, a replay): the name stays, without its arrows.
+    in property <string> game;
+    in property <bool> game-locked;
+    // The footer's status where a screen has none of its own: the player's name.
+    in property <string> player;
+    in property <string> version;
+
+    // The selected game isn't loaded: the bar, in place of the screen.
+    in property <bool> loading;
+    in property <float> loading-progress;
+    // `downloading`: its content is being downloaded first (the app has none of it yet), and the bar is that.
+    in property <bool> downloading;
+    // No game can be played: what is missing is the Legacy Collection, whose folder can be chosen; or, with
+    // `no-content`, the games' content: none is out for this version yet (`unpublished`), or it couldn't be
+    // downloaded.
+    in property <bool> no-games;
+    in property <bool> no-content;
+    in property <bool> unpublished;
+    // The Legacy Collection found lacks some of a game's ROMs: the game, as shown (empty: it has them, or none was
+    // found). The note says so in place of asking for the collection.
+    in property <string> incomplete;
+    // No Legacy Collection found: a computer nearby is looked for, to send it (src/nearby.rs): what is going on, the
+    // other device's name, and the transfer's progress (the bar, while receiving).
+    in property <NearbyState> nearby;
+    in property <string> nearby-name;
+    in property <float> nearby-progress;
+
+    // The two cards before a battle.
+    in property <bool> versus;
+    in property <VersusCard> versus-left;
+    in property <VersusCard> versus-right;
+
+    // A battle is being entered: the field's hexagons rush (it counts the times), and as the battle begins it
+    // jacks in (`JackIn`: it counts those).
+    in property <int> rush-seq;
+    in property <int> jack-in-seq;
+
+    // The battle running, and whether its picture fills the window (else its screen shows it in a `Picture`
+    // of its own). `battle-menu` is saito's menu over it (Start or Esc).
+    in property <BattleKind> battle;
+    in property <bool> battle-full;
+    in property <bool> battle-menu;
+    // What the battle is, in a few words of its owner's (Practice · Round 1): the line beside MENU on a phone.
+    in property <string> battle-note;
+    // The battle's music a player picks (Practice): its list's first choice, each round's background's music; the
+    // rest are the games' battle themes, which the content names.
+    out property <string> background-music: @tr("By background");
+    // The connection's corner: shown online; its bars (0 to 4), the round trip in ms, and the seconds the link
+    // has been down while it is (-1: it is up).
+    in property <bool> connection-shown;
+    in property <int> connection-level;
+    in property <int> connection-ping;
+    in property <int> connection-down: -1;
+    // The link panel over the corner, which a click on the corner opens and a click on it again or anywhere
+    // else on the battle closes (the app closes it as the battle ends), and its figures.
+    in-out property <bool> connection-open;
+    in property <LinkFigures> link;
+
+    // The battle's picture (one texture, written in place), and its size as drawn: a whole multiple of the frame
+    // (240 by 160, or in the enhanced mode as many columns and rows as the room has), and the frame's rows. A screen
+    // shows it with a `Picture`, which says how much room it has.
+    in property <image> picture;
+    // Something was shown in it this frame (a battle, the menu's reel, a replay's still or its viewer): a
+    // `Picture` whose screen shows nothing of its own shows its ground, never what another presented last.
+    in property <bool> picture-shown;
+    in property <length> picture-width;
+    in property <length> picture-height;
+    in property <int> picture-rows: 160;
+    // Where it is drawn in its room: the room's middle, moved onto the display's pixels (the app does it: a
+    // picture drawn across them would not show each of the game's pixels as one square).
+    in property <length> picture-x;
+    in property <length> picture-y;
+    // The safe area's corner in the window (app.slint: the window less a phone's insets), which the app keeps here
+    // (`Shell::fit_window`): what is laid out in the safe area is placed from it.
+    in property <length> safe-left;
+    in property <length> safe-top;
+    // (And the inset at its right: the header's bar goes past both sides to the window's edges on a phone held
+    // sideways.)
+    in property <length> safe-right;
+    // The room the screen's `Picture` gives it: where it is in the safe area (as what is laid out over it is), and
+    // its size.
+    in-out property <length> picture-room-x;
+    in-out property <length> picture-room-y;
+    in-out property <length> picture-room-width;
+    in-out property <length> picture-room-height;
+
+    // A dialog over the screen.
+    in property <bool> dialog;
+    in property <string> dialog-title;
+    in property <string> dialog-message;
+    in property <[DialogButton]> dialog-buttons;
+    // It is a failure's: it shakes once as it arrives.
+    in property <bool> dialog-shake;
+    // A bar under its message, how far something it waits on has come (0 to 1): a send of the Legacy Collection's.
+    in property <bool> dialog-bar;
+    in property <float> dialog-progress;
+
+    // A select's choices, open under it (on a phone, a sheet from the bottom): a list of `picker-rows` rows'
+    // height, which scrolls where there are more.
+    in property <bool> picker;
+    in property <[string]> picker-options;
+    in property <int> picker-chosen;
+    // A menu of actions (Play's build menu, its ⋯): the choices are words of buttons, and those from
+    // `picker-apart` on (-1: none) are set apart under a line, in the error color (DELETE).
+    in property <bool> picker-menu;
+    in property <int> picker-apart: -1;
+    // Each row's marks, where the menu has them (none: no row is marked).
+    in property <[PickMark]> picker-marks;
+    in property <int> picker-rows;
+    // A grid of pictures (Practice's Arena and Background): each choice its picture over its name, `picker-columns`
+    // to a row, each `picker-cell` wide and its picture seven fifteenths of that tall (the battle's field's band,
+    // 240 by 112); `picker-rows` the rows it shows at once. An empty picture is one not drawn yet, or the first choice,
+    // Random, which has none.
+    in property <bool> picker-grid;
+    in property <[image]> picker-pictures;
+    in property <int> picker-columns: 5;
+    in property <length> picker-cell: 120px;
+    in property <length> picker-x;
+    in property <length> picker-y;
+    in property <length> picker-width;
+
+    // The keys bound to L and R, for the hints (the menus' previous and next).
+    in property <string> key-l: "A";
+    in property <string> key-r: "S";
+    // The keys and the pad's buttons that confirm and go back in the menus (Enter and Esc; the pad's buttons
+    // bound to A and B: the app's `Bindings::confirm_button` and the rest), and the pad's button that deletes, for
+    // the hints.
+    in property <string> key-a: "Enter";
+    in property <string> key-b: "Esc";
+    in property <PadButton> pad-a: PadButton.south;
+    in property <PadButton> pad-b: PadButton.west;
+    in property <PadButton> pad-delete: PadButton.east;
+    // The grounds behind the menus, the last on top: the selected game's, and while it sweeps in the ones it is
+    // covering (the app drops those once it has). Their patterns' paths, over the window in units.
+    in property <[Ground]> grounds;
+    in property <PatternPaths> patterns;
+    // The on-screen pad's buttons (a phone, in battle), each by its GBA button's bit number. The pad takes the
+    // window's touches itself, every finger its own (the app: `TouchPad`), so each button says where it is
+    // (`pad-key`) and is drawn held when the app says so (`pad-held`, by bit number). The mouse comes through
+    // the UI, one pointer: `touch`, pressed or let go.
+    callback touch(int, bool);
+    callback pad-key(int, length, length, length, length);
+    in property <[bool]> pad-held;
+    // The custom screen by pointer (the battle's picture takes it while `screen-pointer`): each event of the mouse's
+    // or a finger's over the picture, at its place in the picture (logical pixels from its top left): its kind (0
+    // down, 1 up, 2 moved, 3 cancelled, 4 left the picture) and its button (0 the primary, a finger's, 1 the
+    // secondary, 2 another).
+    in property <bool> screen-pointer;
+    callback picture-pointer(int, int, length, length);
+    // The mouse's cursor is a hand over the battle's picture where a click takes what is under it (a target of
+    // the local player's custom screen, while the picture takes the pointer), as over the app's controls.
+    in property <bool> picture-hand;
+    // A phone's pad held sideways gives way to the custom screen while it is open: its directions, L, R and SELECT
+    // hide, and taps on the window are the screen's (A, B, START and MENU stay).
+    in property <bool> pad-gives-way;
+    // The player's party beside the battle, in a party battle (`PartyHud`): read from the battle each frame. On a
+    // phone the pad has the switches' two buttons (bits 14 and 15), each with the member it names.
+    in property <PartyHud> party;
+}
+
+// What can go wrong, as the player reads it (docs/design/app-ui.md §7; the app's `UserError`). The code's own
+// words for it go to the log file, never here.
+export enum ErrorKind {
+    server-unreachable,
+    app-too-old,
+    no-such-match,
+    match-full,
+    version-mismatch,
+    other-game,
+    build-unusable,
+    build-refused,
+    // There is no build of the game to play with.
+    no-build,
+    their-build-unusable,
+    opponent-left,
+    no-answer,
+    cant-connect,
+    bad-address,
+    port-in-use,
+    connection-lost,
+    replay-version,
+    not-a-replay,
+    replay-damaged,
+    replay-other-game,
+    // A replay made on content that isn't in the store, nor listed by its game's index.
+    replay-content-missing,
+    no-ffmpeg,
+    cant-write-video,
+    export-failed,
+    wrong-game-save,
+    // A file that isn't a ruleset of the game (it doesn't read, is another game's, or names what the game hasn't).
+    not-a-ruleset,
+    // A game couldn't be loaded: its content, or its assets extracted from its ROMs.
+    load-failed,
+    // No Legacy Collection to read the games' ROMs from.
+    no-legacy-collection,
+    // The Legacy Collection found lacks some of a game's ROMs (its files are incomplete).
+    incomplete-legacy-collection,
+    // A game's content couldn't be downloaded (the app has none of it). With no game named: no game's could.
+    download-failed,
+    // No game's content is published for this version of saito yet (the loading screen's note).
+    content-unpublished,
+    other,
+}
+
+// The words of a computer nearby that sends the Legacy Collection (NearbyState).
+export global NearbyWords {
+    // The loading screen's note: `name` is the computer's, as it calls itself.
+    public pure function line(state: NearbyState, name: string) -> string {
+        if state == NearbyState.looking {
+            return @tr("saito needs Battle Network Legacy Collection Vol. 2. Open saito on a computer that has it, on the same Wi-Fi, to send it here. Looking…");
+        }
+        if state == NearbyState.not-found {
+            return @tr("No computer found. Open saito on a computer that has the Legacy Collection, on the same Wi-Fi. Still nothing? Check that its firewall allows saito and that no VPN is on. Or copy its exe folder here and choose it.");
+        }
+        if state == NearbyState.asking {
+            return @tr("Found {}. Choose Send there to send the Legacy Collection here.", name);
+        }
+        if state == NearbyState.declined {
+            return @tr("{} didn't send the Legacy Collection. Open saito on another computer that has it, or copy its exe folder here and choose it.", name);
+        }
+        if state == NearbyState.other-version {
+            return @tr("{} has a different version of saito. You both need the latest.", name);
+        }
+        if state == NearbyState.unreachable {
+            return @tr("Couldn't get the Legacy Collection from {}. Check that its firewall allows saito. Trying again…", name);
+        }
+        if state == NearbyState.busy {
+            return @tr("{} is sending to another device. Trying again soon…", name);
+        }
+        if state == NearbyState.unusable {
+            return @tr("What {} sent can't be played. Details are in the log file.", name);
+        }
+        if state == NearbyState.not-allowed {
+            return @tr("saito isn't allowed to look for computers on this network. Allow it in Settings > Privacy & Security > Local Network, or copy the exe folder here and choose it.");
+        }
+        return "";
+    }
+    // The bar's line while the copies come in.
+    public pure function receiving(name: string) -> string {
+        return @tr("Receiving from {}", name);
+    }
+    // The computer's dialog when a device asks for the collection: `name` is the device's.
+    public pure function ask-title(name: string) -> string {
+        return @tr("Send the Legacy Collection to {}?", name);
+    }
+    public pure function ask-message(name: string) -> string {
+        return @tr("{} is asking for the Legacy Collection's ROMs, to play saito there. They're sent over this network.", name);
+    }
+    out property <string> send: @tr("Send");
+    out property <string> not-now: @tr("Not now");
+    // The dialog once Send is chosen, while the copies are made and sent (its bar shows how far), and if that fails.
+    public pure function sending-title(name: string) -> string {
+        return @tr("Sending the Legacy Collection to {}", name);
+    }
+    out property <string> sending-message: @tr("Keep saito open until it's done.");
+    out property <string> cancel: @tr("Cancel");
+    public pure function failed-title(name: string) -> string {
+        return @tr("Couldn't send the Legacy Collection to {}", name);
+    }
+    out property <string> failed-message: @tr("Details are in the log file.");
+}
+
+// An update of the app (src/updates.rs; docs/app.md §19, "Updates"): the loading screen's lines as the app starts,
+// while it checks for one and while one downloads, and the footer's if it fails.
+export global UpdateWords {
+    out property <string> checking: @tr("Checking for updates");
+    public pure function updating(version: string) -> string {
+        return @tr("Updating to saito {}", version);
+    }
+    out property <string> failed: @tr("The update couldn't be downloaded. It's tried again next start.");
+}
+
+export global Errors {
+    // The whole of it on one line: a field's reserved line, a row's end. `detail` is the rule a build breaks
+    // (a sentence of the catalogs), or a game's name.
+    public pure function line(kind: ErrorKind, detail: string) -> string {
+        if kind == ErrorKind.server-unreachable {
+            return @tr("Can't reach the server. Check your connection.");
+        }
+        if kind == ErrorKind.app-too-old {
+            return @tr("This version of saito is too old for the server. Get the latest.");
+        }
+        if kind == ErrorKind.no-such-match {
+            return @tr("No match with that code.");
+        }
+        if kind == ErrorKind.match-full {
+            return @tr("That match is full.");
+        }
+        if kind == ErrorKind.version-mismatch {
+            return @tr("Your opponent has a different version of saito. You both need the latest.");
+        }
+        if kind == ErrorKind.other-game {
+            return @tr("Your opponent is on {}. Pick the same game.", detail);
+        }
+        if kind == ErrorKind.build-unusable {
+            return @tr("This build can't be used: {}.", detail);
+        }
+        if kind == ErrorKind.build-refused {
+            return @tr("This build can't be used.");
+        }
+        if kind == ErrorKind.no-build {
+            return @tr("Make a build first.");
+        }
+        if kind == ErrorKind.their-build-unusable {
+            return @tr("Your opponent's build can't be used.");
+        }
+        if kind == ErrorKind.opponent-left {
+            return @tr("Your opponent left.");
+        }
+        if kind == ErrorKind.no-answer {
+            return @tr("No answer from your opponent.");
+        }
+        if kind == ErrorKind.cant-connect {
+            return @tr("Couldn't connect to your opponent.");
+        }
+        if kind == ErrorKind.bad-address {
+            return @tr("That isn't an address. Use host:port.");
+        }
+        if kind == ErrorKind.port-in-use {
+            return @tr("That port is already in use.");
+        }
+        if kind == ErrorKind.connection-lost {
+            return @tr("Connection lost. The match has ended.");
+        }
+        if kind == ErrorKind.replay-version {
+            return @tr("This replay is from a different version and can't be played.");
+        }
+        if kind == ErrorKind.not-a-replay {
+            return @tr("That file isn't a replay.");
+        }
+        if kind == ErrorKind.replay-damaged {
+            return @tr("This replay is damaged and can't be played.");
+        }
+        if kind == ErrorKind.replay-other-game {
+            return @tr("This is a {} replay. Pick {} to watch it.", detail, detail);
+        }
+        if kind == ErrorKind.replay-content-missing {
+            return @tr("The content this replay was made with isn't available, so it can't be played.");
+        }
+        if kind == ErrorKind.no-ffmpeg {
+            return @tr("Video export needs ffmpeg. Install it, then try again.");
+        }
+        if kind == ErrorKind.cant-write-video {
+            return @tr("The video's file couldn't be written. Check the folder and the space left.");
+        }
+        if kind == ErrorKind.export-failed {
+            return @tr("The video couldn't be made. Details are in the log file.");
+        }
+        if kind == ErrorKind.wrong-game-save {
+            return @tr("Not a {} save.", detail);
+        }
+        if kind == ErrorKind.not-a-ruleset {
+            return @tr("Not a {} ruleset.", detail);
+        }
+        if kind == ErrorKind.load-failed {
+            return @tr("{}'s data couldn't be loaded. Details are in the log file.", detail);
+        }
+        if kind == ErrorKind.no-legacy-collection {
+            // (How to drag its folder in from Steam, which shows where it is installed: the install's `exe` folder,
+            // the first thing in it. A browser has no Steam to install from, and is a page. A phone has no Steam and
+            // nothing is dragged onto it: the folder is copied to it from a computer and chosen. The button chooses
+            // the folder too.)
+            if Theme.phone-app {
+                return @tr("saito needs Battle Network Legacy Collection Vol. 2. On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here.");
+            }
+            if Theme.web {
+                return @tr("saito needs Battle Network Legacy Collection Vol. 2. In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page.");
+            }
+            return @tr("saito needs Battle Network Legacy Collection Vol. 2. Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window.");
+        }
+        if kind == ErrorKind.incomplete-legacy-collection {
+            return @tr("The Legacy Collection's files are incomplete: some of {}'s are missing. Have Steam verify the collection's files, then choose its folder again.", detail);
+        }
+        if kind == ErrorKind.content-unpublished {
+            return @tr("There's no game content for this version of saito yet. Check back later.");
+        }
+        if kind == ErrorKind.download-failed {
+            if detail == "" {
+                return @tr("The games' content couldn't be downloaded. Check your connection, then start saito again.");
+            }
+            return @tr("{}'s content couldn't be downloaded. Check your connection, then start saito again.", detail);
+        }
+        return @tr("Something went wrong. Details are in the log file.");
+    }
+    // A dialog's title for it, and its message under the title.
+    public pure function title(kind: ErrorKind, detail: string) -> string {
+        if kind == ErrorKind.server-unreachable {
+            return @tr("Can't reach the server");
+        }
+        if kind == ErrorKind.app-too-old {
+            return @tr("This version of saito is too old for the server");
+        }
+        if kind == ErrorKind.no-such-match {
+            return @tr("No match with that code");
+        }
+        if kind == ErrorKind.match-full {
+            return @tr("That match is full");
+        }
+        if kind == ErrorKind.version-mismatch {
+            return @tr("Different versions");
+        }
+        if kind == ErrorKind.other-game {
+            return @tr("Your opponent is on {}", detail);
+        }
+        if kind == ErrorKind.build-unusable {
+            return @tr("This build can't be used");
+        }
+        if kind == ErrorKind.build-refused {
+            return @tr("This build can't be used");
+        }
+        if kind == ErrorKind.no-build {
+            return @tr("No build");
+        }
+        if kind == ErrorKind.their-build-unusable {
+            return @tr("Your opponent's build can't be used");
+        }
+        if kind == ErrorKind.opponent-left {
+            return @tr("Your opponent left");
+        }
+        if kind == ErrorKind.no-answer {
+            return @tr("No answer from your opponent");
+        }
+        if kind == ErrorKind.cant-connect {
+            return @tr("Couldn't connect to your opponent");
+        }
+        if kind == ErrorKind.bad-address {
+            return @tr("That isn't an address");
+        }
+        if kind == ErrorKind.port-in-use {
+            return @tr("That port is already in use");
+        }
+        if kind == ErrorKind.connection-lost {
+            return @tr("Connection lost");
+        }
+        if kind == ErrorKind.replay-version {
+            return @tr("Different version");
+        }
+        if kind == ErrorKind.not-a-replay {
+            return @tr("That file isn't a replay");
+        }
+        if kind == ErrorKind.replay-damaged {
+            return @tr("This replay is damaged");
+        }
+        if kind == ErrorKind.replay-other-game {
+            return @tr("This is a {} replay", detail);
+        }
+        if kind == ErrorKind.replay-content-missing {
+            return @tr("Content not available");
+        }
+        if kind == ErrorKind.no-ffmpeg {
+            return @tr("Video export needs ffmpeg");
+        }
+        if kind == ErrorKind.cant-write-video {
+            return @tr("The video's file couldn't be written");
+        }
+        if kind == ErrorKind.export-failed {
+            return @tr("The video couldn't be made");
+        }
+        if kind == ErrorKind.wrong-game-save {
+            return @tr("Not a {} save", detail);
+        }
+        if kind == ErrorKind.not-a-ruleset {
+            return @tr("Not a {} ruleset", detail);
+        }
+        if kind == ErrorKind.load-failed {
+            return @tr("{}'s data couldn't be loaded", detail);
+        }
+        if kind == ErrorKind.no-legacy-collection {
+            return @tr("saito needs Battle Network Legacy Collection Vol. 2");
+        }
+        if kind == ErrorKind.incomplete-legacy-collection {
+            return @tr("The Legacy Collection's files are incomplete");
+        }
+        if kind == ErrorKind.download-failed {
+            return @tr("{}'s content couldn't be downloaded", detail);
+        }
+        return @tr("Something went wrong");
+    }
+    public pure function body(kind: ErrorKind, detail: string) -> string {
+        if kind == ErrorKind.server-unreachable {
+            return @tr("Check your connection.");
+        }
+        if kind == ErrorKind.app-too-old {
+            return @tr("Get the latest.");
+        }
+        if kind == ErrorKind.no-such-match {
+            return "";
+        }
+        if kind == ErrorKind.match-full {
+            return "";
+        }
+        if kind == ErrorKind.version-mismatch {
+            return @tr("Your opponent has a different version of saito. You both need the latest.");
+        }
+        if kind == ErrorKind.other-game {
+            return @tr("Pick the same game.");
+        }
+        if kind == ErrorKind.build-unusable {
+            return @tr("{}.", detail);
+        }
+        if kind == ErrorKind.build-refused {
+            return "";
+        }
+        if kind == ErrorKind.no-build {
+            return @tr("Make a build first.");
+        }
+        if kind == ErrorKind.their-build-unusable {
+            return "";
+        }
+        if kind == ErrorKind.opponent-left {
+            return "";
+        }
+        if kind == ErrorKind.no-answer {
+            return "";
+        }
+        if kind == ErrorKind.cant-connect {
+            return "";
+        }
+        if kind == ErrorKind.bad-address {
+            return @tr("Use host:port.");
+        }
+        if kind == ErrorKind.port-in-use {
+            return "";
+        }
+        if kind == ErrorKind.connection-lost {
+            return @tr("The match has ended.");
+        }
+        if kind == ErrorKind.replay-version {
+            return @tr("This replay is from a different version and can't be played.");
+        }
+        if kind == ErrorKind.not-a-replay {
+            return "";
+        }
+        if kind == ErrorKind.replay-damaged {
+            return @tr("It can't be played.");
+        }
+        if kind == ErrorKind.replay-other-game {
+            return @tr("Pick {} to watch it.", detail);
+        }
+        if kind == ErrorKind.replay-content-missing {
+            return @tr("The content this replay was made with isn't available, so it can't be played.");
+        }
+        if kind == ErrorKind.no-ffmpeg {
+            return @tr("Install it, then try again.");
+        }
+        if kind == ErrorKind.cant-write-video {
+            return @tr("Check the folder and the space left.");
+        }
+        if kind == ErrorKind.export-failed {
+            return @tr("Details are in the log file.");
+        }
+        if kind == ErrorKind.wrong-game-save {
+            return "";
+        }
+        if kind == ErrorKind.not-a-ruleset {
+            return "";
+        }
+        if kind == ErrorKind.no-legacy-collection {
+            if Theme.phone-app {
+                return @tr("On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here.");
+            }
+            if Theme.web {
+                return @tr("In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page.");
+            }
+            return @tr("Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window.");
+        }
+        if kind == ErrorKind.incomplete-legacy-collection {
+            return @tr("Some of {}'s files are missing. Have Steam verify the collection's files, then choose its folder again.", detail);
+        }
+        if kind == ErrorKind.download-failed {
+            return @tr("Check your connection, then start saito again.");
+        }
+        return @tr("Details are in the log file.");
+    }
+    // What closes a dialog that only says something.
+    public pure function ok() -> string {
+        return @tr("OK");
+    }
+    // What opens the system's folder dialog, to choose the Legacy Collection's folder.
+    public pure function choose-folder() -> string {
+        return I18n.upper(@tr("Choose folder"));
+    }
+}
+
+// A set piece over the layout: something that flies from one place to another (a chip from its library row to
+// its slot). The app sets where from and where to (`Shell::fly`, by two controls' names) and counts the flights;
+// the window draws it, over everything, for the theme's `settle`.
+export global Fx {
+    in property <int> fly-seq;
+    in property <length> fly-from-x;
+    in property <length> fly-from-y;
+    in property <length> fly-to-x;
+    in property <length> fly-to-y;
+    in property <image> fly-image;
+    in property <string> fly-text;
+}
+
+// One ground, over the ones before it: what it covers of the window grows from the side it comes in from as its
+// sweep runs (from its creation, for the theme's `settle`), and a band of its cursor's color leads the edge. Its
+// pattern is one tile larger than the window each way, moves by less than a tile, and is drawn once into a layer,
+// which is what moves: stroking the hexagons anew each frame cost over a millisecond. (The tiles are those the app
+// draws the paths on: `look.rs`.)
+component GroundLayer inherits Rectangle {
+    in property <Ground> ground;
+    in property <float> drift;
+    in property <float> rush;
+    in property <float> pulse;
+    property <Look> look: root.ground.look;
+    property <PatternKind> kind: root.look.pattern;
+    property <bool> stars: root.kind == PatternKind.starfield;
+    property <float> tile-width: root.kind == PatternKind.hexagons ? 42 : root.kind == PatternKind.isometric-grid ? 92 : 292;
+    property <float> tile-height: root.kind == PatternKind.hexagons ? 72.75 : root.kind == PatternKind.isometric-grid ? 53.116 : 244;
+    property <float> shown: root.ground.from == 0 ? 1 : sweep.t;
+    // Where the edge is: past it, on the side the ground came from, is this ground.
+    property <length> edge: root.ground.from < 0 ? root.shown * root.width : (1 - root.shown) * root.width;
+    sweep := Tween { }
+
+    Rectangle {
+        x: root.ground.from < 0 ? 0 : root.edge;
+        width: root.ground.from < 0 ? root.edge : root.width - root.edge;
+        clip: true;
+        Rectangle {
+            x: -parent.x;
+            width: root.width;
+            height: root.height;
+            Rectangle {
+                background: @linear-gradient(180deg, root.look.ground-top 0%, root.look.ground-bottom 100%);
+            }
+
+            Rectangle {
+                x: parent.width * 0.88 - self.width / 2;
+                y: parent.height * -0.1 - self.height / 2;
+                width: parent.width * 1.7;
+                height: self.width;
+                background: @radial-gradient(circle, root.look.ground-glow 0%, transparent 62%);
+            }
+
+            // A starfield's comet: a streak across the window, from the pattern's color into the main action's.
+            Rectangle {
+                visible: root.stars;
+                background: @linear-gradient(118deg, root.look.pattern-color.with-alpha(0) 38%, root.look.pattern-color.with-alpha(root.look.pattern-strength * 0.45) 39%, root.look.action.with-alpha(root.look.pattern-strength * 0.27) 41.5%, root.look.action.with-alpha(0) 44%);
+            }
+
+            // An isometric grid's wash, low on the window.
+            Rectangle {
+                visible: root.kind == PatternKind.isometric-grid;
+                background: @linear-gradient(180deg, root.look.pattern-color.with-alpha(0) 70%, root.look.pattern-color.with-alpha(root.look.pattern-strength * 0.73) 100%);
+            }
+
+            Rectangle {
+                x: -1px * mod(root.drift * 5 + root.rush * 42 * 9, root.tile-width);
+                y: -1px * mod(root.drift * 2.2, root.tile-height);
+                width: parent.width + root.tile-width * 1px;
+                height: parent.height + root.tile-height * 1px;
+                cache-rendering-hint: true;
+                // The hexagons or the grid, stroked; or the starfield's white dots.
+                Path {
+                    commands: root.kind == PatternKind.hexagons ? Shell.patterns.hexagons : root.kind == PatternKind.isometric-grid ? Shell.patterns.isometric-grid : Shell.patterns.stars;
+                    stroke: root.stars ? transparent : root.look.pattern-color.with-alpha(root.look.pattern-strength);
+                    stroke-width: 1px;
+                    fill: root.stars ? #ffffff.with-alpha(root.look.pattern-strength) : transparent;
+                    viewbox-width: self.width / 1px;
+                    viewbox-height: self.height / 1px;
+                    clip: true;
+                }
+
+                // A starfield's fainter white dots, and its brighter ones in the pattern's color.
+                Path {
+                    commands: root.stars ? Shell.patterns.far-stars : "";
+                    fill: #ffffff.with-alpha(root.look.pattern-strength * 0.64);
+                    viewbox-width: self.width / 1px;
+                    viewbox-height: self.height / 1px;
+                    clip: true;
+                }
+
+                Path {
+                    commands: root.stars ? Shell.patterns.bright-stars : "";
+                    fill: root.look.pattern-color.with-alpha(root.look.pattern-strength * 0.91);
+                    viewbox-width: self.width / 1px;
+                    viewbox-height: self.height / 1px;
+                    clip: true;
+                }
+            }
+
+            Rectangle {
+                x: root.pulse * (parent.width + 420px) - 420px;
+                width: 420px;
+                visible: root.pulse < 1;
+                background: @linear-gradient(90deg, root.look.pattern-color.with-alpha(0) 0%, root.look.pattern-color.with-alpha(0.0706) 50%, root.look.pattern-color.with-alpha(0) 100%);
+            }
+        }
+    }
+
+    // The edge as it sweeps: a lit line, and a soft band of the cursor's color behind it, over this ground.
+    Rectangle {
+        x: root.ground.from < 0 ? root.edge - self.width : root.edge;
+        width: 120px;
+        visible: root.ground.from != 0 && root.shown < 1;
+        background: root.ground.from < 0 ? @linear-gradient(90deg, root.look.cursor.with-alpha(0) 0%, root.look.cursor.with-alpha(0.22) 100%) : @linear-gradient(90deg, root.look.cursor.with-alpha(0.22) 0%, root.look.cursor.with-alpha(0) 100%);
+        Rectangle {
+            x: root.ground.from < 0 ? parent.width - self.width : 0px;
+            width: 2px;
+            background: root.look.cursor;
+            drop-shadow-blur: 14px;
+            drop-shadow-color: root.look.cursor.with-alpha(0.4);
+        }
+    }
+}
+
+// The ground behind the menus: the selected game's look's (its gradient, its glow at the top right and its pattern),
+// which drifts slowly, has a soft pulse crossing it now and then, and rushes as a battle is entered. As the game
+// changes, the new game's ground sweeps in over the one before from the side its arrow was pressed on (`Ground`'s
+// `from`), behind a lit edge, over the theme's `settle`; a second change while one sweeps sweeps over both.
+export component Backdrop inherits Rectangle {
+    property <float> drift: Theme.motion ? animation-tick() / 1s : 0;
+    property <float> pulse: Theme.motion ? clamp(mod(animation-tick(), 9s) / 2.8s, 0, 1) : 1;
+    rush := Pulse {
+        seq: Shell.rush-seq;
+        duration: Theme.set-piece;
+    }
+
+    for ground in Shell.grounds: GroundLayer {
+        ground: ground;
+        drift: root.drift;
+        rush: 1 - pow(rush.v, 3);
+        pulse: root.pulse;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}
+
+// The jack-in (docs/design/app-ui.md §4, "Motion"; §2.49): as a battle begins, over its first frames, the field's
+// rush goes on across the window. The ground covers the battle, and a swipe takes it off from the left: eight
+// strips across the window, each a little after the one above, so the swipe's edge is a staircase, each strip's
+// edge lit in the cursor's color with a soft band trailing it over the battle. It is drawn over the battle and
+// takes no input: the battle starts when it would have, and runs under it. With motion turned down the ground
+// only fades (`calm`, the theme's `calm-fade`).
+export component JackIn inherits Rectangle {
+    // How far it is, 0 to 1 (1 once it is over, and as it is made: nothing shows).
+    property <float> p: 1 - clock.v;
+    property <int> strips: 8;
+    clock := Pulse {
+        seq: Shell.jack-in-seq;
+        duration: Theme.motion ? Theme.set-piece : Theme.calm-fade;
+        calm: true;
+    }
+
+    Rectangle {
+        visible: clock.v > 0;
+        // With motion turned down: the ground, fading.
+        Rectangle {
+            visible: !Theme.motion;
+            background: @linear-gradient(180deg, Theme.ground-top 0%, Theme.ground-bottom 100%);
+            opacity: clock.v;
+        }
+
+        // The strips: each the ground's own slice, its edge moving from the window's left to beyond its right
+        // (eased in and out), a strip lower down a little later.
+        for i in root.strips: Rectangle {
+            property <float> q: clamp((root.p - i * 0.045) / 0.62, 0, 1);
+            property <float> eased: self.q < 0.5 ? 4 * self.q * self.q * self.q : 1 - pow(-2 * self.q + 2, 3) / 2;
+            property <length> band: 140px;
+            property <length> edge: self.eased * (parent.width + self.band);
+            visible: Theme.motion && self.q < 1;
+            y: i * parent.height / root.strips;
+            height: parent.height / root.strips + 1px;
+            clip: true;
+            // (The ground of the whole window, in its slice's place, so the strips together are the gradient.)
+            Rectangle {
+                x: parent.edge;
+                y: -parent.y;
+                width: max(0px, root.width - parent.edge);
+                height: root.height;
+                clip: true;
+                Rectangle {
+                    x: -parent.x;
+                    width: root.width;
+                    background: @linear-gradient(180deg, Theme.ground-top 0%, Theme.ground-bottom 100%);
+                }
+            }
+
+            // The band trailing the edge over the battle, and the lit edge.
+            Rectangle {
+                x: parent.edge - parent.band;
+                width: parent.band;
+                background: @linear-gradient(90deg, Theme.clear 0%, Theme.cursor.with-alpha(0.28) 100%);
+            }
+
+            Rectangle {
+                x: parent.edge - 2px;
+                width: 3px;
+                background: #ffffff.mix(Theme.cursor, 0.4);
+                drop-shadow-blur: 12px;
+                drop-shadow-color: Theme.cursor;
+            }
+        }
+    }
+}
+
+// One corner of the cursor: two arms, 10 long and 2 thick, lit.
+component Corner inherits Rectangle {
+    in property <bool> right;
+    in property <bool> bottom;
+    width: 10px;
+    height: 10px;
+    Rectangle {
+        x: 0;
+        y: root.bottom ? 8px : 0px;
+        height: 2px;
+        background: Theme.cursor;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: Theme.glow;
+    }
+
+    Rectangle {
+        x: root.right ? 8px : 0px;
+        y: 0;
+        width: 2px;
+        background: Theme.cursor;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: Theme.glow;
+    }
+}
+
+// The cursor: four corner brackets, 5 outside the focused control. One object that slides from control to
+// control, drawn over the layout: it takes no space, and nothing under it changes size. It shows only while a
+// keyboard or a pad is the last thing used. While idle its brackets breathe 2 out and in, and they snap inward
+// as Enter is pressed. On a setting taken (`Nav.grabbed`) they hold in, still, an arrow beside each side: Left and
+// Right change it.
+export component Cursor inherits Rectangle {
+    property <length> breath: Theme.motion && !Nav.grabbed ? 1px - 1px * cos(mod(animation-tick(), 1.8s) / 1.8s * 360deg) : 0px;
+    property <length> inset: max(snap.v * 5px, Nav.grabbed ? 3px : 0px) - root.breath;
+    snap := Pulse {
+        seq: Nav.press-seq;
+    }
+
+    ArrowLeft {
+        x: -6px;
+        y: (parent.height - self.height) / 2;
+        visible: Nav.grabbed;
+    }
+
+    ArrowRight {
+        x: parent.width + 1px;
+        y: (parent.height - self.height) / 2;
+        visible: Nav.grabbed;
+    }
+
+    Corner {
+        x: root.inset;
+        y: root.inset;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Corner {
+        x: parent.width - 10px - root.inset;
+        y: root.inset;
+        right: true;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Corner {
+        x: root.inset;
+        y: parent.height - 10px - root.inset;
+        bottom: true;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Corner {
+        x: parent.width - 10px - root.inset;
+        y: parent.height - 10px - root.inset;
+        right: true;
+        bottom: true;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}
+
+// ---- The header and the footer -------------------------------------------------------------------------
+
+// The header, the same on every menu screen: Back, naming where it goes; the screen's title with a cyan bar
+// before it (a field, where it is a name changed in place); at the right the game, between its arrows where it can
+// change. The main menu has the logo in
+// Back's and the title's place (`logo`); a screen with no game to choose (the settings) leaves it out.
+export component Header inherits Rectangle {
+    in property <string> title;
+    in property <string> back;
+    in property <bool> logo;
+    in property <bool> game: true;
+    // A tag after the title (a ruleset's page's PRESET). On a phone it is at the header's right. (The header says
+    // nothing of a build's problems: they are said where they are, docs/design/app-ui.md §2.66.)
+    in property <VersionTag> tag;
+    // The title is a name changed in place (the build editor's build's, the player's own ruleset's): a text field of
+    // this name in the title's place, always drawn as one (docs/design/app-ui.md §2.74).
+    in property <string> title-nav;
+    // The most the title (or its field) takes: on a phone held sideways a screen's tabs follow it in the header's one
+    // row (`Page.title-end`).
+    in property <length> title-most: 10000px;
+    property <bool> field: root.title-nav != "" && !root.logo;
+    property <length> pad: Theme.margin;
+    property <length> back-width: Theme.handheld ? 32px : back-text.preferred-width + 37px;
+    property <length> title-x: root.pad + root.back-width + (Theme.handheld ? 27px : 31px);
+    property <length> tag-x: Theme.phone ? self.width - root.pad - tag-pill.width - (root.game ? game.width + 12px : 0px) : root.title-x + root.title-width + 16px;
+    property <length> tag-width: tag-pill.width == 0 ? 0px : tag-pill.width + 16px;
+    // The title's room: what the tag and the game leave of the header.
+    property <length> title-room: min(root.title-most, self.width - root.title-x - root.pad - (root.game ? game.width + 16px : 0px) - root.tag-width);
+    property <length> title-width: min(title-text.preferred-width, root.title-room);
+    // (The field takes the room up to 400 from just before the title's place, its text where the title's is; it
+    // scrolls what it doesn't show.)
+    property <length> field-width: min(root.title-room + 8px, Theme.handheld ? root.title-room + 8px : 400px);
+    // Where the title's room ends (its field's, where it is one), and where the game starts (the header's end without
+    // it): what a screen puts after the title in the header goes between them.
+    out property <length> title-end: root.field ? root.title-x - 8px + root.field-width : root.title-x + root.title-width + (Theme.phone ? 0px : root.tag-width);
+    out property <length> tools-x: root.game ? game.x : self.width - root.pad;
+    property <bool> over: Theme.audit && !root.field && (title-text.preferred-width > root.title-room + 0.5px);
+    // (Sideways the bar goes across the whole window, past the safe area's sides, as upright it goes under the
+    // island.)
+    property <length> bar-x: Theme.sideways ? -Shell.safe-left : 0px;
+    property <length> bar-width: self.width + (Theme.sideways ? Shell.safe-left + Shell.safe-right : 0px);
+    height: Theme.header;
+    // As the screen arrives its title wipes in behind the cyan bar.
+    arrive := Tween { }
+
+    Rectangle {
+        x: root.bar-x;
+        width: root.bar-width;
+        background: Theme.bar;
+    }
+
+    Rectangle {
+        x: root.bar-x;
+        y: parent.height - 1px;
+        width: root.bar-width;
+        height: 1px;
+        background: Theme.line;
+    }
+
+    // The logo: the app's icon (docs/logo/saito-icon.svg), then its bilingual logotype.
+    Image {
+        x: root.pad;
+        y: (parent.height - self.height) / 2;
+        width: Theme.handheld ? 28px : 34px;
+        height: self.width;
+        visible: root.logo;
+        source: @image-url("../../../docs/logo/saito-icon.svg");
+        opacity: arrive.t;
+    }
+
+    // (The logotype: 彩斗 in Navi Mark gold #FFCC1A, then saito in crimson #F2334D.)
+    HorizontalLayout {
+        x: root.pad + (Theme.handheld ? 38px : 46px);
+        width: self.preferred-width;
+        height: parent.height;
+        alignment: start;
+        spacing: Theme.handheld ? 5px : 6px;
+        visible: root.logo;
+        opacity: arrive.t;
+        Text {
+            text: "彩斗";
+            color: #ffcc1a;
+            font-family: "Corporate Logo ver3";
+            font-size: Theme.handheld ? 18px : 21px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "saito";
+            color: #f2334d;
+            font-family: "Chakra Petch";
+            font-size: Theme.handheld ? 22px : 26px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            vertical-alignment: center;
+        }
+    }
+
+    // Back.
+    Rectangle {
+        x: root.pad;
+        width: root.back-width;
+        height: 30px;
+        visible: !root.logo;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: back-hit.pressed || back-reach.pressed ? Theme.line : (back-hit.has-hover ? Theme.tint : transparent);
+        Chevron {
+            x: Theme.handheld ? 13px : 12px;
+        }
+
+        back-text := Text {
+            x: 25px;
+            visible: !Theme.handheld;
+            text: root.back;
+            color: Theme.muted;
+            font-family: Theme.display;
+            font-size: 13px;
+            font-weight: Theme.display-bold;
+            letter-spacing: Theme.cjk ? 0.3px : 1px;
+            vertical-alignment: center;
+        }
+
+        // (A phone's tap reaches past the box, 44 square.)
+        back-reach := Reach {
+            box-width: parent.width;
+            box-height: parent.height;
+            enabled: !root.logo;
+            nav: root.logo ? "" : "back";
+        }
+
+        back-hit := Focusable {
+            nav: root.logo ? "" : "back";
+        }
+    }
+
+    // The title.
+    Rectangle {
+        x: root.pad + root.back-width + (Theme.handheld ? 12px : 16px);
+        width: 3px;
+        height: 23px;
+        visible: !root.logo;
+        background: Theme.cursor;
+    }
+
+    Rectangle {
+        x: root.title-x;
+        width: root.title-width * arrive.t;
+        visible: !root.logo && !root.field;
+        clip: true;
+        title-text := Text {
+            x: 0;
+            width: root.title-width;
+            text: root.title;
+            color: Theme.text;
+            font-family: Theme.display;
+            font-size: Theme.handheld ? 16px : 20px;
+            font-weight: Theme.display-bold;
+            letter-spacing: Theme.handheld ? min(1.2px, Theme.title-tracking) : Theme.title-tracking;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // (The field wipes in as the title does; clipped only meanwhile, so its glow while it is edited shows. It is made
+    // when the title becomes a name to change, not hidden till then: a control is one of the focus's as it is made,
+    // so a field made with no name of its own, a preset's page's, never was one once DUPLICATE made the ruleset the
+    // player's.)
+    if root.field: Rectangle {
+        x: root.title-x - 8px;
+        y: (parent.height - self.height) / 2;
+        width: root.field-width * arrive.t;
+        height: 40px;
+        clip: arrive.t < 1;
+        Field {
+            x: 0;
+            y: 0;
+            width: root.field-width;
+            nav: root.title-nav;
+            text: root.title;
+            heading: true;
+        }
+    }
+
+    tag-pill := Pill {
+        x: root.tag-x;
+        text: root.logo ? "" : root.tag.text;
+        tone: root.tag.tone;
+        opacity: arrive.t;
+    }
+
+    // The game.
+    game := Stepper {
+        x: parent.width - root.pad - self.width;
+        value-width: Theme.handheld ? 56px : 84px;
+        visible: root.game;
+        nav: root.game ? "game" : "";
+        value: Shell.game;
+        title: true;
+        locked: Shell.game-locked;
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped(root.title);
+        }
+    }
+}
+
+// A key's cap. (With no text it is nothing, and takes no room: `visible` on a component's own root would copy
+// the component into every user.)
+component KeyCap inherits Rectangle {
+    in property <string> text;
+    height: 22px;
+    width: root.text == "" ? 0px : max(22px, cap.preferred-width + 12px);
+    Rectangle {
+        border-width: root.text == "" ? 0px : 1px;
+        border-color: Theme.line;
+        border-radius: 2px;
+    }
+
+    Rectangle {
+        x: 1px;
+        y: parent.height - 2px;
+        width: max(0px, parent.width - 2px);
+        height: 1px;
+        background: Theme.line;
+    }
+
+    cap := Text {
+        text: root.text;
+        color: Theme.text;
+        font-family: Theme.mono;
+        font-size: 11px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A pad's face button, by its place: the four as a diamond, the one meant filled.
+export component FaceButton inherits Rectangle {
+    in property <PadButton> button;
+    width: 20px;
+    height: 20px;
+    Rectangle {
+        x: 7px;
+        y: 0px;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: Theme.muted;
+        background: root.button == PadButton.north ? Theme.text : transparent;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: 7px;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: Theme.muted;
+        background: root.button == PadButton.west ? Theme.text : transparent;
+    }
+
+    Rectangle {
+        x: 14px;
+        y: 7px;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: Theme.muted;
+        background: root.button == PadButton.east ? Theme.text : transparent;
+    }
+
+    Rectangle {
+        x: 7px;
+        y: 14px;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: Theme.muted;
+        background: root.button == PadButton.south ? Theme.text : transparent;
+    }
+}
+
+// The D-pad.
+component Dpad inherits Rectangle {
+    width: 18px;
+    height: 18px;
+    Rectangle {
+        x: 6px;
+        width: 6px;
+        border-radius: 1px;
+        background: Theme.muted;
+    }
+
+    Rectangle {
+        y: 6px;
+        height: 6px;
+        border-radius: 1px;
+        background: Theme.muted;
+    }
+}
+
+// One hint: the key's caps or the pad's button, by what was last used, and what it does. (Its parts are all
+// there and sized to nothing where they don't show: an `if` each would be a component each.)
+export component HintView inherits Rectangle {
+    in property <Hint> hint;
+    property <bool> face: root.hint.pad == PadButton.south || root.hint.pad == PadButton.east || root.hint.pad == PadButton.west || root.hint.pad == PadButton.north;
+    property <string> pad-cap: root.hint.pad == PadButton.start ? "START" : (root.hint.pad == PadButton.select ? "SELECT" : (root.hint.pad == PadButton.shoulders ? "L" : ""));
+    property <length> glyph: Nav.pad && (root.face || root.hint.pad == PadButton.move) ? 25px : 0px;
+    property <bool> shown: Nav.pad ? root.hint.pad != PadButton.none : root.hint.key != "";
+    width: root.shown ? label.x + label.preferred-width : 0px;
+    FaceButton {
+        x: 0;
+        visible: root.shown && Nav.pad && root.face;
+        button: root.hint.pad;
+    }
+
+    Dpad {
+        x: 1px;
+        visible: root.shown && Nav.pad && root.hint.pad == PadButton.move;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    first := KeyCap {
+        x: root.glyph;
+        text: !root.shown ? "" : (Nav.pad ? root.pad-cap : root.hint.key);
+    }
+
+    second := KeyCap {
+        x: first.x + first.width + (self.width > 0 ? 5px : 0px);
+        text: !root.shown ? "" : (Nav.pad ? (root.hint.pad == PadButton.shoulders ? "R" : "") : root.hint.key2);
+    }
+
+    label := Text {
+        x: second.x + second.width + (second.x + second.width > root.glyph ? 5px : 0px);
+        width: self.preferred-width;
+        text: root.shown ? root.hint.text : "";
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+}
+
+// The footer, the same on every menu screen: the key hints at the left, one short status at the right. A phone
+// has none.
+export component Footer inherits Rectangle {
+    in property <[Hint]> hints;
+    in property <string> status;
+    // (The hints must leave the status its room.)
+    property <bool> over: Theme.audit && !Theme.handheld && row.preferred-width > self.width - 280px - 24px;
+    height: Theme.footer;
+    Rectangle {
+        visible: !Theme.handheld;
+        background: Theme.bar;
+        Rectangle {
+            y: 0;
+            height: 1px;
+            background: Theme.line;
+        }
+
+        row := HorizontalLayout {
+            padding-left: 32px;
+            padding-right: 32px;
+            spacing: 24px;
+            alignment: start;
+            for hint in root.hints: HintView {
+                hint: hint;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Text {
+            x: parent.width - 32px - self.width;
+            width: 280px;
+            text: Shell.updating != "" ? Shell.updating : root.status;
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 12px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped("the footer's key hints");
+        }
+    }
+}
+
+// A menu screen: the header, the footer, and between them the body, inside the page margins. What a screen puts
+// inside a `Page` is laid out in the body: its `x` and `y` are from the body's corner, and it measures the body
+// by `root.body-width` and `root.body-height` (`parent` in a screen's own file is the screen's root, the whole
+// window). A screen's parts arrive one after another: each is put in an `Arrive` with its place in the order.
+export component Page inherits Rectangle {
+    in property <string> title;
+    in property <string> back;
+    in property <bool> logo;
+    in property <bool> game: true;
+    // The header's tag after the title, and its title a field of this name (a name changed in place).
+    in property <VersionTag> tag;
+    in property <string> title-nav;
+    in property <[Hint]> hints;
+    // The footer's right end (docs/design/app-ui.md §2.80): how many of what the screen lists there are, "N things",
+    // or "N of M things" where the build has a limit; nothing on a screen that lists nothing. (An update that failed
+    // says so in its place: `Shell.updating`.)
+    in property <string> status;
+    out property <length> body-width: body.width;
+    out property <length> body-height: body.height;
+    // On a phone held sideways a screen's tabs are in the header's row, after its title (docs/design/app-ui.md
+    // §2.103): the most the title takes, and in the body's units (where a screen places what it puts in the page)
+    // the header's top and the room it leaves between the title's end and the game.
+    in property <length> title-most: 10000px;
+    out property <length> header-top: -body.y;
+    out property <length> header-room-x: header.title-end + 12px - body.x;
+    out property <length> header-room-width: header.tools-x - 12px - header.title-end - 12px;
+    header := Header {
+        y: 0;
+        title: root.title;
+        back: root.back;
+        logo: root.logo;
+        game: root.game;
+        tag: root.tag;
+        title-nav: root.title-nav;
+        title-most: root.title-most;
+    }
+
+    // (As the screen leaves, its body slides 16 and fades: to the left, or after Back to the right. What
+    // arrives is the screen's own parts, each in an `Arrive`.)
+    body := Rectangle {
+        x: Theme.margin + (!Shell.leaving ? 0px : (Theme.back ? 16px : -16px));
+        y: Theme.header + (Theme.phone ? 16px : Theme.sideways ? 12px : 24px);
+        width: parent.width - 2 * Theme.margin;
+        height: parent.height - Theme.header - Theme.footer - (Theme.phone ? 32px : Theme.sideways ? 24px : 48px);
+        opacity: Shell.leaving ? 0 : 1;
+        animate x, opacity {
+            duration: Theme.leave;
+            easing: ease-in;
+        }
+        @children
+    }
+
+    // (While a text field is typed in, the footer's hints are the field's: there Enter finishes it and Esc
+    // leaves it as it was, as the keys bound to A and B type.)
+    property <[Hint]> field-hints: [
+        { key: "Enter", pad: Shell.pad-a, text: @tr("Done") },
+        { key: "Esc", pad: Shell.pad-b, text: @tr("Cancel") },
+    ];
+    // (While a setting is taken, the hints are its own: Left and Right change it, A or B lets it go.)
+    property <[Hint]> grab-hints: [
+        { key: "←→", pad: PadButton.move, text: @tr("Change") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Done") },
+    ];
+    Footer {
+        y: parent.height - self.height;
+        hints: Nav.editing ? root.field-hints : Nav.grabbed ? root.grab-hints : root.hints;
+        status: root.status;
+    }
+}
+
+// ---- The battle's picture -------------------------------------------------------------------------------
+
+// The battle's picture, in the middle of the room it is given: the largest whole multiple of 240 by 160 display
+// pixels that fits, in the enhanced mode as wide and as tall as the room at that multiple (the app sizes it:
+// `Shell.picture-width`). The box keeps its size whatever the multiple, so
+// nothing beside it moves. One is shown at a time; the picture is there only while something is shown in it
+// (`Shell.picture-shown`), and never past the box.
+export component Picture inherits Rectangle {
+    in property <brush> ground: #000000;
+    clip: true;
+    Rectangle {
+        background: root.ground;
+    }
+
+    Image {
+        visible: Shell.picture-shown;
+        x: Shell.picture-x;
+        y: Shell.picture-y;
+        width: Shell.picture-width;
+        height: Shell.picture-height;
+        source: Shell.picture;
+        image-rendering: pixelated;
+    }
+
+    property <length> ax: self.absolute-position.x - Shell.safe-left;
+    property <length> ay: self.absolute-position.y - Shell.safe-top;
+    function place() {
+        Shell.picture-room-x = root.ax;
+        Shell.picture-room-y = root.ay;
+        Shell.picture-room-width = self.width;
+        Shell.picture-room-height = self.height;
+    }
+    init => {
+        place();
+    }
+    changed ax => {
+        place();
+    }
+    changed ay => {
+        place();
+    }
+    changed width => {
+        place();
+    }
+    changed height => {
+        place();
+    }
+}
+
+// ---- Over the screen ------------------------------------------------------------------------------------
+
+// A dialog's frame: the shade over the screen, and a panel with its title and what is put inside it, in an area
+// `inner-width` wide and `content-height` tall (asked for, not measured: a dialog keeps one size from its start
+// to its end). The shade fades in as the panel grows from 96%; a failure's shakes once.
+//
+// A screen's own dialog (a direct connection's, a new build's, an export's) is one of these in the screen's
+// overlay (`PlayOverlay`), over everything of the screen. Its controls' names share a prefix, which the screen's
+// module opens as a scope while the dialog shows (`shell.nav.open("direct.", ...)`): the keys reach nothing
+// else.
+export component DialogFrame inherits Rectangle {
+    in property <string> title;
+    in property <length> panel-width: 540px;
+    in property <length> content-height;
+    in property <bool> shake;
+    // On a phone held sideways a dialog is the upright phone's width (358), in the middle; `wide` keeps the desktop's,
+    // for one whose upright arrangement is too tall for the window's 372 (a new build's, a direct connection's).
+    in property <bool> wide;
+    property <length> most: Theme.sideways && !root.wide ? 358px : root.panel-width;
+    out property <length> inner-width: panel.width - 48px;
+    // The title takes the lines it needs (a failure's is a sentence, and a phone's dialog is narrow): one line
+    // is 26 tall.
+    property <length> title-height: heading.preferred-height > 36px ? heading.preferred-height : 26px;
+    arrive := Tween {
+        duration: Theme.brisk;
+    }
+
+    swing := Shake {
+        reach: 6px;
+        at-start: root.shake;
+    }
+
+    Rectangle {
+        background: Theme.shade;
+        opacity: arrive.t;
+        TouchArea { }
+    }
+
+    panel := Rectangle {
+        x: (parent.width - self.width) / 2 + swing.dx;
+        width: min(parent.width - 32px, root.panel-width, root.most);
+        height: 24px + root.title-height + 12px + root.content-height + 24px;
+        opacity: arrive.t;
+        transform-scale: 0.96 + 0.04 * arrive.t;
+        Cut {
+            cut: 18px;
+        }
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 72px * arrive.t;
+            height: 2px;
+            background: @linear-gradient(90deg, Theme.cursor 0%, Theme.clear 100%);
+        }
+
+        heading := Text {
+            x: 24px;
+            y: 24px;
+            width: parent.width - 48px;
+            height: root.title-height;
+            text: root.title;
+            color: Theme.text;
+            font-family: Theme.display;
+            font-size: 20px;
+            font-weight: Theme.display-bold;
+            letter-spacing: Theme.title-tracking * 0.7;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            x: 24px;
+            y: 36px + root.title-height;
+            width: parent.width - 48px;
+            height: root.content-height;
+            @children
+        }
+    }
+}
+
+// The shell's dialog: a failure that ends what the player was doing, or a question asked once (`Shell::fail`,
+// `Shell::ask`): a message and its buttons; and, while it waits on something, a bar under the message, with its
+// percent under the bar's end (as the loading screen's).
+export component DialogLayer inherits DialogFrame {
+    title: Shell.dialog-title;
+    panel-width: 460px;
+    property <length> bar-height: Shell.dialog-bar ? 20px + 4px + 8px + 16px : 0px;
+    content-height: message.height + root.bar-height + 24px + 40px;
+    shake: Shell.dialog-shake;
+    message := Text {
+        x: 0;
+        y: 0;
+        width: root.inner-width;
+        height: self.preferred-height;
+        text: Shell.dialog-message;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 14px;
+        wrap: word-wrap;
+    }
+
+    Bar {
+        x: 0;
+        y: message.height + 20px;
+        width: root.inner-width;
+        visible: Shell.dialog-bar;
+        value: Shell.dialog-progress;
+    }
+
+    Mono {
+        x: root.inner-width - 48px;
+        y: message.height + 32px;
+        width: 48px;
+        height: 16px;
+        visible: Shell.dialog-bar;
+        text: "\{round(Shell.dialog-progress * 100)}%";
+        horizontal-alignment: right;
+    }
+
+    HorizontalLayout {
+        x: 0;
+        y: message.height + root.bar-height + 24px;
+        width: root.inner-width;
+        height: 40px;
+        spacing: 12px;
+        alignment: end;
+        for button[i] in Shell.dialog-buttons: Button {
+            nav: "dialog.button";
+            nav-index: i;
+            text: button.text;
+            kind: button.kind;
+            danger: button.danger;
+        }
+    }
+}
+
+// A choice of a select's list: a row of the list, which is what is focused.
+component PickRow inherits Rectangle {
+    in property <string> text;
+    in property <int> nav-index;
+    // A menu's action (`Shell.picker-menu`): a button's words; `danger`, set apart under a line, in the error
+    // color; `apart`, the first of those, with the line over it.
+    in property <bool> menu;
+    in property <bool> danger;
+    in property <bool> apart;
+    in property <PickMark> mark;
+    height: Theme.row;
+    RowBack {
+        hover: touch.has-hover;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 1px;
+        visible: root.apart || root.mark.line;
+        background: Theme.line;
+    }
+
+    property <length> words-room: root.width - (root.mark.check ? 48px : root.mark.value != "" ? 12px + 12px + value.width + 8px : 24px);
+    words := Value {
+        x: 12px;
+        width: max(0px, root.words-room);
+        text: root.text;
+        color: root.mark.dim ? Theme.dim : root.danger ? Theme.bad : Theme.text;
+        font-family: root.menu ? Theme.display : Theme.body;
+        font-size: root.menu ? 13px : 14px;
+        font-weight: root.menu ? Theme.display-semibold : 400;
+        letter-spacing: root.menu ? Theme.button-tracking : 0px;
+    }
+
+    // (A value as wide as its words, up to half the row, cut with an ellipsis past that: a speed's "1×", a navi's "In
+    // the party".)
+    value := Text {
+        x: parent.width - 12px - self.width;
+        width: min(max(56px, self.preferred-width), parent.width / 2);
+        visible: root.mark.value != "";
+        text: root.mark.value;
+        color: Theme.muted;
+        font-family: Theme.mono;
+        font-size: 13px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (A check: drawn, as no font has to have one.)
+    Path {
+        x: parent.width - 32px;
+        width: 16px;
+        height: 16px;
+        visible: root.mark.check;
+        commands: "M 2.5 8.5 L 6.5 12.5 L 13.5 4.5";
+        stroke: Theme.cursor;
+        stroke-width: 2px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+    }
+
+    touch := RowTouch {
+        nav: "pick.option";
+        nav-index: root.nav-index;
+    }
+}
+
+// A choice of a grid of pictures (Practice's Arena and Background): its picture, and its name under it on one line,
+// cut short with an ellipsis where it is too long. The cell is what is focused (the grid is a page of cells, the arrows going to the cell beside in
+// their direction); the chosen one's picture is outlined in the cursor's color over a tint. Random has no
+// picture: a question mark in its place. (Copied into the grid, its one use: docs/app.md §14.)
+component PlaceCell inherits Rectangle {
+    in property <image> picture;
+    in property <string> text;
+    in property <int> nav-index;
+    in property <bool> chosen;
+    property <length> thumb: self.width * 7 / 15;
+    Rectangle {
+        background: root.chosen ? Theme.tint : touch.has-hover ? Theme.tint-hover : transparent;
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.thumb;
+        background: Theme.inset;
+        Image {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.picture;
+            image-fit: fill;
+        }
+
+        Text {
+            visible: root.nav-index == 0;
+            text: "?";
+            color: Theme.dim;
+            font-family: Theme.display;
+            font-size: 28px;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            border-width: root.chosen ? 2px : 1px;
+            border-color: root.chosen ? Theme.cursor : touch.has-hover ? Theme.muted : Theme.line;
+        }
+    }
+
+    Text {
+        x: 2px;
+        y: root.thumb + 4px;
+        width: root.width - 4px;
+        height: 30px;
+        text: root.text;
+        color: root.chosen ? Theme.text : Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: root.chosen ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: top;
+        // (One line: wrapped in a box that holds one, Slint 1.18 put an ellipsis after each glyph run of the line it
+        // kept, "EXE4 く…うちゅう…".)
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    touch := Focusable {
+        nav: "pick.grid.cell";
+        nav-index: root.nav-index;
+    }
+}
+
+// A select's choices: a list under it, or on a phone a sheet from the bottom. It drops into place as it opens.
+// The list is as tall as the rows the app says it shows (`Shell.picker-rows`: as many as there are, up to what
+// the window has room for) and keeps that height: more choices scroll, the focused one into view. A grid of
+// pictures (`Shell.picker-grid`) is the same, its rows of cells: a page whose cells are each focused, Up and Down
+// going a row, Left and Right a cell, the focused one scrolled into view. Its sizes are the app's
+// (`shell::GRID_*`): a cell `Shell.picker-cell` wide, its picture seven fifteenths of that tall and 34 under it for the
+// name, 8 apart (6 on a phone), in 8 of padding with the scrollbar's 12 at the right. A phone's sheet is the window's
+// width upright; sideways at most 480, in the middle (the app places and sizes it: `Shell::open_picker`).
+export component PickerLayer inherits Rectangle {
+    property <length> pad: Shell.picker-grid ? 8px : (Theme.handheld ? 8px : 1px);
+    property <length> gap: Theme.handheld ? 6px : 8px;
+    property <length> cell-height: Shell.picker-cell * 7 / 15 + 34px;
+    property <length> pitch: root.cell-height + root.gap;
+    property <length> list-height: Shell.picker-grid ? Shell.picker-rows * root.pitch - root.gap + 2 * self.pad : Shell.picker-rows * Theme.row + 2 * self.pad;
+    arrive := Tween {
+        duration: Theme.quick;
+    }
+
+    TouchArea {
+        clicked => {
+            Nav.activate("pick.close", 0);
+        }
+    }
+
+    Rectangle {
+        background: Theme.handheld ? Theme.shade : transparent;
+        opacity: arrive.t;
+    }
+
+    Rectangle {
+        x: Theme.phone ? 0px : Shell.picker-x;
+        y: (Theme.handheld ? parent.height - self.height + (1 - arrive.t) * 24px : Shell.picker-y - (1 - arrive.t) * 6px);
+        width: Theme.phone ? parent.width : Shell.picker-width;
+        height: root.list-height;
+        opacity: arrive.t;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #000000a0;
+        list := ListView {
+            x: root.pad;
+            y: root.pad;
+            width: parent.width - 2 * root.pad;
+            height: parent.height - 2 * root.pad;
+            visible: !Shell.picker-grid;
+            nav: "pick.option";
+            // (None while it is a grid: the cells are the choices.)
+            count: Shell.picker-grid ? 0 : Shell.picker-options.length;
+            gap: 0px;
+            chosen: Shell.picker-chosen;
+            for slot in list.shown: PickRow {
+                property <int> at: list.first + slot;
+                y: self.at * list.pitch;
+                width: list.row-width;
+                text: Shell.picker-options[self.at];
+                menu: Shell.picker-menu;
+                danger: Shell.picker-menu && Shell.picker-apart >= 0 && self.at >= Shell.picker-apart;
+                apart: Shell.picker-menu && self.at == Shell.picker-apart && self.at > 0;
+                mark: Shell.picker-marks[self.at];
+                nav-index: self.at;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        grid := ScrollPage {
+            x: root.pad;
+            y: root.pad;
+            // (The scrollbar's 12 in the padding's room at the right: the cells are as far from both edges.)
+            width: parent.width - root.pad - 4px;
+            height: parent.height - 2 * root.pad;
+            visible: Shell.picker-grid;
+            nav: "pick.grid";
+            content-height: ceil(Shell.picker-pictures.length / max(1, Shell.picker-columns)) * root.pitch - root.gap;
+            for picture[i] in Shell.picker-pictures: PlaceCell {
+                x: Math.mod(i, Shell.picker-columns) * (Shell.picker-cell + root.gap);
+                y: floor(i / Shell.picker-columns) * root.pitch;
+                width: Shell.picker-cell;
+                height: root.cell-height;
+                picture: picture;
+                text: Shell.picker-options[i];
+                chosen: i == Shell.picker-chosen;
+                nav-index: i;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+    }
+}

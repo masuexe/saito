@@ -1,0 +1,254 @@
+// Focus and navigation (docs/design/app-ui.md §5, rules 5 to 10; docs/app.md §11).
+//
+// There is one focus, and the app holds it (`nav.rs`): `Nav.id` and `Nav.index` name the focused control. A
+// control is focusable by holding a `Focusable`, which tells the app where it is; the app finds the neighbor in
+// a direction from those rectangles, so no screen writes its own key handling. Keys and pad buttons reach the
+// app before Slint sees them; a click or a tap arrives here and is passed on with the control's name. What a
+// control does is the app's too: `Nav.activate("ready", 0)` goes to the Rust module of the screen shown.
+
+// What a control does with the keys.
+export enum NavKind {
+    // Enter activates; the arrows move on.
+    button,
+    // A setting (a stepper, a segmented control, a slider, a replay's seek bar): the arrows move past it; Enter takes it, and while it is
+    // taken (`Nav.grabbed`) Left and Right change its value, and Enter or Back lets it go.
+    stepper,
+    // Enter or a typed letter starts editing its text.
+    field,
+    // Not a control: a scrolling page (`ScrollPage`) and a list of rows (`ListView`), which say where their view
+    // is. A list is focused as a whole, `Nav.index` its row.
+    page,
+    list,
+}
+
+export global Nav {
+    // The focused control: its name and its index (a row's place in its list, else 0).
+    in property <string> id;
+    in property <int> index;
+    // Where the cursor is in the window: the focused control's place, or on its way there.
+    in property <length> x;
+    in property <length> y;
+    in property <length> w;
+    in property <length> h;
+    // A keyboard or a pad was the last thing used: the cursor shows.
+    in property <bool> shown;
+    // A pad was the last of the two used: the key hints show its buttons.
+    in property <bool> pad;
+    // Enter was pressed on the focused control (it counts the presses: the control flashes, the cursor snaps
+    // in), and the way the last step went (-1 or 1: a value slides that way).
+    in property <int> press-seq;
+    in property <int> step-dir: 1;
+    // The focused setting is taken: Left and Right change it (the cursor holds in, its arrows beside it).
+    in property <bool> grabbed;
+    // The focused field is being edited. `edit-seq` counts the edits begun; `edit-seed` is the letter typed to
+    // begin one (empty: the field's own text, all selected).
+    in property <bool> editing;
+    in property <int> edit-seq;
+    in property <int> edit-heard;
+    in property <string> edit-seed;
+    // A scrolling page or list is asked to move by `reveal-dy`: to bring the focused control into view, or as a
+    // scroll that leaves the focus where it is (the right stick, Shift with Page Up and Down, Home and End). It
+    // slides there, unless `reveal-slides` is false (the stick, each frame).
+    in property <string> reveal-id;
+    in property <length> reveal-dy;
+    in property <bool> reveal-slides: true;
+    in property <int> reveal-seq;
+
+    // A control with a `Focusable` exists (the model it gets back tells the app when it is gone).
+    callback register(string, int, NavKind) -> [int];
+    // Where it is, and whether it can be focused.
+    callback place(string, int, length, length, length, length, bool);
+    // A list's rows (`ListView`): how many, how far apart, how tall, how far scrolled, and how much of its width
+    // the rows take.
+    callback list(string, int, length, length, length, length);
+    // A scrolling page: where its view is, how tall what it holds is and how far it is scrolled.
+    callback page(string, length, length, length, length, length, length);
+    // A click or a tap on a control, on the arrow of a stepper (-1 or 1), on a choice.
+    callback activate(string, int);
+    callback step(string, int, int);
+    callback choose(string, int, int);
+    // The pointer went down on a control: the focus goes there.
+    callback point(string, int);
+    // The pointer came onto a row that describes what it holds (`describes`), or left it (false): the build editor's
+    // strip shows the row under the pointer, and the focused row's again once the pointer has left it.
+    callback hover(string, int, bool);
+    // A field's edit: begun (with the text it had), a change, the end (Enter).
+    callback edit-began(string, int, string);
+    callback edited(string, int, string);
+    callback edit-done(string, int, string);
+    // In a browser, the field being edited holds this now (what the app kept of what was typed: a code in capitals,
+    // a name at its length): the input laid over it is told (the app's page::text_entry). The field says it each
+    // time `edit-heard` counts a change the app heard.
+    callback edit-kept(string);
+    // The wheel or a drag scrolled something: the cursor's place is out of date until the controls say theirs.
+    callback scrolled();
+}
+
+// The clicks and drags of a build's list's rows (docs/app.md §8), as their touch (`Focusable`, or `RowTouch` in a
+// `ListView`) tells them. A click is an ordinary click: it removes nothing (the user: "remove that too", of a click on
+// the marked row removing what it holds). A row given its list's name (`drag`) can
+// be dragged to another place: a press is a click until the pointer has gone `threshold` from where it went down, then
+// a drag (`on`), and each move (and each step of a list scrolling under it) asks the app where the row would land
+// (`Nav.choose("drag-over", from, at)`, `at` the pointer's place in the window as x * 65536 + y). The app says so in
+// `to` (-1: nowhere, the pointer is off the list: let go there, the row goes back) and `swap` (it trades places with
+// what is there, where otherwise the rows between shift). Let go, `Nav.choose("drag-drop", from, at)`. A library's
+// row is dragged so too (its `drag` the library's list, `lib.rows`), into the build's list beside it, which the app
+// names in `into` (the list that scrolls near its edges: a row of the build's, its own).
+export global Drag {
+    // The list a row is pressed in ("" while none is), the row, and whether it has gone far enough to be a drag.
+    out property <string> list;
+    out property <int> from: -1;
+    out property <bool> on;
+    // The pointer, in the window, and where in the row it went down.
+    out property <length> x;
+    out property <length> y;
+    out property <length> grab-x;
+    out property <length> grab-y;
+    // Where the row would land, as the app says; or that it is over the library beside its list, where let go what it
+    // holds is taken out (`removing`: the remove look).
+    in-out property <int> to: -1;
+    in-out property <bool> swap;
+    in-out property <bool> removing;
+    in-out property <string> into;
+    out property <length> threshold: 6px;
+    property <length> start-x;
+    property <length> start-y;
+    pure function at() -> int {
+        return max(0, round(root.x / 1px)) * 65536 + max(0, round(root.y / 1px));
+    }
+    // A click on row `index` of `nav`.
+    public function clicked(list: string, nav: string, index: int) {
+        if list != "" && root.on {
+            // (A press that became a drag is no click.)
+        } else {
+            Nav.activate(nav, index);
+        }
+    }
+    // A pointer event on row `row` of `list`, the touch at `origin` with the pointer at `mx`, `my` in it. A right click
+    // on a row that holds something of the build (`removable`; the press brought the focus to it) removes that, as Del
+    // does (`Nav.choose("remove", ...)`).
+    public function pointer(list: string, row: int, e: PointerEvent, origin: Point, mx: length, my: length, removable: bool) {
+        if removable && e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+            Nav.choose("remove", row, 0);
+        }
+        if list == "" {
+            return;
+        }
+        if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+            root.list = list;
+            root.into = list;
+            root.from = row;
+            root.on = false;
+            root.to = -1;
+            root.swap = false;
+            root.removing = false;
+            root.grab-x = mx;
+            root.grab-y = my;
+            root.x = origin.x + mx;
+            root.y = origin.y + my;
+            root.start-x = root.x;
+            root.start-y = root.y;
+        } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left && root.list == list {
+            if root.on {
+                Nav.choose("drag-drop", root.from, root.at());
+            }
+            root.end();
+        } else if e.kind == PointerEventKind.cancel && root.list == list {
+            root.end();
+        }
+    }
+    // The pointer moved with the button held.
+    public function move(list: string, origin: Point, mx: length, my: length) {
+        if list == "" || root.list != list {
+            return;
+        }
+        root.x = origin.x + mx;
+        root.y = origin.y + my;
+        if !root.on && (abs(root.x - root.start-x) > root.threshold || abs(root.y - root.start-y) > root.threshold) {
+            root.on = true;
+        }
+        root.over();
+    }
+    // Where the row would land, asked again (the list scrolled under it).
+    public function over() {
+        if root.on {
+            Nav.choose("drag-over", root.from, root.at());
+        }
+    }
+    public function end() {
+        root.list = "";
+        root.into = "";
+        root.from = -1;
+        root.on = false;
+        root.to = -1;
+        root.swap = false;
+        root.removing = false;
+    }
+}
+
+// What makes a control focusable, and takes its clicks. Fill the control with one (it is a `TouchArea`) and give
+// it the control's name: unique on its screen, and with a prefix where it belongs to a scrolling page or a
+// dialog (`set.name` on the page `set.`). A control with no name takes clicks alone.
+export component Focusable inherits TouchArea {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <NavKind> kind: NavKind.button;
+    // (The pointer over it: a hand where a click takes it, the text cursor over a field, the arrow over a page or a
+    // list, whose rows have their own, and over what is disabled.)
+    mouse-cursor: !self.enabled || root.kind == NavKind.page || root.kind == NavKind.list ? MouseCursor.default : root.kind == NavKind.field ? MouseCursor.text : MouseCursor.pointer;
+    // The list its row can be dragged in to another place (`Drag`), or none.
+    in property <string> drag;
+    // It holds something of the build: a right click on it removes that, as Del does.
+    in property <bool> removable;
+    // The pointer over it describes what it holds, as the focus on it does (`Nav.hover`).
+    in property <bool> describes;
+    out property <bool> focused: nav != "" && Nav.id == nav && Nav.index == nav-index;
+    property <[int]> token;
+    property <length> ax: self.absolute-position.x;
+    property <length> ay: self.absolute-position.y;
+    function place() {
+        if nav != "" {
+            Nav.place(nav, nav-index, ax, ay, self.width, self.height, self.enabled);
+        }
+    }
+    init => {
+        if nav != "" {
+            token = Nav.register(nav, nav-index, kind);
+            place();
+        }
+    }
+    changed ax => {
+        place();
+    }
+    changed ay => {
+        place();
+    }
+    changed width => {
+        place();
+    }
+    changed height => {
+        place();
+    }
+    changed enabled => {
+        place();
+    }
+    changed has-hover => {
+        if root.describes && nav != "" {
+            Nav.hover(nav, nav-index, self.has-hover);
+        }
+    }
+    clicked => {
+        Drag.clicked(root.drag, nav, nav-index);
+    }
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && nav != "" {
+            Nav.point(nav, nav-index);
+        }
+        Drag.pointer(root.drag, nav-index, e, self.absolute-position, self.mouse-x, self.mouse-y, root.removable);
+    }
+    moved => {
+        if self.pressed {
+            Drag.move(root.drag, self.absolute-position, self.mouse-x, self.mouse-y);
+        }
+    }
+}

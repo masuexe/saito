@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# saito.app, and Velopack's release of it, on macOS, for one architecture: target/package/macos/<arch>/releases/
+# (saito-<channel>-Portable.zip, the app, which the player puts where they like, /Applications or anywhere, and
+# which updates itself there; no installer package: the user, "i don't want to ship a pkg file for mac"; and the
+# update package and its feed the app's updater reads from the GitHub release: saito-<version>-<channel>-full.nupkg,
+# releases.<channel>.json, assets.<channel>.json, RELEASES-<channel>).
+#
+#   SAITO_MACOS_ARCH=aarch64 packaging/macos/package.sh
+#
+# Each architecture is its own package on its own Velopack channel, named for the system and the architecture, as
+# every system's is, so that each one's files and feed sit beside the other's in one release; its Velopack runtime
+# (`vpk pack --runtime`) is osx-arm64 or osx-x64:
+#
+#   aarch64     Apple silicon      macos-arm64     saito-macos-arm64-Portable.zip
+#   x86_64      Intel              macos-x64       saito-macos-x64-Portable.zip
+#
+# (Up to 0.19.1 each app was packed a second time on the architecture's channel up to 0.19.0, osx-arm64 or osx-x64:
+# the bridge, docs/app.md §19, "Updates". The universal app, both programs joined by lipo on the channel osx, a Mac's
+# only package up to 0.12.0, was made up to 0.18.1.)
+#
+# The bundle: Contents/MacOS/{saito, ffmpeg}, Contents/Resources/{saito.icns, LICENSE, THIRD-PARTY-NOTICES.txt,
+# ffmpeg-NOTICE.txt}. No content, no ROM and no extracted asset is in it: the app downloads each game's content
+# (docs/design/content-deployment.md §5) and extracts each game's pack from the player's own copy.
+#
+# SAITO_MACOS_ARCH      aarch64 or x86_64 (above); else this Mac's own architecture
+# SAITO_VERSION         the version, if set; else the app crate's
+# SAITO_BUNDLE_FFMPEG   the ffmpeg to bundle (for the architecture packaged); else the release
+#                        packaging/ffmpeg.sha256 pins, downloaded and checked
+# SAITO_ICONS           a folder packaging/icons.sh made; else it is made here (needs librsvg and ImageMagick)
+# MACOS_SIGN_IDENTITY    a Developer ID Application identity in the keychain to sign the app with (vpk signs it);
+#                        else it is signed ad hoc here
+# MACOS_NOTARY_PROFILE   with the identity, a notarytool keychain profile (`xcrun notarytool store-credentials`):
+#                        the app is notarized and stapled; else it isn't
+# MACOS_KEYCHAIN         the keychain those are in; else the default
+# VPK                    Velopack's vpk (the version crates/saito's velopack is: 1.3.39-g8d2844f); else vpk on the PATH
+set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=../build.sh
+source "$(dirname "$0")/../build.sh"
+
+host=$(uname -m)
+arch=${SAITO_MACOS_ARCH:-${host/arm64/aarch64}}
+# The channel; and Velopack's runtime (Rust's target, <arch>-apple-darwin, names the architecture).
+case $arch in
+    aarch64) channel=macos-arm64 runtime=osx-arm64 ;;
+    x86_64) channel=macos-x64 runtime=osx-x64 ;;
+    *) echo "SAITO_MACOS_ARCH is aarch64 or x86_64, not $arch" >&2; exit 1 ;;
+esac
+
+out=$root/target/package/macos/$arch
+rm -rf "$out"
+mkdir -p "$out"
+
+build_app "$arch-apple-darwin"
+
+icons=${SAITO_ICONS:-}
+if [ -z "$icons" ]; then
+    icons=$out/icons
+    "$root/packaging/icons.sh" "$icons"
+fi
+
+app=$out/saito.app
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$program" "$app/Contents/MacOS/saito"
+# (CFBundleShortVersionString is numbers alone: a tag's "-beta.1" is left out of it.)
+sed -e "s/@VERSION@/$version/" -e "s/@SHORT_VERSION@/${version%%-*}/" "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
+printf 'APPL????' > "$app/Contents/PkgInfo"
+iconutil -c icns -o "$app/Contents/Resources/saito.icns" "$icons/saito.iconset"
+cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
+cp "$notices" "$app/Contents/Resources/THIRD-PARTY-NOTICES.txt"
+
+# ffmpeg beside the program, where the export looks first (saito_video::mp4::find_ffmpeg): the release's program
+# for the architecture (its arm64 is Rust's aarch64); and its notice (GPL: what it is built from, where that source
+# is).
+ffmpeg=$app/Contents/MacOS/ffmpeg
+if [ -n "${SAITO_BUNDLE_FFMPEG:-}" ]; then
+    cp "$SAITO_BUNDLE_FFMPEG" "$ffmpeg"
+else
+    fetch_ffmpeg "ffmpeg-macos-${arch/aarch64/arm64}"
+    cp "$fetched" "$ffmpeg"
+fi
+chmod 755 "$ffmpeg"
+fetch_ffmpeg ffmpeg-NOTICE.txt
+cp "$fetched" "$app/Contents/Resources/ffmpeg-NOTICE.txt"
+
+# The release (Velopack's: docs/app.md §19), on the architecture's channel. With an identity vpk
+# signs the bundle itself, everything in it with the hardened runtime, as notarizing asks; without one it is signed ad
+# hoc here (an Apple silicon Mac runs nothing unsigned; Gatekeeper still asks the player to allow it once).
+pack=(pack --packId saito --packVersion "$version" --packTitle saito --packAuthors "EXESSR Hub" --packDir "$app" --mainExe saito
+    --runtime "$runtime" --icon "$app/Contents/Resources/saito.icns" --noInst --outputDir "$out/releases")
+if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+    pack+=(--signAppIdentity "$MACOS_SIGN_IDENTITY")
+    [ -n "${MACOS_NOTARY_PROFILE:-}" ] && pack+=(--notaryProfile "$MACOS_NOTARY_PROFILE")
+    [ -n "${MACOS_KEYCHAIN:-}" ] && pack+=(--keychain "$MACOS_KEYCHAIN")
+else
+    codesign --force --sign - "$ffmpeg"
+    codesign --force --sign - "$app"
+fi
+"${VPK:-vpk}" "${pack[@]}" --channel "$channel"
+
+echo "$out/releases"

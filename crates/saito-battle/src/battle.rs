@@ -1,0 +1,3067 @@
+//! The battle: round state, the per-tick order of operations, and the flow
+//! state machines (intro, banner, custom screen, fighting, results, end).
+//! See docs/engine/battle-flow.md.
+
+use saito_content_api::RulesHook;
+use crate::actor::{ActorId, Actors};
+use crate::collision::Collision;
+use crate::behavior::Behaviors;
+use crate::custom::CustomScreens;
+use crate::field::Field;
+use crate::hand::ChipHand;
+use crate::hud::{Banner, BannerStatus, CustomGauge};
+use crate::input::{InputRecord, PlayerTick, keys};
+use crate::object::{ObjectRef, Objects};
+use crate::console::Console;
+use crate::rng::Rng;
+use crate::content::{BannerId, BannerRole, Content, FormData, MusicRole, NaviData, NaviWinBanner, PlayerFact, SoundRole};
+use crate::setup::{BattleSettings, NaviStats, RoundSetup, SetScore, effects};
+use crate::transform::{TransformRequest, TransformSequencer};
+use crate::sound::SoundCue;
+use saito_content_api::ChipHandle;
+use std::sync::Arc;
+
+/// Battle flag bits.
+pub mod battle_flags {
+    /// The fight has started (collision is live).
+    pub const FIGHTING: u16 = 0x01;
+    /// The custom gauge is full.
+    pub const GAUGE_FULL: u16 = 0x02;
+    /// Dimming (dimming chips).
+    pub const DIMMED: u16 = 0x04;
+    /// A player asked to open the custom screen.
+    pub const CUSTOM_REQUESTED: u16 = 0x10;
+    /// The cameras shake even while the battle is paused
+    /// (`battle_isTimeStopPauseOrBattleFlags0x20_800a0a4`): EXE5's
+    /// TomahawkSoul's change sets it (0x08012138), every soul change's end
+    /// clears it (0x080121B6); nothing in EXE6 sets it.
+    pub const SHAKE_THROUGH_PAUSE: u16 = 0x20;
+    /// Each side its own custom gauge: battle flag 0x40, in each game a
+    /// mode of its own.
+    /// - EXE5's operation battle (set at 0x0802D590 when the battle mode
+    ///   isn't 1 and the navi's stats' +0x2A is set): both navis
+    ///   in auto battle, the Tactics screen.
+    /// - EXE6's chip gate battle (set once a battle by `sub_802E112` when a
+    ///   chip gate is on the link port, 0x0200AD04, or in a link battle,
+    ///   battle mode 0, whose consoles both have one, EVENT_1722): the
+    ///   gate's slotted chips paid from the side's gauge, SELECT's Program
+    ///   Advance window. `sub_800A8F8` tests it. A netbattle without gates
+    ///   never has it.
+    pub const OWN_GAUGES: u16 = 0x40;
+}
+
+/// Top-level battle states (the game's jump-table offsets).
+pub mod top {
+    pub const INIT: u8 = 0x0;
+    pub const RUNNING: u8 = 0x4;
+    pub const END: u8 = 0x8;
+}
+
+/// Battle-mode handler states (netbattle).
+pub mod mode {
+    pub const INTRO: u8 = 0x00;
+    pub const BANNER: u8 = 0x04;
+    pub const CUSTOM: u8 = 0x08;
+    pub const FIGHTING: u8 = 0x0C;
+    pub const FADE_OUT: u8 = 0x14;
+}
+
+/// Fighting-phase states.
+pub mod fight {
+    pub const SETUP: u8 = 0x00;
+    pub const START_BANNER: u8 = 0x04;
+    pub const FIGHTING: u8 = 0x08;
+    pub const WIN: u8 = 0x0C;
+    pub const LOSE: u8 = 0x10;
+    pub const DRAW: u8 = 0x14;
+    pub const JUDGE: u8 = 0x18;
+    pub const PAUSE: u8 = 0x1C;
+    pub const CUSTOM_REVERT: u8 = 0x20;
+    pub const CUSTOM_SEQUENCE: u8 = 0x24;
+    /// A party battle's (EXE5 DS's 0x0208E1F8, a flow without the
+    /// sequencer before the screen): the rules may hold the flow before
+    /// the custom screen's reversions.
+    pub const CUSTOM_HOLD: u8 = 0x24;
+}
+
+/// Round-level state (the game's BattleState).
+#[derive(Clone, Debug, Default, Hash)]
+pub struct RoundState {
+    pub top: u8,
+    pub mode: u8,
+    pub sub: u8,
+    pub init: u8,
+    /// Actors counted per side (drops when an actor is removed).
+    pub actor_count: [u8; 2],
+    /// Custom screens opened so far (the turn number).
+    pub turn: u8,
+    pub name_counts: [u8; 2],
+    pub running: u8,
+    pub time_up: u8,
+    pub local_side: u8,
+    /// The two counts of fight ticks, each modulo its period (the rules'
+    /// `flow.fight_cycles`; grass heals by them).
+    pub cycles: [u8; 2],
+    pub mode_copy: u8,
+    pub winner: u8,
+    /// Alive navis per side.
+    pub alive: [u8; 2],
+    /// Both players' status bits as the link delivers them (bit 2: that
+    /// player's custom screen is open).
+    pub remote_status: [u8; 2],
+    pub has_regular: u8,
+    pub wins: u8,
+    pub losses: u8,
+    pub round: u8,
+    pub max_combo: u8,
+    pub combo: u8,
+    pub combo_window: u8,
+    pub result: u8,
+    /// Low-HP music latch per side (`sub_8009158`).
+    pub low_hp_music: [bool; 2],
+    /// Small countdown used by banners and the end state.
+    pub delay: i16,
+    pub flags: u16,
+    /// The local navi's HP when the battle ended (`sub_800FAE0`).
+    pub exit_hp: u16,
+    pub escape: u16,
+    /// Ticks of fighting (capped).
+    pub battle_time: u32,
+    pub has_tags: u8,
+    pub tag_index: u8,
+    /// What each side's navis are taken for (their identities; four
+    /// each).
+    pub identities: [[Option<saito_content_api::IdentityHandle>; 4]; 2],
+    /// Intro progress bits (0x10 fade started, 0x01 fade done, 0x02 all
+    /// navis in); 0x04/0x08 chips enabled per side.
+    pub intro_bits: u8,
+    pub frames: u32,
+    pub ticks: u32,
+    /// Alive actors, four slots per side.
+    pub alive_actors: [[Option<ObjectRef>; 4]; 2],
+    /// The actor list as spawned.
+    pub spawned_actors: [[Option<ObjectRef>; 4]; 2],
+}
+
+/// The fighting-phase machine.
+#[derive(Clone, Debug, Default, Hash)]
+pub struct FightMachine {
+    pub state: u8,
+    pub sub: u8,
+    pub init: u8,
+    /// 0 none, 1 local win, 2 local loss, 3 draw, 6 open the custom screen.
+    pub result: u8,
+    pub pausing_player: u8,
+    pub timer: i16,
+    pub turn_timer: u16,
+    /// The damage judge after a time-up (`dword_203EAD0`).
+    pub judge: Judge,
+}
+
+/// The ticks between a console's low-HP sounds.
+const LOW_HP_SOUND_TICKS: u8 = 0x2D;
+
+/// What opening the custom screen costs a side in the own-gauges mode
+/// mode (`sub_800A29A`).
+const GAUGE_CUSTOM_COST: u16 = 0x2900;
+
+/// The damage judge (`sub_802CB38` sets it up, `sub_802CB78` runs it): the
+/// judge's banner with both navis' damage taken, 59 ticks of rolling
+/// digits (one RNG draw each), the real values for 120 ticks, then 30 more.
+/// Less damage taken wins; equal damage is a draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Judge {
+    /// +0: 0 starting, 4 running, 8 done.
+    pub state: u8,
+    /// +1, +2, +3: the running state's step, sub-step, and whether the
+    /// sub-step's entry ran.
+    pub step: u8,
+    pub sub: u8,
+    pub sub_init: bool,
+    /// +5.
+    pub timer: u8,
+    /// +7: 1 the local side wins, 2 it loses, 3 a draw.
+    pub outcome: u8,
+    /// +8, +0xA: the damage side 1 and side 0 took.
+    pub damage: [u16; 2],
+    /// +0xC, +0xE: the rolling digits shown (presentation).
+    pub rolled: [u16; 2],
+}
+
+/// The screen fades a battle starts (`SetScreenFade`'s modes): which
+/// colors, which way the level steps (`off_8005FB4`) and where it stops
+/// (`off_8006040`'s last byte, times 16).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FadeMode {
+    /// 0: the intro of a set's first battle clears from white.
+    IntroFromWhite = 0x00,
+    /// 4: the end of a round, to white (`sub_80094DA`'s other case).
+    EndToWhite = 0x04,
+    /// 8: the intro of a later battle clears from black.
+    IntroFromBlack = 0x08,
+    /// 0xC: the end of a round, to black.
+    EndToBlack = 0x0C,
+    /// 0x38: a dimming's end (`object_undimScreen`).
+    Undim = 0x38,
+    /// 0x3C: a dimming (`object_dimScreen`): a quarter of the way.
+    Dim = 0x3C,
+    /// 0x40: the transformation sequencer's fade back in.
+    TransformIn = 0x40,
+    /// 0x44: the transformation sequencer's fade out.
+    TransformOut = 0x44,
+    /// 0x30: EXE5's soul button's flash fades back (its custom screen's
+    /// state 9).
+    FlashBack = 0x30,
+    /// 0x34: ... and its flash, to full.
+    Flash = 0x34,
+    /// 0x10: the custom screen's Program Advance animation fades back in.
+    ProgramAdvanceBack = 0x10,
+    /// 0x14: ... and out, a quarter of the way.
+    ProgramAdvance = 0x14,
+    /// 0x50: the custom screen's cursor leaves a dark chip.
+    ShadeBack = 0x50,
+    /// 0x54: the cursor rests on a dark chip: five sixteenths of the way.
+    Shade = 0x54,
+    /// 0x58: the second fade record's (`loc_8006274`): the custom screen's
+    /// window and sprites back in when the cursor leaves a dark chip.
+    ShadeWindowBack = 0x58,
+    /// 0x5C: ... and darkened while it rests on one, three sixteenths.
+    ShadeWindow = 0x5C,
+    /// 0x60: the custom screen's Beast Out fades back in.
+    HalfOutBack = 0x60,
+    /// 0x64: ... and out, half the way.
+    HalfOut = 0x64,
+    /// 0x6C: battle mode 1's fade back in after a transformation.
+    Mode1TransformIn = 0x6C,
+    /// 0x70: battle mode 1's fade out for a transformation.
+    Mode1TransformOut = 0x70,
+    /// 0x84: back from 0x88 (`sub_800BCF6`).
+    BlackOutBack = 0x84,
+    /// 0x88: the Gregar and Falzar chips' controllers darken what a dimming
+    /// darkens all the way, to black.
+    BlackOut = 0x88,
+}
+
+impl FadeMode {
+    /// Toward full (`sub_800647C`) rather than toward clear
+    /// (`sub_8006366`), and the level it stops at.
+    fn course(self) -> (bool, u16) {
+        match self {
+            FadeMode::IntroFromWhite | FadeMode::IntroFromBlack => (false, 0),
+            FadeMode::EndToWhite | FadeMode::EndToBlack => (true, 0x100),
+            FadeMode::Undim => (false, 0),
+            FadeMode::Dim => (true, 0x40),
+            FadeMode::TransformIn | FadeMode::Mode1TransformIn => (false, 0),
+            FadeMode::TransformOut | FadeMode::Mode1TransformOut => (true, 0x100),
+            FadeMode::ProgramAdvanceBack | FadeMode::ShadeBack | FadeMode::ShadeWindowBack | FadeMode::HalfOutBack => {
+                (false, 0)
+            }
+            FadeMode::FlashBack => (false, 0),
+            FadeMode::Flash => (true, 0x100),
+            FadeMode::ShadeWindow => (true, 0x30),
+            FadeMode::ProgramAdvance => (true, 0x40),
+            FadeMode::Shade => (true, 0x50),
+            FadeMode::HalfOut => (true, 0x80),
+            FadeMode::BlackOutBack => (false, 0),
+            FadeMode::BlackOut => (true, 0x100),
+        }
+    }
+}
+
+/// The screen fade (`eScreenFade`, the first of its two records): a level
+/// from 0 (clear) to 0x100 (fully faded) that the running fade steps
+/// toward its target once per frame, outside the battle tick
+/// (`subsystem_triggerTransition_800630A`). The level outlives a fade: the
+/// next one starts wherever the last one left it (a counter cut-in's dim
+/// starts from the dimmed screen and is done after one step).
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct Fade {
+    /// +1: the running (or last) fade.
+    pub mode: FadeMode,
+    /// +6: the level.
+    pub level: u16,
+    /// +4: the level's change per step.
+    pub speed: u16,
+    /// +0xA: where the fade stops.
+    pub target: u16,
+    /// +3: the fade is running (`IsScreenFadeActive`).
+    pub active: bool,
+    /// +2: a fade toward clear took its first step (which holds the
+    /// level).
+    pub stepped: bool,
+}
+
+impl Default for Fade {
+    /// A battle starts on a fully faded screen, which its intro clears.
+    fn default() -> Self {
+        Fade { mode: FadeMode::EndToBlack, level: 0x100, speed: 0, target: 0x100, active: false, stepped: false }
+    }
+}
+
+impl Fade {
+    /// The intro's fade takes this many ticks (from a fully faded screen,
+    /// at the speed battles use).
+    pub const TICKS: u8 = 17;
+
+    /// `SetScreenFade(mode, speed)` (a speed of 0xFF steps by 0x100). The
+    /// level is left where it is.
+    pub fn start(&mut self, mode: FadeMode, speed: u8) {
+        let (_, target) = mode.course();
+        self.mode = mode;
+        self.target = target;
+        self.speed = if speed == 0xFF { 0x100 } else { speed as u16 };
+        self.active = true;
+        self.stepped = false;
+    }
+
+    /// `IsScreenFadeActive`.
+    pub fn active(&self) -> bool {
+        self.active
+    }
+
+    /// One step of the running fade (`off_8005FB4[mode]`), once per frame,
+    /// a fade toward clear ending as the game's does (`clear`: the rules'
+    /// `effects.fade_clear`).
+    pub fn step(&mut self, clear: crate::content::FadeClear) {
+        if !self.active {
+            return;
+        }
+        let (up, target) = self.mode.course();
+        if up {
+            // sub_800647C
+            let level = self.level as i32 + self.speed as i32;
+            if level >= target as i32 {
+                self.active = false;
+                self.level = target;
+            } else {
+                self.level = level as u16;
+            }
+        } else {
+            // sub_8006366: the first step holds the level.
+            let mut level = self.level as i32;
+            if self.stepped {
+                level -= self.speed as i32;
+            }
+            self.stepped = true;
+            match clear {
+                // (The level reaching the target ends it.)
+                crate::content::FadeClear::AtTarget => {
+                    let level = level.max(0);
+                    self.level = level as u16;
+                    if level <= target as i32 {
+                        self.active = false;
+                    }
+                }
+                // (EXE4's 0x08005BDE: a level under the target ends it, and
+                // isn't kept.)
+                crate::content::FadeClear::PastTarget => {
+                    if level < target as i32 {
+                        self.active = false;
+                    } else {
+                        self.level = level as u16;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Steps left before the running fade is done (0 when it isn't
+    /// running), a fade toward clear ending as `clear` says.
+    pub fn remaining(&self, clear: crate::content::FadeClear) -> u8 {
+        if !self.active || self.speed == 0 {
+            return 0;
+        }
+        let (up, target) = self.mode.course();
+        let steps = |d: u16| d.div_ceil(self.speed);
+        let left = if up {
+            steps(target.saturating_sub(self.level))
+        } else {
+            let past = u16::from(clear == crate::content::FadeClear::PastTarget);
+            steps(self.level.saturating_sub(target)) + u16::from(!self.stepped) + past
+        };
+        left.min(0xFF) as u8
+    }
+
+    /// The intro's fade's ticks (from a fully faded screen, at the speed
+    /// battles use), a fade toward clear ending as `clear` says.
+    pub fn intro_ticks(clear: crate::content::FadeClear) -> u8 {
+        match clear {
+            crate::content::FadeClear::AtTarget => Fade::TICKS,
+            crate::content::FadeClear::PastTarget => Fade::TICKS + 1,
+        }
+    }
+}
+
+/// A player's custom-screen result, as it goes over the link when their
+/// window has slid out.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CustomResult {
+    /// The chosen hand (None = no chips chosen: the previous hand stays).
+    pub hand: Option<ChipHand>,
+    pub navi_stats: NaviStats,
+    /// Cross/Beast transformation request.
+    pub transform: TransformRequest,
+}
+
+/// Events from outside the simulation that happen on a tick.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TickEvents {
+    /// After the round, the link session the end state asked to close has
+    /// closed.
+    pub link_closed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Battle {
+    /// The content the battle runs on (read-only and shared: snapshots
+    /// share it, and it is not part of the digest; `setup.content` is its
+    /// identity).
+    pub content: Arc<Content>,
+    pub setup: RoundSetup,
+    pub stats: [NaviStats; 2],
+    /// Each side's party (`crate::party`): its members' stats blocks, the
+    /// member on the field and the switches made. Member 0 is a copy of the
+    /// side's stats at the battle's start (`eBattleNaviStats2034A60`, the
+    /// framework's one reserve): without partners, a navi switch keeps the
+    /// navi it leaves there when it is that one, and takes the navi it goes
+    /// to from there when it is that one (`sub_802D7A0`), and a switch
+    /// knockout takes it back (`sub_802D9B0`).
+    pub party: [crate::party::Party; 2],
+    pub rng: Rng,
+    /// Each player's console: its own RNG (RNG1), which ChpShufl's re-deal
+    /// draws from, and what advances it (`console`).
+    pub consoles: [Console; 2],
+    pub round: RoundState,
+    pub fight: FightMachine,
+    pub gauge: CustomGauge,
+    pub banner: Banner,
+    /// The other player's telop, where the game lays it on a block of its
+    /// own (the rules' `effects.telops`: EXE4's second block, 0x02037CF0).
+    pub remote_telop: Banner,
+    /// The chip each side last used, while the other player's console
+    /// names it (what it says is presentation; how long it shows is in the
+    /// digest: where telops run apart, the other player's shares its block
+    /// with that player's telop, whose controller waits on the block).
+    pub used_chips: [Option<crate::hud::UsedChip>; 2],
+    /// What each side's console shows of its own navi's chips
+    /// (presentation only; left out of the digest).
+    pub chip_hud: [crate::hud::ChipHud; 2],
+    /// The HUD parts a chip's effect hid (presentation only; left out of the
+    /// digest).
+    pub hud_hidden: crate::hud::HudHidden,
+    /// The message the HUD shows (presentation only; left out of the
+    /// digest).
+    pub message: Option<crate::hud::MessageLine>,
+    /// The warning markers each console's HUD shows this tick
+    /// (presentation only; left out of the digest).
+    pub warnings: [Vec<crate::hud::Warning>; 2],
+    /// The HP numbers each console's HUD shows under objects, by place
+    /// (presentation only; left out of the digest).
+    pub hp_numbers: [[Option<crate::hud::HpNumber>; crate::hud::HpNumber::PLACES]; 2],
+    /// The navi each side's emotion window and HP box show in place of the
+    /// side's navi (the original's HUD +0x17, `sub_801E724`): one a switch
+    /// on the custom screen picked, until the switch is made; none for the
+    /// side's navi (presentation only; left out of the digest).
+    pub window_navis: [Option<saito_content_api::NaviHandle>; 2],
+    pub paused: bool,
+    pub inputs: [InputRecord; 2],
+    /// Each side's input record's switch request (the DS's +8, the panel's
+    /// request after its refusals: 0x020022E8): the party member its player
+    /// asks to switch to this tick, which the side's navi copies
+    /// (`ActorData::switch_input`) and its custom screen reads.
+    pub switch_inputs: [Option<u8>; 2],
+    /// Each side's input record's microphone level (the DS's +9, its
+    /// packet's +5: 0x020022E8), which the side's rules may hear
+    /// (`mic_heard`): 255 where the player's input heard them loud
+    /// (`PlayerTick::mic_loud`), else 0. Nothing in saito sets it.
+    pub mic_levels: [u8; 2],
+    /// Each side's choice on its custom screen this tick (`PlayerTick::
+    /// choice`), which its screen takes if it chooses.
+    pub screen_choices: [Option<crate::input::ScreenChoice>; 2],
+    /// Where each side's custom screen's own cues of the last tick end in
+    /// the cues its player hears (`sound_cues_for`), if its screen ticked:
+    /// its layer's, the cursor's and the dark chip hover's, which the
+    /// original made in the same call, go there (`screen_cues_at`).
+    /// Output only, as the cues are.
+    pub screen_cues_at: [Option<usize>; 2],
+    pub hands: [ChipHand; 2],
+    /// Both players' transformation requests from the last custom screen.
+    pub transform_requests: [TransformRequest; 2],
+    /// The requests as this turn started (`unk_203A980`): what each navi
+    /// changes into.
+    pub turn_transforms: [TransformRequest; 2],
+    /// The transformation sequencer run at the start of each turn.
+    pub transform_seq: TransformSequencer,
+    /// What a mid-battle custom-screen request waits for first.
+    pub custom_reversion: crate::transform::CustomReversion,
+    /// What the content gives each side for the round, asked as the round
+    /// is set up (`crate::given`): what a side's level gives it, as its
+    /// game's rules read the level (the engine knows none).
+    pub given: crate::given::Given,
+    pub objects: Objects,
+    pub actors: Actors,
+    pub collision: Collision,
+    pub field: Field,
+    pub fade: Fade,
+    /// Navis waiting to fade in at the intro.
+    pub fadein_queue: [Option<ObjectRef>; 8],
+    /// Per-side damage-carry records (`dword_203CFB0`).
+    pub damage_carry: [DamageCarry; 2],
+    /// Both players' custom screens.
+    pub custom: CustomScreens,
+    /// Per-side extra battle state (`sub_802E070`), used by the own-gauges
+    /// mode (battle flag 0x40, `battle_flags::OWN_GAUGES`).
+    pub sides: [SideState; 2],
+    /// Per side: the looks its rules set (presentation).
+    pub looks: [SideLooks; 2],
+    /// Per-side statistics counters (`byte_203EAE0`, `sub_800AB46`).
+    pub side_stats: [[u8; 16]; 2],
+    /// The first four counters of EXE5's per-player battle record
+    /// (`sub_802D064`'s, 0x0802AEA6): the counter hits and inflicted bugs
+    /// that land on the other side's navis no player controls, at most 10
+    /// each.
+    pub navi_hit_counts: [[u8; 4]; 2],
+    /// Per-side registry of defensive chips and their linked objects
+    /// (0x10 bytes per side at 0x02036720).
+    pub linked: [LinkedRecord; 2],
+    /// Per side: its dimming (`byte_203CF00`).
+    pub dimming: [crate::dimming::DimmingRecord; 2],
+    /// Per side: the player's rules, its rules and its systems' state
+    /// (docs/design/rules-in-luau.md).
+    pub rules: [crate::rules::SideRules; 2],
+    /// Sound calls made this tick, as each side's player hears them
+    /// (output only; see `sound`).
+    pub(crate) sound: [Vec<SoundCue>; 2],
+    /// The players who asked for the pause this tick, in a round whose host
+    /// answers it (output only: [`Battle::pause_requests`]).
+    pub(crate) pause_asked: [bool; 2],
+    /// How the round ended, once the end state is through.
+    pub(crate) outcome: Option<RoundEnd>,
+    /// A folder a tool is asking the rules about (`Battle::check_folder`,
+    /// `Battle::folder_view`), while they answer: no part of the simulation.
+    pub(crate) folder_check: Option<saito_content_api::api::CheckedFolder>,
+    /// What the rules answered a tool's hook (`validate`, `folder_check`,
+    /// `folder_view`, `overview`), until the tool takes it: no part of the
+    /// simulation.
+    pub(crate) tool_answer: Option<saito_content_api::Data>,
+    /// Content's reads of each side's keys while dimmed: no part of the
+    /// simulation ([`crate::dimming::KeyReads`]).
+    pub(crate) dimmed_key_reads: crate::dimming::KeyReads,
+    /// The panels each side's attacks were presented on during the tick
+    /// ([`Battle::attacked_panels`]): no part of the simulation.
+    pub(crate) attacked: crate::collision::AttackLog,
+}
+
+/// How a round ended (`sub_8007CA0`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RoundEnd {
+    /// The set goes on. The next round starts with its own init (link
+    /// sync, the navi stats and RNG exchange) from these settings and the
+    /// score so far.
+    NextRound { settings: BattleSettings, score: SetScore },
+    /// The battle is over.
+    Over(BattleResult),
+    /// The engine stopped the battle: a tick failed (`Battle::fail`), on a
+    /// content error or a state the original can't go on from (it would read
+    /// past a table or through a null pointer). The message says what
+    /// happened. Two battles that step the same state on the same inputs
+    /// stop alike, so under netplay both peers end the match here.
+    Error(String),
+}
+
+/// The battle's result from the local side's perspective (BattleState
+/// +0x1F, which the game hands back to the menu that started the battle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BattleResult {
+    Won = 1,
+    Lost = 2,
+    Drawn = 3,
+    /// The player ran away (single-player battles).
+    Escaped = 4,
+    /// The link broke (`sub_8007EB8`).
+    CommError = 5,
+    /// Result codes 9 and 0xA: the battle was cut short. (Their setters
+    /// weren't found; `sub_8007CA0` treats both alike.)
+    Terminated = 9,
+    TerminatedA = 0xA,
+}
+
+/// Where a set stands after a round (`sub_800AF50`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SetStanding {
+    Undecided,
+    Decided(BattleResult),
+}
+
+/// A side's extra battle state (0x1D0 bytes at `sub_802E070(side)`); only
+/// the fields the engine reads or writes are modeled (the rest are listed
+/// in docs/engine/field-names.md). The own-gauges mode (battle
+/// flag 0x40) uses it; outside it, only SloGauge and FstGauge write it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SideState {
+    pub active: u8,
+    pub panel_x: u8,
+    /// A per-side gauge (a SELECT special needs 0x1500; counters add it).
+    pub gauge: u16,
+    /// +0x50: the SELECT special runs (`sub_802E4E4`).
+    pub select_special: u8,
+    /// +0x54: the rules' takeover of the side's navi runs (EXE6's Cross
+    /// special, DarkInvs' auto-battle): idle asks the side's rules
+    /// (`takeover`) instead of reading the buttons.
+    pub takeover: u8,
+    /// +2: ticks the SELECT special holds the navi (0xB4 when reset,
+    /// `sub_802E07C`; `sub_802F068`).
+    pub select_ticks: u8,
+    /// +0x30: ticks left of the takeover (EXE6's Cross special starts it at
+    /// 0x1E0), counted down in the navi's stage B (`sub_802E1D8`).
+    pub takeover_ticks: u16,
+    /// +0x3C / +0x3A: ticks the side's gauge stays slow / fast (SloGauge,
+    /// FstGauge), counted down by `sub_80107D4`.
+    pub slow_gauge_ticks: u16,
+    pub fast_gauge_ticks: u16,
+    /// +0x44: the target the side tracks (an actor of the other side), which
+    /// an obstacle leaving hands on (`sub_802EF74`).
+    pub tracked: Option<ObjectRef>,
+    /// +0x34: the special chip the side's SELECT uses (`sub_800EE26`); none
+    /// for the zeroed field, which reads as the zeroed chip
+    /// (`roles.chips.zeroed`).
+    pub special_chip: Option<ChipHandle>,
+    /// +0x36 / +0x38: bonuses stored for the special chip, spent with it
+    /// (on a damaging chip, on a navi chip).
+    pub special_attack_bonus: u16,
+    pub special_navi_bonus: u16,
+}
+
+/// Presentation a side's rules set as the round is set up: no part of the
+/// original's side block (`SideState`), which the player's init clears
+/// (`sub_802DFC8`), nor of the simulation (the digest leaves it out).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SideLooks {
+    /// The emotion window shows the second set of the base form's faces
+    /// (EXE5's Hub Style, NaviStats +0x4C: 0x0801AF8E adds 11 to the face;
+    /// `battle.set_hud("face_variant", ..)`, `kinds::player::shows_face_variant`).
+    pub face_variant: bool,
+    /// And whatever its form (EXE5's Chaos Unison look while its charge is
+    /// armed, 0x080125F6, which its rules set and clear).
+    pub face_variant_any_form: bool,
+    /// The emotion window shows the side's count (its navi's stat of the
+    /// role `window_count`), else its empty box, as the side's rules say
+    /// for the round (`battle.set_hud("window_count", ..)`: EXE6's Beast Out turns,
+    /// `sub_801D814`).
+    pub window_count: bool,
+    /// The custom screen's enemy names show the side's navi by its variant
+    /// name (EXE5's Hub Style in a link battle: 0x0801AE3A's NameID 0xEA;
+    /// `battle.set_hud("name_variant", ..)`).
+    pub name_variant: bool,
+}
+
+/// A side's defensive-chip record (0x10 bytes per side at 0x02036720):
+/// the chip, its damage word and bonus (for the counterattack), the navi
+/// that used it, and the object that implements it, if any.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct LinkedRecord {
+    /// +0: the chip; none for an empty record (the game's 0).
+    pub chip: Option<ChipHandle>,
+    /// +2: the Atk+ / cross bonus.
+    pub bonus: u16,
+    /// +4: the damage word.
+    pub damage: u32,
+    /// +8: the navi that used the chip; its deletion clears the record.
+    pub owner: Option<ObjectRef>,
+    /// +0xC.
+    pub object: Option<ObjectRef>,
+}
+
+impl Battle {
+    /// `sub_800AB46`: bump a statistics counter (saturating at 0xFF).
+    pub fn bump_side_stat(&mut self, side: u8, index: usize, n: u8) {
+        let v = &mut self.side_stats[side as usize][index];
+        *v = v.saturating_add(n);
+    }
+
+    /// `sub_802CEA6`: clear a side's defensive-chip record. Its object
+    /// (ElemTrap's trap) ends when it sees that the record no longer names
+    /// it; the original tells it through its second parameter.
+    pub fn clear_linked(&mut self, side: u8) {
+        self.linked[side as usize] = Default::default();
+    }
+
+    /// The stage's panel column pattern (which columns belong to which
+    /// side).
+    pub fn panel_pattern(&self) -> u8 {
+        self.content.stage(self.setup.settings.stage).panel_pattern
+    }
+
+    /// A side's form.
+    pub fn form(&self, side: usize) -> &FormData {
+        self.content.form(self.stats[side].form)
+    }
+
+    /// A side's navi.
+    pub fn navi(&self, side: usize) -> &NaviData {
+        self.content.navi(self.stats[side].navi)
+    }
+
+    /// `battle_networkInvert`: whether `alliance` is not the local side.
+    pub fn is_remote(&self, alliance: u8) -> bool {
+        alliance ^ self.round.local_side != 0
+    }
+
+    /// `sub_800AA1A`: add `r` to the intro fade-in queue (unless present).
+    pub fn fadein_enqueue(&mut self, r: ObjectRef) -> bool {
+        for slot in self.fadein_queue.iter_mut() {
+            match slot {
+                Some(o) if *o == r => return false,
+                None => {
+                    *slot = Some(r);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// `sub_800AA06`: whether `r` is first in the fade-in queue.
+    pub fn fadein_is_head(&self, r: ObjectRef) -> bool {
+        self.fadein_queue[0] == Some(r)
+    }
+
+    /// `sub_800AA40`: remove `r` from the fade-in queue, then compact it
+    /// (`sub_800AA64`, which only looks at the first seven entries).
+    pub fn fadein_dequeue(&mut self, r: ObjectRef) {
+        for slot in self.fadein_queue.iter_mut() {
+            if *slot == Some(r) {
+                *slot = None;
+            }
+        }
+        let kept: Vec<ObjectRef> = self.fadein_queue[..7].iter().flatten().copied().collect();
+        for (i, slot) in self.fadein_queue[..7].iter_mut().enumerate() {
+            *slot = kept.get(i).copied();
+        }
+    }
+}
+
+/// A side's damage-carry record: damage this tick and last tick, and the
+/// objects it tracks.
+#[derive(Clone, Copy, Debug, Default, Hash)]
+pub struct DamageCarry {
+    pub this_tick: u16,
+    pub previous: u16,
+    pub source: Option<ObjectRef>,
+    pub target: Option<ObjectRef>,
+}
+
+impl Battle {
+    /// Start a round on `content`: the state the game is in when its init
+    /// finishes and the first battle tick is about to run, with the
+    /// content's scripts running what they implement (a runtime this
+    /// thread keeps: `behavior`). Panics if the setup names other content
+    /// (`RoundSetup::content`), if the content isn't defined
+    /// (`Content::define`), or if its scripts don't load (a content error,
+    /// the same on every machine). It deals nothing: each player's battle
+    /// folder is the setup's, as their console shuffled it; a setup with
+    /// empty ones (`BattleFolder::empty`) is set up all the same, for tools
+    /// to ask the rules of (no folder is read before a custom screen opens).
+    pub fn new(mut setup: RoundSetup, content: Arc<Content>) -> Battle {
+        let hash = content.hash();
+        assert_eq!(setup.content, hash, "the round's setup names content {} but runs on content {hash}", setup.content);
+        assert!(content.defs.defined, "a battle runs on defined content (Content::define)");
+        Behaviors::for_content(&content).unwrap_or_else(|e| panic!("{e}"));
+        let score = setup.score;
+        let stage = content.stage(setup.settings.stage);
+        let panels = &content.rules().panels;
+        let (field, mode) = (Field::new(panels, &stage.layout, stage.panel_pattern, stage.mode), stage.mode);
+        let objects = Objects::with_capacity(content.rules().pools.slots());
+        let hands = [ChipHand::empty(&content), ChipHand::empty(&content)];
+        let rules = [0, 1].map(|p| crate::rules::SideRules::for_player(&content, &mut setup.players[p]));
+        let mut b = Battle {
+            content,
+            stats: setup.navi_stats,
+            party: setup.navi_stats.map(crate::party::Party::of),
+            rng: Rng::new(setup.rng),
+            consoles: [Console::new(&setup.players[0].console), Console::new(&setup.players[1].console)],
+            round: RoundState {
+                running: 1,
+                max_combo: score.max_combo.max(1),
+                wins: score.wins,
+                losses: score.losses,
+                round: score.round,
+                mode_copy: mode,
+                local_side: setup.local_side,
+                intro_bits: 0x0C,
+                low_hp_music: std::array::from_fn(|side| side == setup.local_side as usize && setup.low_hp_music_latched),
+                top: top::RUNNING,
+                ..RoundState::default()
+            },
+            fight: FightMachine::default(),
+            gauge: CustomGauge::new(),
+            banner: Banner::default(),
+            remote_telop: Banner::default(),
+            used_chips: [None; 2],
+            chip_hud: Default::default(),
+            hud_hidden: Default::default(),
+            message: None,
+            warnings: Default::default(),
+            hp_numbers: [[None; crate::hud::HpNumber::PLACES]; 2],
+            window_navis: [None; 2],
+            paused: false,
+            inputs: [InputRecord::default(); 2],
+            switch_inputs: [None; 2],
+            mic_levels: [0; 2],
+            screen_choices: [None; 2],
+            screen_cues_at: [None; 2],
+            hands,
+            transform_requests: [TransformRequest::NONE; 2],
+            turn_transforms: [TransformRequest::NONE; 2],
+            transform_seq: TransformSequencer::default(),
+            custom_reversion: Default::default(),
+            given: Default::default(),
+            objects,
+            actors: Actors::default(),
+            collision: Collision::new(),
+            field,
+            fade: Fade::default(),
+            fadein_queue: [None; 8],
+            damage_carry: [DamageCarry::default(); 2],
+            custom: CustomScreens::new(&setup.players),
+            sides: [SideState::default(); 2],
+            looks: [SideLooks::default(); 2],
+            side_stats: [[0; 16]; 2],
+            navi_hit_counts: [[0; 4]; 2],
+            linked: [LinkedRecord::default(); 2],
+            dimming: Default::default(),
+            rules,
+            sound: [Vec::new(), Vec::new()],
+            pause_asked: [false; 2],
+            outcome: None,
+            folder_check: None,
+            tool_answer: None,
+            dimmed_key_reads: Default::default(),
+            attacked: Default::default(),
+            setup,
+        };
+        // The navi's stats of its game's own are of the rules' `stats`: a
+        // setup's of none (a test's, made without the content) has them
+        // all zero.
+        if let Some(rules) = b.content.defs.rules() {
+            let schema = b.content.defs.schema(rules.stats);
+            for stats in &mut b.stats {
+                if stats.game.id() != rules.stats {
+                    stats.game = saito_content_api::SmallBlock::new(rules.stats, schema).expect("the rules' stats fit (the content's load holds them to it)");
+                }
+            }
+        }
+        // The navi the player states (the engine's navi fact) is the one the
+        // round's stats are of: a setup that says another is two setups.
+        for side in 0..2u8 {
+            let stated = b.fact(side, PlayerFact::Navi).and_then(|f| match f.value() {
+                saito_content_api::FieldValue::Ref(Some((_, h))) => Some(h),
+                _ => None,
+            });
+            if let Some(h) = stated {
+                let navi = b.stats[side as usize].navi;
+                assert_eq!(
+                    h,
+                    navi.0,
+                    "side {side}'s setup states the navi {} but its stats are {}'s",
+                    b.content.defs.navi(saito_content_api::NaviHandle(h)).key,
+                    b.content.defs.navi(navi).key
+                );
+            }
+        }
+        // Each side's rules set the round up before anything reads the
+        // side's stats (EXE6's rules/save builds them from what the save
+        // brings, its NaviCust compiles into them and its patch cards change
+        // them, and may add partners to its party); the battle-start copy of
+        // the stats (the party's member 0) is of the stats after them.
+        b.notify_rules(saito_content_api::RulesHook::RoundSetup);
+        for side in 0..2 {
+            b.party[side].members[0] = b.stats[side];
+        }
+        // Then what the content gives each side for the round (its navi's
+        // and the chips' functions of the side: what its level gives it).
+        b.given = crate::given::Given::ask(&mut b);
+        // Init's last steps: the panels' types' starts, refresh every panel,
+        // then one unpaused panel update.
+        b.start_panels();
+        b.field.refresh_all(&b.content.rules().panels, &b.collision);
+        b.tick_panels();
+        b
+    }
+
+    /// The game's tables (docs/design/rules-in-luau.md §2.3: a match plays
+    /// one game, docs/design/content-model-v2.md §4.0).
+    pub fn game_rules(&self) -> &crate::content::Rules {
+        self.content.rules()
+    }
+
+    /// The game's roles: what the framework uses (the flow's banners and
+    /// music, the field's and the hit kernel's effects, sparks, statuses,
+    /// the actions a side's requests start, the sounds its player hears).
+    pub fn roles(&self) -> &crate::content::Roles {
+        self.content.defs.roles()
+    }
+
+    /// The side object `r` is on, if it is on one (its alliance).
+    pub fn side_of(&self, r: ObjectRef) -> Option<u8> {
+        let a = self.objects.get(r).alliance;
+        (a < 2).then_some(a)
+    }
+
+    /// The chip a zeroed chip field reads: the game's zeroed chip
+    /// (`Content::chip_or_zeroed`).
+    pub fn chip_or_zeroed(&self, h: Option<saito_content_api::ChipHandle>) -> saito_content_api::ChipHandle {
+        self.content.chip_or_zeroed(h)
+    }
+
+    /// The record a chip field names, a zeroed one the game's zeroed
+    /// chip's.
+    pub fn chip_field(&self, h: Option<saito_content_api::ChipHandle>) -> &crate::content::ChipData {
+        self.content.chip_field(h)
+    }
+
+    /// The game's zeroed chip.
+    pub fn zeroed_chip(&self) -> Option<saito_content_api::ChipHandle> {
+        self.content.zeroed_chip()
+    }
+
+    /// Start a banner unless one is showing (`Banner::start`). Returns
+    /// false if one was.
+    pub fn start_banner(&mut self, id: BannerId) -> bool {
+        self.banner.start(id, self.content.rules().banner_holds(id), self.content.rules().effects.banner)
+    }
+
+    /// Start a telop's banner: the role's (`telop_banner`), or none of its
+    /// own where the game has none (EXE4's), which shows as banners do.
+    pub(crate) fn start_telop_banner(&mut self, id: Option<BannerId>) -> bool {
+        match id {
+            Some(id) => self.start_banner(id),
+            None => self.banner.start_as(None, false, self.content.rules().effects.banner),
+        }
+    }
+
+    /// What the flow sees of the banner (`sub_801E754`). Where telops run
+    /// apart from the banners, the local player's telop on the banner block
+    /// is none of the flow's (EXE4's 0x08016148 reads the banners' task
+    /// alone).
+    pub(crate) fn banner_status(&self) -> BannerStatus {
+        if self.game_rules().effects.telops == crate::content::Telops::Apart && self.banner.telop.is_some() {
+            return BannerStatus::Done;
+        }
+        self.banner.status()
+    }
+
+    pub fn is_dimmed(&self) -> bool {
+        self.round.flags & battle_flags::DIMMED != 0
+    }
+
+    /// How many times content has read `side`'s keys `keys` (a mask of
+    /// `input::keys`) while dimmed so far (wrapping): more after a tick
+    /// than before it, a press of them on that tick was read. No part of
+    /// the simulation ([`crate::dimming::KeyReads`]).
+    pub fn dimmed_key_reads(&self, side: u8, keys: u16) -> u32 {
+        self.dimmed_key_reads.get(side, keys)
+    }
+
+    /// The panels an attack of side `side` was presented on during the last
+    /// tick (a registration whose collision type is an attack of that side,
+    /// `collision::ATTACK_OF`), a bit a panel at `y * 8 + x`: what a one-tick
+    /// hit region leaves behind to read once the tick is over (it presents,
+    /// hits and is gone within the tick). A look at what happened, as the
+    /// panels' highlight is: no part of the simulation (nothing in a tick
+    /// reads it, and the digest leaves it out), cleared as each tick starts.
+    pub fn attacked_panels(&self, side: u8) -> u64 {
+        self.attacked.panels[side as usize & 1]
+    }
+
+    pub fn set_flags(&mut self, f: u16) {
+        self.round.flags |= f;
+    }
+
+    pub fn clear_flags(&mut self, f: u16) {
+        self.round.flags &= !f;
+    }
+
+    /// `battle_isBattleOver`: a side has no navis left, or time is up.
+    pub fn is_battle_over(&self) -> bool {
+        self.round.alive[0] == 0 || self.round.alive[1] == 0 || self.round.time_up != 0
+    }
+
+    /// `battle_isBattleOver` as seven callers use it: they test the CPU
+    /// flag the function leaves, which reads "over" only for time-up. A KO
+    /// looks like "not over" to them.
+    pub fn is_battle_over_flag_quirk(&self) -> bool {
+        self.round.time_up != 0 && self.round.alive[0] != 0 && self.round.alive[1] != 0
+    }
+
+    /// The key of `r`'s kind (`"bomb"`, `"engine/effect"`): how tools
+    /// name what an object is.
+    pub fn kind_key(&self, r: ObjectRef) -> &str {
+        &self.content.defs.kind(self.objects.get(r).kind).key
+    }
+
+    /// The key of `r`'s kind in its root (`"bomb"`, `"engine/effect"`):
+    /// how tests on one root name what an object is.
+    pub fn local_kind_key(&self, r: ObjectRef) -> &str {
+        saito_content_api::keys::local(self.kind_key(r))
+    }
+
+    /// The player navi of a side (`sub_80103BC`).
+    pub fn player(&self, side: u8) -> Option<ObjectRef> {
+        let r = self.round.spawned_actors[side as usize][0]?;
+        let a = self.objects.get(r).actor?;
+        (self.actors.get(a).actor_type == crate::actor::ActorType::Player).then_some(r)
+    }
+
+    pub fn player_actor(&self, side: u8) -> Option<ActorId> {
+        self.player(side).and_then(|r| self.objects.get(r).actor)
+    }
+
+    /// Report a sound call of the original (output only), heard on both
+    /// sides.
+    pub fn play_sound(&mut self, cue: impl Into<SoundCue>) {
+        let cue = cue.into();
+        for heard in &mut self.sound {
+            heard.push(cue);
+        }
+    }
+
+    /// Report a sound call that only `side`'s player hears (the original
+    /// makes it on that player's console only).
+    pub fn play_sound_for(&mut self, side: u8, cue: impl Into<SoundCue>) {
+        self.sound[side as usize].push(cue.into());
+    }
+
+    /// Play the sound content gives `role`, heard on both sides; and to
+    /// `side`'s player only.
+    /// (A role a game may leave unfilled, `SoundRole::optional`, plays
+    /// nothing unfilled: the game has no such sound.)
+    pub fn sound(&mut self, role: SoundRole) {
+        if let Some(id) = self.role_sound(role) {
+            self.play_sound(id);
+        }
+    }
+
+    pub fn sound_for(&mut self, side: u8, role: SoundRole) {
+        if let Some(id) = self.role_sound(role) {
+            self.play_sound_for(side, id);
+        }
+    }
+
+    fn role_sound(&self, role: SoundRole) -> Option<crate::SoundId> {
+        if role.optional() { self.roles().try_sound(role) } else { Some(self.roles().sound(role)) }
+    }
+
+    /// The sound calls of the last tick, in the order the game makes them,
+    /// as the local side hears them.
+    pub fn sound_cues(&self) -> &[SoundCue] {
+        &self.sound[self.round.local_side as usize]
+    }
+
+    /// The sound calls of the last tick as `side`'s player hears them.
+    pub fn sound_cues_for(&self, side: u8) -> &[SoundCue] {
+        &self.sound[side as usize]
+    }
+
+    /// Where `side`'s custom screen's own cues of the last tick end among
+    /// [`Battle::sound_cues_for`]'s, if its screen ticked: the cues its
+    /// player's layer made of the tick (`custom::Layer::cues`: the
+    /// cursor's, a sub-screen's, the dark chip hover's), which the original
+    /// made in the same call after the screen's state, go in there.
+    pub fn screen_cues_at(&self, side: u8) -> Option<usize> {
+        self.screen_cues_at[side as usize & 1]
+    }
+
+    /// The players who asked for the pause on the last tick, by side, in a
+    /// round whose host answers it (`HostKeys::pause`): each pressed START
+    /// where the original's fight reads it (`sub_800A046`: fighting, the
+    /// battle not over, not dimmed). Nothing paused; what follows is the
+    /// host's (its own menu, and no more ticks while it is up, if it may
+    /// hold them). Output only, as the tick's sound is: no part of the state
+    /// or its digest. None in a round that pauses itself.
+    pub fn pause_requests(&self) -> [bool; 2] {
+        self.pause_asked
+    }
+
+    /// The player whose START holds the fight in the game's own pause (the fight's pause state, in a round
+    /// that pauses itself); none while it isn't paused so. Output only.
+    pub fn paused_by(&self) -> Option<u8> {
+        (self.round.mode == mode::FIGHTING && self.fight.state == fight::PAUSE).then_some(self.fight.pausing_player & 1)
+    }
+
+    /// One battle tick (one frame of the running battle). A battle the
+    /// engine stopped ([`RoundEnd::Error`]) doesn't tick: it stays as it is,
+    /// silent.
+    pub fn tick(&mut self, input: &[PlayerTick; 2], events: TickEvents) {
+        for heard in &mut self.sound {
+            heard.clear();
+        }
+        self.screen_cues_at = [None; 2];
+        self.pause_asked = [false; 2];
+        if self.is_stopped() {
+            return;
+        }
+        for (shown, console) in self.warnings.iter_mut().zip(&mut self.consoles) {
+            shown.clear();
+            console.frames = console.frames.wrapping_add(1);
+        }
+        // Panel highlights and blinks last one frame: the game's field
+        // renderer clears them after drawing.
+        self.field.clear_one_frame_looks();
+        // (And the panels attacked are this tick's.)
+        self.attacked = Default::default();
+        match self.round.top {
+            top::RUNNING => self.tick_running(input),
+            top::END => self.tick_end(input, &events),
+            _ => {}
+        }
+        self.keep_panel_looks();
+        self.end_console_frames();
+        self.round.frames = self.round.frames.wrapping_add(1);
+        self.fade.step(self.content.rules().effects.fade_clear);
+    }
+
+    /// Both custom screens' choices of this tick. (The original's consoles
+    /// exchanged packets over the link here, `sub_801FF18`; the engine has
+    /// no link: each tick's input is both players', and each console knows
+    /// the other's custom screen at once.)
+    fn read_choices(&mut self, input: &[PlayerTick; 2]) {
+        self.screen_choices = [input[0].choice, input[1].choice];
+    }
+
+    fn tick_running(&mut self, input: &[PlayerTick; 2]) {
+        // Both players' buttons, and whether each one's custom screen is
+        // open (status bit 2) and, where its screen says so, its selection
+        // runs (bit 0: EXE4's), reach the fight. (Its record takes the
+        // buttons through the custom screen too, which takes its player's
+        // choices instead: a button held across its close isn't a new
+        // press on the fight's first tick.)
+        self.read_choices(input);
+        for p in 0..2 {
+            self.inputs[p].update(input[p].held & 0x3FF | keys::PRESENT);
+            let side = &self.custom.sides[p];
+            self.round.remote_status[p] = (if side.in_custom { 4 } else { 0 }) | side.selecting as u8;
+        }
+        self.read_switch_requests(input);
+        self.mic_levels = input.each_ref().map(|t| if t.mic_loud { u8::MAX } else { 0 });
+
+        self.run_mode_handler();
+        self.run_objects();
+        self.update_cameras();
+        self.update_panels();
+        self.update_player_hands();
+        self.run_hud_tasks();
+        self.update_emotion_windows();
+        self.update_linked_registry();
+        self.refresh_variable_damage();
+        if !self.paused {
+            if !self.is_dimmed() {
+                let periods = self.game_rules().flow.fight_cycles;
+                for (count, period) in self.round.cycles.iter_mut().zip(periods) {
+                    *count = (*count + 1) % period;
+                }
+            }
+            self.shift_damage_carry();
+        }
+        self.custom_hp_drain(0);
+        if self.setup.settings.effects & effects::LINK != 0 {
+            self.custom_hp_drain(1);
+        }
+        self.round.ticks = self.round.ticks.wrapping_add(1);
+    }
+
+    /// Top state 8 (`sub_8007B80`): 11 ticks of objects still running,
+    /// then close the link session (mode 0, `sub_8007B9C`). Once it has
+    /// closed (mode 4) the round is over (`sub_8007CA0`).
+    fn tick_end(&mut self, input: &[PlayerTick; 2], events: &TickEvents) {
+        self.read_choices(input);
+        if self.round.mode != 0 {
+            if self.outcome.is_none() {
+                self.finish_round();
+            }
+            return;
+        }
+        match self.round.sub {
+            0 => {
+                // sub_8007BD0
+                if self.round.init == 0 {
+                    self.round.delay = 10;
+                    self.round.init = 4;
+                } else {
+                    self.round.delay -= 1;
+                    if self.round.delay < 0 {
+                        self.round.sub = 4;
+                        self.round.init = 0;
+                    }
+                }
+            }
+            _ => {
+                // sub_8007C14: ask the link to close, then wait for it.
+                if self.round.init == 0 {
+                    self.round.init = 4;
+                } else if events.link_closed {
+                    self.round.mode = 4;
+                    self.round.sub = 0;
+                    self.round.init = 0;
+                }
+            }
+        }
+        self.run_objects();
+        self.update_panels();
+    }
+
+    /// The tick's panel update: none while paused; the panels' tick, or a
+    /// dimmed tick's.
+    fn update_panels(&mut self) {
+        if self.paused {
+            return;
+        }
+        if self.is_dimmed() {
+            self.tick_panels_dimmed();
+        } else {
+            self.tick_panels();
+        }
+    }
+
+    /// How the round ended, once the end state is through.
+    pub fn round_end(&self) -> Option<&RoundEnd> {
+        self.outcome.as_ref()
+    }
+
+    /// Stop the battle on a failed tick: one that panicked, with `message`
+    /// (a content error, or a state the original can't go on from). The round
+    /// ends with [`RoundEnd::Error`]; the state stays as the failed tick left
+    /// it, the failed tick makes no sound, and the battle doesn't tick again.
+    /// The failed tick ran the same code on the same state up to the panic,
+    /// so two battles that fail on the same inputs are left in the same
+    /// state: under netplay, a tick that fails on confirmed inputs ends the
+    /// match on both peers, and one that fails on predicted inputs is rolled
+    /// back like any other.
+    pub fn fail(&mut self, message: impl Into<String>) {
+        for heard in &mut self.sound {
+            heard.clear();
+        }
+        self.pause_asked = [false; 2];
+        self.outcome = Some(RoundEnd::Error(message.into()));
+    }
+
+    /// The engine stopped the battle ([`Battle::fail`]).
+    pub fn is_stopped(&self) -> bool {
+        matches!(self.outcome, Some(RoundEnd::Error(_)))
+    }
+
+    /// `sub_8007CA0`: chain the set's next round, or end the battle.
+    fn finish_round(&mut self) {
+        self.play_sound(SoundCue::StopMusic);
+        let code = self.round.result & 0xF;
+        // A broken link or a cut-short battle ends the set.
+        let cut_short = matches!(code, 5 | 9 | 0xA);
+        if self.setup.settings.effects & effects::SET != 0 && !cut_short {
+            match self.set_standing() {
+                SetStanding::Undecided => return self.chain_next_round(),
+                // setTwoStructs_800A840
+                SetStanding::Decided(r) => self.round.result = r as u8,
+            }
+        }
+        let result = match self.round.result & 0xF {
+            1 => BattleResult::Won,
+            2 => BattleResult::Lost,
+            3 => BattleResult::Drawn,
+            4 => BattleResult::Escaped,
+            5 => BattleResult::CommError,
+            9 => BattleResult::Terminated,
+            0xA => BattleResult::TerminatedA,
+            c => panic!("battle result code {c} is none sub_8007CA0 hands back"),
+        };
+        let link = self.setup.settings.effects & effects::LINK != 0;
+        if result == BattleResult::CommError && !link {
+            // Outside link battles the game may restart the battle
+            // (sub_803F4EC, event flag 0x1733, loc_80071FE): the menus'.
+            panic!("a single-player battle's communication error restarts it from the menus (sub_8007CA0)");
+        }
+        // (A win also counts toward a save-data statistic, dword_2000B30.)
+        // sub_800FAE0: the local navi's HP, read from its object although
+        // the fade-out freed it. A broken link skips it (loc_8007E38).
+        if result != BattleResult::CommError
+            && let Some(r) = self.player(self.round.local_side)
+        {
+            self.round.exit_hp = self.objects.get(r).hp;
+        }
+        // The rest updates the PET navi and rewards outside the battle and
+        // hands the result back (loc_8007E38).
+        self.paused = false;
+        self.round.running = 0;
+        self.outcome = Some(RoundEnd::Over(result));
+    }
+
+    /// `sub_800AF50`: a set of `n` rounds (the original's three: a triple
+    /// battle, best of three, first to 2; a match's set first to `k` round
+    /// wins has `2k − 1`) is decided once one side can no longer be caught,
+    /// or after its last round, drawn if the sides are level. A drawn round
+    /// is one of the `n`.
+    fn set_standing(&self) -> SetStanding {
+        let r = &self.round;
+        let rounds = self.setup.rounds() as i32;
+        let left = rounds - r.round as i32;
+        let (wins, losses) = (r.wins as i32, r.losses as i32);
+        if wins > losses + left {
+            SetStanding::Decided(BattleResult::Won)
+        } else if losses > wins + left {
+            SetStanding::Decided(BattleResult::Lost)
+        } else if r.round as i32 >= rounds {
+            SetStanding::Decided(BattleResult::Drawn)
+        } else {
+            SetStanding::Undecided
+        }
+    }
+
+    /// The set goes on (`battleSettings_802D2B2`, `loc_8007204`): the next
+    /// round is fought on the stage drawn for it and starts over with its
+    /// init, keeping the score.
+    fn chain_next_round(&mut self) {
+        let stage = self.setup.later_stages[self.round.round as usize - 1];
+        let settings = self.setup.next_settings(stage);
+        let r = &self.round;
+        let score = SetScore { wins: r.wins, losses: r.losses, round: r.round, max_combo: r.max_combo };
+        self.round.top = top::INIT;
+        self.round.mode = 0;
+        self.round.sub = 0;
+        self.round.init = 0;
+        self.outcome = Some(RoundEnd::NextRound { settings, score });
+    }
+
+    /// Run every object's update in list order, with pause/dimming gating.
+    pub fn run_objects(&mut self) {
+        let mut cur = self.objects.loop_first();
+        while let Some(r) = cur {
+            let f = self.objects.get(r).flags;
+            let mut run = true;
+            if self.paused && f & crate::object::flags::RUN_WHILE_PAUSED == 0 {
+                run = false;
+            }
+            if run && self.is_dimmed() && f & crate::object::flags::RUN_WHILE_DIMMED == 0 {
+                run = false;
+            }
+            if run {
+                crate::kinds::update(self, r);
+            }
+            cur = self.objects.loop_next();
+        }
+    }
+
+    // ---- Battle-mode handler -------------------------------------------
+
+    fn run_mode_handler(&mut self) {
+        match self.round.mode {
+            mode::INTRO => self.mode_intro(),
+            mode::BANNER => self.mode_banner(),
+            mode::CUSTOM => self.mode_custom(),
+            mode::FIGHTING => self.mode_fighting(),
+            mode::FADE_OUT => self.mode_fade_out(),
+            m => panic!("battle mode state {m:#x} not supported in netbattles"),
+        }
+        self.low_hp_music();
+    }
+
+    fn mode_intro(&mut self) {
+        if self.round.init == 0 {
+            let s = &self.setup.settings;
+            if s.effects & effects::SET == 0 {
+                self.round.round = self.content.stage(s.stage).battle_number;
+            } else {
+                self.round.round += 1;
+            }
+            crate::kinds::intro::spawn(self);
+            self.spawn_actors();
+            self.notify_rules(saito_content_api::RulesHook::RoundStart);
+            // Reward-chip pick: draws once; netbattle navis have no rewards.
+            // (EXE4's is the actors' spawn's last call, 0x080F576C.)
+            self.rng.next_positive();
+            self.paused = true;
+            self.gauge.rate = CustomGauge::rate_for(self.stats[0].gauge_speed, self.stats[1].gauge_speed);
+            if let Some(music) = self.setup.settings.music(&self.content) {
+                self.play_sound(SoundCue::Music(music));
+            }
+            self.round.init = 4;
+            if !self.content.rules().flow.intro_steps_on_init {
+                return;
+            }
+        }
+        if self.round.sub == 0 {
+            // sub_800927C: the HUD's setup.
+            self.start_emotion_windows();
+            self.round.sub = 4;
+        }
+        if self.round.intro_bits & 0x02 != 0 {
+            self.enter_mode(mode::BANNER);
+        }
+    }
+
+    fn enter_mode(&mut self, m: u8) {
+        if m == mode::CUSTOM {
+            // (The screen's close shows the defensive chips' marks again:
+            // `sub_801DA48(0x400)`, EXE4's 0x0801E1D6.)
+            self.hud_hidden.defensive_marks = false;
+        }
+        self.round.mode = m;
+        self.round.sub = 0;
+        self.round.init = 0;
+    }
+
+    /// `sub_8007368`: place what the stage names, in its order. Only navis
+    /// join the alive/actor bookkeeping; rocks and other field objects
+    /// don't. The field objects are content's: each is placed by its
+    /// kind's `place` (the original's spawner for its entry type in
+    /// `off_80073A0`: the rock's `sub_80074FA`, the boulder's
+    /// `sub_8007450`, the Guardian statue's `sub_800751C`).
+    pub fn spawn_actors(&mut self) {
+        use crate::content::Place;
+        use saito_content_api::{HookCall, PanelPos, PlaceSpec};
+        let content = self.content.clone();
+        for entry in &content.stage(self.setup.settings.stage).actors {
+            if let Place::Kind(kind) = entry.place {
+                let hook = content.defs.kind(kind).place.expect("a stage places kinds with a `place` (checked at load)");
+                let panel = PanelPos { x: entry.x, y: entry.y };
+                let spec = PlaceSpec { panel, side: entry.side, variant: entry.variant, hp: entry.hp };
+                crate::behavior::call_hook(self, hook, HookCall::Place { spec });
+                continue;
+            }
+            let r = crate::kinds::player::spawn(self, entry);
+            let side = entry.side as usize;
+            if let Some(r) = r {
+                let counted = self.objects.get(r).actor.map(|a| self.actors.get(a).not_counted != 1).unwrap_or(true);
+                if let Some(slot) = self.round.alive_actors[side].iter_mut().find(|s| s.is_none()) {
+                    *slot = Some(r);
+                }
+                if counted {
+                    self.round.actor_count[side] += 1;
+                }
+                let n = self.round.name_counts[side] as usize;
+                if n < 4 {
+                    self.round.identities[side][n] = self.objects.get(r).identity;
+                }
+                self.round.name_counts[side] += 1;
+            }
+        }
+        self.round.alive = self.round.actor_count;
+        self.round.spawned_actors = self.round.alive_actors;
+    }
+
+    fn mode_banner(&mut self) {
+        match self.round.sub {
+            0 => {
+                if self.round.round == 0 {
+                    self.enter_mode(mode::CUSTOM);
+                    return;
+                }
+                if self.round.init == 0 {
+                    self.round.delay = 10;
+                    self.round.init = 4;
+                    return;
+                }
+                self.round.delay -= 1;
+                if self.round.delay < 0 {
+                    self.round.sub = 4;
+                    self.round.init = 0;
+                }
+            }
+            4 => {
+                if self.round.init == 0 {
+                    self.start_banner(self.roles().banner(BannerRole::RoundStart));
+                    self.round.init = 4;
+                } else if self.banner_status() == BannerStatus::Done {
+                    self.round.sub = 8;
+                    self.round.init = 0;
+                }
+            }
+            _ => {
+                if self.round.init == 0 {
+                    self.round.delay = 10;
+                    self.round.init = 4;
+                    return;
+                }
+                self.round.delay -= 1;
+                if self.round.delay < 0 {
+                    self.enter_mode(mode::CUSTOM);
+                }
+            }
+        }
+    }
+
+    // ---- Custom screen ---------------------------------------------------
+
+    /// Mode state 8 (`sub_8009338`): the custom screen. Both players'
+    /// screens open on the first tick (`sub_8026840`) and run from the
+    /// next; the tick after both results are in, the fight resumes
+    /// (`sub_8026A6C`).
+    fn mode_custom(&mut self) {
+        if self.round.init == 0 {
+            self.round.init = 1;
+            self.open_custom_screens();
+            return;
+        }
+        if self.custom.committed {
+            return self.close_custom_screens();
+        }
+        self.tick_custom_screens();
+    }
+
+    /// `sub_8026A6C`: the screens close and the fight resumes.
+    fn close_custom_screens(&mut self) {
+        self.restart_gauge();
+        for player in self.content.rules().custom_screen.restore_players.clone() {
+            self.play_sound(SoundCue::Volume { player, volume: 0x100 });
+        }
+        // `sub_8009338`: each side's rules, for a side with its navi.
+        for side in 0..2 {
+            if self.player_actor(side).is_some() {
+                self.notify_side(side, RulesHook::CustomClosed);
+            }
+        }
+        self.custom.committed = false;
+        self.enter_mode(mode::FIGHTING);
+    }
+
+    /// `sub_800B3D8`: both results are in: each hand with chips replaces
+    /// that player's hand, both navis' stats are taken as sent, and the
+    /// transformations wait for the turn to start.
+    pub(crate) fn install_exchange(&mut self, results: [CustomResult; 2]) {
+        for (side, r) in results.into_iter().enumerate() {
+            if let Some(h) = r.hand {
+                self.hands[side] = h;
+            }
+            self.stats[side] = r.navi_stats;
+            self.transform_requests[side] = r.transform;
+        }
+    }
+
+    /// `sub_8013FD0`: custom-HP bug damage at custom-screen open. Never kills.
+    pub(crate) fn custom_hp_bug(&mut self, side: u8) {
+        let v = self.stats[side as usize].bugs.custom_damage;
+        if v == 0 {
+            return;
+        }
+        if let Some(r) = self.player(side) {
+            let hp = self.objects.get(r).hp;
+            let d = v.min(hp.saturating_sub(1));
+            crate::kinds::subtract_hp(self, r, d);
+            self.sound(SoundRole::OwnHit);
+        }
+    }
+
+    // ---- Fighting ----------------------------------------------------------
+
+    fn mode_fighting(&mut self) {
+        if self.round.init == 0 {
+            self.fight = FightMachine::default();
+            self.round.init = 4;
+        }
+        self.run_fight_machine();
+        let r = self.fight.result;
+        match r {
+            0 => {}
+            6 => self.enter_mode(mode::CUSTOM),
+            _ => {
+                match r {
+                    // (The original's busting level, BattleState +0x1E
+                    // here, `sub_800AF84`, is its results screen's: saito
+                    // has none, and nothing in a battle reads it.)
+                    1 | 2 => self.round.result = r,
+                    _ => {}
+                }
+                self.enter_mode(mode::FADE_OUT);
+            }
+        }
+    }
+
+    fn run_fight_machine(&mut self) {
+        match self.fight.state {
+            fight::SETUP => self.fight_setup(),
+            fight::START_BANNER => self.fight_start_banner(),
+            fight::FIGHTING => self.fight_fighting(),
+            fight::WIN | fight::LOSE => self.fight_result(),
+            fight::DRAW => self.fight_draw(),
+            fight::JUDGE => self.fight_judge(),
+            fight::PAUSE => self.fight_pause(),
+            fight::CUSTOM_REVERT => self.fight_custom_revert(),
+            fight::CUSTOM_SEQUENCE if self.game_rules().flow.sequencer_before_custom => self.fight_custom_sequence(),
+            fight::CUSTOM_HOLD => self.fight_custom_hold(),
+            s => panic!("fighting state {s:#x} reads past its table (sub_80080D2)"),
+        }
+    }
+
+    /// A word store of the fighting state: its sub-state and entry flag go
+    /// back to 0.
+    fn set_fight_state(&mut self, state: u8) {
+        self.fight.state = state;
+        self.fight.sub = 0;
+        self.fight.init = 0;
+    }
+
+    /// Fighting state 0x14, a draw (`sub_80082DC`): the draw banner (0x1C);
+    /// once it is done, in a set whose standing is decided (`sub_800AF50`)
+    /// the set's winner's result state, otherwise the round is a draw.
+    /// (Its 0x66-tick timer counts down, but its test reads the halfword
+    /// unsigned and never holds the state.)
+    fn fight_draw(&mut self) {
+        if self.fight.init == 0 {
+            // The HUD's parts hide, and its tasks stop (`sub_801BED6`): the
+            // emotion windows' among them.
+            self.stop_emotion_windows();
+            self.fight.timer = 0x66;
+            self.fight.init = 4;
+            self.start_banner(self.roles().banner(BannerRole::Draw));
+        }
+        self.fight.timer = self.fight.timer.wrapping_sub(1);
+        if self.banner_status() != BannerStatus::Done {
+            return;
+        }
+        if self.setup.settings.effects & effects::SET != 0 {
+            match self.set_standing() {
+                SetStanding::Decided(BattleResult::Won) => return self.set_fight_state(fight::WIN),
+                SetStanding::Decided(BattleResult::Lost) => return self.set_fight_state(fight::LOSE),
+                _ => {}
+            }
+        }
+        // setTwoStructs_800A840(3) (and GameState+0x14 = 3).
+        self.round.result = BattleResult::Drawn as u8;
+        self.fight.result = BattleResult::Drawn as u8;
+    }
+
+    /// Fighting state 0x18, the damage judge after a time-up
+    /// (`sub_800834A`): 60 ticks, then the judge (`sub_802CB38`,
+    /// `sub_802CB78`); its outcome is a win (counted), a loss (counted) or a
+    /// draw.
+    fn fight_judge(&mut self) {
+        if self.fight.sub == 0 {
+            // sub_8008364
+            if self.fight.init == 0 {
+                self.fight.timer = 0;
+                self.fight.init = 4;
+            }
+            self.fight.timer = self.fight.timer.wrapping_add(1);
+            if self.fight.timer >= 0x3C {
+                // (The HUD's time display hides.)
+                self.fight.sub = 4;
+                self.fight.init = 0;
+            }
+            return;
+        }
+        // sub_800838A
+        if self.fight.init == 0 {
+            let taken = |b: &Battle, side: u8| {
+                let Some(a) = b.player_actor(side) else {
+                    panic!("the damage judge reads a missing navi's damage (sub_801055E)");
+                };
+                b.actors.get(a).total_damage_taken
+            };
+            let (d1, d0) = (taken(self, 1), taken(self, 0));
+            self.start_judge(d1, d0);
+            self.fight.init = 4;
+            return;
+        }
+        if self.step_judge() {
+            return;
+        }
+        match self.fight.judge.outcome {
+            1 => {
+                self.round.wins += 1;
+                self.set_fight_state(fight::WIN);
+            }
+            2 => {
+                self.round.losses += 1;
+                self.set_fight_state(fight::LOSE);
+            }
+            _ => self.set_fight_state(fight::DRAW),
+        }
+    }
+
+    /// `sub_802CB38(damage of side 1, damage of side 0)`: the side that took
+    /// more damage loses (none on equal damage; the fighting machine's +0x10
+    /// keeps it, which nothing reads), and the outcome from the local side.
+    fn start_judge(&mut self, d1: u16, d0: u16) {
+        let loser = if d1 == d0 {
+            None
+        } else if d1 < d0 {
+            Some(0)
+        } else {
+            Some(1)
+        };
+        let outcome = match loser {
+            None => 3,
+            Some(l) if l == self.round.local_side => 2,
+            Some(_) => 1,
+        };
+        self.fight.judge = Judge { damage: [d1, d0], outcome, ..Judge::default() };
+    }
+
+    /// `sub_802CB78`: one tick of the judge; true while it runs.
+    fn step_judge(&mut self) -> bool {
+        let j = &mut self.fight.judge;
+        match j.state {
+            // sub_802CBA4
+            0 => j.state = 4,
+            // sub_802CBAC
+            4 => match j.step {
+                // sub_802CBCC: the judge's banner with both damages, the
+                // local side's first.
+                0 => {
+                    j.step = 4;
+                    j.sub = 0;
+                    j.sub_init = false;
+                    self.start_banner(self.roles().banner(BannerRole::Judge));
+                }
+                // sub_802CBF2
+                4 => match j.sub {
+                    // sub_802CC10
+                    0 => {
+                        j.timer = 0x3C;
+                        j.sub = 4;
+                    }
+                    // sub_802CC1A: rolling digits.
+                    4 => {
+                        j.timer = j.timer.wrapping_sub(1);
+                        if j.timer == 0 {
+                            j.sub = 8;
+                            j.sub_init = false;
+                        } else {
+                            let v = self.rng.next_positive();
+                            let j = &mut self.fight.judge;
+                            j.rolled = [(v & 0xFFFF) as u16 % 0x270E, (v >> 16) as u16 % 0x270E];
+                        }
+                    }
+                    // sub_802CC50: the real values for 120 ticks.
+                    _ => {
+                        if !j.sub_init {
+                            j.timer = 0x78;
+                            j.sub_init = true;
+                        }
+                        j.timer = j.timer.wrapping_sub(1);
+                        if j.timer == 0 {
+                            j.step = 8;
+                            j.sub = 0;
+                            j.sub_init = false;
+                        }
+                    }
+                },
+                // sub_802CC8C: the banner goes, 30 ticks.
+                _ => {
+                    if j.sub == 0 {
+                        j.timer = 0x1E;
+                        j.sub = 4;
+                        self.banner.release();
+                    }
+                    let j = &mut self.fight.judge;
+                    j.timer = j.timer.wrapping_sub(1);
+                    if j.timer == 0 {
+                        j.state = 8;
+                        j.step = 0;
+                        j.sub = 0;
+                        j.sub_init = false;
+                    }
+                }
+            },
+            // sub_802CCAE
+            _ => return false,
+        }
+        true
+    }
+
+    /// Fighting state 0x1C, paused (`sub_80083E4`): only the player who
+    /// paused resumes, with a new START press (sound 0x9F); the battle
+    /// unpauses at the top of the next fighting tick.
+    fn fight_pause(&mut self) {
+        let p = self.fight.pausing_player as usize & 1;
+        if self.inputs[p].pressed & keys::START != 0 {
+            self.sound(SoundRole::Pause);
+            self.set_fight_state(fight::FIGHTING);
+            // (The HUD's pause display hides.)
+        }
+    }
+
+    /// Fighting state 0 (`sub_800840C`): run the transformation sequencer
+    /// twice, then count down Beast Out.
+    fn fight_setup(&mut self) {
+        // (No sequencer, EXE4's: the turn starts, and its banner on the same
+        // tick, 0x08007064.)
+        if !self.game_rules().flow.sequencer_at_turn_start {
+            // (The turn's requests are the navis' to read all the same: a
+            // form change the rules ask for as the fight runs targets its
+            // side's, EXE4's soul given at OK, whose chip OK put first in
+            // the hand: 0x0800B924's chip less 0x160.)
+            self.turn_transforms = self.transform_requests;
+            for side in 0..2u8 {
+                if self.player(side).is_some() {
+                    self.notify_side(side, RulesHook::TurnStarted);
+                }
+            }
+            self.set_fight_state(fight::START_BANNER);
+            return self.fight_start_banner();
+        }
+        if self.fight.init == 0 {
+            self.start_transform_sequencer();
+            self.fight.init = 4;
+        }
+        if self.step_transform_sequencer() {
+            return;
+        }
+        if self.fight.sub == 0 {
+            self.transform_seq.restart();
+            self.fight.sub = 4;
+            return;
+        }
+        // The turn starts: each side's rules (EXE6's rules/beast spends a
+        // turn in Beast Out, `sub_8015A38`).
+        for side in 0..2u8 {
+            if self.player(side).is_some() {
+                self.notify_side(side, RulesHook::TurnStarted);
+            }
+        }
+        self.fight.state = fight::START_BANNER;
+        self.fight.sub = 0;
+        self.fight.init = 0;
+    }
+
+    fn apply_actor_inputs(&mut self) {
+        for side in 0..2u8 {
+            let Some(a) = self.player_actor(side) else { continue };
+            let over = self.is_battle_over();
+            // (A controlled form, EXE6's Beast Over: the controller decides.)
+            let berserk = self.form(side as usize).traits.has(crate::content::FormTraits::CONTROLLED);
+            let held = self.inputs[side as usize].held;
+            let dimmed = self.is_dimmed();
+            let switch = self.switch_inputs[side as usize];
+            let ad = self.actors.get_mut(a);
+            if over {
+                ad.pad = Default::default();
+                continue;
+            }
+            ad.switch_input = switch;
+            if berserk {
+                continue;
+            }
+            ad.pad.update(held);
+            if !dimmed {
+                ad.dimmed_pad = Default::default();
+            } else {
+                ad.dimmed_pad.update(held);
+            }
+        }
+    }
+
+    /// Each side's switch request into its input record (the DS's bottom
+    /// screen panel's request, 0x02036F80, which its packet carries as +7):
+    /// a member of the side's party other than none, which the side's
+    /// rules may refuse (`switch_requested`: the panel's limit and a member
+    /// at 0 HP). Once the battle is over the record keeps what it had.
+    fn read_switch_requests(&mut self, input: &[PlayerTick; 2]) {
+        if self.is_battle_over() {
+            return;
+        }
+        for side in 0..2u8 {
+            let party = &self.party[side as usize];
+            let asked = input[side as usize].switch_to.filter(|&m| party.has_partners() && party.member(m).is_some());
+            self.switch_inputs[side as usize] = match asked {
+                Some(m) if self.rules_switch_requested(side, m) => Some(m),
+                _ => None,
+            };
+        }
+    }
+
+    /// Each side's rules' fight tick (`fight_tick`, side 0 then side 1: the
+    /// DS's party supports, 0x02003764), then each side's rules hear its
+    /// microphone, on a fight tick its level isn't 0 (the DS's 0x022261A4,
+    /// side 0 then side 1: `mic_heard`); just before the navis copy their
+    /// input (the DS's 0x0208DDE8, `sub_80080D2`'s counterpart; its start
+    /// banner's, 0x0208DD54, does neither).
+    fn side_ticks(&mut self) {
+        for side in 0..2u8 {
+            self.notify_side(side, saito_content_api::RulesHook::FightTick);
+        }
+        for side in 0..2u8 {
+            if self.mic_levels[side as usize] != 0 {
+                self.notify_side(side, saito_content_api::RulesHook::MicHeard);
+            }
+        }
+    }
+
+    fn fight_start_banner(&mut self) {
+        self.apply_actor_inputs();
+        if self.fight.init == 0 {
+            self.fight.timer = 0x1E;
+            self.fight.init = 4;
+            if self.late_turns() {
+                self.fight.turn_timer = 0xA5 * 4 - 1;
+                self.start_banner(self.roles().banner(BannerRole::FinalTurn));
+            } else if self.setup.settings.effects & effects::LINK != 0 {
+                self.start_banner(self.roles().banner(BannerRole::TurnStart));
+            }
+        }
+        if self.banner_status() == BannerStatus::Done {
+            // The emotion windows and HP boxes show the sides' navis again
+            // (`sub_801E724` with 0xFF, `sub_801E0C8` with 0xFFFF).
+            self.window_navis = [None; 2];
+            for side in 0..2u8 {
+                self.notify_side(side, RulesHook::FightStarted);
+            }
+            self.fight.state = fight::FIGHTING;
+            self.fight.sub = 0;
+            self.fight.init = 0;
+        }
+    }
+
+    /// From the 15th custom screen on, netbattles use a turn timer and the
+    /// gauge stops arming.
+    pub fn late_turns(&self) -> bool {
+        self.setup.settings.effects & effects::LINK != 0 && self.round.turn >= 15
+    }
+
+    fn fight_fighting(&mut self) {
+        self.side_ticks();
+        self.apply_actor_inputs();
+        self.paused = false;
+        self.set_flags(battle_flags::FIGHTING);
+        self.update_combo();
+        self.update_battle_time();
+        if self.late_turns() {
+            self.update_turn_timer();
+        }
+        match self.round_result() {
+            1 => {
+                if self.round.escape != 0 && self.game_rules().flow.escape_check {
+                    // sub_800AAD6: an escape ends the battle as a loss
+                    // (result code 4, then 2), straight to the fade-out.
+                    self.round.result = BattleResult::Escaped as u8;
+                    self.enter_mode(mode::FADE_OUT);
+                    self.round.result = BattleResult::Lost as u8;
+                    return;
+                }
+                self.round.wins += 1;
+                self.fight.state = fight::WIN;
+                return;
+            }
+            2 => {
+                self.round.losses += 1;
+                self.fight.state = fight::LOSE;
+                return;
+            }
+            7 => {
+                self.fight.state = fight::JUDGE;
+                return;
+            }
+            _ => {}
+        }
+        if self.setup.host_keys.pause {
+            // The pause is the host's (`HostKeys::pause`): where the
+            // original's `sub_80080D2` pauses for the first player
+            // `sub_800A046` names and returns, the tick says every player
+            // who asked and the fight goes on.
+            self.pause_asked = self.pause_requested_by();
+        } else if let Some(p) = self.pause_request() {
+            self.fight.pausing_player = p;
+            self.paused = true;
+            self.set_fight_state(fight::PAUSE);
+            // The HUD's pause display (`sub_801E15C`): "PAUSE" shows, with
+            // its sound, and the opponent's used chip name goes, where the
+            // game's does (`used_chips_end_early`).
+            if self.game_rules().effects.used_chips_end_early {
+                self.used_chips = [None; 2];
+            }
+            self.sound(SoundRole::Pause);
+            return;
+        }
+        if self.game_rules().flow.custom_request == crate::content::CustomRequest::Joypads {
+            // EXE4's 0x08007A2E: either player's L or R with the gauge full
+            // asks for the screen on this tick (0x0800718E: the battle
+            // pauses, each side's rules hear it, the fight's result is 6).
+            if self.joypad_custom_request() {
+                self.paused = true;
+                for side in 0..2u8 {
+                    if self.player_actor(side).is_some() {
+                        self.notify_side(side, RulesHook::CustomRequested);
+                    }
+                }
+                self.fight.result = 6;
+            }
+            return;
+        }
+        let open = if self.round.flags & battle_flags::OWN_GAUGES != 0 {
+            // sub_800A244: in the own-gauges mode a side opens it with
+            // L or R and a gauge of 0x2900, which it pays.
+            let sides = self.gauge_custom_requests();
+            for side in 0..2 {
+                if sides & (1 << side) != 0 {
+                    let g = &mut self.sides[side].gauge;
+                    *g = g.wrapping_sub(GAUGE_CUSTOM_COST);
+                }
+            }
+            sides != 0
+        } else {
+            self.custom_open_requested()
+        };
+        if open {
+            self.paused = true;
+            // A party battle goes through the DS's hold first (0x0208DEBE).
+            let party = self.party.iter().any(|p| p.has_partners()) && !self.game_rules().flow.sequencer_before_custom;
+            self.set_fight_state(if party { fight::CUSTOM_HOLD } else { fight::CUSTOM_REVERT });
+        }
+    }
+
+    /// Fighting state 0x24 of a party battle (EXE5 DS's 0x0208E1F8): as it
+    /// starts, each side's rules may act and hold the flow
+    /// (`custom_hold`: EXE5 DS's Meddy's HealPulse, 0x02003BD8, and its 50
+    /// ticks), the longest hold; then the reversions (state 0x20).
+    fn fight_custom_hold(&mut self) {
+        if self.fight.init == 0 {
+            let ticks = (0..2u8).map(|side| self.rules_custom_hold(side)).max().unwrap_or(0);
+            if ticks == 0 {
+                self.set_fight_state(fight::CUSTOM_REVERT);
+                return;
+            }
+            self.fight.timer = ticks as i16;
+            self.fight.init = 4;
+        }
+        self.fight.timer -= 1;
+        if self.fight.timer <= 0 {
+            self.set_fight_state(fight::CUSTOM_REVERT);
+        }
+    }
+
+    /// `sub_800A244`: the sides (bit per side; side 1 only in link
+    /// battles) asking for the custom screen with L or R and a full enough
+    /// gauge, unless dimmed, over, or a SELECT special runs.
+    fn gauge_custom_requests(&self) -> u8 {
+        if self.is_dimmed() || self.is_battle_over() {
+            return 0;
+        }
+        if self.sides[0].select_special != 0 || self.sides[1].select_special != 0 {
+            return 0;
+        }
+        // sub_800A29A
+        let asks = |side: usize| {
+            self.sides[side].gauge >= GAUGE_CUSTOM_COST && self.inputs[side].pressed & (keys::L | keys::R) != 0
+        };
+        let link = self.setup.settings.effects & effects::LINK != 0;
+        u8::from(asks(0)) | (u8::from(link && asks(1)) << 1)
+    }
+
+    /// Whether a custom-screen request goes through the reversions and the
+    /// sequencer (battle mode 5, or not the own-gauges mode; EXE5's
+    /// 0x08007774 tests the flag alone).
+    fn custom_request_transforms(&self) -> bool {
+        let mode_5 = self.round.mode_copy == 5 && self.game_rules().flow.sequencer_before_custom;
+        mode_5 || self.round.flags & battle_flags::OWN_GAUGES == 0
+    }
+
+    /// Fighting state 0x20 (`sub_8008452`): a custom screen was asked for:
+    /// wait for the navis' reversions, then state 0x24. EXE5's (0x08007774,
+    /// the flow without `sequencer_before_custom`) opens the screen from
+    /// this state, on the tick the reversions are done, as state 0x24 does
+    /// a tick later.
+    fn fight_custom_revert(&mut self) {
+        if self.custom_request_transforms() {
+            if self.fight.init == 0 {
+                self.start_custom_reversion();
+                // Each side's rules, for a side with its navi (EXE6's beast
+                // part: a Beast Out check comes due, `sub_8015A16`).
+                for side in 0..2u8 {
+                    if self.player_actor(side).is_some() {
+                        self.notify_side(side, RulesHook::CustomRequested);
+                    }
+                }
+                self.fight.init = 4;
+            }
+            if self.step_custom_reversion() {
+                return;
+            }
+        }
+        if !self.game_rules().flow.sequencer_before_custom {
+            self.fight.result = 6;
+            return;
+        }
+        self.fight.state = fight::CUSTOM_SEQUENCE;
+        self.fight.sub = 0;
+        self.fight.init = 0;
+    }
+
+    /// Fighting state 0x24 (`sub_8008492`): the transformation sequencer
+    /// runs once more from the start, then the custom screen opens.
+    fn fight_custom_sequence(&mut self) {
+        // (EXE5 opens the screen straight after the reversions: its flow has
+        // no state 0x24.)
+        if self.custom_request_transforms() && self.game_rules().flow.sequencer_before_custom {
+            if self.step_transform_sequencer() {
+                return;
+            }
+            if self.fight.sub == 0 {
+                self.transform_seq.restart();
+                self.fight.sub = 4;
+                return;
+            }
+        }
+        self.fight.result = 6;
+    }
+
+    /// `sub_800A152`: the round's result from the local side's perspective.
+    fn round_result(&self) -> u8 {
+        if self.is_dimmed() {
+            return 0;
+        }
+        let local = self.round.local_side;
+        if self.round.actor_count[0] == 0 {
+            return if local == 0 { 2 } else { 1 };
+        }
+        if self.round.actor_count[1] == 0 {
+            return if local == 0 { 1 } else { 2 };
+        }
+        if self.round.time_up != 0 {
+            return 7;
+        }
+        0
+    }
+
+    /// `sub_800A046`: a player pressed START (player 0's before player
+    /// 1's).
+    fn pause_request(&self) -> Option<u8> {
+        (0..2u8).find(|&p| self.pause_requested_by()[p as usize])
+    }
+
+    /// `sub_800A046`'s test for each player: START pressed, the battle not
+    /// over and not dimmed.
+    fn pause_requested_by(&self) -> [bool; 2] {
+        if self.is_battle_over() || self.is_dimmed() {
+            return [false; 2];
+        }
+        [0, 1].map(|p| self.inputs[p].pressed & keys::START != 0)
+    }
+
+    /// EXE4's 0x08007A2E (the flow's `custom_request` "joypads"): not
+    /// dimmed, the battle not over, not the late turns, the gauge full, and
+    /// L or R pressed on either player's joypad.
+    fn joypad_custom_request(&self) -> bool {
+        if self.is_dimmed() || self.is_battle_over() || self.late_turns() {
+            return false;
+        }
+        self.round.flags & battle_flags::GAUGE_FULL != 0
+            && (self.inputs[0].pressed | self.inputs[1].pressed) & (keys::L | keys::R) != 0
+    }
+
+    /// `sub_800A1D0`.
+    fn custom_open_requested(&self) -> bool {
+        if self.is_dimmed() || self.is_battle_over() {
+            return false;
+        }
+        // (A controlled navi, EXE6's Beast Over, can't ask for it: a full
+        // gauge opens it.)
+        let berserk = |side: usize| self.form(side).traits.has(crate::content::FormTraits::CONTROLLED);
+        ((berserk(0) || berserk(1)) && self.round.flags & battle_flags::GAUGE_FULL != 0)
+            || self.round.flags & battle_flags::CUSTOM_REQUESTED != 0
+    }
+
+    fn update_combo(&mut self) {
+        let r = &mut self.round;
+        if r.combo > r.max_combo {
+            r.max_combo = r.combo;
+        }
+        if r.combo_window != 0 {
+            r.combo_window -= 1;
+        } else {
+            r.combo = 0;
+        }
+    }
+
+    fn update_battle_time(&mut self) {
+        if self.is_dimmed() || self.paused || self.round.flags & battle_flags::FIGHTING == 0 {
+            return;
+        }
+        if self.is_battle_over_flag_quirk() {
+            return;
+        }
+        if self.round.battle_time < 0x8C9F {
+            self.round.battle_time += 1;
+        }
+    }
+
+    fn update_turn_timer(&mut self) {
+        if self.paused || self.is_dimmed() {
+            return;
+        }
+        if self.is_battle_over() {
+            return;
+        }
+        if self.fight.turn_timer >= 0x3C {
+            self.fight.turn_timer -= 1;
+        } else {
+            self.round.time_up = 1;
+        }
+    }
+
+    fn fight_result(&mut self) {
+        if self.fight.init == 0 {
+            // The HUD's tasks stop (`sub_801BED6(0xE4C53)`): the gauge's and
+            // the emotion windows'; the chips' icons and window go
+            // (`sub_801DACC`).
+            self.chip_hud = Default::default();
+            self.gauge.enabled = false;
+            self.stop_emotion_windows();
+            let win = self.fight.state == fight::WIN;
+            self.round.winner = if win { self.round.local_side } else { self.round.local_side ^ 1 };
+            self.fight.init = 4;
+            let wait = self.game_rules().flow.result_wait;
+            // A win with one of the Cybeasts on the other side has neither
+            // music nor banner, and holds the plain wait (`sub_80081A4`'s
+            // `sub_800A7A6` test, 102 ticks; EXE5's 0x080074D2 counts its
+            // own with 0x08008F6E).
+            if win && self.quiet_win_foes() != 0 {
+                self.fight.timer = wait.normal as _;
+            } else {
+                // The winner's console plays the victory music; in link
+                // battles the other one plays the defeat music. A special
+                // battle's (effect 2) are the winner's music and the wait
+                // in battle modes 4, 5 and 8 too (`sub_80081A4`; EXE5's
+                // tests 4 and 5, and nothing of it tests a mode 8); the
+                // loser's wait is a special battle's alone (`sub_800825A`).
+                let special = self.setup.settings.effects & 2 != 0;
+                let link = self.setup.settings.effects & effects::LINK != 0;
+                let special_win = special || matches!(self.round.mode_copy, 4 | 5 | 8);
+                // (Each console's music is its player's game's.)
+                for side in 0..2 {
+                    let roles = self.roles();
+                    let winner = roles.music(if special_win { MusicRole::WinnerSpecial } else { MusicRole::Winner });
+                    let loser = roles.music(MusicRole::Loser);
+                    if side == self.round.winner {
+                        self.play_sound_for(side, SoundCue::Music(winner));
+                    } else if link {
+                        self.play_sound_for(side, SoundCue::Music(loser));
+                    }
+                }
+                let short = if win { special_win } else { special };
+                self.fight.timer = if short { wait.special } else { wait.normal } as _;
+                let id = self.result_banner(self.round.local_side, win);
+                self.start_banner(id);
+            }
+        }
+        self.fight.timer -= 1;
+        if self.banner_status() == BannerStatus::Done && self.fight.timer <= 0 {
+            self.fight.result = if self.fight.state == fight::WIN { 1 } else { 2 };
+        }
+    }
+
+    /// The banner a round's result starts on `side`'s console, which won
+    /// it or lost it (`sub_80081A4` and `sub_800825A`; EXE5's 0x080074D2
+    /// and 0x0800758A).
+    /// - A loss's is the navi's (`sub_800A8B2`'s table by the navi; EXE5's
+    ///   0x08009098), or "YOU LOSE" on the judge's ruling (the round's
+    ///   result 7: time up with navis left on both sides).
+    /// - A win's is the navi's (`sub_800A8D4`'s table; EXE5's 0x080090C0)
+    ///   in the link battles the flow's `navi_win_banner` names: every one
+    ///   of EXE6's, whatever the result; of EXE5's the operation battles
+    ///   alone; none of EXE4's.
+    /// - Any other win's is "ENEMY DELETED", or "YOU WIN" on the judge's
+    ///   ruling.
+    pub fn result_banner(&self, side: u8, won: bool) -> BannerId {
+        let navi = self.content.navi(self.stats[side as usize].navi);
+        let roles = self.roles();
+        let judged = self.round_result() == 7;
+        if !won {
+            return if judged { roles.banner(BannerRole::LoseJudged) } else { navi.lose_banner };
+        }
+        let link = self.setup.settings.effects & effects::LINK != 0;
+        let navis = link
+            && match self.game_rules().flow.navi_win_banner {
+                NaviWinBanner::LinkBattle => true,
+                NaviWinBanner::OperationBattle => self.round.flags & battle_flags::OWN_GAUGES != 0,
+                NaviWinBanner::Never => false,
+            };
+        if navis {
+            navi.win_banner
+        } else {
+            roles.banner(if judged { BannerRole::WinJudged } else { BannerRole::Win })
+        }
+    }
+
+    /// The actors of side 1 a win over is quiet for (`sub_800A7A6` with
+    /// NameIDs 0x173..=0x17E, the Cybeasts; EXE5's 0x08008F6E with its
+    /// 0x173..=0x176: their identities' `quiet_win`): a win over one ends
+    /// without music or banner, and fades to white.
+    fn quiet_win_foes(&self) -> usize {
+        self.round.alive_actors[1]
+            .iter()
+            .flatten()
+            .filter(|&&r| self.content.identity(self.objects.get(r).identity).quiet_win)
+            .count()
+    }
+
+    // ---- End of round ------------------------------------------------------
+
+    fn mode_fade_out(&mut self) {
+        if self.round.init == 0 {
+            // sub_80094DA: to white when the battle was won against one of
+            // the Cybeasts (NameIDs 0x173..=0x17E; `sub_800A7A6` over side 1's actors,
+            // `sub_800A832`'s result code 1), otherwise to black; either
+            // takes 16 ticks.
+            let white = self.quiet_win_foes() != 0 && self.round.result & 0xF == 1;
+            self.fade.start(if white { FadeMode::EndToWhite } else { FadeMode::EndToBlack }, 0x10);
+            self.round.init = 4;
+            return;
+        }
+        if !self.fade.active() {
+            self.play_sound(SoundCue::StopMusic);
+            self.objects.free_all();
+            self.round.top = top::END;
+            self.round.mode = 0;
+            self.round.sub = 0;
+            self.round.init = 0;
+        }
+    }
+
+    // ---- Per-tick helpers ----------------------------------------------------
+
+    /// `sub_800FDC0`: expose each player's hand on their navi.
+    fn update_player_hands(&mut self) {
+        for side in 0..2 {
+            for slot in 0..4 {
+                let Some(r) = self.round.alive_actors[side][slot] else { continue };
+                let Some(a) = self.objects.get(r).actor else { continue };
+                if self.actors.get(a).actor_type != crate::actor::ActorType::Player {
+                    continue;
+                }
+                let alliance = self.objects.get(r).alliance as usize;
+                let hand = &self.hands[alliance];
+                let (held, next) = (hand.remaining(), hand.next_chip());
+                let o = self.objects.get_mut(r);
+                o.chips_held = held;
+                o.chip = next;
+            }
+        }
+    }
+
+    /// `sub_800AE90`: a warning marker on the HUD this tick, over the
+    /// custom gauge or over the place `at` on the field, with `sound` on
+    /// every 16th frame of the console's frame counter; on `console`'s HUD
+    /// only, or on both.
+    pub fn warn(&mut self, sound: impl Into<SoundCue>, at: Option<crate::object::Vec3>, console: Option<u8>) {
+        let sound = sound.into();
+        for side in 0..2u8 {
+            if console.is_some_and(|c| c & 1 != side) {
+                continue;
+            }
+            self.warnings[side as usize].push(crate::hud::Warning { at });
+            if self.consoles[side as usize].frames & 0xF == 0 {
+                self.play_sound_for(side, sound);
+            }
+        }
+    }
+
+    /// `sub_801DC7C(dx, dy)`: `console`'s HUD (or both) numbers `r`'s HP
+    /// under it, `dx`, `dy` pixels from where it projects its position;
+    /// `damage`: the damage it took instead, uncentered (see
+    /// [`HpNumber`](crate::hud::HpNumber)). It takes the first free place;
+    /// it gets none when one before the first free place has it already or
+    /// when all four are taken. (A place freed before the one that has it
+    /// is taken anew: the original stops at the first free place.)
+    pub fn show_hp(&mut self, r: ObjectRef, dx: i8, dy: i8, damage: bool, console: Option<u8>) {
+        let hp = self.objects.get(r).hp;
+        for side in 0..2u8 {
+            if console.is_some_and(|c| c & 1 != side) {
+                continue;
+            }
+            for place in &mut self.hp_numbers[side as usize] {
+                match place {
+                    Some(n) if n.object == r => break,
+                    Some(_) => {}
+                    None => {
+                        *place = Some(crate::hud::HpNumber { object: r, dx, dy, hp, damage });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// `sub_801DD34`: no more HP number for `r` (the first place that has
+    /// it, on each console).
+    pub fn hide_hp(&mut self, r: ObjectRef) {
+        for places in &mut self.hp_numbers {
+            if let Some(place) = places.iter_mut().find(|p| p.is_some_and(|n| n.object == r)) {
+                *place = None;
+            }
+        }
+    }
+
+    /// `sub_801E270`: the HUD says `message` for a second.
+    pub(crate) fn show_message(&mut self, message: crate::hud::Message) {
+        self.message = Some(crate::hud::MessageLine { message, ticks: crate::hud::MessageLine::SHOWN_TICKS });
+    }
+
+    /// `sub_801EB18(chip, damage, bonus)` on the other player's console:
+    /// `side` used `chip`, whose name (with the attack's damage word and
+    /// bonus, for a chip whose damage shows) that console shows for the
+    /// rules' `effects.used_chip_ticks`. Where telops run apart (EXE4's
+    /// 0x080164B4, the second block), the name takes the place of the
+    /// side's telop there.
+    pub(crate) fn show_used_chip(&mut self, side: u8, chip: ChipHandle, damage: u16, bonus: u16) {
+        let shows_damage = self.content.chip(chip).flags.0 & crate::content::ChipFlags::HAS_DAMAGE != 0;
+        let (damage, bonus) = if shows_damage { (damage, bonus) } else { (0, 0) };
+        if self.game_rules().effects.telops == crate::content::Telops::Apart && self.is_remote(side & 1) {
+            self.remote_telop = Banner::default();
+        }
+        self.used_chips[side as usize & 1] = Some(crate::hud::UsedChip {
+            chip,
+            damage: damage & 0x7FF,
+            doubled: damage & 0x8000 != 0,
+            bonus: bonus & !0x7800,
+            ticks: self.game_rules().effects.used_chip_ticks,
+        });
+    }
+
+    fn run_hud_tasks(&mut self) {
+        // sub_801C168: an HP number whose object's HP is 0 frees its place.
+        // (An object freed with HP left would keep its place in the
+        // original, which goes on reading the freed slot; here the place
+        // goes with it. No netbattle object leaves so: LilBoiler takes its
+        // number away as it goes.)
+        for places in &mut self.hp_numbers {
+            for place in places.iter_mut() {
+                if place.is_some_and(|n| {
+                    let o = self.objects.get(n.object);
+                    o.hp == 0 || o.flags & crate::object::flags::ACTIVE == 0
+                }) {
+                    *place = None;
+                }
+            }
+        }
+        if self.gauge.enabled {
+            self.fill_gauge();
+        }
+        self.low_hp_sound();
+        // sub_801D1D8: the used chips' names run out.
+        for used in &mut self.used_chips {
+            if let Some(u) = used {
+                u.ticks -= 1;
+                if u.ticks == 0 {
+                    *used = None;
+                }
+            }
+        }
+        // (The other player's telop, on the block their names show on.)
+        self.remote_telop.tick();
+        // sub_801CA0C: so does the message. Its end shows the defensive
+        // chips' marks again, unless the battle is over (`sub_801E1A4`).
+        if let Some(m) = &mut self.message {
+            m.ticks -= 1;
+            if m.ticks == 0 {
+                self.message = None;
+                if self.is_battle_over() {
+                    self.hud_hidden.defensive_marks = true;
+                }
+            }
+        }
+        // While the custom screen is up the banner is the local player's
+        // screen's (its Program Advance's), already stepped with it.
+        let local = self.round.local_side as usize;
+        if self.round.mode == mode::CUSTOM
+            && let Some(s) = &self.custom.sides[local].screen
+        {
+            self.banner = s.hud;
+            return;
+        }
+        self.banner.tick();
+    }
+
+    /// `sub_801C470`.
+    fn fill_gauge(&mut self) {
+        if self.paused || self.is_dimmed() || self.round.flags & battle_flags::GAUGE_FULL != 0 {
+            return;
+        }
+        let v = self.gauge.value.wrapping_add(self.gauge.rate);
+        self.gauge.value = v;
+        if v >= CustomGauge::FULL {
+            self.gauge.value = CustomGauge::FULL;
+            if !self.late_turns() {
+                self.set_flags(battle_flags::GAUGE_FULL);
+                self.sound(SoundRole::GaugeFull);
+            }
+        }
+    }
+
+    fn update_linked_registry(&mut self) {
+        crate::kinds::update_linked_registry(self);
+    }
+
+    /// `chip_800AEE8`: chips flagged for it recompute their damage every tick.
+    fn refresh_variable_damage(&mut self) {
+        for side in 0..2u8 {
+            crate::hand::refresh_variable_damage(self, side);
+        }
+    }
+
+    fn shift_damage_carry(&mut self) {
+        crate::kinds::shift_damage_carry(self);
+    }
+
+    /// `sub_80102AC` (EXE4's 0x0800C194): the custom screen's HP-drain bug,
+    /// active only while that player's status has one of the rule
+    /// `custom_drain`'s bits (EXE6's: its screen is up; EXE4's: its
+    /// selection runs), every period by the bug's level or the stat itself.
+    fn custom_hp_drain(&mut self, side: u8) {
+        let rule = self.content.rules().custom_drain;
+        if self.round.remote_status[side as usize] & rule.status == 0 {
+            return;
+        }
+        let period = rule.periods.period(self.stats[side as usize].bugs.custom_drain);
+        if period == 0 {
+            return;
+        }
+        let Some(r) = self.player(side) else { return };
+        if self.objects.get(r).hp <= 1 {
+            return;
+        }
+        let Some(a) = self.objects.get(r).actor else { return };
+        let ad = self.actors.get_mut(a);
+        ad.drain_counter += 1;
+        if ad.drain_counter >= period {
+            ad.drain_counter = 0;
+            crate::kinds::subtract_hp(self, r, 1);
+        }
+    }
+
+    /// The HP box's alarm (`sub_801C840`, the HUD's task bit 7; sound
+    /// only): every 45 ticks a console's own navi is at a quarter of its HP
+    /// or less, while the battle is neither over nor paused, that console
+    /// sounds 0x84. The count stops where the HP recovers. (Hiding the HP
+    /// box, `HudHidden::hp_box`, stops its drawing only: the task runs on,
+    /// and so does its count.)
+    fn low_hp_sound(&mut self) {
+        if self.is_battle_over() || self.paused {
+            return;
+        }
+        for side in 0..2u8 {
+            let Some(r) = self.player(side) else { continue };
+            let o = self.objects.get(r);
+            if o.hp > o.max_hp >> 2 {
+                continue;
+            }
+            let ticks = &mut self.consoles[side as usize].low_hp_ticks;
+            *ticks += 1;
+            if *ticks >= LOW_HP_SOUND_TICKS {
+                *ticks = 0;
+                self.sound_for(side, SoundRole::LowHp);
+            }
+        }
+    }
+
+    /// `sub_8009158`: the low-HP music switch (sound only, but it keeps a
+    /// latch in the round state). Each console switches for its own navi;
+    /// the engine keeps both sides' latches. (Where the arena's flow rules
+    /// have it: EXE5 has none.)
+    fn low_hp_music(&mut self) {
+        if self.setup.settings.effects & effects::LINK == 0 || !self.content.rules().flow.low_hp_music {
+            return;
+        }
+        for side in 0..2 {
+            let Some(r) = self.player(side) else { continue };
+            let o = self.objects.get(r);
+            let low = o.hp <= o.max_hp / 4;
+            let latch = &mut self.round.low_hp_music[side as usize];
+            if low != *latch {
+                *latch = low;
+                self.play_sound_for(side, SoundCue::Pinch(low));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::testing;
+    use crate::setup::Stage;
+
+    /// Updates until a fade started now is done (the first update is the
+    /// starter's own, before the frame's step).
+    fn fade_updates(f: &mut Fade, mode: FadeMode, speed: u8) -> u32 {
+        f.start(mode, speed);
+        let mut n = 1;
+        while f.active() {
+            f.step(crate::content::FadeClear::AtTarget);
+            n += 1;
+        }
+        n
+    }
+
+    /// A message's end shows the defensive chips' marks again, unless the
+    /// battle is over by then (`sub_801E1A4`): then they stay hidden until
+    /// a custom screen opens.
+    #[test]
+    fn a_message_ending_once_the_battle_is_over_leaves_the_defensive_marks_hidden() {
+        let hidden_after = |time_up: u8| {
+            let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(1000)), testing::content());
+            b.round.alive = [1, 1];
+            b.show_message(crate::hud::Message::CounterHit);
+            for tick in 0..crate::hud::MessageLine::SHOWN_TICKS {
+                assert!(b.message.is_some() && !b.hud_hidden.defensive_marks, "tick {tick}");
+                if tick == 30 {
+                    b.round.time_up = time_up;
+                }
+                b.run_hud_tasks();
+            }
+            assert!(b.message.is_none());
+            let hidden = b.hud_hidden.defensive_marks;
+            b.enter_mode(mode::CUSTOM);
+            assert!(!b.hud_hidden.defensive_marks, "a custom screen shows them again");
+            hidden
+        };
+        assert_eq!((hidden_after(0), hidden_after(1)), (false, true));
+    }
+
+    #[test]
+    fn the_damage_judge_rolls_59_times_and_rules_on_damage_taken() {
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(1000)), testing::content());
+        b.round.local_side = 0;
+        // Side 0 took more damage: the local side loses.
+        b.start_judge(10, 20);
+        assert_eq!(b.fight.judge.outcome, 2);
+        let seed = b.rng;
+        let mut ticks = 0;
+        while b.step_judge() {
+            ticks += 1;
+        }
+        // T+62 ..= T+274 run, T+275 reports.
+        assert_eq!(ticks, 213);
+        let mut expected = seed;
+        for _ in 0..59 {
+            expected.next();
+        }
+        assert_eq!(b.rng, expected);
+        b.start_judge(20, 20);
+        assert_eq!(b.fight.judge.outcome, 3);
+        b.start_judge(20, 10);
+        assert_eq!(b.fight.judge.outcome, 1);
+    }
+
+    /// docs/design/exe5-map.md §15.3 item 18: a custom screen asked for in
+    /// the fight opens a tick sooner in EXE5's flow (0x08007774 sets the
+    /// result itself once the reversions are done) than in EXE6's, which
+    /// goes through state 0x24 first.
+    #[test]
+    fn exe5s_custom_request_opens_from_its_own_state() {
+        let ticks = |sequencer_before_custom: bool| {
+            let mut c: crate::content::Content = testing::build();
+            c.define().unwrap_or_else(|e| panic!("{e}"));
+            {
+            let rules = c.rules_mut();
+                rules.flow.sequencer_before_custom = sequencer_before_custom;
+            }
+            let c = std::sync::Arc::new(c);
+            let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+            crate::content::testing::on(&mut setup, &c);
+            let mut b = Battle::new(setup, c);
+            b.spawn_actors();
+            b.run_objects();
+            b.fight.state = fight::CUSTOM_REVERT;
+            b.fight.init = 0;
+            let mut n = 0;
+            while b.fight.result != 6 {
+                n += 1;
+                assert!(n < 100, "the screen never opens");
+                match b.fight.state {
+                    fight::CUSTOM_REVERT => b.fight_custom_revert(),
+                    fight::CUSTOM_SEQUENCE => b.fight_custom_sequence(),
+                    s => panic!("state {s:#x}"),
+                }
+            }
+            (n, b.fight.state)
+        };
+        let (exe6, exe6_state) = ticks(true);
+        let (exe5, exe5_state) = ticks(false);
+        assert_eq!((exe5_state, exe6_state), (fight::CUSTOM_REVERT, fight::CUSTOM_SEQUENCE));
+        assert!(exe5 < exe6, "EXE5 {exe5} ticks, EXE6 {exe6}");
+    }
+
+    /// The looks a side's rules set as the round is set up (EXE5's Hub
+    /// Style's faces and enemy name) outlast the player's init, which clears
+    /// the side's block (`sub_802DFC8`).
+    #[test]
+    fn a_sides_looks_outlast_the_players_init() {
+        let c = testing::content();
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c)), c);
+        let looks = SideLooks { face_variant: true, face_variant_any_form: false, window_count: false, name_variant: true };
+        b.looks = [looks; 2];
+        b.sides[1].takeover_ticks = 3;
+        b.spawn_actors();
+        b.run_objects();
+        assert_eq!(b.sides[1].takeover_ticks, 0, "the init clears the side's block");
+        assert_eq!(b.looks, [looks; 2]);
+    }
+
+    /// The duel's round (`scenario::setup`) with these host keys, run with
+    /// both players pressing through their custom screens until the fight
+    /// runs (fighting state 8) and reads keys.
+    fn fighting(host_keys: crate::setup::HostKeys) -> Battle {
+        let mut b = Battle::new(RoundSetup { host_keys, ..crate::scenario::setup() }, crate::scenario::content());
+        let mut last = [None; 2];
+        for _ in 0..2000 {
+            if b.round.mode == mode::FIGHTING && b.fight.state == fight::FIGHTING {
+                return b;
+            }
+            let input = [0, 1].map(|side| {
+                last[side] = crate::scenario::custom_choice(&b, side, last[side]);
+                PlayerTick::buttons(0).with_choice(last[side])
+            });
+            b.tick(&input, TickEvents::default());
+        }
+        panic!("the fight never started (mode {:#x})", b.round.mode);
+    }
+
+    /// One tick with these buttons held, by side.
+    fn held(b: &mut Battle, buttons: [u16; 2]) {
+        b.tick(&buttons.map(|held| PlayerTick::buttons(held)), TickEvents::default());
+    }
+
+    /// A console's battle pauses itself (`sub_800A046`, state 0x1C
+    /// `sub_80083E4`): START in the fight pauses it for the player who
+    /// pressed, with the pause's sound, and only that player's next START
+    /// resumes it. It asks no host.
+    #[test]
+    fn a_consoles_battle_pauses_itself() {
+        let mut b = fighting(crate::setup::HostKeys::NONE);
+        let pause = SoundCue::from(b.roles().sound(SoundRole::Pause));
+        held(&mut b, [0, keys::START]);
+        assert_eq!((b.fight.state, b.fight.pausing_player, b.paused), (fight::PAUSE, 1, true));
+        assert!(b.sound_cues().contains(&pause));
+        assert_eq!(b.pause_requests(), [false; 2]);
+        held(&mut b, [0, 0]);
+        // The other player's START doesn't resume it.
+        held(&mut b, [keys::START, 0]);
+        assert_eq!(b.fight.state, fight::PAUSE);
+        held(&mut b, [0, keys::START]);
+        assert_eq!(b.fight.state, fight::FIGHTING);
+        held(&mut b, [0, 0]);
+        assert!(!b.paused);
+    }
+
+    /// Who holds a battle in the game's own pause, read as output: not state, a battle asked is the battle it
+    /// was.
+    #[test]
+    fn who_holds_the_games_own_pause_is_read_alone() {
+        let mut b = fighting(crate::setup::HostKeys::NONE);
+        let digest = b.digest();
+        assert!(b.paused_by().is_none());
+        assert_eq!(b.digest(), digest, "asked, nothing changes");
+        held(&mut b, [keys::START, 0]);
+        assert_eq!(b.paused_by(), Some(0));
+        // Held there, it goes on ticking in the game's pause, and comes out of it on the same player's START.
+        for _ in 0..30 {
+            held(&mut b, [0, 0]);
+            assert_eq!(b.paused_by(), Some(0));
+        }
+        held(&mut b, [keys::START, 0]);
+        assert_eq!(b.paused_by(), None);
+        // Nobody on the custom screen.
+        let custom = Battle::new(RoundSetup { host_keys: crate::setup::HostKeys::NONE, ..crate::scenario::setup() }, crate::scenario::content());
+        assert!(custom.paused_by().is_none());
+    }
+
+    /// In a round whose host answers the pause (`HostKeys::pause`), START
+    /// in the fight pauses nothing and makes no sound: the tick says who
+    /// pressed it, each player on the tick of their press, and the fight
+    /// runs on as a fight in which nobody pressed START does (but for the
+    /// buttons the input records hold while it is down). Not while the
+    /// battle is dimmed or over, where the original reads no pause either.
+    #[test]
+    fn a_hosts_pause_leaves_the_fight_running_and_says_who_asked() {
+        let host = crate::setup::HostKeys { pause: true, run: false };
+        let mut b = fighting(host);
+        let mut plain = b.clone();
+        let pause = SoundCue::from(b.roles().sound(SoundRole::Pause));
+        // Side 1 presses START and holds it: asked once, on the press.
+        for (tick, want) in [[false, true], [false, false], [false, false]].into_iter().enumerate() {
+            held(&mut b, [0, keys::START]);
+            held(&mut plain, [0, 0]);
+            assert_eq!(b.pause_requests(), want, "tick {tick}");
+            assert_eq!((b.fight.state, b.paused), (fight::FIGHTING, false), "tick {tick}");
+            assert!(!b.sound_cues().contains(&pause), "tick {tick}");
+            assert_eq!(plain.pause_requests(), [false; 2]);
+        }
+        // Released, the battle is the one nobody pressed START in.
+        for _ in 0..3 {
+            held(&mut b, [0, 0]);
+            held(&mut plain, [0, 0]);
+        }
+        assert_eq!(b.digest(), plain.digest());
+        // Both on one tick: both are said (the original's names player 0).
+        held(&mut b, [keys::START, keys::START]);
+        assert_eq!(b.pause_requests(), [true, true]);
+        assert_eq!(b.fight.state, fight::FIGHTING);
+        held(&mut b, [0, 0]);
+        assert_eq!(b.pause_requests(), [false; 2]);
+        // Dimmed, and over: no pause to ask for.
+        let mut dimmed = b.clone();
+        dimmed.set_flags(battle_flags::DIMMED);
+        held(&mut dimmed, [keys::START, 0]);
+        assert_eq!(dimmed.pause_requests(), [false; 2]);
+        let mut over = b.clone();
+        over.round.time_up = 1;
+        held(&mut over, [keys::START, 0]);
+        assert_eq!(over.pause_requests(), [false; 2]);
+        // A snapshot restored and stepped again says it again: the request
+        // is the tick's output, as its sound is.
+        let snapshot = b.clone();
+        held(&mut b, [keys::START, 0]);
+        let mut again = snapshot;
+        held(&mut again, [keys::START, 0]);
+        assert_eq!((again.pause_requests(), again.digest()), ([true, false], b.digest()));
+    }
+
+    #[test]
+    fn screen_fades_keep_their_level() {
+        let mut f = Fade::default();
+        // The intro clears the faded screen in 17 updates.
+        assert_eq!(fade_updates(&mut f, FadeMode::IntroFromBlack, 0x10), 18);
+        assert_eq!(f.level, 0);
+        // A dim from a clear screen: 16 steps; a counter cut-in's dim from
+        // the dimmed screen: 1.
+        assert_eq!(fade_updates(&mut f, FadeMode::Dim, 4), 17);
+        assert_eq!(f.level, 0x40);
+        assert_eq!(fade_updates(&mut f, FadeMode::Dim, 4), 2);
+        // The undim: its first step holds the level.
+        f.start(FadeMode::Undim, 4);
+        assert_eq!(f.remaining(crate::content::FadeClear::AtTarget), 17);
+        assert_eq!(fade_updates(&mut f, FadeMode::Undim, 4), 18);
+        assert_eq!(f.level, 0);
+        f.start(FadeMode::TransformOut, 0x10);
+        assert_eq!(f.remaining(crate::content::FadeClear::AtTarget), 16);
+        // EXE4's fade toward clear ends a step later, on the level it would
+        // take under its target, and keeps the last one.
+        let mut f = Fade::default();
+        f.start(FadeMode::IntroFromWhite, 0x10);
+        assert_eq!(f.remaining(crate::content::FadeClear::PastTarget), Fade::intro_ticks(crate::content::FadeClear::PastTarget));
+        let mut n = 1;
+        while f.active() {
+            f.step(crate::content::FadeClear::PastTarget);
+            n += 1;
+        }
+        assert_eq!((n, f.level), (19, 0));
+    }
+
+    /// A best-of-three netbattle round about to leave its end state, with
+    /// the set standing at `wins`-`losses` after `round` rounds.
+    fn ending(wins: u8, losses: u8, round: u8) -> Battle {
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::stats(1000));
+        setup.settings.effects = 0xE8C;
+        let content = testing::content();
+        setup.later_stages = vec![
+            Stage { stage: content.stage_by_key(testing::ROCK_BATTLE), background: crate::content::BackgroundId(3) },
+            Stage { stage: content.stage_by_key(testing::LINK_BATTLE_SIDE0_FIRST), background: crate::content::BackgroundId(0x13) },
+        ];
+        let mut b = Battle::new(setup, testing::content());
+        let r = &mut b.round;
+        (r.top, r.mode, r.sub, r.init) = (top::END, 4, 0, 0);
+        (r.wins, r.losses, r.round, r.max_combo) = (wins, losses, round, 1);
+        r.result = if wins > losses { 1 } else { 2 };
+        b.paused = true;
+        b
+    }
+
+    fn tick(b: &mut Battle) {
+        b.tick(&[PlayerTick::default(), PlayerTick::default()], TickEvents::default());
+    }
+
+    #[test]
+    fn an_undecided_set_chains_its_next_round_on_the_drawn_stage() {
+        let mut b = ending(1, 0, 1);
+        tick(&mut b);
+        let Some(RoundEnd::NextRound { settings, score }) = b.round_end() else { panic!("{:?}", b.round_end()) };
+        // The drawn table entry, with this round's effects and the drawn
+        // background.
+        let drawn = testing::content().stage_by_key(testing::ROCK_BATTLE);
+        assert_eq!(*settings, BattleSettings { stage: drawn, effects: 0xE8C, background: crate::content::BackgroundId(3) });
+        assert_eq!(*score, SetScore { wins: 1, losses: 0, round: 1, max_combo: 1 });
+        assert_eq!(b.round.top, top::INIT);
+        assert_eq!(b.sound_cues(), [SoundCue::StopMusic]);
+    }
+
+    #[test]
+    fn a_decided_set_ends_the_battle() {
+        let mut b = ending(2, 0, 2);
+        tick(&mut b);
+        assert_eq!(b.round_end(), Some(&RoundEnd::Over(BattleResult::Won)));
+        assert_eq!((b.round.top, b.round.mode, b.round.running, b.paused), (top::END, 4, 0, false));
+        tick(&mut b);
+        assert_eq!(b.sound_cues(), [], "the battle ends once");
+
+        let mut b = ending(1, 2, 3);
+        tick(&mut b);
+        assert_eq!(b.round_end(), Some(&RoundEnd::Over(BattleResult::Lost)));
+        let mut b = ending(1, 1, 3);
+        b.round.result = 1;
+        tick(&mut b);
+        assert_eq!((b.round_end(), b.round.result), (Some(&RoundEnd::Over(BattleResult::Drawn)), 3));
+    }
+
+    /// A set of `n` rounds (the stages it lists after the first, and one)
+    /// is decided once one side can no longer be caught, or after its last
+    /// round, drawn if level: best of five goes on at 2-0 and 2-2, ends at
+    /// 3-0, 0-3 and 3-2; best of four may end drawn at 2-2; a set of one
+    /// round ends after it.
+    #[test]
+    fn a_set_of_n_rounds_is_decided_by_its_count() {
+        let after = |rounds: usize, wins: u8, losses: u8| {
+            let mut b = ending(wins, losses, wins + losses);
+            let stage = b.setup.later_stages[0];
+            b.setup.later_stages = vec![stage; rounds - 1];
+            tick(&mut b);
+            b.round_end().cloned()
+        };
+        let next = |r: Option<RoundEnd>| matches!(r, Some(RoundEnd::NextRound { .. }));
+        assert!(next(after(5, 2, 0)) && next(after(5, 2, 2)) && next(after(5, 1, 2)));
+        assert_eq!(after(5, 3, 0), Some(RoundEnd::Over(BattleResult::Won)));
+        assert_eq!(after(5, 0, 3), Some(RoundEnd::Over(BattleResult::Lost)));
+        assert_eq!(after(5, 3, 2), Some(RoundEnd::Over(BattleResult::Won)));
+        assert!(next(after(4, 2, 1)));
+        assert_eq!(after(4, 2, 2), Some(RoundEnd::Over(BattleResult::Drawn)));
+        assert_eq!(after(1, 0, 1), Some(RoundEnd::Over(BattleResult::Lost)));
+        // (The rounds' count is the setup's: one more than it lists.)
+        assert_eq!(ending(0, 0, 0).setup.rounds(), 3);
+    }
+
+    /// A set first to `n` round wins, its `2n − 1` rounds (a match's:
+    /// saito-match's `rounds_for`), goes by the original's triple battle's
+    /// rule over them: it ends once its result can no longer change whatever
+    /// the rounds left bring (each won, lost or drawn), and not before; with
+    /// no round drawn, that is when a side has `n` wins. Every score of every
+    /// set first to 1 to 6, drawn rounds among them. First to 2 is the
+    /// original's code itself (`sub_800AF50`, `rem = 3 − r`), and first to 1
+    /// ends with its one round, whatever it was.
+    #[test]
+    fn a_set_first_to_n_ends_once_its_result_cant_change() {
+        // (Where the set stands after `wins`, `losses` and `drawn` rounds.)
+        let after = |first_to: u8, wins: u8, losses: u8, drawn: u8| {
+            let mut b = ending(wins, losses, wins + losses + drawn);
+            let stage = b.setup.later_stages[0];
+            b.setup.later_stages = vec![stage; 2 * first_to as usize - 2];
+            tick(&mut b);
+            match b.round_end() {
+                Some(RoundEnd::NextRound { .. }) => None,
+                Some(RoundEnd::Over(result)) => Some(*result),
+                other => panic!("{other:?}"),
+            }
+        };
+        let by_count = |wins: u8, losses: u8| match wins.cmp(&losses) {
+            std::cmp::Ordering::Greater => BattleResult::Won,
+            std::cmp::Ordering::Less => BattleResult::Lost,
+            std::cmp::Ordering::Equal => BattleResult::Drawn,
+        };
+        // Every result the rounds left can still bring.
+        fn results(wins: u8, losses: u8, left: u8, by_count: &dyn Fn(u8, u8) -> BattleResult, out: &mut Vec<BattleResult>) {
+            if left == 0 {
+                out.push(by_count(wins, losses));
+                return;
+            }
+            for (w, l) in [(1, 0), (0, 1), (0, 0)] {
+                results(wins + w, losses + l, left - 1, by_count, out);
+            }
+        }
+        for first_to in 1..=6u8 {
+            let rounds = 2 * first_to - 1;
+            for played in 1..=rounds {
+                for wins in 0..=played {
+                    for losses in 0..=played - wins {
+                        let drawn = played - wins - losses;
+                        let mut can = Vec::new();
+                        results(wins, losses, rounds - played, &by_count, &mut can);
+                        let only = can.iter().all(|&r| r == can[0]).then_some(can[0]);
+                        let case = format!("first to {first_to}: {wins}-{losses} with {drawn} drawn");
+                        assert_eq!(after(first_to, wins, losses, drawn), only, "{case}");
+                        if drawn == 0 && wins <= first_to && losses <= first_to {
+                            assert_eq!(only.is_some(), wins == first_to || losses == first_to, "{case}");
+                        }
+                        if first_to == 2 {
+                            // (`sub_800AF50` as the original has it.)
+                            let rem = 3 - played as i32;
+                            let (w, l) = (wins as i32, losses as i32);
+                            let original = if w > l + rem {
+                                Some(BattleResult::Won)
+                            } else if l > w + rem {
+                                Some(BattleResult::Lost)
+                            } else if played >= 3 {
+                                Some(BattleResult::Drawn)
+                            } else {
+                                None
+                            };
+                            assert_eq!(after(first_to, wins, losses, drawn), original, "{case}");
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(after(1, 0, 0, 1), Some(BattleResult::Drawn));
+    }
+
+    #[test]
+    fn a_latched_low_hp_switch_plays_no_pinch_cue_on_the_first_tick() {
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::stats(500));
+        setup.low_hp_music_latched = true;
+        let mut b = Battle::new(setup, testing::content());
+        tick(&mut b);
+        assert_eq!(b.sound_cues(), [SoundCue::Music(b.roles().music(MusicRole::LinkBattle))]);
+        tick(&mut b);
+        assert_eq!(b.sound_cues(), [SoundCue::Pinch(false)]);
+    }
+
+    #[test]
+    fn a_warning_sounds_on_a_consoles_sixteenth_frames() {
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(500)), testing::content());
+        (b.consoles[0].frames, b.consoles[1].frames) = (15, 3);
+        tick(&mut b);
+        assert_eq!((b.consoles[0].frames, b.consoles[1].frames), (16, 4));
+        // (Any sound: content names the marker's own.)
+        let id = b.roles().sound(SoundRole::Pause);
+        let sound = SoundCue::from(id);
+        let heard = |b: &Battle, side: u8| b.sound_cues_for(side).iter().filter(|&&c| c == sound).count();
+        // Over the gauge, on both consoles: only the one on a 16th frame
+        // sounds it.
+        b.warn(id, None, None);
+        assert_eq!((b.warnings[0].len(), b.warnings[1].len()), (1, 1));
+        assert_eq!((heard(&b, 0), heard(&b, 1)), (1, 0));
+        // Over a place, on one console: every call sounds on such a frame.
+        let at = crate::object::Vec3 { x: 20 << 16, y: 12 << 16, z: 0 };
+        b.warn(id, Some(at), Some(0));
+        assert_eq!(b.warnings[0][1].at, Some(at));
+        assert_eq!((b.warnings[0].len(), b.warnings[1].len(), heard(&b, 0)), (2, 1, 2));
+        // The markers last the tick.
+        tick(&mut b);
+        assert!(b.warnings.iter().all(Vec::is_empty));
+    }
+
+    #[test]
+    fn a_console_sounds_every_45_ticks_its_navi_is_low() {
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(500)), testing::content());
+        tick(&mut b);
+        tick(&mut b);
+        let navi = b.player(0).expect("side 0's navi");
+        b.objects.get_mut(navi).hp = 125;
+        b.paused = false;
+        let alarm = SoundCue::from(b.roles().sound(SoundRole::LowHp));
+        let heard = |b: &Battle, side: u8| b.sound_cues_for(side).iter().filter(|&&c| c == alarm).count();
+        for _ in 0..44 {
+            b.low_hp_sound();
+        }
+        assert_eq!(heard(&b, 0), 0);
+        // Not while paused; then on the 45th tick, on its own console only.
+        b.paused = true;
+        b.low_hp_sound();
+        assert_eq!(heard(&b, 0), 0);
+        b.paused = false;
+        b.low_hp_sound();
+        assert_eq!((heard(&b, 0), heard(&b, 1)), (1, 0));
+        // Above a quarter the count waits.
+        b.objects.get_mut(navi).hp = 126;
+        for _ in 0..90 {
+            b.low_hp_sound();
+        }
+        assert_eq!(heard(&b, 0), 1);
+    }
+}

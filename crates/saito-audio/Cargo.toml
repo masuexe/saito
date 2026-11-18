@@ -1,0 +1,30 @@
+[package]
+name = "saito-audio"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Plays the battle engine's sound cues through the M4A sound driver"
+
+[dependencies]
+m4a.workspace = true
+saito-battle.workspace = true
+cpal = { workspace = true, optional = true }
+
+# The browser's device: an AudioWorklet on the module's shared memory (cpal's, with Wasm's atomics), else WebAudio.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, optional = true, features = ["wasm-bindgen", "audioworklet"] }
+
+[features]
+default = ["playback"]
+# Real-time output through the default audio device (AudioOut).
+playback = ["dep:cpal"]
+
+[dev-dependencies]
+saito-battle = { workspace = true, features = ["test-content"] }
+# The examples extract a game's sound from its ROMs, by its recipe in the content.
+saito-content = { path = "../saito-content" }
+saito-extract = { path = "../saito-extract" }
+
+[[example]]
+name = "play_song"
+required-features = ["playback"]

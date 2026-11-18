@@ -1,0 +1,888 @@
+//! saito-tool: saito's command line without a window, for the developer
+//! and the verification: chosen frames of a battle to PNGs (a trace's, a
+//! match file's, a replay's), a replay as video (an MP4 through ffmpeg),
+//! the content and trace audits, a match's setup and a
+//! replay checked (docs/tools.md). Its options are the retired
+//! saito-demo's for the same.
+
+#![forbid(unsafe_code)]
+
+use saito_frontend::driver::{Driver, InFight, LivePlayer, Opponent};
+use saito_frontend::game::{Failed, Game, LoadError, RomSource, Sound};
+use saito_frontend::player::Player;
+use saito_frontend::session;
+use saito_render::compose::{HEIGHT, Size, WIDTH};
+use saito_render::{Consoles, Enhancements};
+use saito_render::vfont::TextRenderer;
+use saito_tools::headless;
+use saito_tools::trace::trace_rounds;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+struct Args {
+    content: Option<PathBuf>,
+    mute: bool,
+    /// The trace (several with --audit).
+    traces: Vec<PathBuf>,
+    /// The trace round to start with (none given: the first); of a
+    /// replay's video, the round it shows alone.
+    round: Option<usize>,
+    /// Play this match file; write the match played to that one.
+    match_file: Option<PathBuf>,
+    save_match: Option<PathBuf>,
+    show_folders: bool,
+    keys: Option<String>,
+    /// What the opponent does in the fight of a match file's set played
+    /// headless (none: it stands still).
+    opponent: Option<InFight>,
+    headless: Option<String>,
+    audit: bool,
+    /// With --audit: draw every frame and play every cue as well.
+    draw: bool,
+    /// Audit traces on this many threads (0: every core's).
+    jobs: usize,
+    /// With --audit: write each trace's lookups here.
+    lookups: Option<PathBuf>,
+    audit_content: bool,
+    objects: bool,
+    /// With --headless: time the frames' drawing instead of writing them.
+    time: bool,
+    /// With --headless: what to mark where it is drawn (`Problems::marking`).
+    marks: Vec<String>,
+    out: PathBuf,
+    png_scale: usize,
+    /// With --headless: the filled window's frames this many columns wide
+    /// and rows tall (none: the original's 240 and 160).
+    width: Option<usize>,
+    height: Option<usize>,
+    enhancements: Enhancements,
+    font: Option<PathBuf>,
+    lang: String,
+    /// Write a replay of the set played headless to this file.
+    record: Option<PathBuf>,
+    /// Play this replay; shown from this side (none: the recorder's), its
+    /// console alone or both on one screen (that side's on the left).
+    replay: Option<PathBuf>,
+    side: Option<u8>,
+    consoles: Consoles,
+    /// Write the replay as an MP4 here, through ffmpeg; the picture this
+    /// many times the frame; the frames shown, as `--headless` numbers them
+    /// (none: the round's, or all).
+    mp4: Option<PathBuf>,
+    scale: u32,
+    ticks: Option<String>,
+    /// The video shows both consoles side by side (`--side`'s at the left).
+    both_sides: bool,
+}
+
+const USAGE: &str = "\
+usage: saito-tool [OPTIONS] TRACE.jsonl --headless FRAMES [--out DIR] [--png-scale N]
+       saito-tool [OPTIONS] --match FILE --headless FRAMES [--keys K] [--opponent O]
+       saito-tool [OPTIONS] --replay FILE --headless FRAMES [--side SIDE|both[-left|-right]]
+       saito-tool [OPTIONS] --replay FILE --mp4 OUT [--scale N] [--both-sides] [--round N | --ticks A-B]
+       saito-tool [OPTIONS] --match FILE [--show-folders] [--save-match FILE]
+       saito-tool [OPTIONS] --replay FILE
+       saito-tool [OPTIONS] --match FILE --audit-content
+       saito-tool [OPTIONS] --audit TRACE.jsonl...
+
+  The battles of one game: a match file names its game, a replay and a
+  trace state their own. The game is played on its content folder and the
+  support folders it uses, drawn and heard from its assets, extracted from its
+  ROMs as it loads: $SAITO_ROMS (the Legacy Collection's folder, or a
+  folder of its ROMs), else the Legacy Collection where Steam installed it.
+  Nothing opens a window: a battle is played in a window by saito.
+  --content DIR    the content directory (default: $SAITO_CONTENT, else a
+                   content/ beside the program, else this repository's)
+  --mute           no sound in the audits (headless rendering plays none), and
+                   none in a video
+  --round N        the trace round to start with (default 1; later rounds
+                   follow); with --mp4, the round shown alone
+  --match FILE     the match this file sets up (docs/frontend.md §6): its
+                   setup said on the terminal (the folders with
+                   --show-folders), its frames rendered with --headless; with
+                   --audit-content, the game whose content is audited.
+                   Its seed sets the battle's RNG (else the clock's)
+  --save-match FILE  write the match played with its seed to FILE as a match
+                   file, to play again
+  --show-folders   say both players' folders with the setup
+  --record FILE    with --match --headless: write the set played to FILE as
+                   a replay (docs/frontend.md §8)
+  --replay FILE    a replay: played to its end and checked against the
+                   digests it kept (what happened, and whether it
+                   reproduced; exits 1 where it doesn't); with --headless F,
+                   its frames F (ticks of the set) rendered
+  --side SIDE      with --replay or a trace and --headless or --mp4: the
+                   console shown, left or right (default: the side that
+                   recorded it; a trace drawn for the other console keeps the
+                   traced console's simulation, as netplay's other peer does);
+                   both: both players on one screen, the side that recorded
+                   it on the left (both-left, both-right: that side's on the
+                   left), the right player's pieces mirrored onto the right;
+                   a video's sound then the left console's with the right
+                   side's own effects over it, one track
+  --mp4 OUT        with --replay: write it as an MP4 (H.264 and AAC, the
+                   sound at 48 kHz), encoded by ffmpeg ($SAITO_FFMPEG, else
+                   one beside this program, else the path's): a frame a tick,
+                   as a viewer playing it straight shows and plays it, each
+                   round a chapter ('Round N') and the sound titled with its
+                   player's name; OUT is there only once it is whole
+  --scale N        with --mp4: the picture N times the frame's
+                   240x160 (default 1; the sharp text and HUD are drawn at that
+                   size)
+  --ticks A-B      with --mp4: the frames A to B alone, as --headless
+                   numbers them (the pictures after the set's ticks A to B)
+  --both-sides     with --mp4: both consoles side by side, in a
+                   picture twice as wide: --side's at the left (default: the
+                   side that recorded it), each console's sound a track of
+                   its own, the left one's first
+  --headless F     render frames F (e.g. 150,300,600 or 100-120; trace frame
+                   numbers, or ticks in live play) to frame_NNNNN.png files
+                   in --out (default .)
+  --out DIR        where --headless writes
+  --png-scale N    with --headless: each frame N times its size
+  --width N        with --headless, with fill (--text): each frame N
+                   columns wide (240 or more; default 240), as a window that
+                   wide at the frame's height shows it: the field in the
+                   middle, the background on to both edges, each piece of
+                   the HUD against the edge the original draws it against
+  --height N       with --headless, with fill (--text): each frame N rows
+                   tall (160 or more; default 160), as --width is wide: the
+                   field in the middle, the background on above and below,
+                   each piece of the HUD against the top or the bottom edge
+  --time           with --headless: draw each of FRAMES at --png-scale and
+                   write none, and say how long making and presenting a
+                   frame took, and the drawings read and rasterized
+  --objects        with --headless: list every rendered frame's objects (kind,
+                   place, sprite, animation, look) and what its sprite draw
+                   took of the frame's budget and left out
+  --mark M,...     with --headless: write where each of these is drawn, by
+                   frame, to marks.tsv in --out: sprite:NAME (an object drawn
+                   with it; sprite:NAME:ANIM, in that animation), background:NAME, chip:KEY (its picture in the
+                   chip window), button:NAME (a custom screen button's
+                   picture there), chip-icon:KEY (its icon: over its navi, in
+                   the custom screen's slots and picked column),
+                   chip-description:KEY (its description in the chatbox),
+                   chip-window-at-close (the HUD's chip name before the
+                   navi's first decision); for a frame comparison that knows
+                   what a console shows otherwise there
+  --keys K         with --headless --match: the buttons you hold, by tick (e.g.
+                   232-233:up,300:a+b; a b l r up down left right start
+                   select; switch0 switch1 switch2 ask a party's switch
+                   to that member)
+  --opponent O     with --headless --match: what the other side does in the
+                   fight: still (default: it presses nothing), moves (it
+                   moves about at random and never attacks) or attacks (it
+                   presses at random what a player fights with); on its
+                   custom screen it picks the first chip it can
+  --audit-content  with --match FILE: make every lookup the drawing code and
+                   audio make for everything the game's content defines
+                   (every chip's icon, picture and name, every navi's and
+                   form's face, every asset the content names), in every
+                   language, and list what its assets, extracted from its
+                   ROMs, don't have; exits 1 if there was any. (The assets
+                   against the content, their names, frames and timing:
+                   saito-content check <game>.)
+  --audit          run the traces (several at a time) making each frame's
+                   lookups and checking each sound cue, and list what they
+                   named that the assets don't have (a sprite, an animation, a
+                   palette, a chip's icon or name glyph, a banner, a song);
+                   exits 1 if there was any
+  --draw           with --audit: draw every frame and play every sound cue
+                   into nothing as well (slower)
+  --jobs N         with --audit: traces at a time (default: one a core)
+  --lookups FILE   with --audit: write each trace's lookups to FILE (a line
+                   each: the trace, a tab, the lookup), for the trace cover;
+                   with --audit-content, its own (as the trace \"content\")
+  --text E         the graphics enhancements the battle is drawn with
+                   (docs/frontend.md §3): enhanced (default; `font` says the
+                   same) for all of them, original for none (the original's
+                   picture exactly, what the frame comparison uses), or some
+                   of these joined by commas: text (the names, the telop,
+                   the chatbox and the HUD's lines in a vector font over the
+                   scaled frame), hud (the pictures' words, the numbers and
+                   the frames redrawn at the output's resolution), motion
+                   (the background's glide, the gauge's smooth fill, the
+                   banners' squash and the custom screen's slide between
+                   whole pixels), fill (--width and --height)
+  --font PATH      the sharp text's font (a TrueType or OpenType file) instead
+                   of the bundled one (Noto Sans CJK, its cut of the language)
+  --lang LANG      the language of the battle's text: en (default, the
+                   content's own) or ja (the content's locales/ja.toml, and
+                   the game's fonts and pictures with text)";
+
+fn parse(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut a = Args {
+        content: None,
+        mute: false,
+        traces: Vec::new(),
+        round: None,
+        match_file: None,
+        save_match: None,
+        show_folders: false,
+        keys: None,
+        opponent: None,
+        headless: None,
+        audit: false,
+        draw: false,
+        jobs: 0,
+        lookups: None,
+        audit_content: false,
+        objects: false,
+        time: false,
+        marks: Vec::new(),
+        out: PathBuf::from("."),
+        png_scale: 1,
+        width: None,
+        height: None,
+        enhancements: Enhancements::ALL,
+        font: None,
+        lang: saito_assets::BASE_LANGUAGE.into(),
+        record: None,
+        replay: None,
+        side: None,
+        consoles: Consoles::One,
+        mp4: None,
+        scale: 1,
+        ticks: None,
+        both_sides: false,
+    };
+    while let Some(arg) = it.next() {
+        let mut value = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
+        let number = |v: String, name: &str| v.parse::<u64>().map_err(|_| format!("bad {name} {v:?}"));
+        match arg.as_str() {
+            "--content" => a.content = Some(value("--content")?.into()),
+            "--mute" => a.mute = true,
+            "--round" => a.round = Some(number(value("--round")?, "--round")? as usize),
+            "--mp4" => a.mp4 = Some(value("--mp4")?.into()),
+            "--scale" => a.scale = number(value("--scale")?, "--scale")? as u32,
+            "--ticks" => a.ticks = Some(value("--ticks")?),
+            "--both-sides" => a.both_sides = true,
+            "--match" => a.match_file = Some(value("--match")?.into()),
+            "--save-match" => a.save_match = Some(value("--save-match")?.into()),
+            "--show-folders" => a.show_folders = true,
+            "--keys" => a.keys = Some(value("--keys")?),
+            "--opponent" => {
+                a.opponent = Some(match value("--opponent")?.as_str() {
+                    "still" => InFight::StandsStill,
+                    "moves" => InFight::MovesAround,
+                    "attacks" => InFight::AttacksAtRandom,
+                    s => return Err(format!("bad --opponent {s:?} (still, moves or attacks)")),
+                });
+            }
+            "--headless" => a.headless = Some(value("--headless")?),
+            "--audit" => a.audit = true,
+            "--draw" => a.draw = true,
+            "--jobs" => a.jobs = number(value("--jobs")?, "--jobs")? as usize,
+            "--lookups" => a.lookups = Some(value("--lookups")?.into()),
+            "--audit-content" => a.audit_content = true,
+            "--objects" => a.objects = true,
+            "--time" => a.time = true,
+            "--mark" => a.marks.extend(value("--mark")?.split(',').filter(|m| !m.is_empty()).map(str::to_string)),
+            "--out" => a.out = value("--out")?.into(),
+            "--png-scale" => a.png_scale = number(value("--png-scale")?, "--png-scale")? as usize,
+            "--width" => {
+                let v = value("--width")?;
+                a.width = Some(number(v.clone(), "--width")?.try_into().ok().filter(|&n: &usize| n >= 240).ok_or_else(|| format!("bad --width {v:?} (240 or more)"))?);
+            }
+            "--height" => {
+                let v = value("--height")?;
+                a.height = Some(number(v.clone(), "--height")?.try_into().ok().filter(|&n: &usize| n >= 160).ok_or_else(|| format!("bad --height {v:?} (160 or more)"))?);
+            }
+            "--text" => a.enhancements = value("--text")?.parse()?,
+            "--font" => a.font = Some(value("--font")?.into()),
+            "--lang" => a.lang = value("--lang")?,
+            "--record" => a.record = Some(value("--record")?.into()),
+            "--replay" => a.replay = Some(value("--replay")?.into()),
+            "--side" => {
+                (a.side, a.consoles) = match value("--side")?.as_str() {
+                    "left" => (Some(0), Consoles::One),
+                    "right" => (Some(1), Consoles::One),
+                    "both" => (None, Consoles::Both),
+                    "both-left" => (Some(0), Consoles::Both),
+                    "both-right" => (Some(1), Consoles::Both),
+                    s => return Err(format!("bad --side {s:?} (left, right, both, both-left or both-right)")),
+                };
+            }
+            "-h" | "--help" => return Err(String::new()),
+            s if s.starts_with('-') => return Err(format!("unknown option {s} (a window's options are saito's)")),
+            s => a.traces.push(s.into()),
+        }
+    }
+    let sources = [a.match_file.is_some(), a.replay.is_some(), !a.traces.is_empty()].iter().filter(|s| **s).count();
+    if sources != 1 {
+        return Err("give one of a trace file (several with --audit), --match FILE or --replay FILE".into());
+    }
+    if (a.side.is_some() || a.consoles == Consoles::Both) && a.match_file.is_some() {
+        return Err("--side goes with --replay or a trace".into());
+    }
+    if a.consoles == Consoles::Both && a.replay.is_none() {
+        return Err("--side both, both-left and both-right go with --replay".into());
+    }
+    if a.consoles == Consoles::Both && a.both_sides {
+        return Err("--side both shows both consoles on one screen, --both-sides side by side: one or the other".into());
+    }
+    let video = a.mp4.is_some();
+    if video && (a.replay.is_none() || a.headless.is_some()) {
+        return Err("--mp4 OUT writes a replay as video (--replay FILE, no --headless)".into());
+    }
+    if !video && (a.scale != 1 || a.ticks.is_some() || a.both_sides) {
+        return Err("--scale, --ticks and --both-sides go with --mp4".into());
+    }
+    if video && a.round.is_some() && a.ticks.is_some() {
+        return Err("a video shows a round (--round N) or a range of frames (--ticks A-B), not both".into());
+    }
+    if a.record.is_some() && (a.match_file.is_none() || a.headless.is_none()) {
+        return Err("--record writes the set a match file plays headless (--match FILE --headless F)".into());
+    }
+    if a.keys.is_some() && (a.match_file.is_none() || a.headless.is_none()) {
+        return Err("--keys holds buttons in a match file's set played headless (--match FILE --headless F)".into());
+    }
+    if a.opponent.is_some() && (a.match_file.is_none() || a.headless.is_none()) {
+        return Err("--opponent plays the other side of a match file's set played headless (--match FILE --headless F)".into());
+    }
+    if a.save_match.is_some() && a.match_file.is_none() {
+        return Err("--save-match writes a match file's match".into());
+    }
+    if a.audit_content {
+        if a.match_file.is_none() {
+            return Err("--audit-content needs --match FILE to select the game".into());
+        }
+        if a.audit || a.headless.is_some() || a.save_match.is_some() {
+            return Err("--audit-content audits the content alone (--audit runs traces)".into());
+        }
+        return Ok(a);
+    }
+    if a.audit && (a.traces.is_empty() || a.headless.is_some()) {
+        return Err("--audit runs traces (no --headless)".into());
+    }
+    if (a.draw || a.lookups.is_some() || a.jobs != 0) && !a.audit {
+        return Err("--draw, --jobs and --lookups go with --audit (--lookups with --audit-content too)".into());
+    }
+    if a.traces.len() > 1 && !a.audit {
+        return Err("one trace at a time (several with --audit)".into());
+    }
+    if !a.traces.is_empty() && a.headless.is_none() && !a.audit {
+        return Err("a trace is rendered (--headless F) or audited (--audit); no window watches one".into());
+    }
+    let headless_only = a.objects || a.time || !a.marks.is_empty() || a.png_scale != 1 || a.width.is_some() || a.height.is_some();
+    if headless_only && a.headless.is_none() {
+        return Err("--objects, --time, --mark, --png-scale, --width and --height go with --headless".into());
+    }
+    if (a.width.is_some() || a.height.is_some()) && !a.enhancements.fill {
+        return Err("--width and --height draw the filled window's frames larger (--text with fill); without it they are the original's 240x160".into());
+    }
+    Ok(a)
+}
+
+fn fail(msg: impl std::fmt::Display) -> ! {
+    eprintln!("{msg}");
+    std::process::exit(1);
+}
+
+/// Show what loading the game found (warnings and errors).
+fn show(report: &saito_content::report::Report) {
+    for i in report.issues.iter().filter(|i| i.level != saito_content::report::Level::Note) {
+        eprintln!("{i}");
+    }
+}
+
+/// Stop with a step of loading that failed: what its loaders reported, then
+/// what failed, with the options that say where it is looked for.
+fn load_failed(e: LoadError) -> ! {
+    show(&e.report);
+    fail(match &e.what {
+        Failed::Content { .. } => format!("{e} (--content)"),
+        Failed::Assets { .. } => format!("{e} ($SAITO_ROMS)"),
+        _ => e.to_string(),
+    })
+}
+
+/// How long a part took to load, for whoever asks (`SAITO_LOAD_TIMES`).
+fn load_time(what: &str, since: Instant) {
+    if std::env::var_os("SAITO_LOAD_TIMES").is_some() {
+        eprintln!("loaded the {what} in {:.1?}", since.elapsed());
+    }
+}
+
+/// The game's sound, or stop with what is wrong with it.
+fn sound_of(game: &Game) -> Sound {
+    let t = Instant::now();
+    let sound = game.sound().unwrap_or_else(|e| load_failed(e));
+    show(&sound.report);
+    load_time("sound", t);
+    sound
+}
+
+/// A match file's text.
+fn match_text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("can't read {}: {e}", path.display())))
+}
+
+/// A match file (its text), checked against the content.
+fn read_match(content: &Arc<saito_battle::Content>, path: &Path, text: &str) -> saito_match::Match {
+    saito_match::parse(content, text).unwrap_or_else(|problems| fail(format!("{} can't be played:\n  {}", path.display(), problems.join("\n  "))))
+}
+
+/// Write the match played, with the seed it was played from.
+fn save_match(content: &saito_battle::Content, m: &saito_match::Match, seed: u32, path: &Path) {
+    let m = saito_match::Match { seed: Some(seed), ..m.clone() };
+    std::fs::write(path, saito_match::write(content, &m)).unwrap_or_else(|e| fail(format!("can't write {}: {e}", path.display())));
+    eprintln!("wrote the match to {}", path.display());
+}
+
+/// A recording of match `m` (its seed stated) played from side 0 to the
+/// file `path`, or stop with why not.
+fn recorder(content: &Arc<saito_battle::Content>, m: &saito_match::Match, path: &Path) -> saito_frontend::replay::Recorder {
+    use saito_frontend::replay::{Info, MatchKind, Recorder};
+    let file = std::fs::File::create(path).unwrap_or_else(|e| fail(format!("can't write {}: {e}", path.display())));
+    let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let info = Info { when, ..Info::of(MatchKind::Offline, 0) };
+    let r = Recorder::new(Box::new(std::io::BufWriter::new(file)), content, m, &info).unwrap_or_else(|e| fail(format!("can't record to {}: {e}", path.display())));
+    eprintln!("recording the set to {}", path.display());
+    r
+}
+
+/// `--audit-content`: every lookup for everything the content defines, in each language the content has strings
+/// in, of the game's assets as they loaded (`saito-content check` holds the assets to the content); then exit.
+fn audit_content(args: &Args, game: &Game) -> ! {
+    let t = Instant::now();
+    let (content, dir, games) = (&*game.content, &*game.dir, std::slice::from_ref(&game.name));
+    let bank: Option<Arc<m4a::SoundBank>> = (!args.mute).then(|| sound_of(game).bank);
+    let own_lang = saito_content::locale::OWN;
+    let mut languages: Vec<saito_tools::content_audit::Language> = vec![(own_lang.to_string(), None)];
+    for lang in saito_content::locale::languages(dir).into_iter().filter(|l| l != own_lang) {
+        let strings = saito_content::locale::load_for(dir, games, &lang).unwrap_or_else(|e| fail(e));
+        languages.push((lang, strings.map(Arc::new)));
+    }
+    let found = saito_tools::content_audit::audit(content, (*game.graphics).clone(), &game.numbers, bank.as_deref(), &languages);
+    let problems = &found.problems;
+    for p in problems {
+        println!("{p}");
+    }
+    if !found.untranslated.is_empty() {
+        eprintln!("audit-content: shown in the content's own (a table lacks them): {}", found.untranslated.join(", "));
+    }
+    for note in &found.notes {
+        eprintln!("audit-content: note: {note}");
+    }
+    // (As --audit lists a trace's, under the name "content".)
+    if let Some(path) = &args.lookups {
+        let text: String = found.made.iter().map(|l| format!("content\t{l}\n")).collect();
+        std::fs::write(path, text).unwrap_or_else(|e| fail(format!("can't write {}: {e}", path.display())));
+    }
+    let assets: Vec<String> = found.assets.iter().map(|(k, n)| format!("{n} {k}s")).collect();
+    eprintln!(
+        "audit-content: {} chips, {} navis, {} forms; the assets' {}; {} lookups in {}{}; {} problems ({:.1?})",
+        found.chips,
+        found.navis,
+        found.forms,
+        assets.join(", "),
+        found.made.len(),
+        found.languages.join(" and "),
+        if bank.is_none() { ", no sound (--mute)" } else { "" },
+        problems.len(),
+        t.elapsed()
+    );
+    std::process::exit(if problems.is_empty() { 0 } else { 1 })
+}
+
+/// `--audit TRACE...`: the traces' lookups, several traces at a time; then
+/// exit. One trace prints as `--audit` always has: its problems, and a
+/// summary line.
+fn audit_traces(args: &Args, content: &Arc<saito_battle::Content>, setup: &headless::AuditSetup) -> ! {
+    use std::sync::Mutex;
+    let t = Instant::now();
+    let jobs = if args.jobs > 0 { args.jobs } else { std::thread::available_parallelism().map_or(4, |n| n.get()) };
+    let one = args.traces.len() == 1;
+    // (Each trace's lines together.)
+    let out = Mutex::new(());
+    let done = |a: &headless::TraceAudit| {
+        let _held = out.lock().unwrap();
+        let name = a.trace.display();
+        match &a.audit {
+            Ok(found) => {
+                for s in &found.stopped {
+                    eprintln!("{}{s}", if one { String::new() } else { format!("{name}: ") });
+                }
+                for line in found.problems.lines() {
+                    if one {
+                        println!("{line}");
+                    } else {
+                        println!("{name}: {line}");
+                    }
+                }
+                for line in found.problems.said_lines() {
+                    eprintln!("{}note: {line}", if one { String::new() } else { format!("{name}: ") });
+                }
+                if !one {
+                    eprintln!("audit {name}: {} frames, {} sound cues, {} problems", found.frames, found.cues, found.problems.len());
+                }
+            }
+            Err(e) => println!("{name}: {e}"),
+        }
+    };
+    let results = headless::audit_traces(content, setup, &args.traces, jobs, &done);
+    if let Some(path) = &args.lookups {
+        let mut text = String::new();
+        for r in &results {
+            let Ok(found) = &r.audit else { continue };
+            let name = r.trace.display();
+            text.push_str(&format!("{name}\t#frames {}\n", found.frames));
+            let mut lines: Vec<String> = found.problems.lookups().map(|l| l.describe(content)).collect();
+            lines.sort();
+            lines.dedup();
+            for l in lines {
+                text.push_str(&format!("{name}\t{l}\n"));
+            }
+        }
+        std::fs::write(path, text).unwrap_or_else(|e| fail(format!("can't write {}: {e}", path.display())));
+    }
+    let (frames, cues) = results.iter().filter_map(|r| r.audit.as_ref().ok()).fold((0u64, 0u64), |(f, c), a| (f + a.frames as u64, c + a.cues as u64));
+    let problems: usize = results.iter().map(|r| r.audit.as_ref().map_or(1, |a| a.problems.len())).sum();
+    if one {
+        eprintln!("audit: {frames} frames, {cues} sound cues, {problems} problems");
+    } else {
+        let bad = results.iter().filter(|r| r.audit.as_ref().map_or(true, |a| !a.problems.is_empty())).count();
+        eprintln!(
+            "audit: {} traces, {frames} frames, {cues} sound cues, {problems} problems ({bad} traces with problems; {jobs} at a time, {:.1?})",
+            results.len(),
+            t.elapsed()
+        );
+    }
+    std::process::exit(if problems == 0 { 0 } else { 1 })
+}
+
+/// A replay played to its end and checked: what happened, and whether it
+/// reproduced; then exit (1 where it doesn't).
+fn check_replay(content: &Arc<saito_battle::Content>, replay: &saito_frontend::replay::Replay, path: &Path) -> ! {
+    let outcome = saito_frontend::replay::play_out(content, replay).unwrap_or_else(|e| fail(format!("can't play {}: {e}", path.display())));
+    let rounds: Vec<&str> = outcome.rounds.iter().map(|w| match w {
+        Some(0) => "left",
+        Some(_) => "right",
+        None => "draw",
+    }).collect();
+    println!("{}: {} ticks; rounds won: {}; the set: {:?}", path.display(), outcome.ticks, rounds.join(", "), outcome.result);
+    if let Some(why) = &outcome.stopped {
+        println!("stopped: {why}");
+    }
+    match &outcome.diverged {
+        Some(at) => {
+            println!("doesn't reproduce: {at}");
+            std::process::exit(1)
+        }
+        None => {
+            println!("reproduces");
+            std::process::exit(0)
+        }
+    }
+}
+
+/// `--mp4 OUT`: the replay `viewer` plays as video, the part asked for;
+/// then exit. Progress goes to standard error.
+fn write_video(args: &Args, mut viewer: saito_frontend::viewer::Viewer) -> ! {
+    use saito_video::{Options, Part, Progress, Sides, Titles};
+    use std::ops::ControlFlow;
+    let part = match (args.round, &args.ticks) {
+        (Some(round), _) => Part::Round(round as u32),
+        // (As --headless numbers them: frame N is the picture after the
+        // set's tick N, which is tick N - 1 counted from 0.)
+        (None, Some(ticks)) => {
+            let frames = ticks.split_once('-').and_then(|(a, b)| Some((a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?)));
+            let Some((a, b)) = frames.filter(|&(a, b)| a >= 1 && b >= a) else {
+                fail(format!("bad --ticks {ticks:?} (A-B: the frames A to B, from 1)"))
+            };
+            Part::Ticks(a - 1..b)
+        }
+        (None, None) => Part::Whole,
+    };
+    let started = Instant::now();
+    let mut said = 0;
+    let mut last = Progress { written: 0, of: 0, round: 1, rounds: 1 };
+    let mut progress = |p: Progress| {
+        last = p;
+        // (A line every tenth of the way.)
+        let tenth = p.written as u64 * 10 / p.of.max(1) as u64;
+        if p.written > 0 && tenth > said {
+            said = tenth;
+            eprintln!("{} of {} frames (round {} of {})", p.written, p.of, p.round, p.rounds);
+        }
+        ControlFlow::Continue(())
+    };
+    let scale = args.scale;
+    let sides = match (args.both_sides, args.consoles) {
+        (true, _) => Sides::SideBySide,
+        (false, Consoles::Both) => Sides::Both,
+        (false, Consoles::One) => Sides::One,
+    };
+    // (The chapters "Round N" and the tracks the players' names, in English.)
+    let options = Options { scale, view: None, sides, part, titles: Titles::default() };
+    let to = args.mp4.as_deref().expect("--mp4's file");
+    // (Its samples written as they are made, beside it; then the file, its head and they. Failed or canceled,
+    // nothing is left.)
+    let body = to.with_file_name(format!("{}.body.part", to.file_name().unwrap_or_default().to_string_lossy()));
+    let made = std::fs::File::create(&body).map_err(saito_video::Error::Disk).and_then(|file| {
+        saito_video::write_mp4(&mut viewer, &options, std::io::BufWriter::with_capacity(1 << 20, file), &mut progress)
+    });
+    let made = made.and_then(|made| {
+        drop(made.body);
+        let whole = || -> std::io::Result<()> {
+            use std::io::Write;
+            let mut out = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(to)?);
+            out.write_all(&made.head)?;
+            std::io::copy(&mut std::fs::File::open(&body)?, &mut out)?;
+            out.flush()
+        };
+        whole().map_err(saito_video::Error::Disk)
+    });
+    let _ = std::fs::remove_file(&body);
+    if made.is_err() {
+        let _ = std::fs::remove_file(to);
+    }
+    let wrote = made.map(|_| to.display().to_string());
+    match wrote {
+        Ok(to) => {
+            let seconds = saito_frontend::player::time_of(last.of as u64).as_secs_f64();
+            let sound = if viewer.has_sound() { "with its sound" } else { "without sound" };
+            eprintln!("wrote {} frames ({}x{}, {seconds:.1} s, {sound}) to {to} in {:.1?}", last.of, 240 * scale * sides.count() as u32, 160 * scale, started.elapsed());
+            if let Some(differs) = viewer.diverged() {
+                eprintln!("the replay doesn't reproduce: {differs}");
+                std::process::exit(1);
+            }
+            std::process::exit(0)
+        }
+        Err(e) => fail(format!("no video: {e}")),
+    }
+}
+
+fn main() {
+    let args = match parse(std::env::args().skip(1)) {
+        Ok(a) => a,
+        Err(e) => {
+            if !e.is_empty() {
+                eprintln!("{e}\n");
+            }
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    // The ROMs the game's assets are extracted from.
+    let t = Instant::now();
+    let roms = RomSource::from_env().unwrap_or_else(|e| fail(e));
+    // The game played is the match file's, the replay's or the trace's own.
+    let file_text = args.match_file.as_deref().map(match_text);
+    let replay = args.replay.as_deref().map(|path| {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| fail(format!("can't read {}: {e}", path.display())));
+        saito_frontend::replay::Replay::read(&bytes).unwrap_or_else(|e| fail(format!("can't play {}: {e}", path.display())))
+    });
+    let game = match (&file_text, &replay, args.traces.first()) {
+        (Some(text), _, _) => {
+            saito_match::file::game_of(text).unwrap_or_else(|e| fail(format!("{} can't be played: {e}", args.match_file.as_ref().unwrap().display())))
+        }
+        (None, Some(r), _) => r.head.game.clone(),
+        (None, None, Some(trace)) => saito_tools::trace::trace_game(trace).unwrap_or_else(|e| fail(format!("can't play {}: {e}", trace.display()))),
+        (None, None, None) => unreachable!("argument parsing requires a match file, a replay or a trace"),
+    };
+    // The game's content, and its assets extracted from its ROMs.
+    let loaded = Game::load(&roms, args.content.as_deref(), &game, &[]).unwrap_or_else(|e| load_failed(e));
+    show(&loaded.report);
+    if std::env::var_os("SAITO_LOAD_TIMES").is_some() {
+        eprintln!("loaded the battle content and extracted its assets in {:.1?} ({roms})", t.elapsed());
+    }
+    let content = loaded.content.clone();
+    // (The session reports an engine panic; the program keeps it off stderr.)
+    session::quiet_engine_panics();
+    if args.audit_content {
+        audit_content(&args, &loaded);
+    }
+    // Without frames: a replay checked, a match's setup said.
+    let video = args.mp4.is_some();
+    if args.headless.is_none() && !args.audit && !video {
+        if let (Some(path), Some(r)) = (&args.replay, &replay) {
+            check_replay(&content, r, path);
+        }
+        if let Some((path, text)) = args.match_file.as_deref().zip(file_text.as_deref()) {
+            let m = read_match(&content, path, text);
+            let seed = m.seed.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1));
+            println!("{}", saito_match::describe(&content, &m, seed, args.show_folders, 0));
+            if let Some(path) = &args.save_match {
+                save_match(&content, &m, seed, path);
+            }
+            return;
+        }
+    }
+    // The game's graphics, in the language.
+    let t = Instant::now();
+    let graphics = loaded.graphics(&args.lang).unwrap_or_else(|e| load_failed(e));
+    show(&graphics.report);
+    load_time("graphics", t);
+    // The sharp text's and HUD's font, shared by the renderer (which strings
+    // it has) and the text layer's drawing.
+    let font = saito_frontend::game::font(args.enhancements, args.font.as_deref(), &args.lang).unwrap_or_else(|e| load_failed(e));
+    let mut renderer = graphics.renderer(args.enhancements, font.clone());
+    renderer.problems.marking = args.marks.iter().cloned().collect();
+    renderer.consoles = args.consoles;
+    renderer.size = Size::new(args.width.unwrap_or(WIDTH), args.height.unwrap_or(HEIGHT));
+    if args.audit {
+        let setup = headless::AuditSetup {
+            graphics: renderer.graphics().clone(),
+            strings: graphics.strings.clone(),
+            enhancements: args.enhancements,
+            font,
+            sound: (!args.mute).then(|| sound_of(&loaded).bank),
+            draw: args.draw,
+        };
+        audit_traces(&args, &content, &setup);
+    }
+    let text = font.map(TextRenderer::new);
+    if video {
+        let (path, r) = args.replay.as_deref().zip(replay.as_ref()).expect("argument parsing requires a video's replay");
+        let audio = (!args.mute).then(|| {
+            let sound = sound_of(&loaded);
+            saito_audio::BattleAudio::new(sound.bank, sound.songs)
+        });
+        let viewer = saito_frontend::viewer::Viewer::with(&content, r, args.side, renderer, text, audio).unwrap_or_else(|e| fail(format!("can't play {}: {e}", path.display())));
+        write_video(&args, viewer);
+    }
+
+    // What is played: a replay; live play's set; a recording's rounds, a
+    // driver each, in turn.
+    let mut drivers: Vec<Box<dyn Driver>> = Vec::new();
+    let mut recording = None;
+    if let (Some(path), Some(r)) = (&args.replay, &replay) {
+        let player = saito_frontend::replay::ReplayPlayer::new(&content, r, args.side).unwrap_or_else(|e| fail(format!("can't play {}: {e}", path.display())));
+        let m = saito_match::binary::read_match(&content, &r.match_bytes).expect("a replay that plays has a match");
+        eprintln!("{}", saito_match::describe(&content, &m, m.seed.unwrap_or(0), args.show_folders, args.side.unwrap_or(r.info.side) as usize));
+        drivers.push(Box::new(player));
+    } else if let Some((path, text)) = args.match_file.as_deref().zip(file_text.as_deref()) {
+        let m = read_match(&content, path, text);
+        let seed = m.seed.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1));
+        eprintln!("{}", saito_match::describe(&content, &m, seed, args.show_folders, 0));
+        if let Some(path) = &args.save_match {
+            save_match(&content, &m, seed, path);
+        }
+        if let Some(path) = &args.record {
+            recording = Some(recorder(&content, &saito_match::Match { seed: Some(seed), ..m.clone() }, path));
+        }
+        let mut live = LivePlayer::new(saito_match::Set::of(&content, &m, seed));
+        if let Some(in_fight) = args.opponent {
+            live.set_opponent(Opponent { in_fight, ..live.opponent() });
+        }
+        drivers.push(Box::new(live));
+    } else if let Some(path) = args.traces.first() {
+        let rounds = trace_rounds(path, &content, args.side).unwrap_or_else(|e| fail(format!("can't play {}: {e}", path.display())));
+        for (number, r) in rounds.into_iter().skip(args.round.unwrap_or(1).saturating_sub(1)) {
+            if let Some((a, b)) = r.frame_range() {
+                eprintln!("round {number}: frames {a}..={b}");
+            }
+            drivers.push(r);
+        }
+    }
+    if drivers.is_empty() {
+        fail("nothing to play");
+    }
+    let list = args.headless.as_deref().expect("frames are rendered here");
+    let first = drivers.remove(0);
+    let wanted = headless::parse_frames(list).unwrap_or_else(|e| fail(e));
+    let keys = headless::KeyScript::parse(args.keys.as_deref().unwrap_or("")).unwrap_or_else(|e| fail(e));
+    let mut log = |s: &str| eprintln!("{s}");
+    // (Headless rendering plays no sound.)
+    let mut player = Player::with(renderer, text, None, first);
+    // (The other games' backgrounds the rounds are drawn on, extracted before the first frame.)
+    let backgrounds = saito_render::graphics::set_backgrounds(&player.battle().setup);
+    player.renderer().graphics().wait_backgrounds(&content, backgrounds);
+    if let Some(r) = recording {
+        player.record(r).unwrap_or_else(|e| fail(e));
+    }
+    if args.time {
+        headless::time_frames(&mut player, &wanted, args.png_scale, &keys, &mut log);
+        return;
+    }
+    match headless::render_frames_with(&mut player, drivers, &wanted, &args.out, args.png_scale, args.objects, &keys, &mut log) {
+        Ok(written) => {
+            eprintln!("wrote {} frames to {}", written.len(), args.out.display());
+            if written.len() < wanted.len() {
+                std::process::exit(1);
+            }
+        }
+        Err(e) => fail(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Result<Args, String> {
+        parse(values.iter().map(|s| s.to_string()))
+    }
+
+    /// The options verify's scripts give (the retired saito-demo's, for the same).
+    #[test]
+    fn verifys_command_lines_parse() {
+        for options in [
+            vec!["--text", "original", "--lang", "ja", "--mark", "sprite:megaman,chip-window-at-close", "t.jsonl", "--headless", "1-100000", "--out", "f"],
+            vec!["t.jsonl", "--audit"],
+            vec!["--draw", "--audit", "a.jsonl", "b.jsonl", "--lookups", "l.tsv"],
+            vec!["--match", "exe6.toml", "--audit-content", "--lookups", "s.tsv"],
+            vec!["--match", "m.toml", "--mute", "--headless", "100,300", "--out", "o", "--keys", "100:a"],
+            vec!["--match", "m.toml", "--headless", "1-600", "--opponent", "attacks", "--record", "set.saitoreplay"],
+            vec!["--replay", "set.saitoreplay", "--headless", "1-60", "--side", "right"],
+            vec!["--match", "m.toml", "--show-folders", "--save-match", "played.toml"],
+            vec!["--replay", "set.saitoreplay"],
+            vec!["--replay", "set.saitoreplay", "--mp4", "set.mp4", "--scale", "3", "--side", "right", "--round", "2"],
+            vec!["--replay", "set.saitoreplay", "--mp4", "set.mp4", "--ticks", "1-600", "--mute"],
+            vec!["--replay", "set.saitoreplay", "--mp4", "both.mp4", "--both-sides", "--side", "right", "--scale", "2"],
+        ] {
+            assert!(args(&options).is_ok(), "{options:?}: {:?}", args(&options).err());
+        }
+    }
+
+    /// `--side both` is both players on one screen, the recorder's on the
+    /// left, or the side it names.
+    #[test]
+    fn both_sides_on_one_screen_parse() {
+        for (side, want) in [("both", None), ("both-left", Some(0)), ("both-right", Some(1)), ("left", Some(0))] {
+            let a = args(&["--replay", "set.saitoreplay", "--headless", "1-60", "--side", side]).unwrap();
+            let consoles = if side.starts_with("both") { Consoles::Both } else { Consoles::One };
+            assert_eq!((a.side, a.consoles), (want, consoles), "{side}");
+        }
+        assert!(args(&["--replay", "set.saitoreplay", "--mp4", "o.mp4", "--side", "both"]).is_ok());
+        assert_eq!(args(&["--replay", "r.saitoreplay", "--side", "bothright"]).err().as_deref(), Some("bad --side \"bothright\" (left, right, both, both-left or both-right)"));
+    }
+
+    /// What needs a window isn't here; what goes together does.
+    #[test]
+    fn what_doesnt_go_together_is_refused() {
+        for (options, why) in [
+            (vec![], "give one of a trace file (several with --audit), --match FILE or --replay FILE"),
+            (vec!["--match", "m.toml", "--host", "7777"], "unknown option --host (a window's options are saito's)"),
+            (vec!["--match", "m.toml", "--replay", "r.saitoreplay"], "give one of a trace file (several with --audit), --match FILE or --replay FILE"),
+            (vec!["t.jsonl"], "a trace is rendered (--headless F) or audited (--audit); no window watches one"),
+            (vec!["--audit-content"], "give one of a trace file (several with --audit), --match FILE or --replay FILE"),
+            (vec!["--match", "m.toml", "--keys", "1:a"], "--keys holds buttons in a match file's set played headless (--match FILE --headless F)"),
+            (vec!["--match", "m.toml", "--side", "left"], "--side goes with --replay or a trace"),
+            (vec!["--match", "m.toml", "--opponent", "moves"], "--opponent plays the other side of a match file's set played headless (--match FILE --headless F)"),
+            (vec!["--replay", "r.saitoreplay", "--headless", "1", "--opponent", "still"], "--opponent plays the other side of a match file's set played headless (--match FILE --headless F)"),
+            (vec!["--match", "m.toml", "--headless", "1", "--opponent", "ai"], "bad --opponent \"ai\" (still, moves or attacks)"),
+            (vec!["a.jsonl", "b.jsonl", "--headless", "1"], "one trace at a time (several with --audit)"),
+            (vec!["--match", "m.toml", "--objects"], "--objects, --time, --mark, --png-scale, --width and --height go with --headless"),
+            (vec!["--match", "m.toml", "--width", "284"], "--objects, --time, --mark, --png-scale, --width and --height go with --headless"),
+            (vec!["--match", "m.toml", "--height", "213"], "--objects, --time, --mark, --png-scale, --width and --height go with --headless"),
+            (vec!["--match", "m.toml", "--headless", "1", "--width", "284", "--text", "original"], "--width and --height draw the filled window's frames larger (--text with fill); without it they are the original's 240x160"),
+            (vec!["--match", "m.toml", "--headless", "1", "--height", "213", "--text", "original"], "--width and --height draw the filled window's frames larger (--text with fill); without it they are the original's 240x160"),
+            (vec!["--match", "m.toml", "--headless", "1", "--width", "200"], "bad --width \"200\" (240 or more)"),
+            (vec!["--match", "m.toml", "--headless", "1", "--height", "150"], "bad --height \"150\" (160 or more)"),
+            (vec!["--match", "m.toml", "--mp4", "o.mp4"], "--mp4 OUT writes a replay as video (--replay FILE, no --headless)"),
+            (vec!["--replay", "r.saitoreplay", "--mp4", "o.mp4", "--headless", "1"], "--mp4 OUT writes a replay as video (--replay FILE, no --headless)"),
+            (vec!["--replay", "r.saitoreplay", "--nut", "-"], "unknown option --nut (a window's options are saito's)"),
+            (vec!["--replay", "r.saitoreplay", "--scale", "2"], "--scale, --ticks and --both-sides go with --mp4"),
+            (vec!["--replay", "r.saitoreplay", "--both-sides"], "--scale, --ticks and --both-sides go with --mp4"),
+            (vec!["--replay", "r.saitoreplay", "--mp4", "o.mp4", "--both-sides", "--side", "both"], "--side both shows both consoles on one screen, --both-sides side by side: one or the other"),
+            (vec!["--match", "m.toml", "--side", "both"], "--side goes with --replay or a trace"),
+            (vec!["--replay", "r.saitoreplay", "--mp4", "o.mp4", "--round", "1", "--ticks", "1-9"], "a video shows a round (--round N) or a range of frames (--ticks A-B), not both"),
+        ] {
+            assert_eq!(args(&options).err().as_deref(), Some(why), "{options:?}");
+        }
+    }
+}

@@ -1,0 +1,33 @@
+[package]
+name = "exe6-compat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The original game's numbers for EXE6's content (content/exe6/compat), and what reads them: the codecs of the game's setup records, its saves' import (a save into a side, by the game's facts) and the golden-trace harness. The engine never depends on it."
+
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+saito-battle.workspace = true
+saito-content-api = { path = "../saito-content-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+toml = "0.8"
+# A save's import (src/import.rs): the side it gives, by its game's facts.
+saito-match = { path = "../saito-match" }
+
+[features]
+# This repository's content/exe6/compat compiled in (`Compat::exe6`), for tools and tests: the app reads the compat of
+# the content it plays at run time (`Compat::of_content`), and builds without content/.
+builtin = []
+# Recorded battles (golden traces): reading them, replaying them through
+# the engine, and comparing it with them.
+trace = ["dep:serde_json", "builtin"]
+
+[dev-dependencies]
+# The tests' compat: this repository's, built in.
+exe6-compat = { path = ".", features = ["builtin"] }
+saito-battle = { workspace = true, features = ["test-content"] }
+# content/exe6 itself, for the test of what its forms say of each other
+# (tests/forms.rs).
+saito-match = { path = "../saito-match", features = ["testing"] }

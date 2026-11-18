@@ -1,0 +1,363 @@
+//! saito's netplay protocol on rennet: what each player's stream of
+//! elements carries, and its wire form.
+//!
+//! A player's peer sends its player's input for every tick, in order, on
+//! one rennet stream ([`rennet::OutStream`] / [`rennet::InStream`]): the
+//! transport is a datagram channel that loses, reorders and duplicates,
+//! and rennet makes it an ordered stream again (docs/design/rollback.md
+//! §4.6). This module names the stream's [`Element`]s and the per-frame
+//! [`Meta`], and packs them byte-minimally:
+//!
+//! - [`Element::Tick`]: one tick of the player's input, its word
+//!   (`saito_battle::PlayerTick::word`: their held buttons, a party switch
+//!   request, the microphone heard or not and their custom screen's
+//!   choice: 19 bits) and a few flags for the tick's events. A tick with no
+//!   flags, switch, microphone or choice and only A, B and the directions
+//!   held is one byte; any other buttons, a switch or the microphone, two;
+//!   a choice, three; flags, five or six. A player makes a few dozen
+//!   choices a screen: the mean frame hardly grows.
+//! - [`Element::RoundEnd`] and [`Element::MatchEnd`]: the in-band markers.
+//!   The sender's round is over, and what follows is the next round's
+//!   input; the sender left the match.
+//! - [`Element::Delay`]: the sender's present delay (its player's input
+//!   delay), from the next tick on: no input and no part of the
+//!   simulation, but what the other peer's replay needs to show the
+//!   sender's custom screen as they saw it (their screen layer read the
+//!   battle one tick more than that before their word lands: saito-replay's
+//!   `Tick::delays`). Sent before a peer's first tick and before the first
+//!   tick after it changes ([`crate::peer::Peer::set_present_delay`]). One
+//!   byte.
+//! - [`Meta`]: the sender's tick advantage (getgud's
+//!   `local_tick_advantage`) as of its newest input, for clock sync.
+//!
+//! A game's input goes on the wire through [`WireInput`]: its tick word and
+//! its flags.
+//!
+//! The element's wire form is a LEB128 head:
+//!
+//! ```text
+//! head & 1 == 0   a tick: head >> 1 = buttons (10 bits, in WIRE_ORDER) | switch << 10 (2 bits: the member
+//!                 + 1, 0 none) | microphone heard << 12 (1 bit) | choice << 13 (6 bits: the choice's
+//!                 `ScreenChoice::code`, 0 none: `PlayerTick::word`) | flags << 32
+//! head & 1 == 1   head >> 1: 0 the round's end, 1 the match's end, 2 + d the sender's present delay d (0-255)
+//! ```
+
+use std::io::{self, Read, Write};
+
+use saito_battle::input::keys;
+use rennet::{read_svarint, read_uvarint, write_svarint, write_uvarint};
+
+/// The protocol's version: peers whose versions differ can't play together
+/// (the handshake refuses). It stands for everything two peers must agree
+/// on that the content's hash doesn't say:
+///
+/// - the stream's elements and their wire form (this module): a tick is its
+///   buttons, its switch request, its microphone heard or not, its custom screen's choice and its flags
+///   (`battle::flags`: the link closing), and the round's and the match's end and the sender's present delay are
+///   markers;
+/// - the lobby and the handshake (saito-frontend's `lobby`): the lobby's
+///   messages (the compatibility fields, the match's settings with their
+///   stamp, the player's name, a clock for the round trip), the Hello's
+///   commitment (SHA-256 of the agreed settings' hash and the Reveal's
+///   bytes), the Reveal (the revisions it is of, a nonce and the side, in
+///   saito-match's binary: a side's facts in the order of its game's
+///   rules' setup, definitions by their handles in the content both name),
+///   the loading that follows it, and a refusal's reason;
+/// - how the match is set up from the agreed settings, both sides and both
+///   nonces (the seed), which both peers must do alike: what a round's
+///   setup holds is in every digest of the round.
+///
+/// A change to any of them is a new version. (The engine's own version,
+/// which the lobby compares too, is the crates' and doesn't change with the
+/// engine: this number is what tells two engines apart. Where it wasn't
+/// raised and should have been, the loading's digest of the match's start
+/// tells two setups apart before the first tick.)
+///
+/// A peer of another version is told from its first field, which every
+/// version's lobby messages and refusals start with, and nothing after it
+/// is read of such a peer.
+pub const VERSION: u16 = 0x5301;
+
+/// The rollback horizon, in elements (ticks, besides the rare marker):
+/// the widest gap a player's stream may have at the other peer
+/// before that peer gives up on it ([`rennet::HorizonExceeded`]), and the
+/// most unconfirmed elements a sender keeps to send again. getgud itself
+/// has no limit; a peer's stall guard (`max_lead`) bounds how far its
+/// player's input runs ahead of the other's, and each side's lead adds up,
+/// so a gap reaches at most twice the stall guard. [`max_lead`] keeps the
+/// stall guard below half the horizon. 240 ticks are four seconds.
+pub const HORIZON: u32 = 240;
+
+/// The largest stall guard a horizon allows: a gap reaches up to twice the
+/// stall guard, plus the markers in it.
+pub fn max_lead(horizon: u32) -> u32 {
+    horizon.saturating_sub(MARGIN) / 2
+}
+
+/// The elements a horizon leaves for markers in a gap.
+const MARGIN: u32 = 16;
+
+/// The protocol: rennet's `Protocol` for saito's input streams.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Netplay;
+
+impl rennet::Protocol for Netplay {
+    type Element = Element;
+    type Meta = Meta;
+    /// A sender's window is at most a horizon of elements.
+    const MAX_RUN: usize = HORIZON as usize;
+}
+
+/// One datagram of the protocol.
+pub type Frame = rennet::Frame<Netplay>;
+
+/// One element of a player's stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Element {
+    /// One tick of the player's input: its word (`PlayerTick::word`: the
+    /// buttons they hold, the GBA's bits, `saito_battle::input::keys`,
+    /// their switch request, their microphone heard or not and their custom
+    /// screen's choice) and the game's flags for the tick's events
+    /// ([`WireInput`]).
+    Tick { word: u32, flags: u8 },
+    /// The sender's round is over: the elements after it are the next
+    /// round's.
+    RoundEnd,
+    /// The sender left the match.
+    MatchEnd,
+    /// The sender's present delay from its next tick on (presentation: one
+    /// tick less than the ticks between the battle its player's custom
+    /// screen layer read and the tick their word lands on).
+    Delay(u8),
+}
+
+/// The buttons' order on the wire, lowest bit first: A, B and the
+/// directions (what a player holds most) in the six bits a one-byte tick
+/// has room for, then SELECT, START, R and L.
+pub const WIRE_ORDER: [u16; 10] =
+    [keys::A, keys::B, keys::RIGHT, keys::LEFT, keys::UP, keys::DOWN, keys::SELECT, keys::START, keys::R, keys::L];
+
+/// The buttons as the wire orders them.
+pub fn buttons_to_wire(held: u16) -> u16 {
+    WIRE_ORDER.iter().enumerate().fold(0, |w, (bit, &key)| w | (((held & key != 0) as u16) << bit))
+}
+
+/// The buttons from their wire order.
+pub fn buttons_from_wire(wire: u16) -> u16 {
+    WIRE_ORDER.iter().enumerate().fold(0, |held, (bit, &key)| if wire & (1 << bit) != 0 { held | key } else { held })
+}
+
+/// The buttons a tick carries (the GBA's ten).
+pub const BUTTONS: u16 = 0x3FF;
+
+/// Where a tick's flags go in its head (past the word's 32 bits).
+const FLAGS_AT: u32 = 32;
+
+const ROUND_END: u64 = 0;
+const MATCH_END: u64 = 1;
+/// A delay `d`'s marker kind is this plus `d`.
+const DELAY: u64 = 2;
+
+impl rennet::Codec for Element {
+    fn encode<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        match *self {
+            Element::Tick { word, flags } => {
+                let value = buttons_to_wire(word as u16 & BUTTONS) as u64 | ((word & !(BUTTONS as u32)) as u64) | (flags as u64) << FLAGS_AT;
+                write_uvarint(w, value << 1)
+            }
+            Element::RoundEnd => write_uvarint(w, ROUND_END << 1 | 1),
+            Element::MatchEnd => write_uvarint(w, MATCH_END << 1 | 1),
+            Element::Delay(d) => write_uvarint(w, (DELAY + d as u64) << 1 | 1),
+        }
+    }
+
+    fn decode<R: Read>(r: &mut R) -> io::Result<Option<Element>> {
+        // The run's end: no byte left.
+        let mut first = [0u8; 1];
+        if r.read(&mut first)? == 0 {
+            return Ok(None);
+        }
+        // The head's first byte is read; the rest of a LEB128 number is a
+        // LEB128 number of its own (the bits above the first seven).
+        let mut head = (first[0] & 0x7F) as u64;
+        if first[0] & 0x80 != 0 {
+            let rest = read_uvarint(r)?;
+            if rest >= 1 << 57 {
+                return Err(invalid("element head too long"));
+            }
+            head |= rest << 7;
+        }
+        let kind = head >> 1;
+        let element = if head & 1 == 0 {
+            let flags = u8::try_from(kind >> FLAGS_AT).map_err(|_| invalid("tick flags out of range"))?;
+            Element::Tick { word: buttons_from_wire(kind as u16 & BUTTONS) as u32 | (kind as u32 & !(BUTTONS as u32)), flags }
+        } else {
+            match kind {
+                ROUND_END => Element::RoundEnd,
+                MATCH_END => Element::MatchEnd,
+                k if (DELAY..=DELAY + u8::MAX as u64).contains(&k) => Element::Delay((k - DELAY) as u8),
+                k => return Err(invalid(&format!("unknown element kind {k}"))),
+            }
+        };
+        Ok(Some(element))
+    }
+}
+
+/// What rides on every frame besides the elements.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Meta {
+    /// The sender's tick advantage as of its newest input (getgud's
+    /// `local_tick_advantage`), for the receiver's clock sync.
+    pub tick_advantage: i16,
+}
+
+impl rennet::Codec for Meta {
+    fn encode<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        write_svarint(w, self.tick_advantage as i64)
+    }
+
+    fn decode<R: Read>(r: &mut R) -> io::Result<Option<Meta>> {
+        // Every frame has one: a missing meta is a truncated frame.
+        let tick_advantage = i16::try_from(read_svarint(r)?).map_err(|_| invalid("tick advantage out of range"))?;
+        Ok(Some(Meta { tick_advantage }))
+    }
+}
+
+/// A game's per-tick input on the wire: its tick word, and a few flags
+/// for the tick's events. `decode` must give back the input `encode` wrote.
+pub trait WireInput: Sized {
+    /// The input's tick word and flags.
+    fn encode(&self) -> (u32, u8);
+
+    /// The input from its tick word and flags.
+    fn decode(word: u32, flags: u8) -> io::Result<Self>;
+}
+
+/// A tick word alone (the stand-in battle's input: buttons, the switch
+/// request, the microphone heard or not and the custom screen's choice).
+impl WireInput for u32 {
+    fn encode(&self) -> (u32, u8) {
+        (*self, 0)
+    }
+
+    fn decode(word: u32, flags: u8) -> io::Result<u32> {
+        if flags != 0 {
+            return Err(invalid("a tick word carries no flags"));
+        }
+        Ok(word)
+    }
+}
+
+pub(crate) fn invalid(msg: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saito_battle::{PlayerTick, ScreenChoice};
+    use rennet::Codec;
+
+    fn bytes(e: Element) -> Vec<u8> {
+        let mut out = Vec::new();
+        e.encode(&mut out).unwrap();
+        out
+    }
+
+    fn roundtrip(e: Element) {
+        let b = bytes(e);
+        let mut r = &b[..];
+        assert_eq!(Element::decode(&mut r).unwrap(), Some(e), "{b:02x?}");
+        assert!(r.is_empty(), "{e:?} left {r:02x?}");
+    }
+
+    #[test]
+    fn the_wire_order_is_a_permutation() {
+        for held in 0..=BUTTONS {
+            assert_eq!(buttons_from_wire(buttons_to_wire(held)), held);
+        }
+        assert_eq!(buttons_to_wire(keys::A | keys::B | keys::RIGHT | keys::LEFT | keys::UP | keys::DOWN), 0x3F);
+    }
+
+    /// Ticks with A, B and the directions are a byte, other buttons or a
+    /// switch or the microphone two, a choice three, flags five or six;
+    /// markers one.
+    #[test]
+    fn element_sizes() {
+        assert_eq!(bytes(Element::Tick { word: 0, flags: 0 }), [0x00]);
+        assert_eq!(bytes(Element::Tick { word: (keys::A) as u32, flags: 0 }), [0x02]);
+        assert_eq!(bytes(Element::Tick { word: (keys::DOWN | keys::LEFT | keys::B) as u32, flags: 0 }).len(), 1);
+        assert_eq!(bytes(Element::Tick { word: (keys::L) as u32, flags: 0 }).len(), 2);
+        assert_eq!(bytes(Element::Tick { word: BUTTONS as u32, flags: 1 }).len(), 5);
+        assert_eq!(bytes(Element::Tick { word: BUTTONS as u32, flags: 0xFF }).len(), 6);
+        assert_eq!(bytes(Element::Tick { word: PlayerTick { mic_loud: true, ..PlayerTick::buttons(0) }.word(), flags: 0 }).len(), 2);
+        assert_eq!(bytes(Element::Tick { word: 1 << 10, flags: 0 }).len(), 2);
+        let choice = |c: ScreenChoice| PlayerTick { choice: Some(c), ..PlayerTick::buttons(0) }.word();
+        assert_eq!(bytes(Element::Tick { word: choice(ScreenChoice::Ok), flags: 0 }).len(), 3);
+        assert_eq!(bytes(Element::Tick { word: keys::A as u32 | choice(ScreenChoice::Release(11)), flags: 0 }).len(), 3);
+        assert_eq!(bytes(Element::Tick { word: choice(ScreenChoice::Unpick(4)), flags: 0 }).len(), 3);
+        let most = PlayerTick { held: BUTTONS, switch_to: Some(2), mic_loud: true, choice: Some(ScreenChoice::Release(11)) };
+        assert_eq!(bytes(Element::Tick { word: most.word(), flags: 0 }).len(), 3);
+        assert_eq!(bytes(Element::Tick { word: u32::MAX, flags: 0 }).len(), 5);
+        assert_eq!(bytes(Element::Tick { word: u32::MAX, flags: 0xFF }).len(), 6);
+        assert_eq!(bytes(Element::RoundEnd), [0x01]);
+        assert_eq!(bytes(Element::MatchEnd), [0x03]);
+        assert_eq!(bytes(Element::Delay(0)), [0x05]);
+        assert_eq!(bytes(Element::Delay(4)), [0x0D]);
+        assert_eq!(bytes(Element::Delay(61)).len(), 1);
+        assert_eq!(bytes(Element::Delay(255)).len(), 2);
+    }
+
+    #[test]
+    fn elements_roundtrip() {
+        let ok = PlayerTick { choice: Some(ScreenChoice::Ok), ..PlayerTick::buttons(0) }.word();
+        let release = PlayerTick { choice: Some(ScreenChoice::Release(11)), ..PlayerTick::buttons(0) }.word();
+        for word in
+            [0, keys::A as u32, (keys::START | keys::L) as u32, BUTTONS as u32, u32::MAX, keys::A as u32 | 1 << 10, 0xFF << 12, ok, ok | 0xFF << 12 | keys::B as u32, release]
+        {
+            for flags in [0, 1, 0x7F, 0xFF] {
+                roundtrip(Element::Tick { word, flags });
+            }
+        }
+        roundtrip(Element::RoundEnd);
+        roundtrip(Element::MatchEnd);
+        for d in [0, 1, 4, 10, 61, 62, 255] {
+            roundtrip(Element::Delay(d));
+        }
+        // A tick's word through the wire is the player's tick: its choice
+        // too.
+        let t = PlayerTick { held: keys::A | keys::UP, switch_to: Some(1), mic_loud: true, choice: Some(ScreenChoice::Release(11)) };
+        let b = bytes(Element::Tick { word: t.word(), flags: 0 });
+        let Some(Element::Tick { word, .. }) = Element::decode(&mut &b[..]).unwrap() else { panic!() };
+        assert_eq!(PlayerTick::from_word(word), t);
+    }
+
+    /// A frame: base, ack, meta and the run, byte for byte.
+    #[test]
+    fn frame_bytes() {
+        let f = Frame::new(
+            300,
+            298,
+            Meta { tick_advantage: -2 },
+            vec![Element::Tick { word: (keys::A) as u32, flags: 0 }, Element::RoundEnd, Element::Tick { word: 0, flags: 0 }],
+        );
+        let b = f.to_vec();
+        // base 300 (two bytes), ack -2 from it, advantage -2, three one-byte elements.
+        assert_eq!(b, [0xAC, 0x02, 0x03, 0x03, 0x02, 0x01, 0x00]);
+        assert_eq!(Frame::decode(&mut &b[..]).unwrap(), f);
+    }
+
+    #[test]
+    fn malformed_elements_are_errors() {
+        // An unknown kind (past the delays'), a head cut short.
+        let mut unknown = Vec::new();
+        write_uvarint(&mut unknown, (DELAY + 256) << 1 | 1).unwrap();
+        for b in [&unknown[..], &[0x80]] {
+            assert!(Element::decode(&mut &b[..]).is_err(), "{b:02x?}");
+        }
+        // Flags past a byte.
+        let mut b = Vec::new();
+        write_uvarint(&mut b, (0x100 << FLAGS_AT) << 1).unwrap();
+        assert!(Element::decode(&mut &b[..]).is_err());
+    }
+}

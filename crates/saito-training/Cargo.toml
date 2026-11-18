@@ -1,0 +1,46 @@
+[package]
+name = "saito-training"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The learned training AI's Rust side: what a side sees as arrays (observe), what it presses (act), random builds, a round as an episode, a pool of them on worker threads, scripted players and the measures; the trained network's forward pass (net) and, with `live`, live play's player (ai) (docs/design/training-ai.md)"
+
+[dependencies]
+saito-battle.workspace = true
+# The handles the engine names content by, and the setup schemas' values.
+saito-content-api = { path = "../saito-content-api" }
+# Matches: random builds from the setup schema, checked; a round's setup.
+saito-match = { path = "../saito-match" }
+# A tick's input from buttons (`standin::tick_input`), and the masher.
+saito-netplay = { path = "../saito-netplay" }
+# A game's battle content, loaded from its Luau (`pack::load_battle`).
+saito-content = { path = "../saito-content" }
+# The chips' fingerprints kept on disk, by content hash.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Live play's AI plug (`driver::Ai`), for the app's player (ai.rs): the only
+# thing here that may pull in the frontend.
+saito-frontend = { path = "../saito-frontend", optional = true }
+# Live play's threads and files, the same on the desktop and in a browser
+# (the chips' fingerprints made on workers and kept by content hash).
+saito-threads = { path = "../saito-threads", optional = true }
+saito-files = { path = "../saito-files", optional = true }
+
+[features]
+live = ["dep:saito-frontend", "dep:saito-threads", "dep:saito-files"]
+# The test content of all three games (`saito_match::testing`), for the
+# bridge's and other crates' tests.
+testing = ["saito-match/testing"]
+
+[dev-dependencies]
+saito-match = { path = "../saito-match", features = ["testing"] }
+# The lost-rounds example writes its rounds as replays.
+saito-replay = { path = "../saito-replay" }
+
+[[example]]
+name = "lost_rounds"
+required-features = ["live"]
+
+[[example]]
+name = "search_duel"
+required-features = ["live"]

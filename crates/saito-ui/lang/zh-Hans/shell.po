@@ -1,0 +1,434 @@
+# Simplified Chinese: what every screen shares (the header, the footer, the dialogs, the errors), the loading screens,
+# the main menu and the battle's own. A screen's strings are in the file of its name.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh-Hans\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# The language's own name, as Settings lists it.
+msgctxt "language"
+msgid "English"
+msgstr "简体中文"
+
+# ---- The main menu ----
+
+msgid "Play"
+msgstr "对战"
+
+msgid "Practice"
+msgstr "练习"
+
+msgid "Replays"
+msgstr "录像"
+
+msgid "Demo"
+msgstr "演示"
+
+msgid "vs"
+msgstr "vs"
+
+# ---- The header and the key hints ----
+
+msgid "Menu"
+msgstr "菜单"
+
+msgid "Select"
+msgstr "选择"
+
+msgid "Open"
+msgstr "确定"
+
+msgid "Back"
+msgstr "返回"
+
+# A text field's own hints, while it is typed in: Enter finishes it, Esc leaves it as it was.
+msgid "Done"
+msgstr "完成"
+
+# A setting taken (Enter on it): Left and Right change it.
+msgid "Change"
+msgstr "更改"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Change game"
+msgstr "切换游戏"
+
+# ---- Loading ----
+
+msgid "Loading {}"
+msgstr "正在加载 {}"
+# A game's content being downloaded (the app has none of it yet): {} is the game, as the header shows it.
+msgid "Downloading {}"
+msgstr "正在下载 {}"
+
+msgid "Loading"
+msgstr "加载中"
+
+msgid "VS"
+msgstr "VS"
+
+# ---- The battle ----
+
+msgid "Reconnecting {} s"
+msgstr "正在重新连接 {} 秒"
+
+msgid "{} ms"
+msgstr "{} ms"
+
+# The link panel the connection's corner opens. The figures in frames (the input delay, a rollback's depth,
+# the skew, the lead) are bare numbers.
+msgid "Connection"
+msgstr "连接状况"
+
+msgid "Round trip"
+msgstr "往返时间"
+
+msgid "Jitter"
+msgstr "抖动"
+
+# The share of the other player's packets lost: {} is the number, to a tenth.
+msgid "Loss"
+msgstr "丢包率"
+
+msgid "{}%"
+msgstr "{}%"
+
+msgid "Reconnects"
+msgstr "重连次数"
+
+# Clock sync's skew: how far this player runs ahead of the other (+) or behind (-), in frames.
+msgid "Skew"
+msgstr "时钟偏差"
+
+# This player's inputs the other's haven't matched yet, in frames.
+msgid "Lead"
+msgstr "领先"
+
+msgid "Rollbacks"
+msgstr "回滚次数"
+
+msgid "Last rollback"
+msgstr "上次回滚"
+
+# The deepest rollback of the match, in frames.
+msgid "Deepest"
+msgstr "最深回滚"
+
+msgid "Frames waited"
+msgstr "等待帧数"
+
+msgid "Sent"
+msgstr "发送"
+
+msgid "Received"
+msgstr "接收"
+
+msgid "{} packets · {} KB"
+msgstr "{} 个数据包 · {} KB"
+
+# ---- What can go wrong ----
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Can't reach the server. Check your connection."
+msgstr "无法连接到服务器。请检查网络连接。"
+
+msgid "Can't reach the server"
+msgstr "无法连接到服务器"
+
+msgid "Check your connection."
+msgstr "请检查网络连接。"
+
+msgid "No match with that code."
+msgstr "找不到该邀请码的对战。"
+
+msgid "No match with that code"
+msgstr "找不到该邀请码的对战"
+
+msgid "That match is full."
+msgstr "该对战人数已满。"
+
+msgid "That match is full"
+msgstr "该对战人数已满"
+
+msgid "Your opponent has a different version of saito. You both need the latest."
+msgstr "对手的 saito 版本与你不同。双方都需要更新到最新版本。"
+
+msgid "Different versions"
+msgstr "版本不同"
+
+msgid "This build can't be used: {}."
+msgstr "此构筑无法使用：{}。"
+
+msgid "This build can't be used"
+msgstr "此构筑无法使用"
+
+msgid "No build"
+msgstr "没有构筑"
+
+msgid "{}."
+msgstr "{}。"
+
+msgid "This version of saito is too old for the server. Get the latest."
+msgstr "此 saito 版本过旧，服务器不再支持。请更新到最新版本。"
+
+msgid "This version of saito is too old for the server"
+msgstr "此 saito 版本过旧，服务器不再支持"
+
+msgid "Get the latest."
+msgstr "请更新到最新版本。"
+
+msgid "Your opponent is on {}. Pick the same game."
+msgstr "对手选择了{}。请选择相同的游戏。"
+
+msgid "Your opponent is on {}"
+msgstr "对手选择了{}"
+
+msgid "Pick the same game."
+msgstr "请选择相同的游戏。"
+
+msgid "This build can't be used."
+msgstr "此构筑无法使用。"
+
+msgid "Make a build first."
+msgstr "请先创建构筑。"
+
+msgid "Your opponent's build can't be used."
+msgstr "对手的构筑无法使用。"
+
+msgid "Your opponent's build can't be used"
+msgstr "对手的构筑无法使用"
+
+msgid "Your opponent left."
+msgstr "对手已离开。"
+
+msgid "Your opponent left"
+msgstr "对手已离开"
+
+msgid "No answer from your opponent."
+msgstr "对手没有响应。"
+
+msgid "No answer from your opponent"
+msgstr "对手没有响应"
+
+msgid "Couldn't connect to your opponent."
+msgstr "无法连接到对手。"
+
+msgid "Couldn't connect to your opponent"
+msgstr "无法连接到对手"
+
+msgid "That isn't an address. Use host:port."
+msgstr "这不是有效的地址。请使用 host:port 格式。"
+
+msgid "That isn't an address"
+msgstr "这不是有效的地址"
+
+msgid "Use host:port."
+msgstr "请使用 host:port 格式。"
+
+msgid "That port is already in use."
+msgstr "该端口已被占用。"
+
+msgid "That port is already in use"
+msgstr "该端口已被占用"
+
+msgid "Connection lost. The match has ended."
+msgstr "连接已断开。对战已结束。"
+
+msgid "Connection lost"
+msgstr "连接已断开"
+
+msgid "The match has ended."
+msgstr "对战已结束。"
+
+msgid "This replay is from a different version and can't be played."
+msgstr "此录像来自不同的版本，无法播放。"
+
+msgid "Different version"
+msgstr "版本不同"
+
+# A replay made on content the app hasn't, which its game's index doesn't list either.
+msgid "The content this replay was made with isn't available, so it can't be played."
+msgstr "找不到制作此录像时所用的内容，无法播放。"
+
+msgid "Content not available"
+msgstr "内容不可用"
+
+msgid "That file isn't a replay."
+msgstr "该文件不是录像。"
+
+msgid "That file isn't a replay"
+msgstr "该文件不是录像"
+
+msgid "This replay is damaged and can't be played."
+msgstr "此录像已损坏，无法播放。"
+
+msgid "This replay is damaged"
+msgstr "此录像已损坏"
+
+msgid "It can't be played."
+msgstr "无法播放。"
+
+msgid "This is a {} replay. Pick {} to watch it."
+msgstr "这是{}的录像。选择{}即可播放。"
+
+msgid "This is a {} replay"
+msgstr "这是{}的录像"
+
+msgid "Pick {} to watch it."
+msgstr "选择{}即可播放。"
+
+msgid "Video export needs ffmpeg. Install it, then try again."
+msgstr "导出视频需要 ffmpeg。请安装后重试。"
+
+msgid "Video export needs ffmpeg"
+msgstr "导出视频需要 ffmpeg"
+
+msgid "Install it, then try again."
+msgstr "请安装后重试。"
+
+msgid "The video's file couldn't be written. Check the folder and the space left."
+msgstr "无法写入视频文件。请检查文件夹和剩余空间。"
+
+msgid "The video's file couldn't be written"
+msgstr "无法写入视频文件"
+
+msgid "Check the folder and the space left."
+msgstr "请检查文件夹和剩余空间。"
+
+msgid "The video couldn't be made. Details are in the log file."
+msgstr "无法生成视频。详情请查看日志文件。"
+
+msgid "The video couldn't be made"
+msgstr "无法生成视频"
+
+msgid "Not a {} save."
+msgstr "这不是{}的存档。"
+
+# (A dialog's title: it has a phone's dialog's width, 310, at 20.)
+msgid "Not a {} save"
+msgstr "不是{}的存档"
+
+# A file chosen to import as a ruleset that isn't one of the game's: {} is the game, as the header shows it.
+msgid "Not a {} ruleset."
+msgstr "这不是{}的规则。"
+
+msgid "Not a {} ruleset"
+msgstr "不是{}的规则"
+
+# A game that couldn't be loaded (its content, or its assets extracted from its ROMs): {} is the game, as the header
+# shows it.
+msgid "{}'s data couldn't be loaded. Details are in the log file."
+msgstr "无法加载{}的数据。详情请查看日志文件。"
+
+msgid "{}'s data couldn't be loaded"
+msgstr "无法加载{}的数据"
+
+# The Legacy Collection not found: by its Chinese name (洛克人EXE 合集), and how to drag its folder onto the
+# window from Steam (Steam's own menu words, as its Simplified Chinese client has them: 管理 → 浏览本地文件); the
+# button opens the system's folder dialog, to choose the folder it is installed in.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "saito 需要《洛克人EXE 合集 Vol.2》。请从 Steam 安装，然后在库中右键点击它，选择「管理」→「浏览本地文件」，并将 exe 文件夹拖到此窗口。"
+msgid "saito needs Battle Network Legacy Collection Vol. 2"
+msgstr "saito 需要《洛克人EXE 合集 Vol.2》"
+msgid "Install it from Steam, then right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this window."
+msgstr "请从 Steam 安装，然后在库中右键点击它，选择「管理」→「浏览本地文件」，并将 exe 文件夹拖到此窗口。"
+# The same in a browser (the web build), which has no Steam to install it from.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "saito 需要《洛克人EXE 合集 Vol.2》。请在 Steam 库中右键点击它，选择「管理」→「浏览本地文件」，并将 exe 文件夹拖到此页面。"
+msgid "In Steam, right-click it in your library, choose Manage > Browse local files, and drag the exe folder onto this page."
+msgstr "请在 Steam 库中右键点击它，选择「管理」→「浏览本地文件」，并将 exe 文件夹拖到此页面。"
+# The same on a phone (iOS, Android), which has no Steam and takes nothing dragged onto it: the exe folder copied
+# to it from a computer, then chosen.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "saito 需要《洛克人EXE 合集 Vol.2》。请在电脑上的 Steam 库中右键点击它，选择「管理」→「浏览本地文件」，将 exe 文件夹复制到此设备，然后在这里选择该文件夹。"
+msgid "On a computer, right-click it in your Steam library, choose Manage > Browse local files, and copy the exe folder to this device. Then choose that folder here."
+msgstr "请在电脑上的 Steam 库中右键点击它，选择「管理」→「浏览本地文件」，将 exe 文件夹复制到此设备，然后在这里选择该文件夹。"
+msgid "Choose folder"
+msgstr "选择文件夹"
+# The Legacy Collection found lacks some of a game's ROMs: {} is the game, as the header
+# shows it; by its Chinese name, and Steam's own name for checking a game's files (验证游戏文件的完整性); the button opens the folder dialog again.
+msgid "The Legacy Collection's files are incomplete: some of {}'s are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "《洛克人EXE 合集》的文件不完整：{}的部分文件缺失。请让 Steam 验证游戏文件的完整性，然后重新选择其文件夹。"
+msgid "The Legacy Collection's files are incomplete"
+msgstr "《洛克人EXE 合集》的文件不完整"
+msgid "Some of {}'s files are missing. Have Steam verify the collection's files, then choose its folder again."
+msgstr "{}的部分文件缺失。请让 Steam 验证游戏文件的完整性，然后重新选择其文件夹。"
+# The Legacy Collection from a computer nearby (src/nearby.rs): the loading screen's note while one is looked
+# for, {} the computer's name as it calls itself; the bar's line while it comes; and the computer's dialog when a
+# device asks, {} the device's. The dialog's buttons are the last two; the note names the first.
+msgid "saito needs Battle Network Legacy Collection Vol. 2. Open saito on a computer that has it, on the same Wi-Fi, to send it here. Looking…"
+msgstr "saito 需要《洛克人EXE 合集 Vol.2》。在同一 Wi-Fi 下装有它的电脑上打开 saito，即可将它发送到这里。正在查找…"
+msgid "No computer found. Open saito on a computer that has the Legacy Collection, on the same Wi-Fi. Still nothing? Check that its firewall allows saito and that no VPN is on. Or copy its exe folder here and choose it."
+msgstr "未找到电脑。请在同一 Wi-Fi 下装有《洛克人EXE 合集》的电脑上打开 saito。仍未找到？请检查该电脑的防火墙是否允许 saito，并确认没有开启 VPN。或者将 exe 文件夹复制到这里并选择它。"
+msgid "Found {}. Choose Send there to send the Legacy Collection here."
+msgstr "已找到 {}。在那台电脑上选择「发送」，即可将《洛克人EXE 合集》发送到这里。"
+msgid "{} didn't send the Legacy Collection. Open saito on another computer that has it, or copy its exe folder here and choose it."
+msgstr "{} 没有发送《洛克人EXE 合集》。请在另一台装有它的电脑上打开 saito，或将 exe 文件夹复制到这里并选择它。"
+msgid "{} has a different version of saito. You both need the latest."
+msgstr "{} 的 saito 版本与你不同。双方都需要更新到最新版本。"
+msgid "Couldn't get the Legacy Collection from {}. Check that its firewall allows saito. Trying again…"
+msgstr "未能从 {} 获取《洛克人EXE 合集》。请检查其防火墙是否允许 saito。正在重试…"
+msgid "{} is sending to another device. Trying again soon…"
+msgstr "{} 正在向另一台设备发送。稍后重试…"
+msgid "What {} sent can't be played. Details are in the log file."
+msgstr "{} 发送的内容无法游玩。详情请查看日志文件。"
+msgid "saito isn't allowed to look for computers on this network. Allow it in Settings > Privacy & Security > Local Network, or copy the exe folder here and choose it."
+msgstr "saito 未获准在此网络中查找电脑。请在「设置」→「隐私与安全性」→「本地网络」中允许，或将 exe 文件夹复制到这里并选择它。"
+msgid "Receiving from {}"
+msgstr "正在从 {} 接收"
+msgid "Send the Legacy Collection to {}?"
+msgstr "要将《洛克人EXE 合集》发送到 {} 吗？"
+msgid "{} is asking for the Legacy Collection's ROMs, to play saito there. They're sent over this network."
+msgstr "{} 正在请求《洛克人EXE 合集》的 ROM，以便在那里玩 saito。它们将通过此网络发送。"
+msgid "Send"
+msgstr "发送"
+msgid "Not now"
+msgstr "暂不"
+msgid "Sending the Legacy Collection to {}"
+msgstr "正在将《洛克人EXE 合集》发送到 {}"
+msgid "Keep saito open until it's done."
+msgstr "完成前请不要关闭 saito。"
+msgid "Couldn't send the Legacy Collection to {}"
+msgstr "无法将《洛克人EXE 合集》发送到 {}"
+# A game's content couldn't be downloaded: {} is the game, as the header shows it (the first: no game named,
+# none could be).
+msgid "The games' content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "无法下载游戏内容。请检查网络连接，然后重新启动 saito。"
+msgid "{}'s content couldn't be downloaded. Check your connection, then start saito again."
+msgstr "无法下载{}的内容。请检查网络连接，然后重新启动 saito。"
+msgid "{}'s content couldn't be downloaded"
+msgstr "无法下载{}的内容"
+msgid "Check your connection, then start saito again."
+msgstr "请检查网络连接，然后重新启动 saito。"
+# No game's content is published for this version of saito yet (the loading screen's note).
+msgid "There's no game content for this version of saito yet. Check back later."
+msgstr "此版本的 saito 还没有游戏内容。请稍后再来看看。"
+
+msgid "Something went wrong. Details are in the log file."
+msgstr "出现错误。详情请查看日志文件。"
+
+msgid "Something went wrong"
+msgstr "出现错误"
+
+msgid "Details are in the log file."
+msgstr "详情请查看日志文件。"
+
+# The battle music list's first choice (Practice): each round's background's music.
+msgid "By background"
+msgstr "随背景"
+
+# ---- An update of the app: the loading screen's lines as the app starts, and the footer's if it fails ----
+
+msgid "Checking for updates"
+msgstr "正在检查更新"
+
+msgid "Updating to saito {}"
+msgstr "正在更新到 saito {}"
+
+msgid "The update couldn't be downloaded. It's tried again next start."
+msgstr "无法下载更新。下次启动时将重试。"

@@ -1,0 +1,810 @@
+//! Battle objects as sprites: the original's projection of 16.16 field
+//! positions to the screen, its culling, and the order it hands sprite
+//! parts to the hardware in.
+//!
+//! The game draws objects pool by pool (actors, then attacks, then
+//! effects), each pool in update order (`sub_8003E18`, `sub_8004218`,
+//! `sub_8004510` walk the lists `RunBattleObjectLogic` builds). Each part
+//! goes into a depth bucket of a layer (`sub_3006440`, `sub_3006920`), and
+//! the hardware list is read layer by layer, deepest bucket first, most
+//! recent part first (`copyTo_iObjectAttr3001D70_3006814`): a part drawn
+//! later, or lower on the field, ends up in front.
+
+use crate::audit::Problems;
+use crate::compose::SpritePart;
+use saito_assets::{Palette, Tiles};
+use saito_battle::Battle;
+use saito_battle::object::sprite::Shadow;
+use saito_battle::kinds::EngineKind;
+use saito_battle::object::{Object, ObjectRef, Pool, flags};
+
+/// Where the camera looks and whether the field is shown mirrored (the
+/// right-hand player sees their side on the left).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct View {
+    /// 16.16 camera offset (shakes move it).
+    pub camera: (i32, i32, i32),
+    /// The right-hand player's console's view (side 1's).
+    pub mirror: bool,
+    /// A fade of the objects' palettes (the custom screen's Beast Out
+    /// darkens sprite palettes 0-10, the battle's objects).
+    pub fade: crate::compose::Fade,
+}
+
+impl View {
+    /// The side whose console's view it is (the right-hand player's is
+    /// mirrored).
+    pub fn side(&self) -> u8 {
+        self.mirror as u8
+    }
+}
+
+/// The hardware sprite limit.
+pub const MAX_PARTS: usize = 128;
+
+/// Bucket counts per layer (`byte_802FD90`, the battle's sprite layers).
+const BUCKETS: [usize; 4] = [8, 4, 0xE0, 4];
+
+/// Where parts are ordered: four layers of depth buckets. A part may carry
+/// a tag (the text layer's: `TextSink::tag`), so that what it stands for
+/// can be found in the hardware order afterwards.
+pub struct SpriteList<'a> {
+    layers: [Vec<Bucket<'a>>; 4],
+    count: usize,
+    /// The columns the parts queued are kept to, while set
+    /// (`SpritePart::clip`: a console's part of a screen of both).
+    pub clip: Option<[i16; 2]>,
+    /// Where the parts queued keep to in a frame larger than the original's
+    /// (`SpritePart::anchor`): the battle's objects' with the field (the
+    /// default), each of the HUD's pieces' where the original draws it.
+    pub anchor: crate::compose::Anchor,
+}
+
+/// A depth bucket's parts, each with its tag and its fine offset.
+type Bucket<'a> = Vec<(SpritePart<'a>, Option<u32>, Fine)>;
+
+/// How far a part's true place is from where the frame draws it, in
+/// 16.16 pixels right and down: the part of a pixel the battle projection
+/// rounds off (`project`), which the smooth motion draws
+/// (`smooth::Overlay`). (0, 0) for a part at its true place.
+pub type Fine = (i32, i32);
+
+impl Default for SpriteList<'_> {
+    fn default() -> Self {
+        SpriteList { layers: BUCKETS.map(|n| vec![Vec::new(); n]), count: 0, clip: None, anchor: crate::compose::Anchor::CENTER }
+    }
+}
+
+impl<'a> SpriteList<'a> {
+    /// Queue one sprite's parts as (layer, bucket, part). The whole group
+    /// is dropped when it would pass the hardware limit; a part with a
+    /// bucket out of range drops it and the rest of the group
+    /// (`sub_3006920`).
+    pub fn insert_group(&mut self, group: Vec<(usize, i32, SpritePart<'a>)>) {
+        self.insert_placed_group(group.into_iter().map(|(layer, bucket, part)| (layer, bucket, part, (0, 0))).collect());
+    }
+
+    /// [`insert_group`](Self::insert_group), each part with its [`Fine`]
+    /// offset.
+    pub fn insert_placed_group(&mut self, group: Vec<(usize, i32, SpritePart<'a>, Fine)>) {
+        if self.count + group.len() >= MAX_PARTS {
+            return;
+        }
+        for (layer, bucket, part, fine) in group {
+            if bucket < 0 || bucket as usize >= self.layers[layer].len() {
+                return;
+            }
+            let part = self.clipped(part);
+            self.layers[layer][bucket as usize].push((part, None, fine));
+            self.count += 1;
+        }
+    }
+
+    /// Queue parts at a layer and depth bucket as the HUD's direct
+    /// inserts do (`sub_30068E8`), in front of what the bucket holds; the
+    /// first part ends up frontmost.
+    pub fn insert_at(&mut self, layer: usize, bucket: usize, group: Vec<SpritePart<'a>>) {
+        self.insert_tagged(layer, bucket, group, None);
+    }
+
+    /// [`insert_at`](Self::insert_at), every part tagged `tag`.
+    pub fn insert_tagged(&mut self, layer: usize, bucket: usize, group: Vec<SpritePart<'a>>, tag: Option<u32>) {
+        self.insert_placed(layer, bucket, group, tag, (0, 0));
+    }
+
+    /// [`insert_tagged`](Self::insert_tagged), every part `fine` off its
+    /// true place ([`Fine`]).
+    pub fn insert_placed(&mut self, layer: usize, bucket: usize, group: Vec<SpritePart<'a>>, tag: Option<u32>, fine: Fine) {
+        for part in group.into_iter().rev() {
+            if self.count >= MAX_PARTS {
+                return;
+            }
+            let part = self.clipped(part);
+            let Some(b) = self.layers[layer].get_mut(bucket) else { return };
+            b.push((part, tag, fine));
+            self.count += 1;
+        }
+    }
+
+    /// A part kept to the columns the list keeps its parts to, and its own,
+    /// and to where the list's parts keep to.
+    fn clipped(&self, part: SpritePart<'a>) -> SpritePart<'a> {
+        let part = SpritePart { anchor: self.anchor, ..part };
+        let Some([a, b]) = self.clip else { return part };
+        let clip = match part.clip {
+            Some([c, d]) => [a.max(c), b.min(d)],
+            None => [a, b],
+        };
+        SpritePart { clip: Some(clip), ..part }
+    }
+
+    /// Parts in hardware order (front first).
+    pub fn into_parts(self) -> Vec<SpritePart<'a>> {
+        self.into_tagged_parts().0
+    }
+
+    /// Parts in hardware order (front first), and each part's tag.
+    pub fn into_tagged_parts(self) -> (Vec<SpritePart<'a>>, Vec<Option<u32>>) {
+        let (parts, tags, _) = self.into_placed_parts();
+        (parts, tags)
+    }
+
+    /// Parts in hardware order (front first), each part's tag, and each
+    /// part's [`Fine`] offset.
+    pub fn into_placed_parts(self) -> (Vec<SpritePart<'a>>, Vec<Option<u32>>, Vec<Fine>) {
+        let mut out = Vec::with_capacity(self.count);
+        let mut tags = Vec::with_capacity(self.count);
+        let mut fines = Vec::with_capacity(self.count);
+        for layer in self.layers {
+            for bucket in layer.into_iter().rev() {
+                for (part, tag, fine) in bucket.into_iter().rev() {
+                    out.push(part);
+                    tags.push(tag);
+                    fines.push(fine);
+                }
+            }
+        }
+        (out, tags, fines)
+    }
+}
+
+const WHITE: Palette = [0x7FFF; 16];
+
+/// A frame's sprite draw: what the frame's sprites took of its budget so
+/// far, in draw order (the rules' `effects.sprite_budget`).
+///
+/// Before a drawn object's sprite goes to the part list, the game reserves
+/// its frame's tiles in sprite VRAM and gives its palette a slot (EXE6's
+/// `sub_3006028`, EXE5's 0x03006190, EXE4's 0x03005C00, called for every
+/// object with its VISIBLE flag from the pools' draws, before the parts are
+/// culled). The tiles: a frame another sprite reserved this frame is shared
+/// (the cache `sub_30061A8` searches by the frame's tile block); else the
+/// allocator, which starts each frame at 1 (`sub_80027B4`), less 0x30 plus
+/// the frame's tiles must stay under the cap (`sub_3006404`), or the sprite
+/// is flagged 0x10 and left out, with no palette slot taken. The palette
+/// (`sub_3006108`): its 16 colors as the sprite shows them, color shader
+/// and all; an equal one's slot is shared, else it takes the next, and with
+/// all of them taken the sprite is flagged 0x10 and left out (its tiles
+/// stay reserved). A whitened sprite is in slot 15 already
+/// (`sprite_forceWhitePalette`) and takes none.
+///
+/// Not the game's: its cache holds 89 frames and writes past them, and a
+/// count of 15 slots would give slot 15 to every later sprite; no battle's
+/// caps (10 slots) reach either.
+pub struct SpriteDraw<'a> {
+    cap: i32,
+    slots: usize,
+    /// The tile allocator.
+    next: i32,
+    /// The frames reserved so far.
+    frames: Vec<&'a Tiles>,
+    /// The palette slots taken so far.
+    palettes: Vec<Palette>,
+    /// The objects' sprites left out (what `--objects` lists).
+    left_out: Vec<String>,
+}
+
+/// What a frame's sprite draw took and left out ([`SpriteDraw`]), for
+/// `--objects`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpriteDrawn {
+    /// The tiles reserved, and the most a frame can reserve.
+    pub tiles: u16,
+    pub tile_room: u16,
+    /// The palette slots taken, and the slots there are.
+    pub palettes: u8,
+    pub palette_slots: u8,
+    /// The sprites left out, in draw order.
+    pub left_out: Vec<String>,
+}
+
+/// The allocator's start and what the cap test takes off it.
+const FIRST_TILE: i32 = 1;
+const TILE_BASE: i32 = 0x30;
+
+impl<'a> SpriteDraw<'a> {
+    /// A frame's draw under the game's budget, in battle mode `mode`.
+    pub fn new(rules: saito_battle::content::SpriteBudgetRules, mode: u8) -> SpriteDraw<'a> {
+        let slots = match rules.palettes_in_battle_mode_1 {
+            Some(n) if mode == 1 => n,
+            _ => rules.palettes,
+        };
+        SpriteDraw { cap: rules.tiles as i32, slots: slots as usize, next: FIRST_TILE, frames: Vec::new(), palettes: Vec::new(), left_out: Vec::new() }
+    }
+
+    /// Whether a sprite showing the frame `tiles` in `palette` (none: a
+    /// whitened sprite's, which takes no slot) is drawn: its frame's tiles
+    /// reserved, then its palette's slot.
+    pub fn take(&mut self, tiles: &'a Tiles, palette: Option<&Palette>) -> bool {
+        if !self.frames.iter().any(|f| std::ptr::eq(*f, tiles)) {
+            let n = (tiles.pixels.len() / Tiles::TILE) as i32;
+            if self.next - TILE_BASE + n >= self.cap {
+                return false;
+            }
+            self.frames.push(tiles);
+            self.next += n;
+        }
+        let Some(palette) = palette else { return true };
+        if self.palettes.contains(palette) {
+            return true;
+        }
+        if self.palettes.len() >= self.slots {
+            return false;
+        }
+        self.palettes.push(*palette);
+        true
+    }
+
+    /// What the frame took and left out.
+    pub fn drawn(self) -> SpriteDrawn {
+        SpriteDrawn {
+            tiles: (self.next - FIRST_TILE) as u16,
+            tile_room: (self.cap + TILE_BASE - FIRST_TILE - 1).max(0) as u16,
+            palettes: self.palettes.len() as u8,
+            palette_slots: self.slots as u8,
+            left_out: self.left_out,
+        }
+    }
+}
+
+/// A position projected to the screen (`sub_300638C`, the battle
+/// projection): x and y are the field plane, z is height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Projected {
+    /// Screen x of the object's anchor.
+    pub x: i32,
+    /// Screen y of the ground under the object (also its depth).
+    pub ground: i32,
+    /// Screen y of the object at its height.
+    pub y: i32,
+}
+
+pub fn project(pos: (i32, i32, i32), view: &View) -> Projected {
+    let int = |v: i32| (v >> 16) as i16 as i32;
+    let (cx, cy, cz) = (view.camera.0 >> 16, view.camera.1 >> 16, view.camera.2 >> 16);
+    // (The right-hand player's console mirrors the field, not its camera:
+    // a shake moves the sprites the way it moves the field layer.)
+    let x = if view.mirror { -int(pos.0) } else { int(pos.0) };
+    let x = (x - cx + 0x78) as i16 as i32;
+    let ground = (int(pos.1) - cy + 0x50) as i16 as i32;
+    let y = ground - (int(pos.2) - cz);
+    Projected { x, ground, y }
+}
+
+/// What [`project`] rounds off a position: its true place less the
+/// projected one, in 16.16 pixels right and down, at its anchor (`x`, `y`)
+/// and at its ground (`ground`). The projection takes the whole pixels of
+/// the position and of the camera; what it leaves is their parts of a
+/// pixel: an object's own (a thrown bomb's arc, 2.75 to 2.9 pixels a tick
+/// across, its height a parabola) and the camera's (the custom screen's
+/// slide moves it 1.5 pixels a tick; the field layer's the same:
+/// `Stage::draw_field`). The right-hand player's console mirrors the
+/// position, so its X's part goes the other way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FineProjected {
+    pub x: i32,
+    pub ground: i32,
+    pub y: i32,
+}
+
+/// The part of a pixel of a 16.16 value, as `v >> 16` leaves it.
+fn sub(v: i32) -> i32 {
+    v & 0xFFFF
+}
+
+/// What [`project`] rounds off `pos` ([`FineProjected`]).
+pub fn project_fine(pos: (i32, i32, i32), view: &View) -> FineProjected {
+    let (cx, cy, cz) = view.camera;
+    let x = if view.mirror { -sub(pos.0) } else { sub(pos.0) };
+    let ground = sub(pos.1) - sub(cy);
+    FineProjected { x: x - sub(cx), ground, y: ground - (sub(pos.2) - sub(cz)) }
+}
+
+/// What [`project_hud`] rounds off `pos`: on the right-hand player's
+/// console the camera's X goes the other way.
+pub fn project_hud_fine(pos: (i32, i32, i32), view: &View) -> FineProjected {
+    let f = project_fine(pos, view);
+    FineProjected { x: if view.mirror { f.x + 2 * sub(view.camera.0) } else { f.x }, ..f }
+}
+
+/// The HUD's projection of a position (`sub_800362C`, for the opponents' HP
+/// numbers and the chip icons): the battle projection, except that the
+/// right-hand player's console mirrors after the camera, so a shake moves
+/// these the other way there.
+pub fn project_hud(pos: (i32, i32, i32), view: &View) -> Projected {
+    let p = project(pos, view);
+    let cx = view.camera.0 >> 16;
+    Projected { x: if view.mirror { p.x + 2 * cx } else { p.x }, ..p }
+}
+
+/// A color shader (`sprite_setColorShader`, applied by `sub_3005EF0`):
+/// bit 15 clear adds the color to every palette entry, set subtracts it,
+/// per channel and saturating.
+pub fn shade(mut p: Palette, shader: u16) -> Palette {
+    if shader == 0 {
+        return p;
+    }
+    let ch = |c: u16, s: u32| ((c >> s) & 31) as i32;
+    for c in p.iter_mut() {
+        let mut out = 0u16;
+        for s in [0, 5, 10] {
+            let v = if shader & 0x8000 == 0 { ch(*c, s) + ch(shader, s) } else { ch(*c, s) - ch(shader, s) };
+            out |= (v.clamp(0, 31) as u16) << s;
+        }
+        *c = out;
+    }
+    p
+}
+
+/// The palette flash showing this frame (`sub_80E10A4`), by its variant:
+/// 0 (`sub_80E10C0`) whitens the stage's palettes (background palettes
+/// 0-8) on the frames its counter has bit 2 clear; 1 (`sub_80E114C`, the
+/// FlashBomb's) the background palettes 0-14 (the stage's and the HUD's)
+/// and the sprites' every frame. Neither shows while the battle holds it
+/// (paused, or dimmed unless it keeps flashing then, as the game's rule
+/// has it: `kinds::palette_flash::held`): it turns its palette transform
+/// off.
+pub fn palette_flash(b: &Battle) -> Option<u8> {
+    b.objects.in_order().find_map(|r| {
+        let o = b.objects.get(r);
+        if !is(b, o, EngineKind::PaletteFlash) || o.state == 0 {
+            return None;
+        }
+        let variant = o.params[0];
+        let held = saito_battle::kinds::palette_flash::held(b, r);
+        (!held && (variant == 1 || o.timer & 4 == 0)).then_some(variant)
+    })
+}
+
+/// A pool's objects in the order they are drawn (the rules'
+/// `effects.draw_order`): the update list's, or by slot.
+fn draw_order(b: &Battle, pool: Pool) -> Vec<saito_battle::object::ObjectRef> {
+    let mut refs: Vec<_> = b.objects.in_order().filter(|r| r.pool == pool).collect();
+    if b.game_rules().effects.draw_order == saito_battle::content::DrawOrder::Slots {
+        refs.sort_by_key(|r| r.slot);
+    }
+    refs
+}
+
+/// Whether `o` is of the engine's kind `kind`.
+fn is(b: &Battle, o: &Object, kind: EngineKind) -> bool {
+    b.content.defs.engine_kind(o.kind) == Some(kind)
+}
+
+/// A sprite as content names it, for a problem's text.
+pub fn sprite_name(b: &Battle, id: saito_battle::content::SpriteId) -> String {
+    crate::lookups::sprite_name(&b.content, id)
+}
+
+/// Every object as the renderer sees it, a line each: its kind, where it
+/// is, its sprite with the animation and frame, and its look (what
+/// `--objects` prints: the first thing to read when something isn't drawn
+/// or is drawn wrong).
+pub fn describe(b: &Battle, view: &View) -> Vec<String> {
+    let mut lines = Vec::new();
+    for pool in Pool::ALL {
+        for r in b.objects.in_order().filter(|r| r.pool == pool) {
+            let o = b.objects.get(r);
+            let s = b.objects.sprite(r);
+            let p = project((o.pos.x, o.pos.y, o.pos.z), view);
+            let sprite = match s.id {
+                Some(id) => format!("{} anim {} step {}{}", sprite_name(b, id), s.anim, s.steps, if s.started { "" } else { " (not started)" }),
+                None => "no sprite".to_string(),
+            };
+            let mut notes = Vec::new();
+            if !b.visible_to(r, b.setup.local_side) {
+                notes.push("not visible".to_string());
+            }
+            if o.flags & flags::NO_SPRITE_UPDATE != 0 {
+                notes.push("sprite held (not drawn)".to_string());
+            }
+            let l = s.look;
+            notes.push(format!("palette {} shadow {:?} priority {}", l.palette, l.shadow, l.priority));
+            for (on, what) in [(l.hflip, "hflip"), (l.vflip, "vflip"), (l.white, "white")] {
+                if on {
+                    notes.push(what.to_string());
+                }
+            }
+            if l.color_shader != 0 {
+                notes.push(format!("shader {:#06x}", l.color_shader));
+            }
+            if let Some(a) = l.alpha {
+                notes.push(format!("alpha {a}"));
+            }
+            if let Some(m) = l.mosaic {
+                notes.push(format!("mosaic {m}"));
+            }
+            if l.hidden_parts != 0 {
+                notes.push(format!("hidden parts {:#010x}", l.hidden_parts));
+            }
+            if o.chips_held != 0 {
+                let hud = b.chip_hud_for(o.alliance);
+                notes.push(format!("{} chips (icons {}, window {})", o.chips_held, hud.icons, hud.window));
+            }
+            lines.push(format!(
+                "{:?} {:2} {} side {} at ({}, {}) ground {}: {sprite}; {}",
+                r.pool,
+                r.slot,
+                b.content.defs.kind(o.kind).key,
+                o.alliance,
+                p.x,
+                p.y,
+                p.ground,
+                notes.join(", ")
+            ));
+        }
+    }
+    lines
+}
+
+/// Where object `r` is drawn: where it is, plus, for one that rides on another's sprite (`Look::attach`), the
+/// place of that part in the other's frame (`sub_80030BA`'s offset, X mirrored by `r`'s facing).
+fn drawn_at(b: &Battle, graphics: &crate::graphics::Graphics<'_>, r: ObjectRef) -> saito_battle::object::Vec3 {
+    let o = b.objects.get(r);
+    let mut pos = o.pos;
+    let Some((owner, n)) = b.objects.sprite(r).look.attach else { return pos };
+    let s = b.objects.sprite(owner);
+    let offset = s.id.and_then(|id| graphics.sprite(id)).and_then(|sheet| {
+        let frames = sheet.animations.get(s.anim as usize)?;
+        let frame = frames.get(sheet.frame_index(s.anim, s.steps, s.started)).or(frames.last())?;
+        sheet.part_lists.get(frame.parts as usize)?.get(n as usize).map(|p| (i32::from(p.x), i32::from(p.y)))
+    });
+    let (x, y) = offset.unwrap_or((0, 0));
+    let dir = saito_battle::kinds::common::facing(o.alliance, o.flip);
+    pos.x = pos.x.wrapping_add(x * dir * 0x1_0000);
+    pos.y = pos.y.wrapping_add(y * 0x1_0000);
+    pos
+}
+
+/// Queue every visible object's sprite the frame's sprite draw has room
+/// for ([`SpriteDraw`]); returns what the draw took. Visible: to one of
+/// `viewers` (by side: the console's own, or on a screen of both either
+/// player's). What an object names that the game's graphics don't have
+/// goes to `problems` (`crate::lookups`); with `lookups_only` nothing is
+/// queued.
+///
+/// An object drawn with a sprite the caller names (`sprite:NAME`,
+/// `Problems::marking`) is marked where it is drawn.
+pub fn queue_objects<'a>(
+    b: &Battle,
+    graphics: &crate::graphics::Graphics<'a>,
+    view: &View,
+    viewers: &[u8],
+    list: &mut SpriteList<'a>,
+    problems: &mut Problems,
+    lookups_only: bool,
+) -> SpriteDrawn {
+    let mut draw = SpriteDraw::new(b.game_rules().effects.sprite_budget, b.round.mode_copy);
+    for pool in Pool::ALL {
+        for r in draw_order(b, pool) {
+            let o = b.objects.get(r);
+            // Objects whose sprite doesn't animate are culled to nothing
+            // (`sub_30061E8` gives them a one-point mask).
+            if !viewers.iter().any(|&v| b.visible_to(r, v)) || o.flags & flags::NO_SPRITE_UPDATE != 0 {
+                continue;
+            }
+            // An effect the game spawns without a position (the second
+            // explosion of a deletion) has memory addresses for X and Y:
+            // far off the screen. (Its sprite still takes its tiles and
+            // its palette's slot.)
+            let nowhere = saito_battle::kinds::effect::xy_unknown(b, r);
+            let s = b.objects.sprite(r);
+            let Some(id) = s.id else { continue };
+            let kind = || format!("of kind {:?}", b.content.defs.kind(o.kind).key);
+            let (sheet, frames) = if nowhere {
+                // (Not drawn: what the game's assets lack of it is no problem.)
+                let Some(sheet) = graphics.sprite(id) else { continue };
+                let Some(frames) = sheet.animations.get(s.anim as usize) else { continue };
+                (sheet, &frames[..])
+            } else {
+                let Some(sheet) = crate::lookups::sprite(graphics, &b.content, id, &kind, problems) else { continue };
+                let Some(frames) = crate::lookups::animation(sheet, &b.content, id, s.anim, &kind, problems) else { continue };
+                (sheet, frames)
+            };
+            let Some(frame) = frames.get(sheet.frame_index(s.anim, s.steps, s.started)).or(frames.last()) else { continue };
+            let Some((parts, tiles, set)) = crate::lookups::frame_parts(sheet, frame) else { continue };
+            let look = b.look_for(r, view.side());
+            // The palette offset the sprite holds: the first part's of the
+            // frame it last took one from (`Look::part_palette`; EXE5's
+            // frame load leaves the last step's).
+            let first_palette = look.part_palette.map_or(0, |at| {
+                sheet
+                    .animations
+                    .get(at.anim as usize)
+                    .and_then(|frames| frames.get(sheet.frame_index(at.anim, at.steps, at.started)).or(frames.last()))
+                    .and_then(|f| sheet.part_lists.get(f.parts as usize))
+                    .and_then(|parts| parts.first())
+                    .map_or(0, |p| p.palette)
+            });
+            let palette_index = look.palette.wrapping_add(first_palette) as usize;
+            // The frame's sprite draw, before any culling: a sprite it has
+            // no room for isn't drawn.
+            if !lookups_only {
+                let shown = (!look.white).then(|| shade(set.get(palette_index).copied().unwrap_or([0; 16]), look.color_shader));
+                if !draw.take(tiles, shown.as_ref()) {
+                    draw.left_out.push(format!("{:?} {} {}", r.pool, r.slot, b.content.defs.kind(o.kind).key));
+                    continue;
+                }
+            }
+            if nowhere {
+                continue;
+            }
+            let pos = drawn_at(b, graphics, r);
+            let p = project((pos.x, pos.y, pos.z), view);
+            let fine = project_fine((pos.x, pos.y, pos.z), view);
+            let hflip = look.hflip ^ view.mirror;
+            let vflip = look.vflip;
+
+            // Culling (`sub_30061E8`): a part is kept if its anchor is near
+            // the screen. The first part is tested at the ground when the
+            // sprite has a ground shadow.
+            let mut mask = 0u32;
+            let mut basis = if look.shadow == Shadow::Ground { p.ground } else { p.y };
+            let m = view.mirror as i32;
+            for (i, part) in parts.iter().take(32).enumerate() {
+                let px = p.x + if hflip { -(part.x as i32) } else { part.x as i32 };
+                let py = basis + if vflip { -(part.y as i32) } else { part.y as i32 };
+                if (m - 0x40..m + 0x131).contains(&px) && (-0x20..0xC1).contains(&py) {
+                    mask |= 0x8000_0000 >> i;
+                }
+                basis = p.y;
+            }
+            if mask == 0 {
+                continue;
+            }
+            mask &= !look.hidden_parts;
+
+            let palette = if look.white {
+                WHITE
+            } else {
+                let what = || format!("{} asks for {} on animation {}", kind(), look.palette, s.anim);
+                let p = crate::lookups::palette(set, &b.content, id, frame, palette_index, &what, problems).unwrap_or([0; 16]);
+                shade(p, look.color_shader)
+            };
+            if lookups_only {
+                continue;
+            }
+            let palette = palette.map(|c| crate::compose::apply_fade(c, view.fade));
+
+            // A sprite marked as under the objects (`Look::under_objects`,
+            // the sprite's flag 0x20) with a ground shadow: `sub_3006440`
+            // goes on drawing every part as it does the shadow (it doesn't
+            // clear its `r7` after the first), in the shadows' layer and
+            // bucket, and `sub_300638C` leaves the shadow's Y at the
+            // sprite's height.
+            let under = look.under_objects && look.shadow == Shadow::Ground;
+            let by_priority = b.game_rules().effects.sprite_depth == saito_battle::content::SpriteDepth::GroundAndPriority;
+            let mut group = Vec::new();
+            for (i, part) in parts.iter().take(32).enumerate() {
+                let shadow = i == 0;
+                if shadow && look.shadow == Shadow::Hidden {
+                    continue;
+                }
+                if mask & (0x8000_0000 >> i) == 0 {
+                    continue;
+                }
+                let as_shadow = under || (shadow && look.shadow == Shadow::Ground);
+                let (w, h) = (part.width as i32, part.height as i32);
+                let dx = if hflip { -(part.x as i32) - w } else { part.x as i32 };
+                let dy = if vflip { -(part.y as i32) - h } else { part.y as i32 };
+                let base_y = if as_shadow && !under { p.ground } else { p.y };
+                let sprite = SpritePart {
+                    x: p.x + dx,
+                    y: base_y + dy,
+                    width: part.width,
+                    height: part.height,
+                    tiles,
+                    first_tile: part.tile as usize,
+                    hflip: part.hflip ^ hflip,
+                    vflip: part.vflip ^ vflip,
+                    palette,
+                    priority: look.priority,
+                    alpha: look.alpha,
+                    mosaic: look.mosaic,
+                    vscale: None,
+                    affine: None,
+                    fade: None,
+                    clip: None,
+                    anchor: crate::compose::Anchor::CENTER,
+                };
+                // Ground shadows go one layer back, in the first bucket.
+                // Where the rules count the sprite's priority into the
+                // depth (EXE4's 0x0300613C), a bucket is further by it: the
+                // first part's (and every part's of a mark under the
+                // objects) by the sprite's priority, a later part's by 2.
+                let bias = match (by_priority, i == 0 || under) {
+                    (false, _) => 0,
+                    (true, true) => look.priority as i32,
+                    (true, false) => 2,
+                };
+                let (layer, bucket) = if as_shadow { (3, bias) } else { (2, p.ground + 0x40 + bias) };
+                let fine = (fine.x, if as_shadow && !under { fine.ground } else { fine.y });
+                group.push((layer, bucket, sprite, fine));
+            }
+            if !problems.marking.is_empty()
+                && let Some(name) = crate::graphics::name(&b.content, saito_content_api::AssetKind::Sprite, id.0)
+            {
+                // (The sprite whatever it plays, or one animation of it:
+                // `sprite:NAME:ANIM`.)
+                for what in [format!("sprite:{name}"), format!("sprite:{name}:{}", s.anim)] {
+                    if problems.wants(&what) {
+                        problems.mark(object_box(&p, &group), what);
+                    }
+                }
+            }
+            list.insert_placed_group(group);
+        }
+    }
+    draw.drawn()
+}
+
+/// Where an object is drawn: the box around its anchor, its ground and its
+/// parts (`Problems::mark`'s, for a sprite the caller names).
+fn object_box(p: &Projected, group: &[(usize, i32, SpritePart, Fine)]) -> [i32; 4] {
+    let mut rect = [p.x, p.y.min(p.ground), p.x, p.y.max(p.ground)];
+    for (_, _, s, _) in group {
+        // (Its place on the original's screen, unwrapped.)
+        rect = [rect[0].min(s.x), rect[1].min(s.y), rect[2].max(s.x + s.width as i32), rect[3].max(s.y + s.height as i32)];
+    }
+    rect
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_matches_the_game() {
+        // A navi on panel (2, 2): X = 2*40 - 140, Y = 2*24 - 20.
+        let v = View::default();
+        let p = project(((-60) << 16, 28 << 16, 0), &v);
+        assert_eq!(p, Projected { x: 60, ground: 108, y: 108 });
+        // Height lifts the sprite, not its ground.
+        let p = project(((-60) << 16, 28 << 16, 16 << 16), &v);
+        assert_eq!((p.ground, p.y), (108, 92));
+        // Mirrored for the right-hand player.
+        let p = project(((-60) << 16, 28 << 16, 0), &View { mirror: true, ..v });
+        assert_eq!(p.x, 180);
+    }
+
+    /// What the projection rounds off, added back, is the true place: the
+    /// position and the camera taken whole, from either console, for the
+    /// battle's projection and the HUD's.
+    #[test]
+    fn the_rounded_off_part_of_a_pixel_added_back_is_the_true_place() {
+        let exact = |v: i32| v as f64 / 65536.0;
+        for pos in [(-60 << 16, 28 << 16, 0), (0x12_8000 - (60 << 16), 0x1C_4000, 0x9_C000), (-0x2_E666, 0x31_1999, 0x1_7333)] {
+            for camera in [(0, 0, 0), (0, -0x1_8000, 0), (0x2_0000, -0x4_8000, 0), (0x8000, 0x1_4000, 0)] {
+                for mirror in [false, true] {
+                    let view = View { camera, mirror, ..View::default() };
+                    let (p, f, h, fh) = (project(pos, &view), project_fine(pos, &view), project_hud(pos, &view), project_hud_fine(pos, &view));
+                    let sign = if mirror { -1.0 } else { 1.0 };
+                    let x = sign * exact(pos.0) - exact(camera.0) + 120.0;
+                    let ground = exact(pos.1) - exact(camera.1) + 80.0;
+                    let y = ground - (exact(pos.2) - exact(camera.2));
+                    let hud_x = if mirror { x + 2.0 * exact(camera.0) } else { x };
+                    let got = |whole: i32, part: i32| whole as f64 + exact(part);
+                    assert_eq!((got(p.x, f.x), got(p.ground, f.ground), got(p.y, f.y)), (x, ground, y), "{pos:?} {camera:?} {mirror}");
+                    assert_eq!((got(h.x, fh.x), got(h.y, fh.y)), (hud_x, y), "{pos:?} {camera:?} {mirror}: the HUD's");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_shake_moves_the_mirrored_view_the_same_way() {
+        // The camera 3 pixels right and 2 down: everything moves left and up
+        // on both consoles; the HUD's pieces move right on the mirrored one.
+        let pos = ((-60) << 16, 28 << 16, 0);
+        let shaken = View { camera: (3 << 16, 2 << 16, 0), ..View::default() };
+        assert_eq!(project(pos, &shaken), Projected { x: 57, ground: 106, y: 106 });
+        assert_eq!(project_hud(pos, &shaken).x, 57);
+        let mirrored = View { mirror: true, ..shaken };
+        assert_eq!(project(pos, &mirrored), Projected { x: 177, ground: 106, y: 106 });
+        assert_eq!(project_hud(pos, &mirrored), Projected { x: 183, ground: 106, y: 106 });
+    }
+
+    #[test]
+    fn deeper_and_later_parts_come_first() {
+        let tiles = saito_assets::Tiles::default();
+        let part = |x: i32| SpritePart {
+            x,
+            y: 0,
+            width: 8,
+            height: 8,
+            tiles: &tiles,
+            first_tile: 0,
+            hflip: false,
+            vflip: false,
+            palette: [0; 16],
+            priority: 2,
+            alpha: None,
+            mosaic: None,
+            vscale: None,
+            affine: None,
+            fade: None,
+            clip: None,
+            anchor: crate::compose::Anchor::CENTER,
+        };
+        let mut list = SpriteList::default();
+        list.insert_group(vec![(2, 100, part(1)), (2, 100, part(2))]);
+        list.insert_group(vec![(2, 150, part(3)), (3, 0, part(4))]);
+        list.insert_group(vec![(2, 100, part(5)), (2, 999, part(6)), (2, 100, part(7))]);
+        // The HUD's own: a banner in the front layer, an icon among the
+        // field's sprites by its bucket.
+        list.insert_at(0, 0, vec![part(8), part(9)]);
+        list.insert_at(2, 120, vec![part(10)]);
+        let order: Vec<i32> = list.into_parts().iter().map(|p| p.x).collect();
+        assert_eq!(order, vec![8, 9, 3, 10, 5, 2, 1, 4]);
+    }
+
+    /// A frame's sprite draw (`SpriteDraw`): a battle's caps, 0x2FF tiles
+    /// and 10 palette slots (8 in battle mode 1 where the game says so).
+    #[test]
+    fn the_sprite_draw_leaves_out_what_the_frame_has_no_room_for() {
+        use saito_battle::content::SpriteBudgetRules;
+        let rules = SpriteBudgetRules { tiles: 0x2FF, palettes: 10, palettes_in_battle_mode_1: Some(8) };
+        let frame = |n: usize| Tiles { pixels: vec![0; n * Tiles::TILE] };
+        let palette = |n: u16| -> Palette { [n; 16] };
+
+        // Tiles: the allocator starts at 1, and a frame is left out when
+        // the allocator less 0x30 plus its tiles reaches the cap: a frame
+        // holds 0x32D tiles in all (1 - 0x30 + 0x32D = 0x2FE).
+        let (big, one, two, small) = (frame(0x32C), frame(1), frame(2), frame(1));
+        let mut d = SpriteDraw::new(rules, 0);
+        assert!(d.take(&big, Some(&palette(1))));
+        assert!(!d.take(&two, Some(&palette(2))), "0x32C reserved, two more reach the cap");
+        assert!(d.take(&one, Some(&palette(1))), "one more fits");
+        assert!(!d.take(&small, Some(&palette(1))), "the frame is full");
+        // A frame a sprite reserved this frame is shared, whatever is left.
+        assert!(d.take(&big, Some(&palette(1))) && d.take(&one, None));
+        let drawn = d.drawn();
+        assert_eq!((drawn.tiles, drawn.tile_room, drawn.palettes, drawn.palette_slots), (0x32D, 0x32D, 1, 10));
+        // (The one left out for its tiles took no palette slot.)
+
+        // Palettes: an equal palette's slot is shared; with every slot
+        // taken a new palette's sprite is left out, its tiles reserved all
+        // the same; a whitened sprite takes no slot.
+        let frames: Vec<Tiles> = (0..12).map(|_| frame(4)).collect();
+        let mut d = SpriteDraw::new(rules, 0);
+        for (i, f) in frames.iter().take(10).enumerate() {
+            assert!(d.take(f, Some(&palette(i as u16))));
+        }
+        assert!(!d.take(&frames[10], Some(&palette(10))), "an eleventh palette");
+        assert!(d.take(&frames[10], Some(&palette(3))), "its frame is reserved, and palette 3 has its slot");
+        assert!(d.take(&frames[11], None), "whitened: slot 15, none of the ten");
+        let drawn = d.drawn();
+        assert_eq!((drawn.tiles, drawn.palettes), (48, 10));
+
+        // Battle mode 1: 8 slots where the game states them.
+        let mut d = SpriteDraw::new(rules, 1);
+        for (i, f) in frames.iter().take(8).enumerate() {
+            assert!(d.take(f, Some(&palette(i as u16))));
+        }
+        assert!(!d.take(&frames[8], Some(&palette(8))));
+        let mut d = SpriteDraw::new(SpriteBudgetRules { palettes_in_battle_mode_1: None, ..rules }, 1);
+        for (i, f) in frames.iter().take(10).enumerate() {
+            assert!(d.take(f, Some(&palette(i as u16))));
+        }
+    }
+}

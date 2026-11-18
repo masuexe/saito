@@ -1,0 +1,293 @@
+# Korean: Replays (ui/screens/replays.slint).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ---- The list ----
+
+msgid "Search by opponent"
+msgstr "상대 이름으로 검색"
+
+# A row's opponent.
+msgid "vs {}"
+msgstr "vs {}"
+
+# The footer: how many replays the game has.
+msgid "{n} replay"
+msgid_plural "{n} replays"
+msgstr[0] "리플레이 {n}개"
+
+msgid "No replays yet. Every online match is recorded."
+msgstr "아직 리플레이가 없습니다. 모든 온라인 대전이 기록됩니다."
+
+msgid "No replays found."
+msgstr "리플레이를 찾을 수 없습니다."
+
+msgid "Watch"
+msgstr "재생"
+
+msgid "Export"
+msgstr "내보내기"
+
+msgid "Delete"
+msgstr "삭제"
+
+# ---- The selected replay ----
+
+msgid "Played"
+msgstr "대전 일시"
+
+msgid "Result"
+msgstr "결과"
+
+msgid "Length"
+msgstr "길이"
+
+msgctxt "verb"
+msgid "Export video"
+msgstr "동영상 내보내기"
+
+msgid "Show file"
+msgstr "파일 보기"
+
+msgid "Save replay"
+msgstr "리플레이 저장"
+
+msgid "Delete replay?"
+msgstr "리플레이를 삭제하시겠습니까?"
+
+# ---- The play queue ----
+
+msgid "Queue"
+msgstr "재생 대기열"
+
+msgid "Add to queue"
+msgstr "대기열에 추가"
+
+# Put a replay at the queue's start: what plays next.
+msgid "Play next"
+msgstr "다음에 재생"
+
+msgid "Watch from here"
+msgstr "여기서부터 재생"
+
+msgid "Move up"
+msgstr "위로 이동"
+
+msgid "Move down"
+msgstr "아래로 이동"
+
+msgid "Clear the queue?"
+msgstr "재생 대기열을 비우시겠습니까?"
+
+# A queue entry whose file is gone: its file's name.
+msgid "Missing: {}"
+msgstr "찾을 수 없음: {}"
+
+# Watch: WATCH's own word.
+msgid "The queue is empty. Add replays to it with the arrow beside Watch."
+msgstr "재생 대기열이 비어 있습니다. '재생' 옆의 화살표로 추가할 수 있습니다."
+
+# The players of a replay, the one whose console is shown first.
+msgid "{} vs {}"
+msgstr "{} vs {}"
+
+# A player a replay has no name for: the first, the second.
+msgid "P1"
+msgstr "1P"
+
+msgid "P2"
+msgstr "2P"
+
+# ---- Dates: a month's short name, a day of a month ({0} the month, {1} the day), and with its year ({2}) ----
+
+msgid "Jan"
+msgstr "1월"
+
+msgid "Feb"
+msgstr "2월"
+
+msgid "Mar"
+msgstr "3월"
+
+msgid "Apr"
+msgstr "4월"
+
+msgid "May"
+msgstr "5월"
+
+msgid "Jun"
+msgstr "6월"
+
+msgid "Jul"
+msgstr "7월"
+
+msgid "Aug"
+msgstr "8월"
+
+msgid "Sep"
+msgstr "9월"
+
+msgid "Oct"
+msgstr "10월"
+
+msgid "Nov"
+msgstr "11월"
+
+msgid "Dec"
+msgstr "12월"
+
+msgctxt "date"
+msgid "{0} {1}"
+msgstr "{0} {1}일"
+
+msgctxt "date"
+msgid "{0} {1}, {2}"
+msgstr "{2}년 {0} {1}일"
+
+# ---- How a set went: a row's letter with the rounds won and lost, and the same in words ----
+
+msgctxt "score"
+msgid "W {}–{}"
+msgstr "승 {}–{}"
+
+msgctxt "score"
+msgid "L {}–{}"
+msgstr "패 {}–{}"
+
+msgctxt "score"
+msgid "D {}–{}"
+msgstr "무 {}–{}"
+
+msgid "Won {}–{}"
+msgstr "승리 {}–{}"
+
+msgid "Lost {}–{}"
+msgstr "패배 {}–{}"
+
+msgid "Draw {}–{}"
+msgstr "무승부 {}–{}"
+
+msgid "Not finished · {}–{}"
+msgstr "미종료 · {}–{}"
+
+# ---- The viewer ----
+
+msgid "Replay"
+msgstr "리플레이"
+
+msgid "Round {} of {}"
+msgstr "라운드 {}/{}"
+
+msgid "Player"
+msgstr "플레이어"
+
+msgid "Play or pause"
+msgstr "재생/일시정지"
+
+msgid "Step a frame"
+msgstr "프레임 이동"
+
+# The viewer's Left and Right: five seconds back or ahead (Shift: one).
+msgid "Seek"
+msgstr "탐색"
+
+msgid "Previous or next round"
+msgstr "이전/다음 라운드"
+
+# The viewer's footer: how many rounds the replay has.
+msgid "{n} round"
+msgid_plural "{n} rounds"
+msgstr[0] "{n}라운드"
+
+# The transport's ⋯ menu.
+msgid "Other side's picture"
+msgstr "상대 측 화면"
+
+msgid "Playback speed"
+msgstr "재생 속도"
+
+# The viewer's play queue popup.
+msgid "Autoplay next"
+msgstr "다음 자동 재생"
+
+msgid "Up next"
+msgstr "다음 재생"
+
+msgid "Nothing else is in the queue."
+msgstr "대기열에 다음 리플레이가 없습니다."
+
+# ---- The export mode ----
+
+msgid "Set start here"
+msgstr "여기를 시작으로"
+
+msgid "Set end here"
+msgstr "여기를 끝으로"
+
+msgid "Set start or end"
+msgstr "시작/끝 지점 설정"
+
+msgid "Drag the handles on the bar to choose the part to export."
+msgstr "바 양쪽의 핸들을 드래그하여 내보낼 구간을 선택하세요."
+
+msgid "Size"
+msgstr "크기"
+
+# The consoles a video shows.
+msgid "Sides"
+msgstr "화면"
+
+msgctxt "sides"
+msgid "One"
+msgstr "한쪽"
+
+msgctxt "sides"
+msgid "Both"
+msgstr "양쪽"
+
+msgctxt "sides"
+msgid "Side by side"
+msgstr "나란히"
+
+msgid "Save as"
+msgstr "저장 위치"
+
+msgid "Whole match · {}"
+msgstr "전체 대전 · {}"
+
+msgid "Round {} · {}"
+msgstr "라운드 {} · {}"
+
+msgid "Custom · {}"
+msgstr "사용자 지정 · {}"
+
+# A round's chapter in an exported video.
+msgid "Round {}"
+msgstr "라운드 {}"
+
+msgid "Exporting round {} of {} · {}%"
+msgstr "내보내는 중: 라운드 {}/{} · {}%"
+
+msgid "Saved."
+msgstr "저장되었습니다."
+
+msgid "Export canceled."
+msgstr "내보내기가 취소되었습니다."
+
+msgctxt "verb"
+msgid "Export"
+msgstr "내보내기"
+
+msgid "Close"
+msgstr "닫기"
+
+# What the system's save dialog calls the file.
+msgid "MP4 video"
+msgstr "MP4 동영상"
+
+# The viewer: both builds, over the picture.
+msgid "Builds"
+msgstr "빌드"

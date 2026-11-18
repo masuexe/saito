@@ -1,0 +1,607 @@
+//! The chatbox the custom screen runs (a chip's or a Cross's description,
+//! the no-running message), as the original's chatbox draws it each tick
+//! (`chatbox_interpreteAndDrawDialogChar`): the box on BG0, the text as
+//! three rows of sprites, the speaker's portrait and the key-wait arrow.
+//!
+//! How far the chatbox has got is the player's layer's (`custom::layer`,
+//! its `custom::chatbox`: the box's opening step, the characters printed,
+//! the portrait's face and tint, the arrow); the text is the content's
+//! strings (a chip's or a Cross's `description`, a navi's `run_message`,
+//! in the player's language), drawn in the dialogue font.
+//! docs/frontend.md §3.
+
+use crate::audit::{Lookup, Problems};
+use crate::compose::{Layer, SpritePart};
+use crate::fonts;
+use crate::objects::SpriteList;
+use crate::textlayer::{Plane, Rect, TextItem, TextSink};
+use crate::vfont::Role;
+use saito_assets::{Bundle, Chatbox as Graphics, Palette, SpriteSheet, Tiles};
+use saito_battle::custom::chatbox::{Chatbox, PortraitLook, Script};
+use saito_battle::custom::layer::Sub;
+use saito_battle::Battle;
+
+/// Four blank tiles: the arrow's part where it is drawn as shapes.
+static BLANK_ARROW: std::sync::LazyLock<Tiles> = std::sync::LazyLock::new(|| Tiles { pixels: vec![0; 4 * Tiles::TILE] });
+
+/// The box's map on BG0 (`CurTileYBlockPos`): from row 12, 30 columns of
+/// 8 rows.
+const BOX_ROW: i32 = 12;
+/// The text's image (the line buffer `sub_30070B4` copies): 192 pixels
+/// wide and 40 rows, a line every 14 rows, shown from the game's place
+/// (EXE6's (51, 108): `HudLayout::chatbox_text`) as three rows of six
+/// sprites (`chatbox_804021C`): 32x16, 32x16 and 32x8.
+const TEXT_WIDTH: usize = 192;
+const TEXT_ROWS: usize = 40;
+const LINE_ROWS: usize = 14;
+const TEXT_SPRITES: [(usize, usize); 3] = [(0, 16), (16, 16), (32, 8)];
+/// The rows past the line buffer the text layer may draw a third line's
+/// descenders in (a font's go lower than the dialogue font's, which the
+/// buffer's 40 rows hold; the box's frame is further down).
+const DESCENDER_ROWS: usize = 3;
+/// The pixels a line keeps clear of the box's right frame.
+const BORDER_GAP: i32 = 1;
+/// The portrait sprite's place (`+0x84`, `+0x88`).
+const PORTRAIT_AT: (i32, i32) = (0x19, 0x80);
+/// The sprite layer the chatbox's sprites go to, in front of the rest.
+const LAYER: usize = 0;
+const TEXT_BUCKET: usize = 3;
+const FRONT_BUCKET: usize = 4;
+
+/// The box kinds (`Chatbox::boxes`).
+const MESSAGE_BOX: usize = 0;
+const DESCRIPTION_BOX: usize = 1;
+
+/// What the chatbox shows this frame, worked out once (its text's sprite
+/// tiles live here).
+pub struct Shown<'a> {
+    chatbox: Chatbox,
+    kind: usize,
+    text: Tiles,
+    /// With the sharp text, the lines for the text layer (their sprites'
+    /// tiles are blank): each line's text and the units of it printed.
+    lines: Option<Vec<(String, usize)>>,
+    /// The portrait's sheet, look, and the frame of its animation it is at.
+    portrait: Option<(&'a SpriteSheet, PortraitLook, usize)>,
+}
+
+/// Side `side`'s player's chatbox, if their layer (`layer`) has one up,
+/// with its text composed.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare<'a>(
+    b: &Battle,
+    layer: Option<&saito_battle::custom::Layer>,
+    side: u8,
+    assets: &'a Bundle,
+    graphics: &crate::graphics::Graphics<'a>,
+    sink: &TextSink,
+    problems: &mut Problems,
+) -> Option<Shown<'a>> {
+    // (Only while the side has a screen up.)
+    crate::custom::screen_of(b, side)?;
+    let layer = layer?;
+    let navi = b.stats[side as usize & 1].navi;
+    // The text: the content's own strings, or the player's language's
+    // (`DisplayText`); a translation prints in step with the content's
+    // own, whose lines and characters the chatbox's timing counts
+    // (`shown`).
+    let strings = &sink.strings;
+    // (Each with the lookup its text is: whose it is.)
+    let (chatbox, said, portrait, lookup) = match layer.sub {
+        Sub::Description { from_list: false, chip, chatbox, .. } => {
+            // The chip described: the one in the slot R or a pointer
+            // described (the cursor's, or a pick's in the column) as the
+            // screen checked it, or the chip a button there shows (EXE5's
+            // capsules).
+            let said = chip.and_then(|c| strings.chip_description(&b.content, c));
+            (chatbox, said, None, chip.map(Lookup::ChipDescription))
+        }
+        Sub::Description { from_list: true, form, chatbox, .. } => {
+            // A form of the rules' form list described (EXE6's Cross window:
+            // the Cross under its cursor, of whichever game it is).
+            let said = form.and_then(|f| strings.form_description(&b.content, f));
+            (chatbox, said, None, form.map(Lookup::FormDescription))
+        }
+        Sub::RunMessage { chatbox: Some(chatbox) } => {
+            let said = strings.run_message(&b.content, navi);
+            (chatbox, said, b.content.navi(navi).run_message.portrait, Some(Lookup::RunMessage(navi)))
+        }
+        _ => return None,
+    };
+    let translated = said.is_some_and(|s| s.translated);
+    if !crate::lookups::chatbox_graphics(&assets.hud, problems) {
+        return None;
+    }
+    // (A chip's description is marked where the caller names its chip:
+    // `chip-description:KEY`, the text's lines.)
+    if let Some(Lookup::ChipDescription(chip)) = lookup
+        && chatbox.shows_contents()
+    {
+        let what = crate::lookups::chip_description_mark(&b.content, chip);
+        if problems.wants(&what) {
+            let (x, y) = text_at(&assets.hud);
+            problems.mark([x, y, x + TEXT_WIDTH as i32, y + (TEXT_ROWS + DESCENDER_ROWS) as i32], what);
+        }
+    }
+    let kind = match chatbox.script() {
+        Script::Description { .. } => DESCRIPTION_BOX,
+        Script::RunMessage { .. } => MESSAGE_BOX,
+    };
+    let string = said.map_or("", |s| s.text);
+    // (The dialogue font's glyphs, which the original draws: in
+    // either mode the lookup.)
+    let glyphs = match lookup {
+        Some(l) => crate::lookups::dialogue(&assets.hud.dialogue_font, l, string, problems),
+        None => Vec::new(),
+    };
+    let (text, lines) = if sink.takes(string, Role::Dialogue) {
+        (Tiles { pixels: vec![0; TEXT_WIDTH * TEXT_ROWS] }, Some(printed(&chatbox, string, translated)))
+    } else {
+        (text_tiles(assets, &chatbox, &glyphs, translated), None)
+    };
+    let portrait = match (portrait, chatbox.look().portrait) {
+        (Some(id), Some(look)) => {
+            let who = || "(a portrait)".to_string();
+            let sheet = crate::lookups::sprite(graphics, &b.content, id, &who, problems);
+            if let Some(sheet) = sheet {
+                crate::lookups::animation(sheet, &b.content, id, look.anim, &who, problems);
+                note_true_face(b, navi, crate::custom::console_version(b, graphics, side), problems);
+            }
+            // (Its animation timed as its sheet times it.)
+            sheet.map(|sheet| (sheet, look, sheet.frame_index(look.anim, u32::from(look.updates), true)))
+        }
+        _ => None,
+    };
+    Some(Shown { chatbox, kind, text, lines, portrait })
+}
+
+/// The lines printed so far, each with the characters of it shown (as
+/// `text_tiles` composes them).
+fn printed(chatbox: &Chatbox, string: &str, translated: bool) -> Vec<(String, usize)> {
+    let lines: Vec<&str> = string.split('\n').take(3).collect();
+    let units: Vec<usize> = lines.iter().map(|l| l.chars().count()).collect();
+    lines.into_iter().zip(shown(chatbox, &units, translated)).filter(|&(_, n)| n > 0).map(|(l, n)| (l.to_string(), n)).collect()
+}
+
+/// How much of each line shows, its lines being `units` long: the lines
+/// done whole, the one printing up to the characters printed. A
+/// translation (whose lines and lengths aren't the content's, which the
+/// chatbox counts) shows as far through it as the chatbox is through the
+/// content's own string: a description's whole lines in the proportion of the
+/// content's lines printed; a message's characters in the proportion of
+/// the content's characters printed, so it ends printing when the
+/// content's would.
+pub fn shown(chatbox: &Chatbox, units: &[usize], translated: bool) -> Vec<usize> {
+    let Some((done, printing)) = chatbox.look().text else { return vec![0; units.len()] };
+    if !translated {
+        return units
+            .iter()
+            .enumerate()
+            .map(|(k, &n)| match (k as u8).cmp(&done) {
+                std::cmp::Ordering::Less => n,
+                std::cmp::Ordering::Equal => (printing as usize).min(n),
+                std::cmp::Ordering::Greater => 0,
+            })
+            .collect();
+    }
+    match chatbox.script() {
+        Script::Description { breaks } => {
+            let (lines, printed) = (breaks as usize + 1, done as usize + (printing > 0) as usize);
+            let whole = (printed * units.len()).div_ceil(lines).min(units.len());
+            units.iter().enumerate().map(|(k, &n)| if k < whole { n } else { 0 }).collect()
+        }
+        Script::RunMessage { lines } => {
+            let total: usize = lines.iter().map(|&n| n as usize).sum();
+            let printed = lines.iter().take(done as usize).map(|&n| n as usize).sum::<usize>() + printing as usize;
+            let all: usize = units.iter().sum();
+            let mut left = (printed * all).div_ceil(total.max(1)).min(all);
+            units
+                .iter()
+                .map(|&n| {
+                    let s = n.min(left);
+                    left -= s;
+                    s
+                })
+                .collect()
+        }
+    }
+}
+
+/// The text's sprite tiles: the lines printed so far (`lines`, the text's
+/// first three lines in the dialogue font's glyphs) composed into the line
+/// buffer's image, cut into the eighteen sprites' tiles (each sprite's row
+/// by row).
+fn text_tiles(assets: &Bundle, chatbox: &Chatbox, lines: &[Vec<u16>], translated: bool) -> Tiles {
+    let font = &assets.hud.dialogue_font;
+    let mut image = vec![0u8; TEXT_WIDTH * TEXT_ROWS];
+    if chatbox.look().text.is_some() {
+        let units: Vec<usize> = lines.iter().map(Vec::len).collect();
+        for (k, (glyphs, n)) in lines.iter().zip(shown(chatbox, &units, translated)).enumerate() {
+            fonts::dialogue_text(font, &glyphs[..n], &mut image, TEXT_WIDTH, LINE_ROWS * k);
+        }
+    }
+    let mut tiles = Tiles { pixels: Vec::with_capacity(TEXT_WIDTH * TEXT_ROWS) };
+    for (top, height) in TEXT_SPRITES {
+        for column in 0..TEXT_WIDTH / 32 {
+            for ty in 0..height / 8 {
+                for tx in 0..4 {
+                    for y in 0..8 {
+                        let at = (top + 8 * ty + y) * TEXT_WIDTH + 32 * column + 8 * tx;
+                        tiles.pixels.extend_from_slice(&image[at..at + 8]);
+                    }
+                }
+            }
+        }
+    }
+    tiles
+}
+
+/// A link navi of another version than the console's (its definition's
+/// `version`) has a black placeholder for a portrait in this console's ROM,
+/// which the original shows; the frontend shows the true face
+/// (docs/frontend.md §5).
+fn note_true_face(b: &Battle, navi: saito_content_api::NaviHandle, console: &str, problems: &mut Problems) {
+    if b.content.navi(navi).version.as_deref().is_some_and(|v| v != console) {
+        problems.known(5, 104, 40, 48, "another game's link navi's portrait (the true face)");
+    }
+}
+
+/// Draw the chatbox: the box on `names_layer` (BG0), the sprites into
+/// `list`, in front of the screen's.
+pub fn draw<'a>(shown: &'a Shown<'a>, assets: &'a Bundle, names_layer: &mut Layer, list: &mut SpriteList<'a>, sink: &mut TextSink) {
+    let g = &assets.hud.chatbox;
+    let c = &shown.chatbox;
+    let (text_x, text_y) = text_at(&assets.hud);
+    if let Some(step) = c.box_step() {
+        draw_box(g, &assets.hud.shapes.chatbox, shown.kind, step, names_layer, sink);
+    }
+    // chatbox_804021C: the text, when the box is open; the line buffer's
+    // last row of sprites first.
+    if c.shows_contents() {
+        let mut first = 0;
+        let mut rows: Vec<Vec<SpritePart<'a>>> = Vec::new();
+        for (top, height) in TEXT_SPRITES {
+            let mut row = Vec::new();
+            for column in 0..TEXT_WIDTH / 32 {
+                let at = (text_x + 32 * column as i32, text_y + top as i32);
+                row.push(part(&shown.text, first, at, (32, height as u8), g.text_palette));
+                first += 4 * height / 8;
+            }
+            row.reverse();
+            rows.push(row);
+        }
+        rows.reverse();
+        let group = rows.into_iter().flatten().collect();
+        match &shown.lines {
+            // With the sharp text the sprites are blank and the lines are text
+            // items as deep as them, cut where they end (the last row of
+            // sprites is 8 rows high).
+            Some(lines) => {
+                let tag = sink.tag();
+                list.insert_tagged(LAYER, TEXT_BUCKET, group, Some(tag));
+                let sprites = Rect::new(text_x, text_y, TEXT_WIDTH as i32, (TEXT_ROWS + DESCENDER_ROWS) as i32);
+                // Each line fits the open box's inside (the line buffer
+                // runs past the description box's right edge).
+                let room = text_room(g, (text_x, text_y), shown.kind);
+                // (In the color the dialogue font's strokes take: EXE4's
+                // palette's 1 is the box's white.)
+                let ink = g.text_palette[assets.hud.dialogue_font.ink() as usize];
+                for (k, (line, units)) in lines.iter().enumerate() {
+                    let rect = Rect::new(text_x, text_y + (LINE_ROWS * k) as i32, room, 12);
+                    let item = TextItem::new(line.as_str(), Role::Dialogue, rect, ink, None);
+                    sink.push(Plane::Sprite(tag), TextItem { clip: sprites, shown: Some(*units), ..item });
+                }
+            }
+            None => list.insert_at(LAYER, TEXT_BUCKET, group),
+        }
+    }
+    // chatbox_804082C: the arrow; chatbox_8040B8C: the portrait in front.
+    if let Some(frame) = c.look().arrow {
+        // (Its place by the box: the game's, EXE6's `byte_8045DCC`.)
+        let (x, y) = assets.hud.layout.chatbox_arrows[shown.kind.min(1)];
+        let at = (x as i32, y as i32);
+        let arrow = part(&g.arrow, 4 * frame as usize, at, (16, 16), g.text_palette);
+        // (Drawn as shapes with the sharp HUD where the game's graphics have its
+        // frame's drawing, as deep as the part, which stands blank.)
+        match assets.hud.shapes.chatbox_arrow.get(frame as usize).filter(|_| sink.draws_shapes()) {
+            Some(d) => {
+                let tag = sink.tag();
+                let drawn = crate::shapes::drawn(d, |_, c| g.text_palette[c as usize & 15], (false, false), None);
+                sink.push(Plane::Sprite(tag), crate::shapes::item(drawn, at, (16, 16)));
+                list.insert_tagged(LAYER, FRONT_BUCKET, vec![SpritePart { tiles: &BLANK_ARROW, first_tile: 0, ..arrow }], Some(tag));
+            }
+            None => list.insert_at(LAYER, FRONT_BUCKET, vec![arrow]),
+        }
+    }
+    if let Some((sheet, look, frame)) = shown.portrait {
+        list.insert_at(LAYER, FRONT_BUCKET, portrait_parts(sheet, look, frame));
+    }
+}
+
+/// The room a line of text has in an open box of `kind`, in pixels from
+/// the text's left: up to a pixel short of the inner edge of the box's
+/// right frame, on the map's row at the text's middle (the first pixel
+/// column, from the inside, of the rightmost tile drawn on that row that
+/// isn't the color under the text's left). The description box ends 27
+/// tiles in, short of the line buffer's 192 pixels; the message box spans
+/// the screen. The line buffer's width when the map has no such frame.
+pub fn text_room(g: &Graphics, (text_x, text_y): (i32, i32), kind: usize) -> i32 {
+    let fallback = TEXT_WIDTH as i32;
+    let Some(map) = g.boxes.get(kind).map(|steps| &steps[3]) else { return fallback };
+    let y = text_y + TEXT_ROWS as i32 / 2 - 8 * BOX_ROW;
+    let Some(row) = map.chunks(Graphics::COLUMNS).nth((y / 8) as usize) else { return fallback };
+    // A map entry's pixel at (x, y % 8) in its tile.
+    let pixel = |e: &saito_assets::MapEntry, x: usize| {
+        let t = g.tiles.get(e.tile as usize)?;
+        let (x, ty) = (if e.hflip { 7 - x } else { x }, if e.vflip { 7 - (y % 8) as usize } else { (y % 8) as usize });
+        Some(t[8 * ty + x])
+    };
+    let Some(fill) = row.get((text_x / 8) as usize).and_then(|e| pixel(e, (text_x % 8) as usize)) else { return fallback };
+    let drawn = |e: &&saito_assets::MapEntry| g.tiles.get(e.tile as usize).is_some_and(|t| t.iter().any(|&p| p != 0));
+    let Some((col, frame)) = row.iter().enumerate().rev().find(|(_, e)| drawn(e)) else { return fallback };
+    let inner = (0..8).find(|&x| pixel(frame, x) != Some(fill)).unwrap_or(8);
+    (8 * col as i32 + inner as i32 - BORDER_GAP - text_x).clamp(1, fallback)
+}
+
+/// Where the chatbox's text starts on the screen (`HudLayout::chatbox_text`).
+pub fn text_at(hud: &saito_assets::Hud) -> (i32, i32) {
+    (hud.layout.chatbox_text.0 as i32, hud.layout.chatbox_text.1 as i32)
+}
+
+/// The box's map at an opening step (`chatbox_CopyBackgroundTiles_8040344`);
+/// with the sharp HUD the cells the game's graphics have drawings of drawn as shapes
+/// (`saito_assets::shapes`), in the box's palette, the rest as tiles.
+fn draw_box(g: &Graphics, shapes: &[Option<saito_assets::shapes::MapDrawing>], kind: usize, step: u8, layer: &mut Layer, sink: &mut TextSink) {
+    let Some(map) = g.boxes.get(kind).and_then(|steps| steps.get(step as usize)) else { return };
+    let drawing = shapes.get(kind * 4 + step as usize).and_then(Option::as_ref).filter(|_| sink.draws_shapes());
+    // (Each cell a drawing stands in for: the pixels the drawing covers, to
+    // be in front of what the box hides, drawn as tiles under it.)
+    let mut covered: Vec<Option<(usize, std::sync::Arc<Vec<bool>>)>> = vec![None; map.len()];
+    if let Some(m) = drawing {
+        let (w, h) = (8 * Graphics::COLUMNS as i32, 8 * (map.len() / Graphics::COLUMNS) as i32);
+        for part in &m.parts {
+            let coverage = crate::shapes::coverage(&part.drawing);
+            for &[c, r] in &part.cells {
+                if let Some(d) = covered.get_mut(r as usize * Graphics::COLUMNS + c as usize) {
+                    *d = Some((part.drawing.size[0] as usize, coverage.clone()));
+                }
+            }
+            let mut d = crate::shapes::drawn(&part.drawing, |_, c| g.palette[c as usize & 15], (false, false), None);
+            d.cells = Some(part.cells.clone());
+            sink.push(Plane::Bg0, crate::shapes::item(d, (0, 8 * BOX_ROW), (w, h)));
+        }
+    }
+    for (i, e) in map.iter().enumerate() {
+        let (col, row) = ((i % Graphics::COLUMNS) as i32, (i / Graphics::COLUMNS) as i32);
+        let Some(t) = g.tiles.get(e.tile as usize) else { continue };
+        match &covered[i] {
+            Some((w, coverage)) => {
+                let mut tile = [0u8; 64];
+                for (k, p) in tile.iter_mut().enumerate() {
+                    let (x, y) = (if e.hflip { 7 - k % 8 } else { k % 8 }, if e.vflip { 7 - k / 8 } else { k / 8 });
+                    let at = (8 * row as usize + k / 8) * w + 8 * col as usize + k % 8;
+                    if coverage.get(at) == Some(&true) {
+                        *p = t[8 * y + x];
+                    }
+                }
+                layer.draw_tile(&tile, &g.palette, 8 * col, 8 * (BOX_ROW + row), false, false);
+            }
+            None => layer.draw_tile(t, &g.palette, 8 * col, 8 * (BOX_ROW + row), e.hflip, e.vflip),
+        }
+    }
+}
+
+/// The portrait's parts at frame `k` of its animation (where the
+/// sprite's updates have stepped it, `SpriteSheet::frame_index`), drawn with its
+/// first palette plus the tint (`sub_8002818`), the last part in front.
+fn portrait_parts(sheet: &SpriteSheet, look: PortraitLook, k: usize) -> Vec<SpritePart<'_>> {
+    let Some(&frame) = sheet.animations.get(look.anim as usize).and_then(|f| f.get(k)) else { return Vec::new() };
+    let (Some(parts), Some(tiles)) = (sheet.part_lists.get(frame.parts as usize), sheet.tilesets.get(frame.tileset as usize)) else {
+        return Vec::new();
+    };
+    let set = sheet.palette_sets.get(frame.palette_set as usize);
+    let first = parts.first().map_or(0, |p| p.palette) as usize;
+    let palette = set.and_then(|s| s.get(first)).copied().unwrap_or([0; 16]);
+    let palette = palette.map(|c| tint(c, look.tint));
+    let mut out: Vec<SpritePart> = parts
+        .iter()
+        .map(|p| SpritePart {
+            hflip: p.hflip,
+            vflip: p.vflip,
+            ..part(tiles, p.tile as usize, (PORTRAIT_AT.0 + p.x as i32, PORTRAIT_AT.1 + p.y as i32), (p.width, p.height), palette)
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
+/// A color with the tint added, each channel saturating
+/// (`sub_3005F34`).
+fn tint(c: u16, t: u16) -> u16 {
+    let ch = |v: u16, s: u16| (((v >> s) & 31) + ((t >> s) & 31)).min(31) << s;
+    (c & 0x8000) | ch(c, 0) | ch(c, 5) | ch(c, 10)
+}
+
+fn part(tiles: &Tiles, first_tile: usize, (x, y): (i32, i32), (width, height): (u8, u8), palette: Palette) -> SpritePart<'_> {
+    SpritePart {
+        x,
+        y,
+        width,
+        height,
+        tiles,
+        first_tile,
+        hflip: false,
+        vflip: false,
+        palette,
+        priority: 0,
+        alpha: None,
+        mosaic: None,
+        vscale: None,
+        affine: None,
+        fade: None,
+        clip: None,
+        anchor: crate::compose::Anchor::CENTER,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::strings::DisplayText;
+    use saito_battle::Content;
+
+    /// The units of a translation shown tick by tick until the chatbox
+    /// waits for a key, while it shows text.
+    fn printing(mut c: Chatbox, units: &[usize]) -> Vec<Vec<usize>> {
+        let mut out = Vec::new();
+        for _ in 0..300 {
+            c.update(0, 0);
+            if c.look().text.is_some() {
+                out.push(shown(&c, units, true));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_translated_message_prints_in_step_with_the_contents() {
+        // The content's message: lines of 4 and 2 characters; the
+        // translation's: three lines of 3.
+        let ticks = printing(Chatbox::new(Script::RunMessage { lines: [4, 2, 0] }), &[3, 3, 3]);
+        let totals: Vec<usize> = ticks.iter().map(|s| s.iter().sum()).collect();
+        assert!(totals.windows(2).all(|w| w[0] <= w[1]), "it only grows: {totals:?}");
+        assert!(totals.iter().any(|&n| n > 0 && n < 9), "it prints a part at a time: {totals:?}");
+        assert_eq!(ticks.last(), Some(&vec![3, 3, 3]), "all of it once the content's is printed");
+        // Lines fill in order.
+        assert!(ticks.iter().all(|s| s.windows(2).all(|w| w[1] == 0 || w[0] == 3)), "{ticks:?}");
+    }
+
+    #[test]
+    fn a_translated_description_shows_whole_lines_as_the_contents_do() {
+        // The content's description has three lines (two breaks), the
+        // translation two.
+        let ticks = printing(Chatbox::new(Script::Description { breaks: 2 }), &[5, 4]);
+        assert!(ticks.iter().all(|s| s.iter().zip([5, 4]).all(|(&n, whole)| n == 0 || n == whole)), "{ticks:?}");
+        assert_eq!(ticks.last(), Some(&vec![5, 4]));
+        // Not translated: the content's own lines, as the chatbox prints them.
+        let mut c = Chatbox::new(Script::Description { breaks: 2 });
+        for _ in 0..300 {
+            c.update(0, 0);
+        }
+        assert_eq!(shown(&c, &[5, 4, 6], false), vec![5, 4, 6]);
+    }
+
+    /// Box graphics shaped as EXE6's: a frame tile (the game's tile 8: a
+    /// clear column, the border's three, then the fill) on the left and,
+    /// flipped, on the right, the message box's at column 29, the
+    /// description box's at column 26, with columns 27 to 29 clear.
+    fn exe6_like_boxes() -> Graphics {
+        let frame_row = [0u8, 11, 10, 10, 1, 1, 1, 1];
+        let mut tiles = Tiles { pixels: vec![0; 64] };
+        tiles.pixels.extend([1; 64]);
+        tiles.pixels.extend(frame_row.repeat(8));
+        let entry = |tile, hflip| saito_assets::MapEntry { tile, hflip, vflip: false, palette: 15 };
+        let open = |last: usize| -> Vec<saito_assets::MapEntry> {
+            (0..Graphics::ROWS * Graphics::COLUMNS)
+                .map(|i| match i % Graphics::COLUMNS {
+                    0 => entry(2, false),
+                    c if c == last => entry(2, true),
+                    c if c < last => entry(1, false),
+                    _ => entry(0, false),
+                })
+                .collect()
+        };
+        let steps = |last| [Vec::new(), Vec::new(), Vec::new(), open(last)];
+        Graphics { tiles, boxes: vec![steps(29), steps(26)], ..Graphics::default() }
+    }
+
+    /// A line's room is the open box's inside: up to a pixel short of its
+    /// right frame's border (212 for the description box, 236 for the
+    /// message box), from the text's left at 51.
+    #[test]
+    fn a_line_has_the_room_of_its_boxs_inside() {
+        let g = exe6_like_boxes();
+        let at = text_at(&saito_assets::Hud::default());
+        assert_eq!(text_room(&g, at, MESSAGE_BOX), 236 - 1 - 51);
+        assert_eq!(text_room(&g, at, DESCRIPTION_BOX), 212 - 1 - 51);
+        // No graphics: the line buffer.
+        assert_eq!(text_room(&Graphics::default(), at, DESCRIPTION_BOX), TEXT_WIDTH as i32);
+    }
+
+    /// Every line the chatbox shows, in both languages (the chips' and the
+    /// Crosses' descriptions in the description box, the no-running
+    /// messages in the message box), measured against its box: laid out by
+    /// the text layer, none leaves the box's inside. Those that need the
+    /// fit (wider than the box at the font's natural width) are listed
+    /// (`--nocapture`): before the fit was the box's, they ran past its
+    /// frame.
+    #[test]
+    fn every_chatbox_line_fits_its_box() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../content"));
+        let g = exe6_like_boxes();
+        let at = text_at(&saito_assets::Hud::default());
+        let rooms = [text_room(&g, at, MESSAGE_BOX), text_room(&g, at, DESCRIPTION_BOX)];
+        let mut r = crate::vfont::TextRenderer::new(std::sync::Arc::new(crate::vfont::VectorFont::bundled()));
+        let (mut lines, mut fitted) = (0, Vec::new());
+        for lang in ["ja", "zh-Hans"] {
+            let table = saito_content::locale::load(&dir.join("exe6"), lang).unwrap().expect("a table");
+            let mut strings: Vec<(String, usize, &str)> = Vec::new();
+            for (key, c) in &table.chips {
+                strings.extend(c.description.as_deref().map(|d| (format!("chips.{key}"), DESCRIPTION_BOX, d)));
+            }
+            for (key, f) in &table.forms {
+                strings.extend(f.description.as_deref().map(|d| (format!("forms.{key}"), DESCRIPTION_BOX, d)));
+            }
+            for (key, n) in &table.navis {
+                strings.extend(n.run_message.as_deref().map(|m| (format!("navis.{key}"), MESSAGE_BOX, m)));
+            }
+            for (what, kind, text) in strings {
+                for line in text.split('\n').filter(|l| !l.is_empty()) {
+                    lines += 1;
+                    let room = rooms[kind];
+                    let natural = r.fitted_width(line, Role::Dialogue, 10_000);
+                    let width = r.fitted_width(line, Role::Dialogue, room);
+                    assert!(width <= room as f32 + 0.01, "{lang} {what} {line:?}: {width} in {room}");
+                    if natural > room as f32 {
+                        fitted.push(format!("{lang} {what} {line:?}: {natural:.1} in {room} ({:.0}%)", 100.0 * room as f32 / natural));
+                    }
+                }
+            }
+        }
+        eprintln!("{lines} lines; {} wider than their box at the font's width, fitted:\n{}", fitted.len(), fitted.join("\n"));
+        assert!(lines > 1000, "{lines} lines");
+    }
+
+    /// A Cross's description is its form's own, in either language: the
+    /// Cross window describes the Cross under its cursor by its form (the
+    /// rules/cross's `custom.describe`), so a Gregar Cross (HeatCross) in
+    /// a Falzar player's mixed Cross list shows HeatCross's, not that of
+    /// Falzar's Cross in its place.
+    #[test]
+    fn a_cross_shows_its_own_description() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../content"));
+        let mut report = saito_content::report::Report::default();
+        let read = saito_content::index::read(dir, &["exe6".to_string()], &mut report).expect("content/exe6 reads");
+        let mut c = Content::default();
+        c.scripts = read.scripts();
+        c.strings = read.strings;
+        c.define().unwrap_or_else(|e| panic!("content/exe6: {e}"));
+        let ja = saito_content::locale::load(&dir.join("exe6"), "ja").unwrap().expect("ja.toml");
+        let form = |key: &str| c.defs.form_by_key(key).unwrap_or_else(|| panic!("no form {key}"));
+        for (language, table) in [(None, &c.strings), (Some(&ja), &ja)] {
+            let strings = DisplayText::new(language);
+            for key in ["heatcross", "groundcross", "spoutcross", "tomahawkcross"] {
+                let said = strings.form_description(&c, form(&format!("{key}"))).expect("a description");
+                let want = table.form(&format!("{key}")).and_then(|f| f.description.as_deref());
+                assert_eq!(Some(said.text), want, "{key} in {:?}", table.language);
+            }
+        }
+    }
+
+    #[test]
+    fn the_tint_adds_to_each_channel_up_to_31() {
+        assert_eq!(tint(0x0000, 0x18C6), 0x18C6);
+        assert_eq!(tint(0x7FFF, 0x18C6), 0x7FFF);
+        assert_eq!(tint(0x001E, 0x0006), 0x001F);
+    }
+}

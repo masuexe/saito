@@ -1,0 +1,386 @@
+"""The league (§8): who plays each seat, frozen snapshots picked by PFSP, scripted players, win rates and Elo.
+
+The pool takes a seat's controller "from the next round" (§6.6), so each env carries two plans: the current
+round's, which the pool is already playing, and the next one's, already sent with `set_seat`. Whether a seat is
+"policy" or a scripted player must be known a round ahead; which network plays a policy seat is Python's own
+choice and is made when the round starts.
+
+Streams (env · 2 + seat) are tagged for the current round: LEARNER, BOT, or a snapshot id (≥ 0; an external
+opponent's is EXTERNAL + its index).
+
+External opponents (`external`, `external_dir`) are another run's networks: the weight files in a directory (a
+snapshot's state dict, or a checkpoint with its "model"), rescanned before each rollout and read again when a file
+changes. An exploiter (§8) plays only the main run's latest network so; the main run plays the exploiter's
+snapshots so, picked by PFSP as its own are, and bounded as its own are: new rounds draw from `active` of them, at
+most `draining` dropped ones still playing.
+"""
+
+from __future__ import annotations
+
+import math
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+import numpy as np
+import torch
+
+from .config import LeagueConfig
+from .model import Model
+
+LEARNER = -1
+BOT = -2
+SELF, SNAP, BOTS, EXT = 0, 1, 2, 3
+KIND_NAMES = {SELF: "self", SNAP: "snapshot", BOTS: "bot", EXT: "external"}
+# An external opponent's id in the streams' tags: this plus its index (snapshot ids stay below it).
+EXTERNAL = 1_000_000
+
+
+@dataclass
+class Snapshot:
+    id: int
+    path: str  # file name under the run's snapshots/
+    update: int
+    scores: deque = field(default_factory=deque)  # the learner's recent scores against it (1, 0.5, 0)
+
+    def winrate(self) -> float:
+        """The learner's win rate against it, with one win and one loss of prior."""
+        return (sum(self.scores) + 1.0) / (len(self.scores) + 2.0)
+
+
+@dataclass
+class External:
+    """Another run's network: a weight file in the league's external directory."""
+
+    name: str
+    mtime: float
+    scores: deque = field(default_factory=deque)
+
+    def winrate(self) -> float:
+        return (sum(self.scores) + 1.0) / (len(self.scores) + 2.0)
+
+
+def score(result: int) -> float:
+    return 1.0 if result > 0 else (0.0 if result < 0 else 0.5)
+
+
+def elo_expected(ra: float, rb: float) -> float:
+    return 1.0 / (1.0 + 10.0 ** ((rb - ra) / 400.0))
+
+
+class League:
+    def __init__(
+        self,
+        cfg: LeagueConfig,
+        pool,
+        envs: int,
+        run_dir: Path,
+        device: torch.device,
+        make_model: Callable[[], Model],
+        rng: np.random.Generator,
+    ):
+        total = cfg.self_play + cfg.snapshots + cfg.bots + cfg.external
+        if not math.isclose(total, 1.0, abs_tol=1e-6):
+            raise ValueError(f"league: self_play + snapshots + bots + external = {total}, not 1")
+        if cfg.external > 0 and not cfg.external_dir:
+            raise ValueError("league: an external share with no external_dir")
+        if cfg.bots > 0 and not cfg.bot_names:
+            raise ValueError("league: a bot share with no bot_names")
+        if cfg.bot_weights is not None and (len(cfg.bot_weights) != len(cfg.bot_names) or min(cfg.bot_weights, default=1) < 0 or sum(cfg.bot_weights) <= 0):
+            raise ValueError(f"league: bot_weights {cfg.bot_weights} aren't one weight ≥ 0 a bot of bot_names {cfg.bot_names}")
+        # Snapshots and external opponents each have active + draining in play.
+        need = (cfg.active + cfg.draining) * (2 if cfg.external > 0 else 1)
+        if cfg.cache < need:
+            raise ValueError(f"league: cache {cfg.cache} holds fewer than the networks that can be in play ({need})")
+        self.cfg = cfg
+        self.pool = pool
+        self.E = envs
+        self.dir = Path(run_dir) / "snapshots"
+        self.device = device
+        self.make_model = make_model
+        self.rng = rng
+        self.snapshots: list[Snapshot] = []
+        self.active: list[int] = []
+        self.cache: OrderedDict[int, Model] = OrderedDict()
+        self.externals: list[External] = []
+        self.ext_active: list[int] = []
+        self.ext_dir = Path(cfg.external_dir) if cfg.external_dir else None
+        self.ratings: dict[str, float] = {"learner": 1000.0}
+        for b in cfg.bot_names:
+            self.ratings[f"bot:{b}"] = 1000.0
+        self.bot_scores: dict[str, deque] = {b: deque(maxlen=cfg.winrate_window) for b in cfg.bot_names}
+        # Plans, current and next: learner seat, kind, opponent (snapshot id or bot index).
+        self.seat = np.zeros(envs, np.int64)
+        self.kind = np.zeros(envs, np.int64)
+        self.opp = np.zeros(envs, np.int64)
+        self.next_seat = np.zeros(envs, np.int64)
+        self.next_kind = np.zeros(envs, np.int64)
+        self.next_bot = np.zeros(envs, np.int64)
+        self.ctrl = torch.full((envs * 2,), LEARNER, dtype=torch.int64)
+
+    # Plans ---------------------------------------------------------------------------------------------
+
+    def start(self) -> None:
+        """The first round: the pool starts every seat as "policy", so it is self-play."""
+        envs = np.arange(self.E)
+        self.next_kind[envs] = SELF
+        self.next_seat[envs] = 0
+        self._begin(envs)
+        self._draw_next(envs)
+        self._send_next(envs)
+
+    def _draw_next(self, envs: np.ndarray) -> None:
+        n = len(envs)
+        c = self.cfg
+        p = np.array([c.self_play, c.snapshots, c.bots, c.external])
+        self.next_kind[envs] = self.rng.choice(4, size=n, p=p / p.sum())
+        self.next_seat[envs] = self.rng.integers(0, 2, n)
+        if c.bot_weights is None:
+            self.next_bot[envs] = self.rng.integers(0, max(1, len(c.bot_names)), n)
+        else:
+            w = np.asarray(c.bot_weights, np.float64)
+            self.next_bot[envs] = self.rng.choice(len(w), size=n, p=w / w.sum())
+
+    def _send_next(self, envs: np.ndarray) -> None:
+        """set_seat for the next round of envs, grouped by (seat, controller)."""
+        groups: dict[tuple[int, str], list[int]] = {}
+        for e in envs:
+            for s in (0, 1):
+                if self.next_kind[e] == BOTS and s != self.next_seat[e]:
+                    ctl = self.cfg.bot_names[self.next_bot[e]]
+                else:
+                    ctl = "policy"
+                groups.setdefault((s, ctl), []).append(int(e))
+        for (s, ctl), es in groups.items():
+            self.pool.set_seat(np.asarray(es, np.int64), s, ctl)
+
+    def _begin(self, envs: np.ndarray) -> None:
+        """The next plan becomes the current round's; a snapshot round draws its opponent now."""
+        self.seat[envs] = self.next_seat[envs]
+        self.kind[envs] = self.next_kind[envs]
+        self.opp[envs] = self.next_bot[envs]
+        for e in envs:
+            if self.kind[e] == SNAP:
+                if self.active:
+                    self.opp[e] = self.active[self.rng.integers(len(self.active))]
+                else:
+                    self.kind[e] = SELF
+            elif self.kind[e] == EXT:
+                if self.ext_active:
+                    self.opp[e] = self.ext_active[self.rng.integers(len(self.ext_active))]
+                else:
+                    self.kind[e] = SELF
+            ls, os_ = 2 * e + self.seat[e], 2 * e + 1 - self.seat[e]
+            self.ctrl[ls] = LEARNER
+            k = int(self.kind[e])
+            self.ctrl[os_] = {SELF: LEARNER, SNAP: int(self.opp[e]), BOTS: BOT, EXT: EXTERNAL + int(self.opp[e])}[k]
+
+    def round_end(self, envs: np.ndarray, result: np.ndarray, games: np.ndarray, truncated: np.ndarray) -> list[tuple]:
+        """Rounds of envs ended with result [E, 2]: record them, start the next plans, send the ones after.
+
+        A round cut off (truncated: max_fight_ticks, a screen open too long, a content error) has no result and
+        counts for nothing: not a draw, not a loss."""
+        records = []
+        for e in envs:
+            k = int(self.kind[e])
+            if k == SELF or truncated[e]:
+                continue
+            sc = score(int(result[e, self.seat[e]]))
+            if k == SNAP:
+                snap = self.snapshots[int(self.opp[e])]
+                snap.scores.append(sc)
+                while len(snap.scores) > self.cfg.winrate_window:
+                    snap.scores.popleft()
+                opp = f"snap:{snap.id}"
+            elif k == EXT:
+                x = self.externals[int(self.opp[e])]
+                x.scores.append(sc)
+                while len(x.scores) > self.cfg.winrate_window:
+                    x.scores.popleft()
+                opp = f"ext:{x.name}"
+                self.ratings.setdefault(opp, self.ratings["learner"])
+            else:
+                name = self.cfg.bot_names[int(self.opp[e])]
+                self.bot_scores[name].append(sc)
+                opp = f"bot:{name}"
+            self._elo("learner", opp, sc)
+            records.append((KIND_NAMES[k], opp, sc, int(games[e])))
+        self._begin(envs)
+        self._draw_next(envs)
+        self._send_next(envs)
+        return records
+
+    def opponent_label(self, e: int) -> str:
+        """Who plays against the learner in env e's current round: "self", "snapshot" or "bot:<name>"."""
+        k = int(self.kind[e])
+        return f"bot:{self.cfg.bot_names[int(self.opp[e])]}" if k == BOTS else KIND_NAMES[k]
+
+    # External opponents --------------------------------------------------------------------------------
+
+    def _scan_externals(self) -> None:
+        """The external directory's weight files: new ones joined, changed ones read again (their cached network
+        dropped), removed ones left out of draws."""
+        if self.ext_dir is None or not self.ext_dir.is_dir():
+            return
+        known = {x.name: i for i, x in enumerate(self.externals)}
+        for f in sorted(self.ext_dir.glob("*.pt")):
+            try:
+                mtime = f.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            i = known.get(f.name)
+            if i is None:
+                self.externals.append(External(f.name, mtime))
+            elif self.externals[i].mtime != mtime:
+                self.externals[i].mtime = mtime
+                self.cache.pop(EXTERNAL + i, None)
+
+    def ext_in_play(self) -> set[int]:
+        """The external opponents playing a current round."""
+        return {int(o) for o in self.opp[self.kind == EXT]}
+
+    def _ext_there(self, i: int) -> bool:
+        return self.ext_dir is not None and (self.ext_dir / self.externals[i].name).exists()
+
+    def _draw_external(self, exclude: set[int]) -> int | None:
+        """An external opponent whose file is there, outside `exclude`, by PFSP weight (None: there is none)."""
+        cands = [i for i in range(len(self.externals)) if i not in exclude and self._ext_there(i)]
+        if not cands:
+            return None
+        w = np.array([(1.0 - self.externals[i].winrate()) ** self.cfg.pfsp_power for i in cands]) + 1e-6
+        return cands[int(self.rng.choice(len(cands), p=w / w.sum()))]
+
+    def _elo(self, a: str, b: str, sa: float) -> None:
+        ea = elo_expected(self.ratings[a], self.ratings[b])
+        k = self.cfg.elo_k
+        self.ratings[a] += k * (sa - ea)
+        self.ratings[b] -= k * (sa - ea)
+
+    # Snapshots -----------------------------------------------------------------------------------------
+
+    def pfsp_weight(self, s: Snapshot) -> float:
+        """(1 − the learner's win rate) ** power: snapshots that still beat it are picked most."""
+        return (1.0 - s.winrate()) ** self.cfg.pfsp_power
+
+    def in_play(self) -> set[int]:
+        """The snapshots playing a current round."""
+        return {int(o) for o in self.opp[self.kind == SNAP]}
+
+    def _draw(self, exclude: set[int]) -> int | None:
+        """A snapshot on disk outside `exclude`, by PFSP weight (None: there is none)."""
+        cands = [s for s in self.snapshots if s.path and s.id not in exclude]
+        if not cands:
+            return None
+        w = np.array([self.pfsp_weight(s) for s in cands]) + 1e-6
+        return cands[int(self.rng.choice(len(cands), p=w / w.sum()))].id
+
+    def refresh(self) -> None:
+        """Before each rollout: the external directory rescanned, then for the snapshots and the external opponents
+        each, fill the active set (those new rounds draw from) to `active` and turn its longest-serving slot over
+        to a new PFSP draw if fewer than `draining` dropped ones still play. So no more than active + draining of
+        each are ever in play (LeagueConfig.active). An external opponent whose file is gone leaves its active set."""
+        self._scan_externals()
+        self.active = self._rotate(self.active, self.in_play(), self._draw)
+        self.ext_active = self._rotate([i for i in self.ext_active if self._ext_there(i)], self.ext_in_play(), self._draw_external)
+
+    def _rotate(self, active: list[int], in_play: set[int], draw: Callable[[set[int]], int | None]) -> list[int]:
+        draining = in_play - set(active)
+        active = list(active)
+        # (An active one dropped for its file still plays out its rounds: it counts as draining.)
+        while len(active) < self.cfg.active and len(active) + len(draining) < self.cfg.active + self.cfg.draining:
+            sid = draw(set(active) | draining)
+            if sid is None:
+                return active
+            active.append(sid)
+        if len(draining) < self.cfg.draining:
+            sid = draw(set(active) | draining)
+            if sid is not None:
+                active = active[1:] + [sid]
+        return active
+
+    def add_snapshot(self, model: Model, update: int) -> Snapshot:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        sid = len(self.snapshots)
+        path = self.dir / f"snap_{sid:05d}.pt"
+        torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, path)
+        snap = Snapshot(sid, path.name, update)
+        self.snapshots.append(snap)
+        self.ratings[f"snap:{sid}"] = self.ratings["learner"]
+        self._prune()
+        return snap
+
+    def _prune(self) -> None:
+        """Past `keep` snapshots on disk, delete the files of those the learner beats most (never an active or
+        in-play one). A deleted snapshot keeps its record, with an empty path, and is never drawn again."""
+        on_disk = [s for s in self.snapshots if s.path]
+        busy = set(self.active) | self.in_play()
+        spare = sorted((s for s in on_disk if s.id not in busy), key=self.pfsp_weight)
+        for s in spare[: max(0, len(on_disk) - self.cfg.keep)]:
+            (self.dir / s.path).unlink(missing_ok=True)
+            s.path = ""
+            self.cache.pop(s.id, None)
+
+    def model(self, sid: int) -> Model:
+        if sid in self.cache:
+            self.cache.move_to_end(sid)
+            return self.cache[sid]
+        m = self.make_model()
+        if sid >= EXTERNAL:
+            path = self.ext_dir / self.externals[sid - EXTERNAL].name
+            d = torch.load(path, map_location=self.device, weights_only=False)
+            m.load_state_dict(d["model"] if isinstance(d, dict) and "model" in d else d)
+        else:
+            m.load_state_dict(torch.load(self.dir / self.snapshots[sid].path, map_location=self.device, weights_only=True))
+        m.eval()
+        self.cache[sid] = m
+        while len(self.cache) > self.cfg.cache:
+            self.cache.popitem(last=False)
+        return m
+
+    # Reporting and resuming ----------------------------------------------------------------------------
+
+    def bot_winrate(self, name: str) -> tuple[float, int]:
+        s = self.bot_scores[name]
+        return (sum(s) / len(s) if s else float("nan")), len(s)
+
+    def summary(self) -> dict[str, float]:
+        """What the training log shows of the league (read on the league's own thread)."""
+        out = {
+            "elo/learner": self.ratings["learner"],
+            "league/snapshots": len(self.snapshots),
+            "league/on_disk": sum(1 for s in self.snapshots if s.path),
+            "league/in_play": len(self.in_play()),
+        }
+        if self.externals:
+            out["league/externals"] = len(self.externals)
+            out["league/externals_in_play"] = len(self.ext_in_play())
+            out["league/external_winrate"] = float(np.mean([x.winrate() for x in self.externals]))
+        for b in self.cfg.bot_names:
+            wr, cnt = self.bot_winrate(b)
+            if cnt:
+                out[f"league/winrate_{b}"] = wr
+        return out
+
+    def state_dict(self) -> dict:
+        return {
+            "snapshots": [(s.id, s.path, s.update, list(s.scores)) for s in self.snapshots],
+            "ratings": dict(self.ratings),
+            "bot_scores": {k: list(v) for k, v in self.bot_scores.items()},
+            "externals": [(x.name, x.mtime, list(x.scores)) for x in self.externals],
+        }
+
+    def load_state_dict(self, d: dict) -> None:
+        self.snapshots = [Snapshot(i, p, u, deque(sc)) for i, p, u, sc in d["snapshots"]]
+        # A run resumed on another machine without its snapshots' files (the cloud machine stopped and its GPU
+        # taken): those are as deleted ones, their records kept, never drawn.
+        missing = [s for s in self.snapshots if s.path and not (self.dir / s.path).exists()]
+        for s in missing:
+            s.path = ""
+        if missing:
+            print(f"league: {len(missing)} snapshots' files are missing (a run moved without them): kept as deleted ones")
+        self.externals = [External(n, m, deque(sc)) for n, m, sc in d.get("externals", [])]
+        self.ratings = dict(d["ratings"])
+        for k, v in d["bot_scores"].items():
+            if k in self.bot_scores:
+                self.bot_scores[k].extend(v)

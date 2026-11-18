@@ -1,0 +1,217 @@
+// The app's window (docs/app.md §2): the ground, the one screen shown, what opens over it, and the cursor.
+//
+// A screen is one file in screens/ (its component, its overlay for what it opens over itself, and its view: the
+// global its Rust module sets) and one Rust module in src/screens/. This file names each of those once, below;
+// what a screen adds to its view, and the structs and enums it uses there, reach Rust with no edit here.
+
+import { Theme, Audit } from "theme.slint";
+import { Nav, NavKind } from "nav.slint";
+import { Shell, Screen, BattleKind, Backdrop, Cursor, DialogLayer, PickerLayer, Fx, JackIn } from "shell.slint";
+import { Pulse } from "motion.slint";
+import { LoadingScreen } from "screens/loading.slint";
+import { MenuScreen } from "screens/menu.slint";
+import { SettingsScreen, SettingsOverlay } from "screens/settings.slint";
+import { VersusScreen } from "screens/versus.slint";
+import { BattleScreen } from "screens/battle.slint";
+import { PlayScreen, PlayOverlay, MatchMenu, MatchPeek, MatchResult, PlayView } from "screens/play.slint";
+import { PracticeMenu, PracticeInputs, PracticeGettingReady, PracticeView } from "screens/practice.slint";
+import { BuildsScreen, BuildsOverlay } from "screens/builds.slint";
+import { ReplaysScreen, ReplaysOverlay, ReplaysView } from "screens/replays.slint";
+import { RulesetPage, RulesetView } from "ruleset.slint";
+
+export { Theme, Audit, Nav, NavKind }
+export { Drag } from "nav.slint";
+export { Look, PatternKind, I18n } from "theme.slint";
+export { Shell, Screen, BattleKind, DialogButton, PickMark, VersusCard, LinkFigures, PadButton, ErrorKind, Errors, UpdateWords, NearbyState, NearbyWords, Fx, Ground, PatternPaths } from "shell.slint";
+export { ButtonKind } from "widgets.slint";
+// What any screen shows of a build, and its words (`crate::builds`).
+export { BuildWords } from "build.slint";
+// What each screen's Rust module sets: its view.
+export { MenuView } from "screens/menu.slint";
+export { SettingsView } from "screens/settings.slint";
+export { PlayView } from "screens/play.slint";
+export { PracticeView } from "screens/practice.slint";
+export { BuildsView, NaviView, FolderView, NavicustView, PatchCardsView, AutoBattleView, PartyView } from "screens/builds.slint";
+export { ReplaysView } from "screens/replays.slint";
+export { AboutView } from "screens/settings/about.slint";
+// A ruleset's page, which the lobby and the build editor open over themselves.
+export { RulesetView, RulesetCategory, RulesetItem, RulesetChoice, RulesetKey, RulesetProgram } from "ruleset.slint";
+
+export component AppWindow inherits Window {
+    // What is shown in place of a menu screen: the bar while the game loads, the two cards before a battle,
+    // the battle.
+    property <bool> in-battle: Shell.battle != BattleKind.none && Shell.battle-full;
+    property <bool> covered: Shell.loading || Shell.versus || root.in-battle;
+    // The safe area's insets, in the UI's units, for the app (`Shell::fit_window`): Slint's, or on Android the app's
+    // (Slint has none there: crates/saito/src/activity.rs).
+    in-out property <length> safe-left: self.safe-area-insets.left;
+    in-out property <length> safe-top: self.safe-area-insets.top;
+    in-out property <length> safe-right: self.safe-area-insets.right;
+    in-out property <length> safe-bottom: self.safe-area-insets.bottom;
+    title: "saito";
+    // (The taskbar's and the title bar's, where the system draws one: macOS takes the app bundle's.)
+    icon: @image-url("../../../docs/logo/saito-icon.svg");
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: Theme.ground-bottom;
+    default-font-family: Theme.body;
+    default-font-size: 14px;
+    default-font-weight: 400;
+    // (Behind everything, a battle that fills the window too: the user, "the backdrop should be behind the game at all
+    // times". Its pattern costs about a millisecond a frame there.)
+    Backdrop {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // (A phone keeps some of its screen for itself: a notch or an island, the home bar, rounded corners. The screens
+    // and what opens over them are laid out in the rest, the safe area, which the app fits its units to
+    // (`Shell::fit_window`); the backdrop, the cursor and what flies go across the whole window. Elsewhere the safe
+    // area is the window. A phone held sideways keeps 12 at least at its left and right, where its safe area keeps
+    // less: `Shell::sides`.)
+    Rectangle {
+        x: Theme.sideways ? max(root.safe-left, 12px) : root.safe-left;
+        y: root.safe-top;
+        width: root.width - self.x - (Theme.sideways ? max(root.safe-right, 12px) : root.safe-right);
+        height: root.height - root.safe-top - root.safe-bottom;
+
+        // Each screen, and what it opens over itself (Practice has no page: its battle fills the window): one
+        // conditional each, as each conditional is a component of its own in what Slint generates. (A screen's
+        // overlay is over it; only one screen is shown at a time, so it is over every screen.)
+        if !root.covered && Shell.screen == Screen.menu: MenuScreen {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        // (A ruleset's page opened over the lobby or the build editor takes the screen's place as another screen would:
+        // the screen's component is gone while the page is open, its Rust half going on, and is made again as the page
+        // closes, so it arrives as a screen gone to does, its header still: docs/design/app-ui.md §2.74.)
+        if !root.covered && Shell.screen == Screen.play && !RulesetView.open: Rectangle {
+            PlayScreen {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+            PlayOverlay {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+        if !root.covered && Shell.screen == Screen.builds && !RulesetView.open: Rectangle {
+            BuildsScreen {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+            BuildsOverlay {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+        if !root.covered && Shell.screen == Screen.replays: Rectangle {
+            ReplaysScreen {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+            ReplaysOverlay {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+        if !root.covered && Shell.screen == Screen.settings: Rectangle {
+            SettingsScreen {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+            SettingsOverlay {
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+        if !root.covered && RulesetView.open: RulesetPage {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if Shell.loading && !Shell.versus && !root.in-battle: LoadingScreen {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if Shell.versus: VersusScreen {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if root.in-battle: BattleScreen {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        // (Practice's input display: over its battle's picture, wherever that is shown. It is there throughout and
+        // shown when it is on: an `if` would be a component for it.)
+        PracticeInputs {
+            visible: Shell.battle == BattleKind.practice && PracticeView.inputs;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        // (The dummy that fights getting ready, in the corner netplay's connection takes: over the battle's picture,
+        // while it is.)
+        PracticeGettingReady {
+            visible: root.in-battle && Shell.battle == BattleKind.practice && PracticeView.getting-ready.shown;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+
+        if Shell.battle == BattleKind.practice && Shell.battle-menu: PracticeMenu {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if Shell.battle == BattleKind.online && Shell.battle-menu: MatchMenu {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        // (Both builds, while Tab is held in a match, the match menu open or not.)
+        if root.in-battle && Shell.battle == BattleKind.online: MatchPeek {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        // (How the match went, once its set is over.)
+        if Shell.battle == BattleKind.online && PlayView.result-shown: MatchResult {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if Shell.picker: PickerLayer {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+        if Shell.dialog: DialogLayer {
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+
+    // The cursor: one object that glides from control to control. (The app moves it, a share of the way each
+    // frame: an animation here would start over each time the control it is going to moved.) It goes with a
+    // replay's controls when they hide.
+    Cursor {
+        x: Nav.x - 5px;
+        y: Nav.y - 5px;
+        width: Nav.w + 10px;
+        height: Nav.h + 10px;
+        visible: Nav.shown && Nav.id != "" && !(ReplaysView.watching && !ReplaysView.hud);
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // Something flying over the layout (`Fx`): from one place to another, as it shrinks into the second.
+    fly := Pulse {
+        seq: Fx.fly-seq;
+        duration: Theme.settle;
+    }
+
+    Rectangle {
+        property <float> at: 1 - pow(fly.v, 3);
+        x: Fx.fly-from-x + (Fx.fly-to-x - Fx.fly-from-x) * self.at;
+        y: Fx.fly-from-y + (Fx.fly-to-y - Fx.fly-from-y) * self.at - sin(self.at * 180deg) * 18px;
+        width: 20px + tag.preferred-width + (Fx.fly-text == "" ? 0px : 8px);
+        height: 20px;
+        visible: fly.v > 0;
+        opacity: min(1, fly.v * 3);
+        Image {
+            x: 0;
+            width: 16px;
+            height: 16px;
+            source: Fx.fly-image;
+            image-rendering: pixelated;
+        }
+
+        tag := Text {
+            x: 22px;
+            text: Fx.fly-text;
+            color: Theme.text;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    // The jack-in, over the battle's first frames as it begins.
+    JackIn {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}

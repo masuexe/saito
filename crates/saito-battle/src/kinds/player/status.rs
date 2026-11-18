@@ -1,0 +1,1642 @@
+//! Stage B of the damage pipeline (`sub_801AF44`): apply the damage,
+//! turn requests into reactions (death, drag, slide, flinch), run the
+//! flash and status timers, then dispatch the current action. See
+//! objects-and-player.md §H3-§H5 and field-collision-damage.md §4.
+
+use super::{
+    actions, ai, ai_mut, attach_point, clear_bubble, clear_flag1, clear_flag2, clear_freeze, clear_paralysis, coll,
+    EmotionRole, coll_mut, switch_protected, emotion_role, entry, exit_attack_state, flag1, flag2, idle, is_link, own_gauges, navi_record,
+    panel_kind, reactions, reset_attack_links, save_state_word, set_attack, navi_action,
+    set_navi_action, NaviAction,
+    set_coordinates_from_panel, set_flag1, set_flag2, set_mood,
+};
+use crate::actor::{ActorType, request, status as ai_status};
+use crate::battle::{Battle, battle_flags};
+use crate::collision::{f1, link, timer};
+use crate::object::{DragStep, ObjectRef, PanelPos, Vec3};
+
+/// `sub_801AF44`, including the action dispatch (`sub_801B9E6`). Its top
+/// block skips a pause but in the entry (EXE6's, EXE5's), or, where the
+/// navi stops for pauses at control (EXE4's 0x08013A48: no pause test),
+/// runs whenever the navi does: its take-control tick in the intro too.
+pub(super) fn update(b: &mut Battle, r: ObjectRef) {
+    let top_while_paused = b.content.rules().paused_navi == crate::content::PausedNavi::StopsAtControl;
+    if !b.paused || navi_action(b, r) == NaviAction::Entry || top_while_paused {
+        match apply(b, r) {
+            Flow::Tail => {}
+            Flow::Dispatch => return dispatch(b, r),
+            Flow::Return => return,
+        }
+    }
+    tail(b, r);
+}
+
+/// Where the top block of `sub_801AF44` continues.
+enum Flow {
+    /// The visuals and the pause/dimming/dispatch choice (`loc_801B142`).
+    Tail,
+    /// Straight to the action dispatch.
+    Dispatch,
+    /// Nothing more this tick.
+    Return,
+}
+
+/// The top block: damage, death, special states, drag, slides, flinch,
+/// flash and status timers.
+fn apply(b: &mut Battle, r: ObjectRef) -> Flow {
+    weakness_effect(b, r);
+    bug_effect(b, r);
+    counter_hit_bookkeeping(b, r);
+    weakness_request(b, r);
+    apply_damage(b, r);
+    // sub_801BADE: a damaging hit pops the bubble.
+    if navi_action(b, r) == NaviAction::Bubble && coll(b, r).acc.final_damage != 0 {
+        clear_bubble(b, r);
+    }
+    if flag1(b, r) & f1::DEAD != 0 {
+        return Flow::Tail;
+    }
+    if flag2(b, r) & 1 != 0 {
+        clear_flag2(b, r, 1);
+        set_flag1(b, r, f1::DEAD);
+        set_attack(b, r, NaviAction::Deletion, 0);
+        return Flow::Tail;
+    }
+    let st = ai(b, r).status;
+    // (The DS's party battle adds its in-battle switch, the rules'
+    // follow-up and their revival to what runs on: 0x02062174. None of them
+    // is set outside a side with partners, or the rules' asking.)
+    const RUNS_ON: u32 = ai_status::SWITCH_KNOCKOUT
+        | ai_status::SWITCHING_NAVI
+        | ai_status::FOLLOWING_UP
+        | ai_status::VOLLEY
+        | ai_status::REVIVING
+        | ai_status::UNINTERRUPTIBLE;
+    if st & RUNS_ON != 0 {
+        return Flow::Dispatch;
+    }
+    // (A game with no transformation sequencer at a turn's start, EXE4's:
+    // a navi changing form runs its change whatever else, dimmed or not,
+    // 0x08013AFC.)
+    if st & ai_status::FORM_CHANGE != 0 && !b.game_rules().flow.sequencer_at_turn_start {
+        return Flow::Dispatch;
+    }
+    if st & ai_status::FORM_BREAKING != 0 && breaking_form(b, r) {
+        return Flow::Return;
+    }
+    if b.is_dimmed() {
+        return Flow::Tail;
+    }
+    b.objects.get_mut(r).prevent_anim = 0;
+    if let Some(flow) = unpaused_form_change(b, r) {
+        return flow;
+    }
+    if let Some(flow) = action_requests(b, r) {
+        return flow;
+    }
+    if b.game_rules().reactions == crate::content::Reactions::FlashTimerFirst {
+        return flash_timer_first_reactions(b, r);
+    }
+    if flag2(b, r) & 0x100 != 0 {
+        start_drag(b, r);
+        return Flow::Tail;
+    }
+    if flag1(b, r) & f1::DRAG != 0 {
+        set_navi_action(b, r, NaviAction::Drag);
+        return Flow::Tail;
+    }
+    b.objects.get_mut(r).drag_step = DragStep::Start;
+    if flag2(b, r) & 0x10 != 0 {
+        clear_flag2(b, r, 0x10);
+        slide(b, r);
+    } else if flag1(b, r) & f1::SLIDING != 0 {
+        slide(b, r);
+    } else {
+        b.objects.get_mut(r).slide_state = 0;
+    }
+    if flag2(b, r) & 4 != 0 {
+        flinch_request(b, r);
+    }
+    tick_flash(b, r);
+    tick_statuses(b, r);
+    tick_submerged(b, r);
+    tick_dive(b, r);
+    tick_anger(b, r);
+    drain_hp(b, r);
+    // sub_802E1D8: the side's takeover (EXE6's Cross special) runs down.
+    let side = &mut b.sides[b.objects.get(r).alliance as usize];
+    side.takeover_ticks = side.takeover_ticks.saturating_sub(1);
+    Flow::Tail
+}
+
+/// EXE5's reactions (0x08017CC8 to 0x08017D88): the flash's timer, the
+/// slides, a drag, a flinch, then the status timers.
+fn flash_timer_first_reactions(b: &mut Battle, r: ObjectRef) -> Flow {
+    tick_flash(b, r);
+    if flag2(b, r) & 0x10 != 0 {
+        clear_flag2(b, r, 0x10);
+        slide(b, r);
+    } else if flag1(b, r) & f1::SLIDING != 0 {
+        slide(b, r);
+    } else {
+        b.objects.get_mut(r).slide_state = 0;
+    }
+    if flag2(b, r) & 0x100 != 0 {
+        // 0x08017D04: the state word kept, a paralysis ended unless a
+        // counter just made it; the drag from its start.
+        clear_flag2(b, r, 0x100);
+        save_state_word(b, r);
+        if flag2(b, r) & 0x4000 == 0 {
+            clear_paralysis(b, r);
+        }
+        clear_flag2(b, r, 0x4000);
+        let o = b.objects.get_mut(r);
+        o.phase = 0;
+        o.drag_step = DragStep::Start;
+        set_navi_action(b, r, NaviAction::Drag);
+        return Flow::Tail;
+    }
+    if flag1(b, r) & f1::DRAG != 0 {
+        set_navi_action(b, r, NaviAction::Drag);
+        return Flow::Tail;
+    }
+    b.objects.get_mut(r).drag_step = DragStep::Start;
+    if flag2(b, r) & 4 != 0 {
+        // 0x08017D58: a paralysis ended unless a counter just made it;
+        // the flinch.
+        clear_flag2(b, r, 4);
+        if flag2(b, r) & 0x4000 == 0 {
+            clear_paralysis(b, r);
+        }
+        clear_flag2(b, r, 0x4000);
+        set_attack(b, r, NaviAction::Flinch, 0);
+    }
+    tick_statuses(b, r);
+    tick_submerged(b, r);
+    // 0x08017D84: the sea's dive (0x0800DF5A).
+    tick_dive(b, r);
+    tick_anger(b, r);
+    drain_hp(b, r);
+    Flow::Tail
+}
+
+/// `loc_801B142`: visibility, then the action (or the pause / dimming
+/// handler).
+fn tail(b: &mut Battle, r: ObjectRef) {
+    clear_flag2(b, r, 0x4000);
+    status_shader(b, r);
+    update_visibility(b, r);
+    counter_shader(b, r);
+    // The rules' own shader over those (EXE4's 0x0800BB18: the dark soul's
+    // last ticks).
+    let side = b.objects.get(r).alliance;
+    if let Some(shader) = b.rules_navi_shader(side, r) {
+        b.objects.sprite_mut(r).look.set_color_shader(shader);
+    }
+    charge_brings_glow(b, r);
+    dive_ripple(b, r);
+    if flag1(b, r) & f1::DEAD != 0 {
+        return dispatch(b, r);
+    }
+    // (A navi that stops at control has no pause handler: the object loop
+    // decides whether it runs while paused, its header flag 0x04.)
+    if b.paused
+        && navi_action(b, r) != NaviAction::Entry
+        && b.content.rules().paused_navi == crate::content::PausedNavi::PauseHandler
+    {
+        return pause_requests(b, r);
+    }
+    if b.is_dimmed() {
+        return while_dimmed(b, r);
+    }
+    dispatch(b, r);
+}
+
+/// Where the rules say a charge brings its own glow (EXE4's 0x0800BD88): with
+/// the navi's glow link empty and its charge at a level, the role's glow, on
+/// the navi's side, the navi its first related, linked and shown.
+fn charge_brings_glow(b: &mut Battle, r: ObjectRef) {
+    if b.content.rules().effects.charge_glow != crate::content::ChargeGlow::WithCharge {
+        return;
+    }
+    let a = ai(b, r);
+    if a.charge_glow.is_some() || a.charge_level == 0 {
+        return;
+    }
+    let kind = b.roles().kind(crate::content::KindRole::ChargeGlow);
+    let e = crate::kinds::spawn(b, kind, saito_content_api::SpawnAt::AfterCurrent, Vec3::default(), [0; 4]);
+    if let Some(e) = e {
+        let alliance = b.objects.get(r).alliance;
+        let o = b.objects.get_mut(e);
+        o.alliance = alliance;
+        o.related[0] = Some(r);
+        crate::behavior::set_state_field(b, e, "shown", saito_content_api::Value::Bool(true));
+    }
+    ai_mut(b, r).charge_glow = e;
+}
+
+/// `sub_801B9E6`: run the current action (§12.0 action table).
+pub(super) fn dispatch(b: &mut Battle, r: ObjectRef) {
+    let action = navi_action(b, r);
+    if action.is_attack() {
+        // The game's wrapper (EXE6's Beast Out rush, `sub_80EAD9C`) runs
+        // instead, and runs the action when it chooses
+        // (`CoreApi::run_wrapped`).
+        // (A wrapper of the rules', for a side that plays by none, doesn't
+        // run.)
+        if ai(b, r).attack.wrapped == 1
+            && let Some(wrapper) = b.roles().try_action(crate::content::ActionRole::Wrapper)
+            && (!b.content.defs.is_rules_action(wrapper) || b.has_rules(b.objects.get(r).alliance))
+        {
+            return crate::behavior::run_action(b, wrapper, r);
+        }
+        return actions::dispatch(b, r, action);
+    }
+    match action {
+        NaviAction::Entry => entry::entry(b, r),
+        NaviAction::TakeControl => entry::take_control(b, r),
+        NaviAction::Deletion => match b.roles().try_action(crate::content::ActionRole::Deletion) {
+            // (A navi no player controls dies the engine's way: EXE4's own,
+            // 0x08010D4C, waits for EXE4's auto battle, exe4-map.md §18.)
+            Some(deletion) if !super::ai_navi::is_ai_navi(b, r) => crate::behavior::run_action(b, deletion, r),
+            _ => reactions::deletion(b, r),
+        },
+        NaviAction::Flinch => reactions::flinch(b, r),
+        NaviAction::Paralysis => reactions::paralysis(b, r),
+        NaviAction::Drag => reactions::drag(b, r),
+        NaviAction::Freeze => reactions::freeze(b, r),
+        NaviAction::Bubble => reactions::bubble(b, r),
+        NaviAction::Idle => idle::control(b, r),
+        // (The original's table goes on past idle with the link navis'
+        // own actions, `off_80EA4C8[AIIndex]`; none has one.)
+        NaviAction::Content(_) | NaviAction::Engine(_) => unreachable!("an attack"),
+    }
+}
+
+// ---- Damage ---------------------------------------------------------------------
+
+/// Spawn the weakness / bug "!" marker (`sub_80E8124`, effect #0x6B)
+/// where the status visual sits (the rule `effects.status_visual.place`):
+/// the navi's attach point 5 (EXE6's, EXE5's), or its identity's
+/// `status_mark`, x toward the enemy (EXE4's 0x080133E8: its actor
+/// record's +6 and +7 by the navi's enemy direction).
+fn spawn_marker(b: &mut Battle, r: ObjectRef, mark: crate::kinds::hit_marker::Mark) {
+    let (dx, dy) = match b.game_rules().effects.status_visual.place {
+        crate::content::StatusVisualPlace::AttachPoint => attach_point(b, r, 5),
+        crate::content::StatusVisualPlace::StatusMark => {
+            let o = b.objects.get(r);
+            let Some((x, z)) = b.content.identity(o.identity).status_mark else {
+                panic!("identity {:?} has no `status_mark`, where its hit marker sits (0x080133E8)", b.content.identity(o.identity).key)
+            };
+            let toward = if o.alliance == 0 { 1 } else { -1 };
+            (x as i32 * toward, z as i32)
+        }
+    };
+    let offset = Vec3 { x: dx << 16, y: 0, z: dy << 16 };
+    crate::kinds::hit_marker::spawn(b, r, offset, mark);
+}
+
+/// `sub_801A42E`: a weakness hit shows "!!", by what the game's routine
+/// tests (the rule `weakness_mark`). EXE6's: the last hit's multiplier, on
+/// a tick with final damage. EXE5's (0x08017254): the damage of the element
+/// the navi's is weak to (the elements its row of the weakness table
+/// multiplies; EXE5's own table, 0x08017284, names the one accumulator),
+/// whichever hit came last.
+fn weakness_effect(b: &mut Battle, r: ObjectRef) {
+    use crate::content::WeaknessMark;
+    let c = coll(b, r);
+    let rules = b.game_rules();
+    let shown = match rules.weakness_mark {
+        WeaknessMark::LastHitMultiplier => c.acc.exclamation != 0 && c.acc.final_damage != 0,
+        WeaknessMark::WeakElementDamage => rules
+            .element_weakness
+            .get(c.element as usize)
+            .is_some_and(|row| row.iter().zip(&c.acc.element_damage[..5]).any(|(&weak, &damage)| weak != 0 && damage != 0)),
+    };
+    if shown {
+        spawn_marker(b, r, crate::kinds::hit_marker::Mark::Weakness);
+    }
+}
+
+/// `sub_801A4A6`: a hit's bug shows the HP bug's marker where its side's
+/// rules say (`bug_mark`: EXE6's HP bug codes), when a hit brought a code.
+fn bug_effect(b: &mut Battle, r: ObjectRef) {
+    if coll(b, r).acc.inflicted_bugs & 0xFF == 0 {
+        return;
+    }
+    let side = b.objects.get(r).alliance;
+    if b.rules_bug_mark(side, r) {
+        spawn_marker(b, r, crate::kinds::hit_marker::Mark::Bug);
+    }
+}
+
+/// `sub_801A45C`: a counter hit fills the attacker's own gauge (the
+/// own-gauges mode, battle flag 0x40), is counted, and closes the counter
+/// window.
+fn counter_hit_bookkeeping(b: &mut Battle, r: ObjectRef) {
+    if coll(b, r).acc.hit_flags & 0x40 == 0 {
+        return;
+    }
+    let opp = b.objects.get(r).alliance ^ 1;
+    if own_gauges(b) {
+        // sub_802E032
+        let s = &mut b.sides[opp as usize];
+        s.gauge = (s.gauge as u32 + 0x1500).min(0x4000) as u16;
+    }
+    b.bump_side_stat(opp, 8, 1);
+    coll_mut(b, r).counter_timer = 0;
+    // Unless the battle is over: the HUD's "COUNTER HIT!" and a sound.
+    if !b.is_battle_over() {
+        b.show_message(crate::hud::Message::CounterHit);
+        b.sound(crate::content::SoundRole::CounterHit);
+    }
+}
+
+/// `sub_801A506`: note a damaging weakness hit, where the game's status
+/// routine has the step (the rule `weakness_hit_breaks_form`: EXE5's has
+/// none, 0x08017BF2).
+fn weakness_request(b: &mut Battle, r: ObjectRef) {
+    if !b.game_rules().weakness_hit_breaks_form {
+        return;
+    }
+    let c = coll(b, r);
+    if c.acc.damage_multiplier != 0 && c.acc.final_damage != 0 {
+        ai_mut(b, r).requests |= request::WEAKNESS_HIT;
+    }
+}
+
+/// The sounds of navi `r`'s hit, as the rules' `intake.hit_sound` says: a
+/// player hears their own navi's as `own_hit` and another's as `hit`
+/// (EXE6's, EXE5's); or every console hears `hit`, or `auto_battle_hit` for
+/// a navi in auto battle (EXE4's 0x08013A8C). The side's rules hear of a
+/// player navi's hit first (`navi_hit_shown`).
+fn hit_sounds(b: &mut Battle, r: ObjectRef) {
+    use crate::content::{HitSound, SoundRole};
+    if navi_record(b, r).actor_type == ActorType::Player {
+        let side = b.objects.get(r).alliance;
+        b.rules_navi_hit_shown(side, r);
+    }
+    match b.game_rules().intake.hit_sound {
+        HitSound::ByConsole => {
+            let player = navi_record(b, r).actor_type == ActorType::Player;
+            let alliance = b.objects.get(r).alliance;
+            for side in 0..2 {
+                let own = player && side == alliance;
+                b.sound_for(side, if own { SoundRole::OwnHit } else { SoundRole::Hit });
+            }
+        }
+        HitSound::ByNavi => {
+            let role = if super::ai_navi::is_ai_navi(b, r) { SoundRole::AutoBattleHit } else { SoundRole::Hit };
+            b.sound(role);
+        }
+    }
+}
+
+/// `applyDamageToPlayer_801ba12`: subtract the final damage (Undershirt
+/// keeps 1 HP), then the element-5 damage; at 0 HP request deletion
+/// (§4.5). Runs every tick, even once dead or after the battle ends.
+fn apply_damage(b: &mut Battle, r: ObjectRef) {
+    match b.game_rules().intake.hp_loss {
+        crate::content::HpLoss::Gauge => return apply_damage_shown_by_hp(b, r),
+        crate::content::HpLoss::HitDrainsGauge => return apply_damage_asking_at_zero(b, r),
+        crate::content::HpLoss::HpAlone => {}
+    }
+    let mut d = coll(b, r).acc.final_damage;
+    let mut dead = false;
+    if d != 0 {
+        let a = ai_mut(b, r);
+        a.total_damage_taken = (a.total_damage_taken as u32 + d as u32).min(0xFFFF) as u16;
+        let hp = b.objects.get(r).hp;
+        if hp > 1 && flag1(b, r) & f1::UNDERSHIRT != 0 && hp <= d {
+            d = hp - 1;
+        }
+        crate::kinds::subtract_hp(b, r, d);
+        // A player hears another sound when their own navi is hit (or, a hit
+        // that sounds by the navi, every console hears the navi's);
+        // sprite_forceWhitePalette.
+        hit_sounds(b, r);
+        b.objects.sprite_mut(r).look.white = true;
+        dead = b.objects.get(r).hp == 0;
+    }
+    if !dead {
+        let d5 = coll(b, r).acc.element_damage[5];
+        crate::kinds::subtract_hp(b, r, d5);
+        dead = b.objects.get(r).hp == 0;
+    }
+    if dead {
+        fall(b, r);
+    }
+    counter_and_mood(b, r);
+}
+
+/// EXE5's `applyDamageToPlayer` (0x080185A2): EXE6's, but the hit shows
+/// (white, then its sounds) only when the loss leaves r1 non-zero (the HP
+/// left, or at 0 the side's rules' answer, `hp_emptied`:
+/// `kinds::subtract_hp`), and a hit that doesn't goes straight to the
+/// deletion's test (no element-5 damage). (That test first tries the last
+/// stand again, 0x0802C16C, which finds what it found as the HP went: the
+/// navi falls. Where a hit landed is learned for the auto-battling navis'
+/// auto battle data too, 0x0802C3E2: for the battles after, which nothing
+/// of a battle reads.)
+fn apply_damage_shown_by_hp(b: &mut Battle, r: ObjectRef) {
+    let mut d = coll(b, r).acc.final_damage;
+    let mut fell = false;
+    if d != 0 {
+        let a = ai_mut(b, r);
+        a.total_damage_taken = (a.total_damage_taken as u32 + d as u32).min(0xFFFF) as u16;
+        let hp = b.objects.get(r).hp;
+        if hp > 1 && flag1(b, r) & f1::UNDERSHIRT != 0 && hp <= d {
+            d = hp - 1;
+        }
+        if crate::kinds::subtract_hp(b, r, d) {
+            b.objects.sprite_mut(r).look.white = true;
+            hit_sounds(b, r);
+        } else {
+            fell = true;
+        }
+    }
+    if !fell {
+        let d5 = coll(b, r).acc.element_damage[5];
+        crate::kinds::subtract_hp(b, r, d5);
+        fell = b.objects.get(r).hp == 0;
+    }
+    if fell {
+        fall(b, r);
+    }
+    counter_and_mood(b, r);
+}
+
+/// EXE4's damage (its player's status block, 0x08013A48): the hit drains the
+/// side's gauge with the HP (0x0800AB9E: by the loss ×128) and shows (white,
+/// its sound) only with HP left; the element-5 damage takes the HP alone
+/// (0x0800AB92); at 0 HP, from either, the side's rules are asked
+/// (`hp_emptied`, 0x0800EBC8, which hold the navi at 1 HP themselves) and
+/// the navi falls unless they keep it. (Its sound is the rules'
+/// `intake.hit_sound`'s: EXE4's, 0x6B on every console, 0x6D for a navi in
+/// auto battle, 0x08013A8C.) (Unported:
+/// 0x0800EE4C after the sound records the hit navi's panel into the hitter's
+/// side's records at 0x02037A90 and 0x02037C60, which nothing yet reads.)
+fn apply_damage_asking_at_zero(b: &mut Battle, r: ObjectRef) {
+    let mut d = coll(b, r).acc.final_damage;
+    let mut left = true;
+    if d != 0 {
+        let a = ai_mut(b, r);
+        a.total_damage_taken = (a.total_damage_taken as u32 + d as u32).min(0xFFFF) as u16;
+        let hp = b.objects.get(r).hp;
+        if hp > 1 && flag1(b, r) & f1::UNDERSHIRT != 0 && hp <= d {
+            d = hp - 1;
+        }
+        let side = b.objects.get(r).alliance as usize & 1;
+        let s = &mut b.sides[side];
+        s.gauge = (s.gauge as u32).saturating_sub((d as u32) << 7) as u16;
+        let o = b.objects.get_mut(r);
+        o.hp = o.hp.saturating_sub(d);
+        if o.hp != 0 {
+            b.objects.sprite_mut(r).look.white = true;
+            hit_sounds(b, r);
+        } else {
+            left = false;
+        }
+    }
+    if left {
+        let d5 = coll(b, r).acc.element_damage[5];
+        let o = b.objects.get_mut(r);
+        o.hp = o.hp.saturating_sub(d5);
+        left = o.hp != 0;
+    }
+    if !left && !super::hp_emptied(b, r) {
+        fall(b, r);
+    }
+    counter_and_mood(b, r);
+}
+
+/// A navi at 0 HP where the framework would delete it
+/// (`applyDamageToPlayer`'s test; the DS's 0x02062C5A for its order): the
+/// side's rules may keep it (`navi_falling`: the DS's ToadMan rescue,
+/// 0x020048E8); else a switched-in navi falls back (`switch_protected`:
+/// the knockout's request); else, unless the rules' revival is asked for
+/// or runs, it is deleted.
+fn fall(b: &mut Battle, r: ObjectRef) {
+    let side = b.objects.get(r).alliance;
+    if b.rules_navi_falling(side, r) {
+        return;
+    }
+    if switch_protected(b, r) {
+        ai_mut(b, r).requests |= request::SWITCH_KNOCKOUT;
+        return;
+    }
+    if ai(b, r).requests & request::REVIVAL != 0 || ai(b, r).status & ai_status::REVIVING != 0 {
+        return;
+    }
+    set_flag2(b, r, 1);
+}
+
+/// `sub_801A200` (EXE5's 0x08016FDC, EXE4's 0x080131F4): what the hits
+/// this navi took in the tick counted goes to the other side, as a
+/// counter's mark (its rules hear it: EXE6's and EXE5's Full Synchro) or as
+/// the rules' gain of its mood; and the hits wear down this navi's mood.
+fn counter_and_mood(b: &mut Battle, r: ObjectRef) {
+    if b.is_battle_over() {
+        return;
+    }
+    let side = b.objects.get(r).alliance;
+    let opp = side ^ 1;
+    let rules = &b.game_rules().emotion;
+    let (marks, gain) = (rules.hit_mood == crate::content::HitMood::CounterMark, rules.hitter_gain);
+    let counted = coll(b, r).acc.counter;
+    if marks && counted & 0x8000 != 0 {
+        b.rules_countered(opp, r);
+    } else if counted != 0 {
+        match gain {
+            crate::content::HitterGain::None => {}
+            crate::content::HitterGain::ToFull => super::raise_mood(b, opp, counted),
+            crate::content::HitterGain::ShortOfFull => super::gain_mood(b, opp, counted),
+        }
+    }
+    let loss = coll(b, r).acc.mood_damage;
+    super::lose_mood(b, side, loss);
+}
+
+// ---- Special states ------------------------------------------------------------
+
+/// `sub_8015766`: a weakness hit breaks the form; true while it runs.
+fn breaking_form(b: &mut Battle, r: ObjectRef) -> bool {
+    actions::transform::break_form(b, r)
+}
+
+/// The Cross/Beast requests in `ai.requests` (none fire for base
+/// MegaMan).
+fn action_requests(b: &mut Battle, r: ObjectRef) -> Option<Flow> {
+    let f = ai(b, r).requests;
+    // The rules' revival of a navi at 0 HP (the DS's ToadMan rescue: request
+    // 0x100, action 0x5A), before everything.
+    if f & request::REVIVAL != 0 {
+        ai_mut(b, r).requests &= !request::REVIVAL;
+        ai_mut(b, r).status |= ai_status::REVIVING;
+        let revival = super::role_action(b, crate::content::ActionRole::Revival);
+        set_attack(b, r, revival, 0);
+        return Some(Flow::Dispatch);
+    }
+    if f & request::SWITCH_KNOCKOUT != 0 {
+        ai_mut(b, r).requests &= !request::SWITCH_KNOCKOUT;
+        ai_mut(b, r).status |= ai_status::SWITCH_KNOCKOUT;
+        let death = super::role_action(b, crate::content::ActionRole::SwitchKnockout);
+        set_attack(b, r, death, 0);
+        return Some(Flow::Dispatch);
+    }
+    // A side with partners switches in battle (the DS's action 0x59, from
+    // the navi's own request: `actions::navi_switch::request_in_battle`).
+    let side = b.objects.get(r).alliance as usize & 1;
+    if f & request::NAVI_SWITCH != 0 && b.party[side].has_partners() {
+        ai_mut(b, r).requests &= !request::NAVI_SWITCH;
+        ai_mut(b, r).status |= ai_status::SWITCHING_NAVI;
+        set_attack(b, r, NaviAction::Engine(super::EngineAction::NaviSwitch), 0);
+        return Some(Flow::Dispatch);
+    }
+    // The rules' follow-up (the DS's Double Attack after a paused swap:
+    // request 0x02000000, action 0x5C).
+    if f & request::FOLLOW_UP != 0 {
+        ai_mut(b, r).requests &= !request::FOLLOW_UP;
+        ai_mut(b, r).status |= ai_status::FOLLOWING_UP;
+        let follow_up = super::role_action(b, crate::content::ActionRole::FollowUp);
+        set_attack(b, r, follow_up, 0);
+        return Some(Flow::Dispatch);
+    }
+    if f & request::VOLLEY != 0 {
+        ai_mut(b, r).requests &= !request::VOLLEY;
+        ai_mut(b, r).status |= ai_status::VOLLEY;
+        let volley = super::role_action(b, crate::content::ActionRole::Volley);
+        set_attack(b, r, volley, 0);
+        return Some(Flow::Dispatch);
+    }
+    if f & request::WEAKNESS_HIT != 0 {
+        ai_mut(b, r).requests &= !request::WEAKNESS_HIT;
+        // A form marked to break (EXE6's Crosses, Beast Out and the Crosses
+        // in it, NameIDs 0x1AC..=0x1C1); in EXE5 (0x08017CAC) any navi.
+        let marked = b.content.identity(b.objects.get(r).identity).breaks_on_weakness;
+        let any = b.game_rules().form_break == crate::content::FormBreak::AnyForm;
+        if any || marked {
+            ai_mut(b, r).status |= ai_status::FORM_BREAKING;
+            exit_attack_state(b, r);
+            breaking_form(b, r);
+            return Some(Flow::Return);
+        }
+    }
+    None
+}
+
+/// A game with no transformation sequencer at a turn's start (EXE4's): a
+/// form change asked for (its side's rules ask, EXE4's Double Soul from
+/// the hand's soul chip, 0x0800B658) starts as the navi's action as the
+/// fight runs, the form's change (0x08013B14: action 0x0D); the battle isn't
+/// paused for it.
+fn unpaused_form_change(b: &mut Battle, r: ObjectRef) -> Option<Flow> {
+    if b.game_rules().flow.sequencer_at_turn_start || ai(b, r).requests & request::FORM_CHANGE == 0 {
+        return None;
+    }
+    ai_mut(b, r).requests &= !request::FORM_CHANGE;
+    let action = form_change_action(b, r)?;
+    ai_mut(b, r).status |= ai_status::FORM_CHANGE;
+    set_attack(b, r, NaviAction::Content(action), 0);
+    Some(Flow::Dispatch)
+}
+
+/// Stage B's drag request (`F2 & 0x100`): save the state, clear freeze
+/// and bubble (and paralysis, unless kept) and start action 5.
+fn start_drag(b: &mut Battle, r: ObjectRef) {
+    clear_flag2(b, r, 0x100);
+    save_state_word(b, r);
+    reset_attack_links(b, r);
+    clear_freeze(b, r);
+    clear_bubble(b, r);
+    let f = flag2(b, r);
+    let keep_paralysis = f & 0x4000 != 0 || (f & 2 == 0 && navi_action(b, r) == NaviAction::Paralysis);
+    if !keep_paralysis {
+        clear_paralysis(b, r);
+    }
+    clear_flag2(b, r, 0x4000);
+    let o = b.objects.get_mut(r);
+    o.phase = 0;
+    o.drag_step = DragStep::Start;
+    set_navi_action(b, r, NaviAction::Drag);
+}
+
+/// `slide_state` values: where the slide machine is.
+pub(crate) mod slide_state {
+    /// Start a slide (`sub_80166D0`).
+    pub const START: u8 = 0;
+    /// Sliding toward the destination panel (`sub_8016730`).
+    pub const SLIDING: u8 = 4;
+}
+
+/// Ticks a slide takes per panel.
+const SLIDE_TICKS: u8 = 4;
+
+/// `sub_80166B6`: the ice / road / push slide machine: a panel every 4
+/// ticks, the navi's panel following its coordinates on the way.
+fn slide(b: &mut Battle, r: ObjectRef) {
+    match b.objects.get(r).slide_state {
+        slide_state::START => start_slide(b, r),
+        _ => continue_slide(b, r),
+    }
+}
+
+/// `object_setCollisionPanelsToCurrent`: the collision anchor moves to the
+/// navi's panel (the move direction is left alone).
+fn anchor_collision(b: &mut Battle, r: ObjectRef) {
+    let p = b.objects.get(r).panel;
+    coll_mut(b, r).panel = p;
+}
+
+/// `sub_80166D0`: onto the destination panel, then off in the slide's
+/// direction, if its first panel is open.
+fn start_slide(b: &mut Battle, r: ObjectRef) {
+    set_flag1(b, r, f1::SLIDING);
+    let o = b.objects.get_mut(r);
+    o.panel = o.future_panel;
+    set_coordinates_from_panel(b, r);
+    anchor_collision(b, r);
+    let fp = b.objects.get(r).future_panel;
+    b.unreserve_panel(r, fp.x, fp.y);
+    let v = reactions::slide_vector(b, r);
+    let o = b.objects.get_mut(r);
+    o.slide_dx = v.dx as u8;
+    o.slide_dy = v.dy as u8;
+    o.slide_tiles = v.tiles;
+    if v.tiles != 0 {
+        let target = offset(o.panel, v.dx, v.dy);
+        o.future_panel = target;
+        b.reserve_panel(r, target.x, target.y);
+        let o = b.objects.get_mut(r);
+        o.slide_timer = SLIDE_TICKS;
+        o.slide_state = slide_state::SLIDING;
+        return;
+    }
+    if o.slide_type == 3 {
+        ai_mut(b, r).slide_cooldown = 5;
+    }
+    b.objects.get_mut(r).slide_type = 0;
+    clear_flag1(b, r, f1::SLIDING);
+}
+
+/// `sub_8016730`: move toward the destination; there, go on (one panel
+/// more for each ice panel, onto a road the road's way) or stop.
+fn continue_slide(b: &mut Battle, r: ObjectRef) {
+    let o = b.objects.get_mut(r);
+    let left = o.slide_timer as i32 - 1;
+    o.slide_timer = left as u8;
+    if left > 0 {
+        // (The arena's speed: EXE5's goes 8 pixels a tick in depth.)
+        let speed = b.game_rules().slide_speed;
+        let o = b.objects.get_mut(r);
+        let (dx, dy) = (o.slide_dx as i8 as i32, o.slide_dy as i8 as i32);
+        o.pos.x = o.pos.x.wrapping_add(dx * speed.x);
+        o.pos.y = o.pos.y.wrapping_add(dy * speed.y);
+        o.panel = PanelPos::under(o.pos.x, o.pos.y, o.alliance);
+        anchor_collision(b, r);
+        return;
+    }
+    let fp = b.objects.get(r).future_panel;
+    b.unreserve_panel(r, fp.x, fp.y);
+    b.objects.get_mut(r).panel = fp;
+    set_coordinates_from_panel(b, r);
+    let kind = panel_kind(b, fp);
+    // The type's `slide`: ice's one panel further, a road's (EXE5's magnet's,
+    // 0x08013564's type 5 where EXE6 tests 9 to 12) carry, EXE5's sea's and
+    // EXE4's pitfall's (0x080102FC) stop.
+    let mut go_on = true;
+    let answer = b.panel_slide(kind, r, saito_content_api::SlideHow::Slide);
+    if answer == Some(saito_content_api::SlideAnswer::On) {
+        let o = b.objects.get_mut(r);
+        o.slide_tiles = o.slide_tiles.wrapping_add(1);
+    } else if answer == Some(saito_content_api::SlideAnswer::Carry) {
+        if b.objects.get(r).slide_type == 3 {
+            ai_mut(b, r).slide_cooldown = 5;
+            go_on = false;
+        } else {
+            // Onto a road: it takes over.
+            let o = b.objects.get(r);
+            let dir = slide_direction(o.slide_dx as i8, o.slide_dy as i8, o.alliance);
+            coll_mut(b, r).direction = dir;
+            b.objects.get_mut(r).slide_type = 3;
+            let v = reactions::slide_vector(b, r);
+            let o = b.objects.get_mut(r);
+            o.slide_dx = v.dx as u8;
+            o.slide_dy = v.dy as u8;
+            if v.tiles == 0 {
+                go_on = false;
+            } else {
+                o.slide_tiles = o.slide_tiles.wrapping_add(1);
+            }
+        }
+    } else if answer == Some(saito_content_api::SlideAnswer::Stop) {
+        go_on = false;
+    }
+    if go_on {
+        let o = b.objects.get_mut(r);
+        let left = o.slide_tiles as i32 - 1;
+        o.slide_tiles = left as u8;
+        if left > 0 {
+            let next = offset(o.future_panel, o.slide_dx as i8, o.slide_dy as i8);
+            if reactions::can_slide_to(b, r, next) {
+                let o = b.objects.get_mut(r);
+                o.slide_timer = SLIDE_TICKS;
+                o.future_panel = next;
+                b.reserve_panel(r, next.x, next.y);
+                return;
+            }
+        }
+    }
+    let o = b.objects.get(r);
+    let dir = slide_direction(o.slide_dx as i8, o.slide_dy as i8, o.alliance);
+    coll_mut(b, r).direction = dir;
+    let o = b.objects.get_mut(r);
+    o.slide_state = slide_state::START;
+    clear_flag1(b, r, f1::SLIDING);
+    b.objects.get_mut(r).slide_type = 0;
+    anchor_collision(b, r);
+}
+
+/// The panel `(dx, dy)` from `p`.
+fn offset(p: PanelPos, dx: i8, dy: i8) -> PanelPos {
+    PanelPos { x: (p.x as i8).wrapping_add(dx) as u8, y: (p.y as i8).wrapping_add(dy) as u8 }
+}
+
+/// `sub_801683C`: the collision direction a slide leaves (1 up, 2 down,
+/// 3 back, 4 forward, 5 none).
+fn slide_direction(dx: i8, dy: i8, alliance: u8) -> u8 {
+    let dx = if alliance != 0 { -dx } else { dx };
+    match (dx.signum(), dy.signum()) {
+        (1, _) => 4,
+        (-1, _) => 3,
+        (_, -1) => 1,
+        (_, 1) => 2,
+        _ => 5,
+    }
+}
+
+/// Stage B's flinch request (`F2 & 4`): flinch unless paralyzed or frozen
+/// by a hit without the flash bit (§4.7).
+fn flinch_request(b: &mut Battle, r: ObjectRef) {
+    clear_flag2(b, r, 4);
+    reset_attack_links(b, r);
+    let action = navi_action(b, r);
+    // sub_801BA92
+    let mut a = 0;
+    if action == NaviAction::Paralysis {
+        a = 1;
+        let f = flag2(b, r);
+        if f & 0x4000 == 0 && f & 2 != 0 {
+            clear_paralysis(b, r);
+            a = 2;
+        }
+    }
+    // sub_801BABE
+    let mut c = 0;
+    if action == NaviAction::Freeze {
+        c = 1;
+        if flag2(b, r) & 2 != 0 {
+            clear_freeze(b, r);
+            c = 2;
+        }
+    }
+    let both = a | c;
+    if both == 0 || both & 2 != 0 {
+        set_attack(b, r, NaviAction::Flinch, 0);
+    }
+    clear_flag2(b, r, 0x4000);
+}
+
+// ---- Timers ------------------------------------------------------------------------
+
+/// `sub_801A5EE`: mercy invincibility: a flash request starts 120 ticks
+/// of FLASHING (not extended by new requests). Only while fighting in
+/// EXE6's reactions (EXE5's 0x080173C4 runs regardless).
+fn tick_flash(b: &mut Battle, r: ObjectRef) {
+    if b.round.flags & battle_flags::FIGHTING == 0 && b.game_rules().reactions == crate::content::Reactions::FlashTimerLast {
+        return;
+    }
+    if coll(b, r).status_timers[timer::FLASH] == 0 && flag2(b, r) & 2 != 0 {
+        coll_mut(b, r).status_timers[timer::FLASH] = 120;
+    }
+    clear_flag2(b, r, 2);
+    let t = coll(b, r).status_timers[timer::FLASH];
+    if t != 0 {
+        let t = t as i32 - 1;
+        coll_mut(b, r).status_timers[timer::FLASH] = t as u16;
+        if t > 0 {
+            set_flag1(b, r, f1::FLASHING);
+            return;
+        }
+        if flag1(b, r) & f1::INVISIBLE != 0 {
+            b.sound(crate::content::SoundRole::Appear);
+        }
+    }
+    clear_flag1(b, r, f1::FLASHING | f1::INVISIBLE);
+}
+
+/// Count a status timer down (`t - 1` on the u16); true while it runs.
+fn count_down(b: &mut Battle, r: ObjectRef, i: usize) -> bool {
+    let t = coll(b, r).status_timers[i] as i32 - 1;
+    coll_mut(b, r).status_timers[i] = if t > 0 { t as u16 } else { 0 };
+    t > 0
+}
+
+/// Enter a status action at phase 0, saving the state word first.
+fn enter_status_action(b: &mut Battle, r: ObjectRef, action: NaviAction) {
+    save_state_word(b, r);
+    super::set_action(b, r, action);
+}
+
+/// `sub_800E730`: the status timers and their requests (§H5). `F2` is
+/// read once at entry. Returns early while paused, unless the game's
+/// timers count then (`status_timers_while_paused`: EXE4's 0x0800AE58).
+fn tick_statuses(b: &mut Battle, r: ObjectRef) {
+    let f2 = flag2(b, r);
+    if b.paused && !b.game_rules().status_timers_while_paused {
+        return;
+    }
+    tick_paralysis(b, r, f2);
+    if !tick_freeze(b, r, f2) {
+        if !count_down(b, r, timer::BUBBLE) {
+            clear_flag1(b, r, f1::BUBBLED);
+            coll_mut(b, r).links[link::BUBBLE] = None;
+        } else if !bubble_active(b, r, f2) {
+            // A stale bubble visual skips the confusion countdown.
+            confusion_active(b, r, f2);
+            return tick_minor_statuses(b, r, f2);
+        }
+    } else {
+        // A stale ice visual skips the bubble countdown.
+        if !bubble_active(b, r, f2) {
+            confusion_active(b, r, f2);
+            return tick_minor_statuses(b, r, f2);
+        }
+    }
+    if count_down(b, r, timer::CONFUSE) {
+        confusion_active(b, r, f2);
+    } else {
+        clear_flag1(b, r, f1::CONFUSED);
+        clear_flag2(b, r, 0x80);
+        coll_mut(b, r).links[link::CONFUSE] = None;
+    }
+    tick_minor_statuses(b, r, f2);
+}
+
+/// Paralysis: a request stops the other statuses and enters action 4.
+fn tick_paralysis(b: &mut Battle, r: ObjectRef, f2: u32) {
+    if !count_down(b, r, timer::PARALYZE) {
+        clear_flag1(b, r, f1::PARALYZED);
+        clear_flag2(b, r, 0x8);
+        return;
+    }
+    if f2 & 0x8 != 0 {
+        clear_flag2(b, r, 0x88);
+        enter_status_action(b, r, NaviAction::Paralysis);
+        let c = coll_mut(b, r);
+        c.status_timers[timer::CONFUSE] = 0;
+        c.status_timers[timer::FREEZE] = 0;
+        c.status_timers[timer::BUBBLE] = 0;
+    }
+    clear_flag1(b, r, f1::BUBBLED | f1::FROZEN | f1::CONFUSED);
+    if flag1(b, r) & f1::PARALYZED == 0 {
+        set_flag1(b, r, f1::PARALYZED);
+        enter_status_action(b, r, NaviAction::Paralysis);
+    }
+}
+
+/// Freeze: like paralysis with action 6 and the ice visual. Returns true
+/// when a stale ice visual makes the game jump into the bubble's active
+/// branch (after spawning one it goes on to the bubble's countdown).
+fn tick_freeze(b: &mut Battle, r: ObjectRef, f2: u32) -> bool {
+    if !count_down(b, r, timer::FREEZE) {
+        clear_flag1(b, r, f1::FROZEN);
+        return false;
+    }
+    if f2 & 0x1_0000 != 0 {
+        clear_flag2(b, r, 0x3_0080);
+        enter_status_action(b, r, NaviAction::Freeze);
+        let c = coll_mut(b, r);
+        c.status_timers[timer::CONFUSE] = 0;
+        c.status_timers[timer::PARALYZE] = 0;
+        c.status_timers[timer::BUBBLE] = 0;
+    }
+    clear_flag1(b, r, f1::BUBBLED | f1::CONFUSED);
+    if flag1(b, r) & f1::FROZEN != 0 {
+        return false;
+    }
+    set_flag1(b, r, f1::FROZEN);
+    enter_status_action(b, r, NaviAction::Freeze);
+    if coll(b, r).links[link::FREEZE].is_some() {
+        return true;
+    }
+    crate::kinds::ice_visual::spawn(b, r);
+    false
+}
+
+/// The bubble's active branch. Returns false when a stale bubble visual
+/// makes the game jump into the confusion's active branch.
+fn bubble_active(b: &mut Battle, r: ObjectRef, f2: u32) -> bool {
+    if f2 & 0x2_0000 != 0 {
+        clear_flag2(b, r, 0x2_0080);
+        enter_status_action(b, r, NaviAction::Bubble);
+        let c = coll_mut(b, r);
+        c.status_timers[timer::CONFUSE] = 0;
+        c.status_timers[timer::PARALYZE] = 0;
+        c.status_timers[timer::FREEZE] = 0;
+    }
+    clear_flag1(b, r, f1::CONFUSED);
+    if flag1(b, r) & f1::BUBBLED != 0 {
+        return true;
+    }
+    set_flag1(b, r, f1::BUBBLED);
+    enter_status_action(b, r, NaviAction::Bubble);
+    if coll(b, r).links[link::BUBBLE].is_some() {
+        return false;
+    }
+    crate::kinds::bubble_visual::spawn(b, r);
+    true
+}
+
+/// The confusion's active branch.
+fn confusion_active(b: &mut Battle, r: ObjectRef, f2: u32) {
+    if f2 & 0x80 != 0 {
+        clear_flag2(b, r, 0x3_0088);
+        let c = coll_mut(b, r);
+        c.status_timers[timer::PARALYZE] = 0;
+        c.status_timers[timer::FREEZE] = 0;
+        c.status_timers[timer::BUBBLE] = 0;
+    }
+    set_flag1(b, r, f1::CONFUSED);
+    clear_flag1(b, r, f1::BUBBLED | f1::FROZEN | f1::PARALYZED);
+    if coll(b, r).links[link::CONFUSE].is_none() {
+        crate::kinds::status_visual::spawn(b, r, crate::kinds::status_visual::Status::Confusion);
+    }
+}
+
+/// Immobilize, blind and the invulnerability timer.
+fn tick_minor_statuses(b: &mut Battle, r: ObjectRef, f2: u32) {
+    if !count_down(b, r, timer::IMMOBILIZE) {
+        clear_flag1(b, r, f1::IMMOBILIZED);
+    } else if f2 & 0x40 != 0 {
+        clear_flag2(b, r, 0x40);
+        set_flag1(b, r, f1::IMMOBILIZED);
+    }
+    if !count_down(b, r, timer::BLIND) {
+        clear_flag1(b, r, f1::BLIND);
+        coll_mut(b, r).links[link::BLIND] = None;
+    } else if f2 & 0x20 != 0 {
+        clear_flag2(b, r, 0x20);
+        set_flag1(b, r, f1::BLIND);
+        if coll(b, r).links[link::BLIND].is_none() {
+            crate::kinds::status_visual::spawn(b, r, crate::kinds::status_visual::Status::Blindness);
+        }
+    }
+    if count_down(b, r, timer::INVULNERABLE) {
+        set_flag1(b, r, f1::INVULNERABLE);
+    } else {
+        clear_flag1(b, r, f1::INVULNERABLE);
+    }
+}
+
+/// `sub_8010162`: the timed submerged state (0xFFFF = indefinite);
+/// the flag is off while an action runs.
+fn tick_submerged(b: &mut Battle, r: ObjectRef) {
+    let t = coll(b, r).status_timers[timer::SUBMERGED];
+    if t != 0xFFFF {
+        let t = t as i32 - 1;
+        if t < 0 {
+            clear_flag1(b, r, f1::SUBMERGED);
+            return;
+        }
+        coll_mut(b, r).status_timers[timer::SUBMERGED] = t as u16;
+        if t == 0 {
+            b.sound(crate::content::SoundRole::Appear);
+        }
+    }
+    if flag1(b, r) & f1::USING_ACTION != 0 {
+        clear_flag1(b, r, f1::SUBMERGED);
+    } else {
+        set_flag1(b, r, f1::SUBMERGED);
+    }
+}
+
+/// Whether the arena has a panel that submerges (EXE5's sea).
+fn arena_submerges(b: &Battle) -> bool {
+    b.game_rules().panels.types.iter().any(|t| t.submerges)
+}
+
+/// EXE5's 0x0800DF5A, in an arena with a panel that submerges (its sea): a
+/// body that dives is under the surface while on it (0x08017030: its dive
+/// timer held at 0xFFFF there, else 0), its flag 0x80000000 on (the bit
+/// EXE6's bubble has) unless it is using an action, dragged, flinching or
+/// paralyzed (0x00500C00).
+fn tick_dive(b: &mut Battle, r: ObjectRef) {
+    if !arena_submerges(b) {
+        return;
+    }
+    let rules = &b.game_rules().panels;
+    let p = coll(b, r).panel;
+    let on = b.field.panel(p.x, p.y).is_some_and(|p| rules.rule(p.kind).submerges);
+    let dives = b.objects.get(r).actor.is_some_and(|a| b.actors.get(a).status & crate::actor::status::DIVES != 0);
+    coll_mut(b, r).dive_timer = if on && dives { 0xFFFF } else { 0 };
+    let t = coll(b, r).dive_timer;
+    if t != 0xFFFF {
+        let t = t as i32 - 1;
+        if t < 0 {
+            clear_flag1(b, r, f1::BUBBLED);
+            return;
+        }
+        coll_mut(b, r).dive_timer = t as u16;
+        if t == 0 {
+            b.sound(crate::content::SoundRole::Appear);
+        }
+    }
+    if flag1(b, r) & (f1::USING_ACTION | f1::DRAG | f1::FLINCHING | f1::PARALYZED) != 0 {
+        clear_flag1(b, r, f1::BUBBLED);
+    } else {
+        set_flag1(b, r, f1::BUBBLED);
+    }
+}
+
+/// `sub_801012C` (EXE5's 0x0800DEB2, EXE4's 0x0800C0A6): a body that is
+/// under (submerged, flag 4; and in a game that counts a bubbled body as
+/// submerged, `hit_test.bubbled_as_submerged`, under its sea's surface:
+/// EXE5's flags 0x80000004) is hidden, a mark over it (the role
+/// `kinds.dive_ripple`: EXE5's ripple, EXE4's hole, effect object #0x3E,
+/// kept in its collision's link); out of it, the mark ends. (Only EXE5's
+/// sea and EXE4's PopUp put a player under: EXE6's timed submerged state
+/// has no starter, `timer::SUBMERGED`.)
+fn dive_ripple(b: &mut Battle, r: ObjectRef) {
+    let under = if b.game_rules().hit_test.bubbled_as_submerged { f1::BUBBLED | f1::SUBMERGED } else { f1::SUBMERGED };
+    if flag1(b, r) & under != 0 {
+        b.objects.get_mut(r).set_visible(false);
+        if coll(b, r).links[link::RIPPLE].is_some() {
+            return;
+        }
+        let kind = b.roles().kind(crate::content::KindRole::DiveRipple);
+        let (pos, alliance) = {
+            let o = b.objects.get(r);
+            (Vec3 { z: 0, ..o.pos }, o.alliance)
+        };
+        let e = crate::kinds::spawn(b, kind, saito_content_api::SpawnAt::AfterCurrent, pos, [0; 4]);
+        if let Some(e) = e {
+            let o = b.objects.get_mut(e);
+            o.alliance = alliance;
+            o.related[0] = Some(r);
+        }
+        coll_mut(b, r).links[link::RIPPLE] = e;
+    } else if let Some(e) = coll_mut(b, r).links[link::RIPPLE].take() {
+        let o = b.objects.get_mut(e);
+        o.state = crate::object::state::DESTROY;
+        o.action = 0;
+        o.phase = 0;
+        o.phase_init = 0;
+    }
+}
+
+/// How long anger lasts (`sub_8014326`'s 600 ticks).
+pub(crate) const ANGER_TICKS: u16 = 600;
+
+/// `sub_8014326`: anger lasts [`ANGER_TICKS`] (player navis whose emotion
+/// allows it).
+fn tick_anger(b: &mut Battle, r: ObjectRef) {
+    if navi_record(b, r).actor_type != ActorType::Player {
+        return;
+    }
+    // A body that never angers (its identity's `never_angers`: EXE5's
+    // tick, 0x08011A14, passes over the actor records of AI index 23,
+    // ShadowMan's SplitUp shadow's and the two after it; EXE6's has no
+    // such test, and no EXE6 identity says so).
+    if b.content.identity(b.objects.get(r).identity).never_angers {
+        return;
+    }
+    let side = b.objects.get(r).alliance;
+    if matches!(emotion_role(b, side), Some(EmotionRole::WornOut | EmotionRole::Tired)) {
+        clear_flag2(b, r, 0x200);
+        clear_flag1(b, r, f1::ANGER);
+        return;
+    }
+    if flag1(b, r) & f1::ANGER == 0 {
+        if flag2(b, r) & 0x200 != 0 {
+            clear_flag2(b, r, 0x200);
+            set_flag1(b, r, f1::ANGER);
+            ai_mut(b, r).anger = ANGER_TICKS;
+            set_mood(b, side, 0x80);
+        }
+        return;
+    }
+    clear_flag2(b, r, 0x200);
+    let a = ai_mut(b, r);
+    if a.anger != 0 {
+        a.anger -= 1;
+        if a.anger > 0 {
+            return;
+        }
+    }
+    end_anger(b, r);
+}
+
+/// `sub_80143A6`: calm down.
+pub(crate) fn end_anger(b: &mut Battle, r: ObjectRef) {
+    let side = b.objects.get(r).alliance as usize;
+    // The mood back to 0x80: whatever holds it, or (EXE5's, 0x08011A94)
+    // through the setter, a held mood staying (`emotion.anger_end`).
+    let through_setter = b.game_rules().emotion.anger_end == crate::content::AngerEnd::ThroughSetter;
+    if !(through_setter && super::mood_is_held(b, side as u8)) {
+        b.stats[side].mood = 0x80;
+    }
+    clear_flag1(b, r, f1::ANGER);
+    clear_flag2(b, r, 0x200);
+    let a = ai_mut(b, r);
+    a.anger = 0;
+    a.stun_ticks = 0;
+}
+
+/// `sub_8014498`: exhausted after Beast Over, lose 1 HP per tick (never
+/// to 0).
+fn drain_hp(b: &mut Battle, r: ObjectRef) {
+    if b.is_battle_over() || !ai(b, r).exhausted {
+        return;
+    }
+    let o = b.objects.get_mut(r);
+    if o.hp.wrapping_sub(1) != 0 {
+        o.hp = o.hp.wrapping_sub(1);
+    }
+}
+
+// ---- Tail ---------------------------------------------------------------------------
+
+/// The glow of an invulnerable navi and of a SELECT special (`byte_80168A8`,
+/// `byte_80172C8`): up and down over 32 ticks of the battle time.
+const GLOW: [u16; 32] = [
+    0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0,
+];
+
+/// EXE5's DarkPlus tint's greens by its timer's low bits (0x080136D8).
+const PLUS_TINT: [u8; 8] = [0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1E];
+
+/// The navi's color shader for its statuses (presentation only;
+/// `loc_801B142`: `sprite_zeroColorShader`, then `sub_80143E4`,
+/// `sub_801690A`, `sub_8016860`, `sub_80168C8`, `sub_80168F0`, the later
+/// ones over the earlier): red while angry, a black blink while
+/// immobilized (where the rules' `effects.immobilized_blinks` say), a
+/// green glow while invulnerable (red in battle mode 1), a
+/// yellow blink while paralyzed, pale blue while frozen. The blinks are two
+/// ticks of the battle time on and two off.
+fn status_shader(b: &mut Battle, r: ObjectRef) {
+    let t = b.round.battle_time;
+    let blink = |shader: u16| if t & 2 != 0 { shader } else { 0 };
+    let f = flag1(b, r);
+    let mut shader = 0;
+    if ai(b, r).anger != 0 {
+        shader = 0x000F;
+    }
+    if f & f1::IMMOBILIZED != 0 && b.game_rules().effects.immobilized_blinks {
+        shader = blink(0xFFFF);
+    }
+    let action = navi_action(b, r);
+    if f & f1::INVULNERABLE != 0
+        // (Not in a form with its own glow: Beast Over.)
+        && super::form_of(b, r).glow.is_none()
+        && action != NaviAction::Entry
+        // (`sub_8016860` reads CurAction: not during ChargeCross's tackle.)
+        && !super::runs_role(b, r, crate::content::ActionRole::Glowless)
+    {
+        let glow = GLOW[(t & 0x1F) as usize];
+        shader = if super::battle_mode(b) == 1 { glow } else { glow << 5 };
+    }
+    // EXE5's 0x080136B8: DarkPlus's tint (EXE6 has none).
+    let tint = ai(b, r).plus_tint;
+    if tint != 0 {
+        shader = (PLUS_TINT[(tint & 7) as usize] as u16) << 5;
+    }
+    if f & f1::PARALYZED != 0 {
+        shader = blink(0x03FF);
+    }
+    if f & f1::FROZEN != 0 {
+        shader = 0x7E94;
+    }
+    b.objects.sprite_mut(r).look.set_color_shader(shader);
+}
+
+/// The shaders after the visibility (presentation only; `sub_8016CA4`,
+/// `sub_801728E`): a navi blinks blue while it can be countered, on the
+/// console of the other player when that player is in Full Synchro (the
+/// original's local console blinks the other side's navi alone: each
+/// console's is kept, `OtherLook::color_shader`); EXE5's no-charge drive
+/// flickers gray its last 180 ticks (0x080136E0, between the two); in the
+/// own-gauges mode a navi glows yellow while its SELECT special
+/// runs. Those two are every console's.
+fn counter_shader(b: &mut Battle, r: ObjectRef) {
+    let t = b.round.battle_time;
+    let alliance = b.objects.get(r).alliance;
+    // By console: the shader so far, then the blink on the other side's.
+    let mut shown = [b.objects.sprite(r).look.color_shader; 2];
+    if !b.is_battle_over()
+        && b.player(alliance ^ 1).is_some()
+        && emotion_role(b, alliance ^ 1) == Some(EmotionRole::FullSynchro)
+        && coll(b, r).counter_timer != 0
+    {
+        shown[(alliance ^ 1) as usize & 1] = if t & 2 != 0 { 0x7C00 } else { 0 };
+    }
+    // EXE5's 0x080136E0: the no-charge drive's last 180 ticks, the navi
+    // flickers gray by its ticks left.
+    if b.game_rules().intake.no_charge_drive && navi_action(b, r) != NaviAction::Entry {
+        let a = ai(b, r);
+        let left = a.no_charge_timer;
+        if a.status & crate::actor::status::NO_CHARGE != 0 && left != 0 && left <= 180 {
+            let v = GLOW[(left & 0x1F) as usize];
+            shown = [v | v << 5 | v << 10; 2];
+        }
+    }
+    if own_gauges(b)
+        && navi_action(b, r) != NaviAction::Entry
+        && b.sides[alliance as usize & 1].select_special != 0
+    {
+        let glow = GLOW[(t & 0x1F) as usize];
+        shown = [glow | glow << 5; 2];
+    }
+    let local = b.round.local_side as usize & 1;
+    let look = &mut b.objects.sprite_mut(r).look;
+    look.color_shader = shown[local];
+    look.other.color_shader = (shown[0] != shown[1]).then_some(shown[local ^ 1]);
+}
+
+/// `sub_8016934`: visible unless flashing (2 ticks off, 2 on: off while
+/// the flash timer's bit 1 is set, or clear in a game whose status rules
+/// say `flash_hides_on_clear`, EXE5's 0x080137B6), and hidden from a viewer
+/// whose navi is blind if it is the other side's (each console's rule,
+/// decided for both viewers).
+fn update_visibility(b: &mut Battle, r: ObjectRef) {
+    if !b.is_dimmed() {
+        b.objects.get_mut(r).set_visible(true);
+    }
+    let f = flag1(b, r);
+    if f & f1::DEAD != 0 {
+        return;
+    }
+    let bit = coll(b, r).status_timers[timer::FLASH] & 2 != 0;
+    if f & (f1::FLASHING | f1::INVISIBLE) != 0 && bit != b.game_rules().flash_hides_on_clear {
+        b.objects.get_mut(r).set_visible(false);
+    }
+    // On its own side's console: the HUD's HP numbers, which it shows and
+    // ends while blind (the frontend's, `saito_render::hud`), and markers.
+    // On the other's, hidden while that console's navi is blind.
+    let alliance = b.objects.get(r).alliance;
+    let hidden = [0u8, 1].map(|viewer| {
+        viewer != alliance & 1
+            && b.player(viewer).and_then(|p| b.objects.get(p).collision).is_some_and(|c| b.collision.get(c).f1 & f1::BLIND != 0)
+    });
+    b.hide_from(r, hidden);
+}
+
+/// `sub_8017BC0`: while paused, requests start the pause-time action 0x1C
+/// (form changes and the like).
+fn pause_requests(b: &mut Battle, r: ObjectRef) {
+    let st = ai(b, r).status;
+    if st & ai_status::FORM_CHANGE != 0 {
+        return form_change(b, r);
+    }
+    if st & ai_status::REVERTING_FORM != 0 {
+        // A form's own revert (EXE5's souls') runs as the navi's action.
+        if let NaviAction::Content(h) = super::navi_action(b, r) {
+            return crate::behavior::run_action(b, h, r);
+        }
+        return actions::transform::revert(b, r);
+    }
+    if st & ai_status::SWITCHING_NAVI != 0 {
+        return actions::navi_switch::change(b, r);
+    }
+    if st & ai_status::SWITCH_KNOCKOUT != 0 {
+        return actions::navi_switch::knock_out(b, r);
+    }
+    let f = ai(b, r).requests;
+    // The form's own revert (EXE5's 0x08014676 saves no state word).
+    let own_revert = super::form_of(b, r).revert;
+    let (bit, state) = if f & request::FORM_CHANGE != 0 {
+        (request::FORM_CHANGE, ai_status::FORM_CHANGE)
+    } else if f & request::REVERT_FORM != 0 {
+        if own_revert.is_none() {
+            // Saves the state word after zeroing it.
+            ai_mut(b, r).saved_word = None;
+            save_state_word(b, r);
+        }
+        (request::REVERT_FORM, ai_status::REVERTING_FORM)
+    } else if f & request::NAVI_SWITCH != 0 {
+        (request::NAVI_SWITCH, ai_status::SWITCHING_NAVI)
+    } else if f & request::SWITCH_KNOCKOUT != 0 {
+        (request::SWITCH_KNOCKOUT, ai_status::SWITCH_KNOCKOUT)
+    } else {
+        return;
+    };
+    // The change into a form runs the action that form names; the rest are
+    // the framework's own (the original's CurAction is 0x1C for all).
+    let action = match (form_change_action(b, r), own_revert) {
+        (Some(h), _) if bit == request::FORM_CHANGE => NaviAction::Content(h),
+        (_, Some(h)) if bit == request::REVERT_FORM => NaviAction::Content(h),
+        _ => NaviAction::Engine(super::EngineAction::FormChange),
+    };
+    let a = ai_mut(b, r);
+    a.requests &= !bit;
+    a.status |= state;
+    set_attack(b, r, action, 0);
+}
+
+/// The change into the form the side asked for at this turn's start
+/// (`sub_8014A38`'s place): the form's `change` (EXE6's forms':
+/// content/exe6/rules/forms), run while paused. Without a form asked for (or
+/// with the base form) the change is none.
+fn form_change(b: &mut Battle, r: ObjectRef) {
+    match form_change_action(b, r) {
+        Some(action) => crate::behavior::run_action(b, action, r),
+        None => ai_mut(b, r).status &= !ai_status::FORM_CHANGE,
+    }
+}
+
+/// The action that changes the navi into the form its side asked for.
+fn form_change_action(b: &Battle, r: ObjectRef) -> Option<saito_content_api::ActionHandle> {
+    let target = super::form_change_target(b, r)?;
+    let change = b.content.form(target).change;
+    Some(change.unwrap_or_else(|| panic!("form {} names no action that changes a navi into it", b.content.defs.form(target).key)))
+}
+
+/// `sub_800BEDA`: the navi may cut in on the other side's dimming: its own
+/// side isn't freezing (or it is waiting on a counter), and the other
+/// side's chip, which can be cut in on, is showing its telop.
+fn can_cut_in(b: &Battle, r: ObjectRef) -> bool {
+    use crate::dimming::DimmingState;
+    let side = b.objects.get(r).alliance as usize;
+    let own = b.dimming[side];
+    let other = b.dimming[side ^ 1];
+    own.user.is_none_or(|u| u == r)
+        && matches!(own.state, DimmingState::Idle | DimmingState::Waiting)
+        && !other.no_cut_in
+        && other.state == DimmingState::ShowingName
+}
+
+/// `sub_8017AB4`'s counter cut-in: the next chip is used without leaving
+/// the current action (its attack variables are a scratch copy); a dimming
+/// chip's (action 0x15) or navi chip's (0x1B) controller is spawned and
+/// takes the dimming over (`loc_800BF30`), with the cut-in flash, and the
+/// hand moves on. A chip of any other action registers nothing and stays
+/// in the hand. See docs/engine/chips.md §3.6.5.
+fn cut_in(b: &mut Battle, r: ObjectRef) {
+    let (action, a) = super::chip_use::prepare_detached(b, r);
+    let controller = match action {
+        NaviAction::Engine(super::EngineAction::DimmingChip) => actions::dimming_chip::spawn_controller(b, r, &a),
+        NaviAction::Engine(super::EngineAction::HandOffChip) => actions::hand_off_chip::spawn_controller(b, r, &a),
+        _ => return,
+    };
+    let side = b.objects.get(r).alliance;
+    b.cut_in_dimming(side, controller, r);
+    crate::dimming::cut_in_flash(b, side);
+    // sub_800FC7C
+    b.hands[side as usize].advance();
+    // A chip asked for before the dimming with none left to use after the
+    // cut-in: the request ends. EXE4's cut-in leaves the requests (its
+    // `request_clears` clear none), and once the dimming is over the navi's
+    // idle uses chip 0xFFFF, a record past the chip table; EXE5's and EXE6's
+    // clear them. The engine doesn't port that read: the deliberate
+    // departure the chip destruction makes (docs/engine/chips.md §2.9).
+    if super::next_chip(b, r).is_none() {
+        ai_mut(b, r).requests &= !(request::CHIP | request::CHARGED_CHIP);
+    }
+}
+
+/// `sub_8017AB4`: while dimmed the navi only shakes while hit (one RNG
+/// draw per shaking tick).
+fn while_dimmed(b: &mut Battle, r: ObjectRef) {
+    let player = navi_record(b, r).actor_type == ActorType::Player;
+    if player && is_link(b) && ai(b, r).requests & request::CUT_IN != 0 {
+        // The next chip must be a dimming chip too, and one the side's
+        // rules don't bar (`cut_in_barred`: EXE4's 0x08010C64 and EXE5's
+        // 0x0801452E, the chips of the other kind of MegaMan), asked
+        // before the use is prepared.
+        let chip = super::next_chip(b, r);
+        let freezes = chip.is_some_and(|c| b.content.chip(c).flags.has(crate::content::ChipFlags::DIMMING));
+        let side = b.objects.get(r).alliance;
+        if can_cut_in(b, r) && freezes && !b.rules_cut_in_barred(side, r, chip) {
+            cut_in(b, r);
+        }
+        // The ask goes, with what the rules clear beside it (EXE6's and
+        // EXE5's the chip requests, EXE4's nothing: `request_clears`).
+        let clears = b.game_rules().request_clears.cut_in.0;
+        ai_mut(b, r).requests &= !(request::CUT_IN | clears);
+    }
+    let o = b.objects.get_mut(r);
+    if o.prevent_anim == 0 {
+        o.shake_origin_x = (o.pos.x >> 16) as i16;
+        o.shake_origin_z = (o.pos.z >> 16) as i16;
+        o.shake_timer = 0;
+        o.prevent_anim = 4;
+    }
+    if coll(b, r).acc.final_damage != 0 {
+        b.objects.get_mut(r).shake_timer = 30;
+    }
+    let o = b.objects.get(r);
+    if o.shake_timer != 0 {
+        let base = Vec3 { x: (o.shake_origin_x as i32) << 16, y: o.pos.y, z: (o.shake_origin_z as i32) << 16 };
+        b.objects.get_mut(r).shake_timer -= 1;
+        let pos = crate::kinds::spark::jitter(b, 3, base);
+        b.objects.get_mut(r).pos = pos;
+    } else {
+        let o = b.objects.get_mut(r);
+        o.pos.x = (o.pos.x & 0xFFFF) | ((o.shake_origin_x as i32) << 16);
+        o.pos.z = (o.pos.z & 0xFFFF) | ((o.shake_origin_z as i32) << 16);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::{Content, WeaknessMark, testing};
+    use std::sync::Arc;
+
+    /// A counter cut-in on the other side's dimming chip, with a chip
+    /// asked for before the field dimmed: under EXE4's rule (the cut-in
+    /// clears no request) the request outlives the dimming, but with no
+    /// chip left at the cursor after the cut-in it ends (`cut_in`: the
+    /// empty hand's chip is a read past the chip table). The cursor, and
+    /// the chip request left.
+    #[test]
+    fn a_cut_in_that_takes_the_last_chip_ends_the_chip_request() {
+        let cut_in_with = |hand: &[&str]| {
+            let mut c: Content = testing::build();
+            c.define().unwrap_or_else(|e| panic!("{e}"));
+            c.rules_mut().request_clears.cut_in = crate::content::RequestSet(0);
+            let c = Arc::new(c);
+            let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+            testing::on(&mut setup, &c);
+            let mut b = Battle::new(setup, c);
+            b.spawn_actors();
+            b.run_objects();
+            let r = b.player(0).unwrap();
+            b.hands[0].ids = std::array::from_fn(|i| hand.get(i).map(|key| testing::chip_handle(key)));
+            b.hands[0].cursor = 0;
+            // (The other side's chip shows its name: it can be cut in on.)
+            b.dimming[1].state = crate::dimming::DimmingState::ShowingName;
+            ai_mut(&mut b, r).requests |= request::CHIP | request::CUT_IN;
+            while_dimmed(&mut b, r);
+            (b.hands[0].cursor, ai(&b, r).requests & (request::CHIP | request::CUT_IN))
+        };
+        assert_eq!(cut_in_with(&[testing::VEIL]), (1, 0), "the last chip cut in: the chip request ends");
+        assert_eq!(cut_in_with(&[testing::VEIL, testing::SUN_GUN_3]), (1, request::CHIP), "a chip left: the request stays");
+    }
+
+    /// The status timers hold while the battle is paused (the test
+    /// content's, EXE6's), or count on (`status_timers_while_paused`:
+    /// EXE4's 0x0800AE58).
+    #[test]
+    fn status_timers_count_through_a_pause_where_the_rules_say() {
+        let left = |count: bool| {
+            let mut c: Content = testing::build();
+            c.define().unwrap_or_else(|e| panic!("{e}"));
+            c.rules_mut().status_timers_while_paused = count;
+            let c = Arc::new(c);
+            let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+            testing::on(&mut setup, &c);
+            let mut b = Battle::new(setup, c);
+            b.spawn_actors();
+            b.run_objects();
+            let r = b.player(1).unwrap();
+            coll_mut(&mut b, r).status_timers[timer::PARALYZE] = 30;
+            b.paused = true;
+            tick_statuses(&mut b, r);
+            coll(&b, r).status_timers[timer::PARALYZE]
+        };
+        assert_eq!((left(false), left(true)), (30, 29));
+    }
+
+    /// Whether the weakness mark shows over a navi of `element` under the
+    /// rule `mark`, after a tick whose hits left `damage` by element, the
+    /// last of them multiplied by `last_multiplier` more. (Aqua is weak to
+    /// elec, element 2 to 3, and nothing else to anything.)
+    fn marked(mark: WeaknessMark, element: u8, damage: [u16; 6], last_multiplier: u8) -> bool {
+        let mut c: Content = testing::build();
+        c.define().unwrap_or_else(|e| panic!("{e}"));
+        {
+            let rules = c.rules_mut();
+            rules.weakness_mark = mark;
+            rules.element_weakness = [[0; 6]; 6];
+            rules.element_weakness[2][3] = 1;
+        }
+        let c = Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+        testing::on(&mut setup, &c);
+        let mut b = Battle::new(setup, c);
+        b.spawn_actors();
+        b.run_objects();
+        b.round.flags |= battle_flags::FIGHTING;
+        let r = b.player(1).unwrap();
+        let hit = coll_mut(&mut b, r);
+        hit.element = element;
+        hit.acc.element_damage = damage;
+        hit.acc.exclamation = last_multiplier;
+        hit.acc.final_damage = damage[..5].iter().sum();
+        let before = b.objects.in_order().count();
+        weakness_effect(&mut b, r);
+        b.objects.in_order().count() == before + 1
+    }
+
+    /// EXE6's mark (`sub_801A42E`) tests the last hit's multiplier and the
+    /// final damage; EXE5's (0x08017254) the damage of the element the
+    /// navi's is weak to. They part where a plain hit follows a weakness hit
+    /// on one tick (the lab's souls/12-aqua/weak-buster: a Thunder and a
+    /// buster shot onto ToadSoul), and where a hit is multiplied by anything
+    /// but the element's weakness.
+    #[test]
+    fn the_weakness_mark_by_each_games_test() {
+        use WeaknessMark::{LastHitMultiplier, WeakElementDamage};
+        // A weakness hit alone: both.
+        assert!(marked(LastHitMultiplier, 2, [0, 0, 0, 80, 0, 0], 1));
+        assert!(marked(WeakElementDamage, 2, [0, 0, 0, 80, 0, 0], 1));
+        // A plain hit after it on the tick: the last hit's multiplier is
+        // none, the weak element's damage is there.
+        assert!(!marked(LastHitMultiplier, 2, [1, 0, 0, 80, 0, 0], 0));
+        assert!(marked(WeakElementDamage, 2, [1, 0, 0, 80, 0, 0], 0));
+        // A hit of another element that something multiplied (EXE6's second
+        // weaknesses, a thaw): the multiplier alone.
+        assert!(marked(LastHitMultiplier, 2, [140, 0, 0, 0, 0, 0], 1));
+        assert!(!marked(WeakElementDamage, 2, [140, 0, 0, 0, 0, 0], 1));
+        // No damage left (a barrier took the hit): neither.
+        assert!(!marked(LastHitMultiplier, 2, [0; 6], 1));
+        assert!(!marked(WeakElementDamage, 2, [0; 6], 1));
+        // A navi of no element has no weak element; nor is the sixth
+        // accumulator (poison, a panel's drain) any element's.
+        assert!(!marked(WeakElementDamage, 0, [10, 10, 10, 10, 10, 0], 0));
+        assert!(!marked(WeakElementDamage, 2, [0, 0, 0, 0, 0, 3], 0));
+    }
+
+    /// docs/design/exe4-map.md §18 item 7: EXE4's loss of HP (0x08013A48): a
+    /// hit drains the side's gauge with the HP and shows only with HP left;
+    /// the element-5 damage takes the HP alone; at 0 the navi falls (the test
+    /// content's rules keep none).
+    #[test]
+    fn exe4s_hit_drains_the_gauge_and_shows_with_hp_left() {
+        let after = |hp: u16, damage: u16, poison: u16| {
+            let mut c: Content = testing::build();
+            c.define().unwrap_or_else(|e| panic!("{e}"));
+            c.rules_mut().intake.hp_loss = crate::content::HpLoss::HitDrainsGauge;
+            let c = Arc::new(c);
+            let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+            testing::on(&mut setup, &c);
+            let mut b = Battle::new(setup, c);
+            b.spawn_actors();
+            b.run_objects();
+            b.round.flags |= battle_flags::FIGHTING;
+            let r = b.player(1).unwrap();
+            b.objects.get_mut(r).hp = hp;
+            b.sides[1].gauge = 0x4000;
+            let hit = coll_mut(&mut b, r);
+            hit.acc.final_damage = damage;
+            hit.acc.element_damage[5] = poison;
+            apply_damage(&mut b, r);
+            (b.objects.get(r).hp, b.sides[1].gauge, b.objects.sprite(r).look.white, flag2(&b, r) & 1 != 0)
+        };
+        assert_eq!(after(100, 10, 0), (90, 0x4000 - 10 * 0x80, true, false));
+        assert_eq!(after(100, 0, 5), (95, 0x4000, false, false), "the element-5 damage drains no gauge");
+        assert_eq!(after(10, 10, 5), (0, 0x4000 - 10 * 0x80, false, true), "no hit shown at 0, no element-5 damage");
+        assert_eq!(after(5, 0, 5), (0, 0x4000, false, true));
+    }
+}

@@ -1,0 +1,563 @@
+//! What a match must be to be played: the checks a match file passes when
+//! it loads, a netplay offer when it arrives (`check_side`), and the build creator
+//! shows as they fail. Each problem is said, with where it is.
+//!
+//! - **The rounds**: the content's game, as many as a set first to 1 to
+//!   [`crate::MAX_FIRST_TO`] round wins takes (`2 × wins − 1`,
+//!   [`crate::rounds_for`]), each stage stated one a match of the game may
+//!   name (its rules'
+//!   `link_pick.match_stages`, `crate::link_battle_stages`), each
+//!   background stated one its game has, and a stage left unstated only
+//!   where the rules pick one (`link_pick.stages`).
+//! - **A side**: its navi stated and the match's game's; its facts its game's
+//!   rules' (`crate::facts::check`: an enum the rules require stated, each
+//!   definition they name, at any depth, the game's, a definition once in its
+//!   list, the engine's form list forms of the navi's own lists).
+//! - **What its game's rules say of it** (their `validate`, `Battle::validate`),
+//!   once the round is set up (the stats its rules built: the NaviCust's and
+//!   the patch cards' folder limits, which the original's folder editor and
+//!   its link battle check read): EXE6's and EXE5's the navi's level, the
+//!   base HP, the patch cards, the NaviCust on its board, the folder by its
+//!   game's folder rules (content/exe6/rules, content/exe5/rules). This crate
+//!   knows none of those: it reports what the rules say, with the setup
+//!   field and entry they tie each problem to ([`problems`]).
+
+use crate::{Match, RoundSettings, Side, Wrong, ids};
+use saito_battle::Battle;
+use saito_battle::content::Content;
+use saito_battle::setup::NaviStats;
+use std::sync::Arc;
+
+fn check_round(content: &Content, game: &str, r: &RoundSettings, at: &str, out: &mut Vec<String>) {
+    match r.stage {
+        Some(stage) if stage.index() >= content.defs.stages.len() || !ids::in_game(content, game, &content.defs.stage(stage).key) => {
+            out.push(format!("{at}: a stage {game} hasn't"));
+            return;
+        }
+        Some(stage) if !crate::link_battle_stages(content, game).contains(&stage) => {
+            out.push(format!("{at}: {} is no link battle stage", ids::local(&content.defs.stage(stage).key)));
+        }
+        Some(_) => {}
+        None if content.rules().link_pick.stages.is_empty() => {
+            out.push(format!("{at}: no stage, and {game}'s rules pick none (link_pick.stages): a round states its own"));
+        }
+        None => {}
+    }
+    if let Some(b) = &r.background
+        && crate::background(content, game, b).is_none()
+    {
+        out.push(crate::no_background(at, game, b));
+    }
+}
+
+/// Why `rounds` rounds are no set's (a set first to `n` round wins has
+/// `2n − 1`, `n` from 1 to [`crate::MAX_FIRST_TO`]).
+pub fn no_set(rounds: usize) -> String {
+    let most = crate::rounds_for(crate::MAX_FIRST_TO);
+    format!("{rounds} rounds: a set is first to 1 to {} round wins, of 2 × wins − 1 rounds (1, 3, 5 ... {most})", crate::MAX_FIRST_TO)
+}
+
+/// What is wrong with a match's game and its rounds (`rounds`: each a
+/// round's settings, where it is fought).
+pub fn check_rounds(content: &Content, game: &str, rounds: &[RoundSettings]) -> Vec<String> {
+    let mut out = Vec::new();
+    let games = ids::games(content);
+    if !games.contains(&game.to_string()) {
+        return vec![format!("no game {game:?} (the content's are {})", games.join(", "))];
+    }
+    if let Err(e) = crate::playable(content, game) {
+        return vec![e];
+    }
+    if crate::first_to(rounds.len()).is_none() {
+        out.push(no_set(rounds.len()));
+    }
+    for (i, r) in rounds.iter().enumerate() {
+        check_round(content, game, r, &format!("round {}", i + 1), &mut out);
+    }
+    out
+}
+
+/// What is wrong with a side of a match of `game` that needs no battle to
+/// see: its navi, its auto battle data, its facts as its game's rules
+/// declare them.
+pub fn check_side_alone(content: &Content, game: &str, s: &Side) -> Vec<String> {
+    side_alone(content, game, s).into_iter().map(|p| p.text).collect()
+}
+
+/// [`check_side_alone`]'s problems, typed (of no side: the caller says
+/// whose).
+pub fn side_alone(content: &Content, game: &str, s: &Side) -> Vec<Problem> {
+    let defs = &content.defs;
+    let of_facts = |s: &Side| -> Vec<Problem> {
+        let problems = crate::facts::problems(content, game, s);
+        problems.into_iter().map(|p| Problem { side: None, field: p.field, entry: None, what: p.what, text: p.text }).collect()
+    };
+    // (A side's facts of another game's rules say nothing of this game's.)
+    if !s.facts.fit(content) {
+        return of_facts(s);
+    }
+    let navi = content.defs.fact_name(saito_battle::content::PlayerFact::Navi).map(str::to_string);
+    match s.stated_navi(content) {
+        None => {
+            return vec![Problem { side: None, field: navi, entry: None, what: Wrong::Missing, text: "no navi: a side states its own".into() }];
+        }
+        Some(n) if n.index() >= defs.navis.len() || !ids::in_game(content, game, &defs.navi(n).key) => {
+            return vec![Problem { side: None, field: navi, entry: None, what: Wrong::Foreign, text: format!("a navi {game} hasn't") }];
+        }
+        Some(_) => {}
+    }
+    // The facts its game's rules take.
+    of_facts(s)
+}
+
+/// The round `m` starts, set up and its folders dealt (each side's rules
+/// have set its stats: the NaviCust, the patch cards), or why it doesn't
+/// start: a round to play. A side's folder still being made is no round's.
+pub fn start(content: &Arc<Content>, m: &Match) -> Result<Battle, String> {
+    if let Some(side) = m.sides.iter().position(|s| s.folder(content).saved().is_none()) {
+        return Err(format!("the round doesn't start: the {} side's folder isn't whole", ["left", "right"][side]));
+    }
+    new_battle(content, m.round(content, m.seed.unwrap_or(0)))
+}
+
+/// The round `m` starts, set up for the checks (each side's rules have set
+/// its stats: the NaviCust, the patch cards), its folders not dealt
+/// ([`Match::undealt_round`]), or why it isn't set up. What the checks and
+/// a build's stats ask the rules of; no round to play. A folder still being
+/// made is set up as it is: its rules read its own entries (`validate`) and
+/// say it isn't whole.
+pub fn set_up(content: &Arc<Content>, m: &Match) -> Result<Battle, String> {
+    new_battle(content, m.undealt_round(content, m.seed.unwrap_or(0)))
+}
+
+fn new_battle(content: &Arc<Content>, setup: saito_battle::setup::RoundSetup) -> Result<Battle, String> {
+    let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Battle::new(setup, content.clone())));
+    started.map_err(|e| {
+        let why = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+        format!("the round doesn't start: {}", why.unwrap_or_else(|| "the engine stopped".into()))
+    })
+}
+
+/// What side `side`'s rules say is wrong with its setup in `b` as a
+/// player's build (their `build_check`), beside what their `validate` says
+/// of any setup: what a round would play and no save made by play holds
+/// (EXE4's patch card out of its own slot). A match's checks don't ask it
+/// (a match file and a recording may hold what the game itself would run);
+/// a build's do (`crate::build::Checked`).
+pub(crate) fn built(b: &mut Battle, side: usize) -> Vec<Problem> {
+    let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.build_problems(side as u8)));
+    match checked {
+        Ok(problems) => {
+            let content = b.content.clone();
+            problems.into_iter().map(|p| Problem::of_rules(&content, Some(side), p)).collect()
+        }
+        Err(_) => vec![Problem::of(Some(side), Wrong::Internal, "the rules stopped checking the build".into())],
+    }
+}
+
+/// The stats each side's round starts with: the setup's, after the rules
+/// have set the round up (each side's NaviCust and patch cards), or why the
+/// round doesn't start.
+pub fn round_stats(content: &Arc<Content>, m: &Match) -> Result<[NaviStats; 2], String> {
+    set_up(content, m).map(|b| b.stats)
+}
+
+/// A problem with a match, with where it is: its side (none: the match's
+/// game or rounds), and the setup field and its entry (from 0, a list's)
+/// the rules' `validate` ties it to (none: the side's as a whole). What is
+/// wrong is typed (`what`: the kind and its numbers), which a screen words
+/// in its player's language; `text` is the sentence for a log and the
+/// terminal's tools, never a screen's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub side: Option<usize>,
+    pub field: Option<String>,
+    pub entry: Option<usize>,
+    pub what: Wrong,
+    pub text: String,
+}
+
+impl Problem {
+    /// A problem of no field (`side`'s, or none's).
+    fn of(side: Option<usize>, what: Wrong, text: String) -> Problem {
+        Problem { side, field: None, entry: None, what, text }
+    }
+
+    /// A problem a side's rules said (their `validate`, their
+    /// `folder_check`), typed.
+    pub(crate) fn of_rules(content: &Content, side: Option<usize>, p: saito_battle::rules::Problem) -> Problem {
+        Problem { side, what: Wrong::of_rules(content, &p.kind, &p.data), field: p.field, entry: p.entry, text: p.text }
+    }
+
+    /// Whether it is about entry `entry` (from 0) of its field's list: the entry it names, or of an item a ruleset
+    /// doesn't allow, any of the entries that hold it ([`Wrong::NotAllowed`]'s `entries`: every copy of a chip, every
+    /// placed copy of a program).
+    pub fn at(&self, entry: usize) -> bool {
+        match &self.what {
+            Wrong::NotAllowed { entries, .. } => entries.contains(&entry),
+            _ => self.entry == Some(entry),
+        }
+    }
+
+    /// The problem as [`check_match`] says it: its side first.
+    pub fn said(&self) -> String {
+        match self.side {
+            Some(s) => format!("{}: {}", ["left", "right"][s & 1], self.text),
+            None => self.text.clone(),
+        }
+    }
+}
+
+/// What side `side`'s rules say is wrong with its setup in `b`, the
+/// round's battle set up for the checks ([`set_up`]: its folders not dealt)
+/// (their `validate`): of the side's own setup, its folder as it stands.
+pub(crate) fn validated(b: &mut Battle, side: usize) -> Vec<Problem> {
+    let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.validate(side as u8)));
+    match checked {
+        Ok(problems) => {
+            let content = b.content.clone();
+            problems.into_iter().map(|p| Problem::of_rules(&content, Some(side), p)).collect()
+        }
+        Err(_) => vec![Problem::of(Some(side), Wrong::Internal, "the rules stopped checking the side".into())],
+    }
+}
+
+/// What is wrong with one side of a match of `game` on `rounds`, as a
+/// netplay offer brings it: everything [`check_side_alone`] sees, and its
+/// folder against the stats its round starts with (the side on both sides
+/// of the match's first round).
+pub fn check_side(content: &Arc<Content>, game: &str, rounds: &[RoundSettings], s: &Side) -> Vec<String> {
+    side_problems(content, game, rounds, s).into_iter().map(|p| p.text).collect()
+}
+
+/// [`check_side`]'s problems, typed (the side's are side 0's; the rounds',
+/// no side's): what a screen says of an offer it refuses.
+pub fn side_problems(content: &Arc<Content>, game: &str, rounds: &[RoundSettings], s: &Side) -> Vec<Problem> {
+    let of_rounds: Vec<Problem> = check_rounds(content, game, rounds).into_iter().map(|p| Problem::of(None, Wrong::Match, p)).collect();
+    if !of_rounds.is_empty() {
+        return of_rounds;
+    }
+    let alone: Vec<Problem> = side_alone(content, game, s).into_iter().map(|p| Problem { side: Some(0), ..p }).collect();
+    if !alone.is_empty() {
+        return alone;
+    }
+    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [s.clone(), s.clone()], backgrounds: crate::BackgroundPick::Game, custom_screen_time: None };
+    match set_up(content, &m) {
+        Ok(mut b) => validated(&mut b, 0),
+        Err(e) => vec![Problem::of(Some(0), Wrong::Internal, e)],
+    }
+}
+
+/// What is wrong with a match, each problem with where it is.
+pub fn check_match(content: &Arc<Content>, m: &Match) -> Vec<String> {
+    problems(content, m).iter().map(Problem::said).collect()
+}
+
+/// [`check_match`]'s problems, each with its side, and the setup field and
+/// entry the rules tie it to (a tool shows it there: the build creator's rows).
+pub fn problems(content: &Arc<Content>, m: &Match) -> Vec<Problem> {
+    let mut out: Vec<Problem> = check_rounds(content, &m.game, &m.rounds).into_iter().map(|p| Problem::of(None, Wrong::Match, p)).collect();
+    out.extend(crate::check_custom_screen_time(m.custom_screen_time).map(|p| Problem::of(None, Wrong::Match, p)));
+    if !out.is_empty() {
+        return out;
+    }
+    for (side, s) in m.sides.iter().enumerate() {
+        out.extend(side_alone(content, &m.game, s).into_iter().map(|p| Problem { side: Some(side), ..p }));
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    match set_up(content, m) {
+        Ok(mut b) => {
+            for side in 0..m.sides.len() {
+                out.extend(validated(&mut b, side));
+            }
+        }
+        Err(e) => out.push(Problem::of(None, Wrong::Internal, e)),
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{PlacedProgram, set_navicust};
+
+    /// A MegaMan with a NaviCust of EXE6's programs: rules/navicust
+    /// compiles it into the stats the round starts with.
+    fn compiled(parts: &[(&str, &str, u8, u8)]) -> (NaviStats, bool, Vec<String>) {
+        compiled_at(parts, None)
+    }
+
+    /// [`compiled`], MegaMan from a navi code of `level`.
+    fn compiled_at(parts: &[(&str, &str, u8, u8)], level: Option<u8>) -> (NaviStats, bool, Vec<String>) {
+        let content = crate::testing::exe6_content();
+        let mut m = crate::pick::live(&content, "exe6", 3, None).unwrap();
+        let s = &mut m.sides[0];
+        s.set_level(&content, level).unwrap();
+        // (What the save brings: a base HP of 600, a Regular memory of 50.)
+        use saito_battle::rules::Fact;
+        use saito_content_api::Value;
+        s.set_fact(&content, "hp", &[Fact::Value(Value::Int(600))]).unwrap();
+        s.set_fact(&content, "reg_up", &[Fact::Value(Value::Int(50))]).unwrap();
+        let placed: Vec<PlacedProgram> = parts
+            .iter()
+            .map(|&(name, color, x, y)| {
+                let program = ids::entry(&content, "exe6", "navicust_programs", name).unwrap();
+                let color = crate::testing::program_colors(&content, program).iter().position(|c| *c == color).unwrap() as u8;
+                PlacedProgram { program, color, x, y, rotation: 0, compressed: false }
+            })
+            .collect();
+        set_navicust(&content, s, &placed, 2);
+        let problems = check_match(&content, &m);
+        let b = Battle::new(m.round(&content, 3), content.clone());
+        (b.stats[0], b.consoles[0].emotion_window_glitch, problems)
+    }
+
+    /// A folder being made whose first chip is a Giga, 13 chips, is checked as it is: its round is set up
+    /// with no folder dealt and no stand-in in its gaps (a stand-in Giga made 18 Gigas, which the shuffle
+    /// couldn't deal: the user's crash in the folder builder). Its rules say it isn't whole, and its stats are
+    /// read; it starts no round to play.
+    #[test]
+    fn a_folder_being_made_is_checked_as_it_is() {
+        use saito_battle::content::ChipClass;
+        use saito_battle::custom::FolderChip;
+        let content = crate::testing::exe6_content();
+        let mut m = crate::pick::live(&content, "exe6", 3, None).unwrap();
+        let of = |class: ChipClass| {
+            (0..content.defs.chips.len() as u16)
+                .map(saito_content_api::ChipHandle)
+                .find_map(|id| (content.chip(id).class == class).then(|| content.chip(id).codes.first().map(|&code| FolderChip::new(id, code))).flatten())
+                .unwrap()
+        };
+        let mut folder = m.sides[0].folder(&content);
+        folder.chips = std::array::from_fn(|i| match i {
+            0 => Some(of(ChipClass::Giga)),
+            1..13 => Some(of(ChipClass::Standard)),
+            _ => None,
+        });
+        (folder.regular, folder.tags) = (None, None);
+        m.sides[0].set_folder(&content, &folder).unwrap();
+        let problems = problems(&content, &m);
+        assert!(problems.iter().any(|p| p.side == Some(0) && matches!(p.what, Wrong::FolderSize(c) if c.used == 13)), "{problems:?}");
+        assert!(!problems.iter().any(|p| p.what == Wrong::Internal), "{problems:?}");
+        let b = set_up(&content, &m).unwrap();
+        assert!(b.custom.sides.iter().all(|s| s.folder.count() == 0), "no folder dealt");
+        assert_eq!(round_stats(&content, &m).unwrap(), b.stats);
+        let checked = crate::build::Checked::of(&content, "exe6", &m.sides[0]);
+        assert_eq!(checked.stats(), Some(&b.stats[0]));
+        assert!(checked.problems.iter().any(|p| matches!(p.what, Wrong::FolderSize(c) if c.used == 13)), "{:?}", checked.problems);
+        assert!(start(&content, &m).is_err(), "a folder being made starts no round to play");
+    }
+
+    /// The round the checks set up (no folder dealt) has the stats, what the content gives each side, and
+    /// the rules' state a dealt round starts with, and its rules say the same of each side: in every game.
+    #[test]
+    fn the_checks_round_is_a_dealt_rounds_setup() {
+        for (game, content) in [("exe4", crate::testing::exe4_content()), ("exe5", crate::testing::exe5_content()), ("exe6", crate::testing::exe6_content())] {
+            for seed in [1, 3] {
+                let m = crate::pick::live(&content, game, seed, None).unwrap();
+                let (mut dealt, mut checks) = (start(&content, &m).unwrap(), set_up(&content, &m).unwrap());
+                assert!(dealt.custom.sides.iter().all(|s| s.folder.count() == 30), "{game}");
+                assert!(checks.custom.sides.iter().all(|s| s.folder.count() == 0), "{game}");
+                assert_eq!(dealt.stats, checks.stats, "{game} {seed}");
+                assert_eq!(dealt.party, checks.party, "{game} {seed}");
+                assert_eq!(dealt.given, checks.given, "{game} {seed}");
+                assert_eq!(dealt.rules, checks.rules, "{game} {seed}");
+                for side in 0..2 {
+                    assert_eq!(validated(&mut dealt, side), validated(&mut checks, side), "{game} {seed} side {side}");
+                    assert_eq!(built(&mut dealt, side), built(&mut checks, side), "{game} {seed} side {side}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_navicust_compiles_into_the_stats() {
+        // UnderSht on the command line, Attack+1 and HP+100 off it: no bug.
+        let (s, glitch, problems) = compiled(&[("undersht", "white", 1, 3), ("attack-1", "pink", 5, 2), ("hp-100", "white", 3, 2)]);
+        assert_eq!(problems, Vec::<String>::new());
+        assert!(s.undershirt && !glitch);
+        assert_eq!((s.attack, s.max_hp, s.hp), (1, 700, 700));
+        assert_eq!((s.bugs.buster_blanks, s.bugs.hp_drain), (0, 0));
+        // Attack+1 on the command line: the buster bug (and it still works).
+        let (s, glitch, _) = compiled(&[("undersht", "white", 1, 3), ("attack-1", "pink", 5, 4), ("hp-100", "white", 3, 2)]);
+        assert!(glitch);
+        assert_eq!((s.attack, s.bugs.buster_blanks, s.bugs.buster_charged), (1, 6, 1));
+        // Attack+1 beside HP+100 of its color: each brings the other's bug.
+        let (s, glitch, _) = compiled(&[("undersht", "white", 1, 3), ("attack-1", "pink", 5, 2), ("hp-100", "pink", 3, 2)]);
+        assert!(glitch);
+        assert_eq!((s.bugs.buster_blanks, s.bugs.hp_drain, s.bugs.hit_status), (6, 1, 3));
+        // UnderSht off the command line: the step bug, and no UnderSht.
+        let (s, glitch, _) = compiled(&[("undersht", "white", 1, 2)]);
+        assert!(glitch && !s.undershirt);
+        assert_eq!(s.bugs.processing, 1);
+        // Over another, and off the board: said.
+        let (_, _, problems) = compiled(&[("undersht", "white", 1, 3), ("attack-1", "pink", 1, 3)]);
+        assert!(problems.iter().any(|p| p.contains("is over program 1")), "{problems:?}");
+        let (_, _, problems) = compiled(&[("undersht", "white", 0, 1)]);
+        assert!(problems.iter().any(|p| p.contains("off the board")), "{problems:?}");
+    }
+
+    /// EXE5's board grows with its ExpMemry (4x4, 5x4, 5x5, no frame): a
+    /// program in the fifth column fits from one expansion, one in the fifth
+    /// row from two; off the board it is said, as the original's placing
+    /// refuses it (0x0813F250). A new side's board is the largest, and the
+    /// compile is the same on every board the programs fit.
+    #[test]
+    fn exe5s_board_grows_with_its_expansions() {
+        let content = crate::testing::exe5_content();
+        let m = crate::pick::live(&content, "exe5", 3, None).unwrap();
+        assert_eq!(crate::testing::navicust_expansions(&content, &crate::Match::empty(&content, "exe5").unwrap().sides[0]), Some(2));
+        let undersht = ids::entry(&content, "exe5", "navicust_programs", "undersht").unwrap();
+        // (UnderSht covers its center and the cell above it.)
+        let with = |x: u8, y: u8, expansions: u8| {
+            let mut m = m.clone();
+            let part = PlacedProgram { program: undersht, color: 0, x, y, rotation: 0, compressed: false };
+            set_navicust(&content, &mut m.sides[0], &[part], expansions);
+            m
+        };
+        let said = |x: u8, y: u8, expansions: u8| -> Vec<String> {
+            check_match(&content, &with(x, y, expansions)).into_iter().filter(|p| p.contains("navicust") || p.contains("NaviCust")).collect()
+        };
+        let works = |x: u8, y: u8, expansions: u8| Battle::new(with(x, y, expansions).round(&content, 3), content.clone()).stats[0].undershirt;
+        // On the command line (the engine's row 3) inside the 4x4: every board.
+        for expansions in 0..3 {
+            assert_eq!((said(1, 3, expansions), works(1, 3, expansions)), (Vec::new(), true), "{expansions} expansions");
+        }
+        // The fifth column (the engine's 5): from one expansion.
+        assert!(said(5, 3, 0).iter().any(|p| p.contains("off the board")));
+        for expansions in 1..3 {
+            assert_eq!((said(5, 3, expansions), works(5, 3, expansions)), (Vec::new(), true), "{expansions} expansions");
+        }
+        // The fifth row (the engine's 5): from two (off the command line there).
+        for expansions in 0..2 {
+            assert!(said(1, 5, expansions).iter().any(|p| p.contains("off the board")), "{expansions} expansions");
+        }
+        assert_eq!((said(1, 5, 2), works(1, 5, 2)), (Vec::new(), false));
+        // No frame: off the 5x5 is off every board; and a fourth size is none.
+        assert!(said(6, 3, 2).iter().any(|p| p.contains("off the board")));
+        assert!(said(1, 3, 3).iter().any(|p| p.contains("3 expansions")));
+    }
+
+    /// EXE5's HubBatc shares a board with no HP program. It has one place
+    /// (the middle of the 5x5 board, the whole command line its own; no
+    /// smaller board holds it), which leaves four corners of three cells in
+    /// an L, and no HP program fits one: turned or not, compressed or not
+    /// (none has a compressed shape of its own). So its bug, which halves
+    /// what the HP programs add (0x08140248), has nothing to halve on a
+    /// board a save can hold. The lab's recordings of that halving
+    /// (docs/design/exe5-map.md §15.13) lay HP+500 over HubBatc, which the
+    /// original's compile takes and its placing refuses (0x0813F2A4), as
+    /// this check does. BugStop fits beside it only compressed, in a corner,
+    /// off the command line, where it stops nothing.
+    #[test]
+    fn exe5s_hubbatc_shares_a_board_with_no_hp_program() {
+        use crate::testing::{SIZE, cells};
+        let content = crate::testing::exe5_content();
+        let m = crate::pick::live(&content, "exe5", 3, None).unwrap();
+        let program = |name: &str| ids::entry(&content, "exe5", "navicust_programs", name).unwrap();
+        let problems = |parts: &[PlacedProgram], expansions: u8| -> Vec<String> {
+            let mut m = m.clone();
+            set_navicust(&content, &mut m.sides[0], parts, expansions);
+            check_match(&content, &m).into_iter().filter(|p| p.contains("navicust") || p.contains("NaviCust")).collect()
+        };
+        let at = |program, x: u8, y: u8, rotation: u8, compressed: bool| PlacedProgram { program, color: 0, x, y, rotation, compressed };
+        let everywhere = || (0..SIZE as u8).flat_map(|x| (0..SIZE as u8).map(move |y| (x, y)));
+        let hub = program("hubbatc");
+        // HubBatc: the middle of the largest board alone.
+        for expansions in 0..3 {
+            for (x, y) in everywhere() {
+                let fits = problems(&[at(hub, x, y, 0, false)], expansions).is_empty();
+                assert_eq!(fits, expansions == 2 && (x, y) == (3, 3), "{expansions} expansions, ({x}, {y})");
+            }
+        }
+        let beside_hub = |part: PlacedProgram| problems(&[at(hub, 3, 3, 0, false), part], 2);
+        // No HP program beside it.
+        for name in ["hp-50", "hp-100", "hp-200", "hp-300", "hp-400", "hp-500"] {
+            let hp = program(name);
+            for (x, y) in everywhere() {
+                for rotation in 0..4 {
+                    for compressed in [false, true] {
+                        let said = beside_hub(at(hp, x, y, rotation, compressed));
+                        assert!(
+                            said.iter().any(|p| p.contains("off the board") || p.contains("is over program 1")),
+                            "{name} at ({x}, {y}) turned {rotation}, compressed {compressed}: {said:?}"
+                        );
+                    }
+                }
+            }
+        }
+        // (The lab's board: HP+500 over HubBatc's top.)
+        assert!(beside_hub(at(program("hp-500"), 3, 2, 0, false)).iter().any(|p| p.contains("is over program 1")));
+        // BugStop beside it: compressed alone, and never on the command line.
+        let bugstop = program("bugstop");
+        // (The command line: the board module's.)
+        let board = start(&content, &m).unwrap().module_data("exe5:rules/navicust/board").unwrap().unwrap();
+        let line = board.field("COMMAND_LINE").int().unwrap() as i32;
+        let mut places = 0;
+        for (x, y) in everywhere() {
+            for rotation in 0..4 {
+                assert!(!beside_hub(at(bugstop, x, y, rotation, false)).is_empty(), "BugStop as it is at ({x}, {y}) turned {rotation}");
+                if beside_hub(at(bugstop, x, y, rotation, true)).is_empty() {
+                    let shape = crate::testing::program_shape(&content, bugstop, true, rotation);
+                    assert!(cells(&shape, x, y).all(|(_, row)| row != line), "BugStop on the command line at ({x}, {y}) turned {rotation}");
+                    places += 1;
+                }
+            }
+        }
+        assert!(places > 0, "compressed, BugStop fits a corner");
+    }
+
+    /// A setup with no NaviCust has its stats as a compile left them (a
+    /// recording's): no setup field gives the emotion window's glitch, and
+    /// the rules make it from the stats' NaviCust bugs (here the support
+    /// bug, which the window's own count of bugs doesn't see).
+    #[test]
+    fn stats_set_directly_glitch_as_their_bugs_say() {
+        let content = crate::testing::exe6_content();
+        let m = crate::pick::live(&content, "exe6", 3, None).unwrap();
+        let mut setup = m.round(&content, 3);
+        // (No NaviCust: the rules' `navicust_expansions` none.)
+        for p in &mut setup.players {
+            let none = saito_battle::rules::Fact::Value(saito_content_api::Value::Nil);
+            p.set_fact(&content, "navicust_expansions", &[none]).unwrap();
+        }
+        setup.navi_stats[0].support = None;
+        let b = Battle::new(setup, content.clone());
+        assert!(b.consoles[0].emotion_window_glitch, "the support bug");
+        assert!(!b.consoles[1].emotion_window_glitch, "no bug");
+    }
+
+    /// MegaMan from a navi code gets his level's gains over what his
+    /// NaviCust made (`reloadCurNaviStatBoosts`: `sub_8121154` after
+    /// `sub_813C458`): its HP to the maximum and the HP the maximum, the
+    /// buster's levels to 4, the custom level to 8, the Mega level to 10.
+    #[test]
+    fn megaman_from_a_navi_code_gets_his_levels_gains() {
+        let content = crate::testing::exe6_content();
+        let megaman = content.form_changing_navi().unwrap();
+        let parts = [("undersht", "white", 1, 3), ("attack-1", "pink", 5, 2), ("hp-100", "white", 3, 2)];
+        let (base, _, problems) = compiled(&parts);
+        assert_eq!(problems, Vec::<String>::new());
+        for level in [0u8, 7, 14] {
+            let (s, _, problems) = compiled_at(&parts, Some(level));
+            assert_eq!(problems, Vec::<String>::new(), "level {level}");
+            let g = content.navi(megaman).levels.as_ref().unwrap().by_level[level as usize];
+            let up = |v: u8, n: u8, most: u8| (v + n).min(most);
+            assert_eq!(
+                (s.max_hp, s.hp, s.attack, s.rapid, s.charge, s.custom_level, s.mega_level),
+                (
+                    base.max_hp + g.hp,
+                    base.max_hp + g.hp,
+                    up(base.attack, g.attack, 4),
+                    up(base.rapid, g.rapid, 4),
+                    up(base.charge, g.charge, 4),
+                    up(base.custom_level, g.custom_level, 8),
+                    up(base.mega_level, g.mega_level, 10)
+                ),
+                "level {level}"
+            );
+        }
+    }
+}

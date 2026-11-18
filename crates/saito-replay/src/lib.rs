@@ -1,0 +1,656 @@
+//! The replay file: everything a set's battles are played from, and
+//! nothing a replay of it makes again. It runs no engine: saito-frontend
+//! records one as a set is played and plays one back; this crate writes
+//! and reads the file.
+//!
+//! A replay holds one set, all its rounds: the match it is played from
+//! (saito-match's binary, against the content the head names), and each
+//! tick's input, both players' by side. The simulation is a function of
+//! those alone, so playing them back makes the set again, round by round
+//! (the next round is made from the round before and the match). Nothing
+//! it makes is kept (who won a round or the set, the score), but for two
+//! marks, the ticks a round and the set ended on, which a reader may go by
+//! without playing, and the battle's digest every so often, which a
+//! playback compares to tell it reproduces. A replay plays only on the
+//! content it was made with and an engine of the same minor version (a
+//! patch release plays it: [`line`]): the head names them, and a player
+//! refuses another's ([`Head::require`]).
+//!
+//! ```text
+//! file   := "STRP", layout (a byte: 0x53), head, info, match, input
+//! head   := "SHED", length (u32), engine version (string), game (string),
+//!           content hash (u64), the first battle's digest before any tick (u64)
+//! info   := "SINF", length (u32), when (u64: unix seconds), the side that
+//!           recorded (a byte: 0, 1), the kind of match (a byte: 0 offline,
+//!           1 online), open setups (a byte: 0 no, 1 yes), the players'
+//!           names by side (two strings)
+//! match  := "SMTC", length (u32), the match in saito-match's binary
+//! input  := "STCK", then a record per tick to the end of the file
+//! record := control (a byte), then what its bits announce, in their order:
+//!           bit 0: side 0's input (LEB128) follows, bit 1: side 1's,
+//!           bit 5: side 0's screen delay (a byte) follows, bit 6: side 1's,
+//!           bit 2: the battle's digest after the tick (u64) follows,
+//!           bit 3: a round ended on the tick (a digest always comes with it),
+//!           bit 4: the set ended on it (a round did too; nothing comes after);
+//!           bit 7 is 0
+//! string := length (LEB128), UTF-8
+//! ```
+//!
+//! Numbers are little-endian. A side's input is its tick's word
+//! (`saito_battle::PlayerTick::word`, 19 bits): the GBA's buttons in the
+//! low ten bits, the party switch request in bits 10 and 11 (the member +
+//! 1, 0 none), the microphone heard (full) or not (silent) in bit 12, and
+//! in bits 13 to 18 the custom screen's choice (its `ScreenChoice::code`, 0
+//! none). It is written as LEB128 (one byte for A, B and the directions,
+//! two with other buttons, a switch or the microphone, three with a choice)
+//! when it changes: before the first tick nothing is held, and it carries
+//! across a round's end. A writer flushes each record as it is written, so
+//! a file cut short (a crash) holds every tick before the cut, and a reader
+//! says it was cut ([`End::Cut`]).
+//!
+//! **The screens' presentation track.** Where each player's custom screen
+//! cursor was and what they had up over the chips (R's description, L's
+//! message, SELECT's hiding, the form list) is no part of the simulation:
+//! each player's own screen layer kept it, outside it
+//! (`saito_battle::custom::layer`), driven by their buttons and their
+//! pointer. A viewer shows both players' screens by running each side's
+//! layer again from the words' buttons and choices: what keys did shows as
+//! it was, and a pointer's choice puts the cursor on what it names (the
+//! pointer's presses and moves aren't recorded). A player's layer read the
+//! word a few ticks before it landed (their input delay: netplay's present
+//! delay and one, live play's input delay; none for a side played with no
+//! delay, a bot's, a trace's): the record keeps it as the side's screen
+//! delay ([`Tick::delays`]), written when it changes (0 before the first
+//! tick), and the layer's input before tick `u` is the word that landed on
+//! tick `u + delay`. The delay is presentation alone: no part of the input
+//! the simulation takes, nor of its digest.
+//!
+//! **What a replay says of each side** is its player's name (the info) and
+//! its setup (the match: the navi, the folder and whatever else its game's
+//! rules take, each a number or a definition's handle). The setup is what
+//! the simulation is made from, so it stays. A build's name is the
+//! player's own business and is in neither: the info has no place for one,
+//! and a match in binary holds no text at all. A viewer that should not
+//! show the setups either is told so by the info ([`Info::open_setups`]:
+//! where they weren't open).
+//!
+//! **The layout.** This is layout 2 (layout 1, saito 0.20 and before,
+//! wrote each input as four bytes). A file of another layout is refused
+//! as one from another version of saito ([`ReadError::OtherLayout`]): a
+//! replay plays only on the engine and content it was made with, so such a
+//! file would not play here whatever its layout.
+
+#![forbid(unsafe_code)]
+
+use std::fmt;
+use std::io::{self, Write};
+
+/// The file's first bytes (saito replay, incompatible with saito's "NTRP").
+pub const MAGIC: &[u8; 4] = b"STRP";
+
+/// The layout this crate writes and reads.
+pub const LAYOUT: u8 = 0x53;
+
+/// Section tags for saito replays (distinct from saito's HEAD/INFO/MTCH/TICK).
+const TAG_HEAD: &[u8; 4] = b"SHED";
+const TAG_INFO: &[u8; 4] = b"SINF";
+const TAG_MATCH: &[u8; 4] = b"SMTC";
+const TAG_INPUT: &[u8; 4] = b"STCK";
+
+/// The part of a saito version that says what its simulation is: its
+/// major and minor numbers ("0.7" of "0.7.3"). Engines of one line play the
+/// same matches the same way (a patch release changes no simulation, state
+/// layout, digest or protocol: docs/design/rollback.md), so a replay plays
+/// on any of its line, and netplay peers of one line play together (the
+/// user: "patch version changes don't break netplay compatibility but minor
+/// version changes do").
+pub fn line(version: &str) -> &str {
+    match version.match_indices('.').nth(1) {
+        Some((i, _)) => &version[..i],
+        None => version,
+    }
+}
+
+/// What a replay is played on: the engine, the game and its content, and
+/// the battle they make before any tick.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Head {
+    /// The engine's version.
+    pub engine: String,
+    /// The game (its pack's id: `exe6`).
+    pub game: String,
+    /// The content's hash (`saito_battle::Content::hash`).
+    pub content: u64,
+    /// The digest of the set's first battle before any tick: a player
+    /// compares it before playing, so a match that makes another battle on
+    /// this engine is told from a simulation that goes another way later.
+    pub start: u64,
+}
+
+impl Head {
+    /// The head of a replay's file, whether or not the rest of it reads:
+    /// what a list of replays goes by to tell which game a file it can't
+    /// play is of. None if the bytes aren't a replay, are of another
+    /// layout, or end inside the head.
+    pub fn read(bytes: &[u8]) -> Option<Head> {
+        if bytes.get(..4) != Some(MAGIC.as_slice()) || bytes.get(4) != Some(&LAYOUT) {
+            return None;
+        }
+        let mut b = Bytes { rest: &bytes[5..], what: "start" };
+        let mut h = b.section(TAG_HEAD, "head").ok()?;
+        let head = Head { engine: h.string().ok()?, game: h.string().ok()?, content: h.u64().ok()?, start: h.u64().ok()? };
+        h.done().ok()?;
+        Some(head)
+    }
+
+    /// That a replay of this head plays on `engine`'s build of `game`'s
+    /// `content` (an engine of the replay's [`line`]): or what differs.
+    pub fn require(&self, engine: &str, game: &str, content: u64) -> Result<(), Mismatch> {
+        if self.game != game {
+            return Err(Mismatch::Game { replay: self.game.clone(), here: game.to_string() });
+        }
+        if self.content != content {
+            return Err(Mismatch::Content { replay: self.content, here: content });
+        }
+        if line(&self.engine) != line(engine) {
+            return Err(Mismatch::Engine { replay: self.engine.clone(), here: engine.to_string() });
+        }
+        Ok(())
+    }
+}
+
+/// Why a replay doesn't play here: what its head names that isn't what it
+/// is asked to play on ([`Head::require`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mismatch {
+    /// It is a replay of another game.
+    Game { replay: String, here: String },
+    /// It was made on other content (the hashes).
+    Content { replay: u64, here: u64 },
+    /// It was made on an engine of another minor version (the versions).
+    Engine { replay: String, here: String },
+}
+
+impl fmt::Display for Mismatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Mismatch::Game { replay, here } => write!(f, "the replay is of {replay}, not {here}"),
+            Mismatch::Content { replay, here } => write!(f, "the replay was made on other content (its hash {replay:016x}, this one's {here:016x})"),
+            Mismatch::Engine { replay, here } => write!(f, "the replay was made on saito {replay}, this is {here}"),
+        }
+    }
+}
+
+impl std::error::Error for Mismatch {}
+
+/// The kind of match a replay is of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MatchKind {
+    /// Played on one machine: no other player over a network.
+    Offline,
+    /// Played against another player over the network.
+    Online,
+}
+
+impl MatchKind {
+    /// The kind's byte in the info.
+    fn byte(self) -> u8 {
+        match self {
+            MatchKind::Offline => 0,
+            MatchKind::Online => 1,
+        }
+    }
+
+    fn of_byte(b: u8) -> Option<MatchKind> {
+        match b {
+            0 => Some(MatchKind::Offline),
+            1 => Some(MatchKind::Online),
+            _ => None,
+        }
+    }
+}
+
+/// What a replay says about itself besides: when, who recorded it, what
+/// kind of match it was and whether its setups were open, the players'
+/// names. (Nothing of a player's build but what the match holds of it: no
+/// build's name.)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Info {
+    /// When the set started, in seconds since 1970 (UTC).
+    pub when: u64,
+    /// The side whose player recorded it (0 or 1): the one a viewer is
+    /// shown by default.
+    pub side: u8,
+    /// The kind of match it was.
+    pub kind: MatchKind,
+    /// The match was played with open setups: each player could be shown
+    /// the other's, and so may a viewer of the replay. Where they weren't,
+    /// neither player was shown the other's, and a viewer isn't shown
+    /// them either. (The match still holds both setups: the simulation is
+    /// made from them.)
+    pub open_setups: bool,
+    /// The players' names by side; empty where none is known.
+    pub names: [String; 2],
+}
+
+impl Info {
+    /// The info of a match of `kind` recorded from `side`, with open
+    /// setups, at no stated time, by players without names: for the rest
+    /// to be filled in.
+    pub fn of(kind: MatchKind, side: u8) -> Info {
+        Info { when: 0, side, kind, open_setups: true, names: Default::default() }
+    }
+}
+
+/// One tick: both players' input by side (each a tick word: the buttons,
+/// the switch request, the microphone heard or not and the custom screen's
+/// choice), each side's screen delay, and what a recording marks of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tick {
+    pub inputs: [u32; 2],
+    /// Each side's screen delay that tick's word was decided with: the
+    /// ticks between the tick whose battle its player's custom screen layer
+    /// read and the tick the word lands on (live play's input delay,
+    /// netplay's present delay and one; 0 for a side played with none, a
+    /// bot's, a trace's, lockstep). Presentation: the layer's input before
+    /// tick `u` is the word that landed on tick `u + delay` (the crate's
+    /// docs).
+    pub delays: [u8; 2],
+    /// The battle's digest after the tick, where it was taken.
+    pub digest: Option<u64>,
+    /// A round of the set ended on this tick (its digest is taken).
+    pub round_ended: bool,
+    /// The set ended on this tick (a round did too).
+    pub set_ended: bool,
+}
+
+/// How a replay's input ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End {
+    /// With the set's end: the whole set.
+    Set,
+    /// Between two ticks, before the set's end: the recording stopped
+    /// there (the engine stopped, a player left).
+    Open,
+    /// Inside a tick's record: the file was cut short (its writer stopped
+    /// mid-write). The ticks before the cut are whole.
+    Cut,
+}
+
+/// A replay, read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replay {
+    pub head: Head,
+    /// The match, in saito-match's binary.
+    pub match_bytes: Vec<u8>,
+    pub info: Info,
+    pub ticks: Vec<Tick>,
+    pub end: End,
+}
+
+const INPUT_0: u8 = 1 << 0;
+const INPUT_1: u8 = 1 << 1;
+const DIGEST: u8 = 1 << 2;
+const ROUND_ENDED: u8 = 1 << 3;
+const SET_ENDED: u8 = 1 << 4;
+const DELAY_0: u8 = 1 << 5;
+const DELAY_1: u8 = 1 << 6;
+const KNOWN: u8 = INPUT_0 | INPUT_1 | DIGEST | ROUND_ENDED | SET_ENDED | DELAY_0 | DELAY_1;
+
+// ---- Writing ------------------------------------------------------------------
+
+/// Writes a replay as its set is played: the head, the info and the match
+/// at once, then a record a tick, each flushed as it is written.
+pub struct Writer<W: Write> {
+    out: W,
+    /// The input after the last tick written, by side, and the screen
+    /// delays.
+    inputs: [u32; 2],
+    delays: [u8; 2],
+    /// The set's end was written: nothing comes after it.
+    ended: bool,
+}
+
+impl<W: Write> Writer<W> {
+    /// A replay of `match_bytes` (saito-match's binary) on `out`, from its
+    /// head and info; written and flushed before the first tick.
+    pub fn new(mut out: W, head: &Head, match_bytes: &[u8], info: &Info) -> io::Result<Writer<W>> {
+        let mut b = MAGIC.to_vec();
+        b.push(LAYOUT);
+        let mut h = Vec::new();
+        string(&mut h, &head.engine);
+        string(&mut h, &head.game);
+        h.extend_from_slice(&head.content.to_le_bytes());
+        h.extend_from_slice(&head.start.to_le_bytes());
+        section(&mut b, TAG_HEAD, &h);
+        let mut i = info.when.to_le_bytes().to_vec();
+        i.push(info.side);
+        i.push(info.kind.byte());
+        i.push(info.open_setups as u8);
+        for name in &info.names {
+            string(&mut i, name);
+        }
+        section(&mut b, TAG_INFO, &i);
+        section(&mut b, TAG_MATCH, match_bytes);
+        b.extend_from_slice(TAG_INPUT);
+        out.write_all(&b)?;
+        out.flush()?;
+        Ok(Writer { out, inputs: [0; 2], delays: [0; 2], ended: false })
+    }
+
+    /// The next tick, written and flushed. Refused (nothing written): a
+    /// tick after the set's end, a round's end without its digest, the
+    /// set's end without a round's.
+    pub fn tick(&mut self, t: &Tick) -> io::Result<()> {
+        let invalid = |why: &str| Err(io::Error::new(io::ErrorKind::InvalidInput, why.to_string()));
+        if self.ended {
+            return invalid("a tick after the set's end");
+        }
+        if t.round_ended && t.digest.is_none() {
+            return invalid("a round's end without its digest");
+        }
+        if t.set_ended && !t.round_ended {
+            return invalid("the set's end without a round's");
+        }
+        let mut control = 0;
+        let mut rest = Vec::with_capacity(16);
+        for side in 0..2 {
+            if t.inputs[side] != self.inputs[side] {
+                control |= [INPUT_0, INPUT_1][side];
+                leb128(&mut rest, t.inputs[side] as u64);
+            }
+        }
+        for side in 0..2 {
+            if t.delays[side] != self.delays[side] {
+                control |= [DELAY_0, DELAY_1][side];
+                rest.push(t.delays[side]);
+            }
+        }
+        if let Some(d) = t.digest {
+            control |= DIGEST;
+            rest.extend_from_slice(&d.to_le_bytes());
+        }
+        control |= if t.round_ended { ROUND_ENDED } else { 0 } | if t.set_ended { SET_ENDED } else { 0 };
+        let mut record = vec![control];
+        record.extend_from_slice(&rest);
+        self.out.write_all(&record)?;
+        self.out.flush()?;
+        self.inputs = t.inputs;
+        self.delays = t.delays;
+        self.ended = t.set_ended;
+        Ok(())
+    }
+
+    /// The set's end was written.
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+
+    /// The sink, once done with.
+    pub fn into_inner(self) -> W {
+        self.out
+    }
+}
+
+fn leb128(out: &mut Vec<u8>, mut n: u64) {
+    loop {
+        let byte = (n & 0x7F) as u8;
+        n >>= 7;
+        if n == 0 {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn string(out: &mut Vec<u8>, s: &str) {
+    leb128(out, s.len() as u64);
+    out.extend_from_slice(s.as_bytes());
+}
+
+fn section(out: &mut Vec<u8>, tag: &[u8; 4], body: &[u8]) {
+    out.extend_from_slice(tag);
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(body);
+}
+
+// ---- Reading ------------------------------------------------------------------
+
+/// Bytes being read, with where they are for a message.
+struct Bytes<'a> {
+    rest: &'a [u8],
+    what: &'static str,
+}
+
+impl<'a> Bytes<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        if n > self.rest.len() {
+            return Err(format!("the file ends inside its {}", self.what));
+        }
+        let (b, rest) = self.rest.split_at(n);
+        self.rest = rest;
+        Ok(b)
+    }
+
+    fn u8(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
+    }
+
+    fn u64(&mut self) -> Result<u64, String> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+    }
+
+    /// A tick's input, LEB128 (none: the bytes end inside it, a file cut
+    /// there).
+    fn input(&mut self) -> Result<Option<u32>, String> {
+        let mut n: u64 = 0;
+        for shift in (0..35).step_by(7) {
+            let Ok(b) = self.u8() else { return Ok(None) };
+            n |= ((b & 0x7F) as u64) << shift;
+            if b & 0x80 == 0 {
+                return u32::try_from(n).map(Some).map_err(|_| format!("an input in its {} is past 32 bits", self.what));
+            }
+        }
+        Err(format!("an input in its {} is past 32 bits", self.what))
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        let mut n: u64 = 0;
+        for shift in (0..).step_by(7) {
+            if shift > 28 {
+                return Err(format!("a string's length in its {} is past any", self.what));
+            }
+            let b = self.u8()?;
+            n |= ((b & 0x7F) as u64) << shift;
+            if b & 0x80 == 0 {
+                break;
+            }
+        }
+        let b = self.take(n as usize)?;
+        String::from_utf8(b.to_vec()).map_err(|_| format!("a string in its {} isn't UTF-8", self.what))
+    }
+
+    /// Section `tag`'s body, all of it.
+    fn section(&mut self, tag: &[u8; 4], what: &'static str) -> Result<Bytes<'a>, String> {
+        self.what = what;
+        let got = self.take(4)?;
+        if got != tag {
+            return Err(format!("no {what} where it goes (\"{}\" there)", String::from_utf8_lossy(got)));
+        }
+        let n = self.u32()? as usize;
+        Ok(Bytes { rest: self.take(n)?, what })
+    }
+
+    /// That nothing is left of a section.
+    fn done(self) -> Result<(), String> {
+        match self.rest.len() {
+            0 => Ok(()),
+            n => Err(format!("{n} bytes after the end of its {}", self.what)),
+        }
+    }
+}
+
+/// Why bytes don't read as a replay ([`Replay::read`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadError {
+    /// They aren't a replay: no "STRP" at their start.
+    NotAReplay,
+    /// A replay of another layout than this crate reads: one written by
+    /// another version of saito.
+    OtherLayout { layout: u8 },
+    /// A replay of this layout that no writer writes: its head, info or
+    /// match cut short or running on, a value none of them holds, a
+    /// tick's record with unknown bits. What is wrong, for a log.
+    Damaged(String),
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ReadError::NotAReplay => write!(f, "not a replay (no \"STRP\" at its start)"),
+            ReadError::OtherLayout { layout } => write!(f, "a replay of layout {layout}; this reads layout {LAYOUT}"),
+            ReadError::Damaged(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
+
+impl Replay {
+    /// A replay from a file's bytes. Refused, saying why: bytes that aren't
+    /// a replay, a replay of another layout (another version's), and one
+    /// of this layout that is damaged: a head, info or match cut short or
+    /// running on, and a tick's record no writer writes (unknown bits, a
+    /// round's end without its digest, the set's end without a round's,
+    /// anything after the set's end). A record cut short ends the input
+    /// there ([`End::Cut`]).
+    pub fn read(bytes: &[u8]) -> Result<Replay, ReadError> {
+        if bytes.get(..4) != Some(MAGIC.as_slice()) {
+            return Err(ReadError::NotAReplay);
+        }
+        match bytes.get(4) {
+            Some(&LAYOUT) => Replay::read_sections(&bytes[5..]).map_err(ReadError::Damaged),
+            Some(&layout) => Err(ReadError::OtherLayout { layout }),
+            None => Err(ReadError::Damaged("the file ends inside its start".into())),
+        }
+    }
+
+    /// A replay of this crate's layout from what follows the layout byte:
+    /// or what is wrong with it.
+    fn read_sections(bytes: &[u8]) -> Result<Replay, String> {
+        let mut b = Bytes { rest: bytes, what: "start" };
+        let mut h = b.section(TAG_HEAD, "head")?;
+        let head = Head { engine: h.string()?, game: h.string()?, content: h.u64()?, start: h.u64()? };
+        h.done()?;
+        let mut i = b.section(TAG_INFO, "info")?;
+        let when = i.u64()?;
+        let side = i.u8()?;
+        if side > 1 {
+            return Err(format!("the info's recording side is {side}, not 0 or 1"));
+        }
+        let kind = i.u8()?;
+        let kind = MatchKind::of_byte(kind).ok_or_else(|| format!("the info's kind of match is {kind}, not 0 (offline) or 1 (online)"))?;
+        let open_setups = match i.u8()? {
+            0 => false,
+            1 => true,
+            n => return Err(format!("the info's open setups is {n}, not 0 or 1")),
+        };
+        let info = Info { when, side, kind, open_setups, names: [i.string()?, i.string()?] };
+        i.done()?;
+        let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
+        b.what = "input";
+        if b.take(4)? != TAG_INPUT {
+            return Err("no input where it goes".into());
+        }
+        let mut ticks = Vec::new();
+        let mut inputs = [0u32; 2];
+        let mut delays = [0u8; 2];
+        let end = loop {
+            if b.rest.is_empty() {
+                break End::Open;
+            }
+            let n = ticks.len();
+            let control = b.u8()?;
+            if control & !KNOWN != 0 {
+                return Err(format!("tick {n}: its record's bits {control:#04x} are none a writer writes"));
+            }
+            let record = |b: &mut Bytes| -> Result<Option<Tick>, String> {
+                let mut t = Tick { inputs, delays, ..Tick::default() };
+                for side in 0..2 {
+                    if control & [INPUT_0, INPUT_1][side] != 0 {
+                        let Some(word) = b.input()? else { return Ok(None) };
+                        t.inputs[side] = word;
+                    }
+                }
+                for side in 0..2 {
+                    if control & [DELAY_0, DELAY_1][side] != 0 {
+                        let Ok(d) = b.u8() else { return Ok(None) };
+                        t.delays[side] = d;
+                    }
+                }
+                if control & DIGEST != 0 {
+                    let Ok(d) = b.u64() else { return Ok(None) };
+                    t.digest = Some(d);
+                }
+                t.round_ended = control & ROUND_ENDED != 0;
+                t.set_ended = control & SET_ENDED != 0;
+                if t.round_ended && t.digest.is_none() {
+                    return Err(format!("tick {n}: a round ends without its digest"));
+                }
+                if t.set_ended && !t.round_ended {
+                    return Err(format!("tick {n}: the set ends without a round"));
+                }
+                Ok(Some(t))
+            };
+            let Some(t) = record(&mut b)? else { break End::Cut };
+            inputs = t.inputs;
+            delays = t.delays;
+            ticks.push(t);
+            if t.set_ended {
+                if !b.rest.is_empty() {
+                    return Err(format!("{} bytes after the set's end", b.rest.len()));
+                }
+                break End::Set;
+            }
+        };
+        Ok(Replay { head, match_bytes, info, ticks, end })
+    }
+
+    /// The ticks of each round, in order, as the marks divide them (the
+    /// last round's run to the input's end, ended or not).
+    pub fn rounds(&self) -> Vec<&[Tick]> {
+        let mut out = Vec::new();
+        let mut from = 0;
+        for (i, t) in self.ticks.iter().enumerate() {
+            if t.round_ended {
+                out.push(&self.ticks[from..=i]);
+                from = i + 1;
+            }
+        }
+        if from < self.ticks.len() {
+            out.push(&self.ticks[from..]);
+        }
+        out
+    }
+
+    /// The tick each round starts on, counted through the set from 0, in
+    /// order: the first round's 0, each later one's the tick after a
+    /// round's end (a mark on the input's last tick starts none).
+    pub fn round_starts(&self) -> Vec<u32> {
+        let mut out = vec![0];
+        for (i, t) in self.ticks.iter().enumerate() {
+            if t.round_ended && i + 1 < self.ticks.len() {
+                out.push(i as u32 + 1);
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests;

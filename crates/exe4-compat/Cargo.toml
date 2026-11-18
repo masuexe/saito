@@ -1,0 +1,30 @@
+[package]
+name = "exe4-compat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The original games' numbers for EXE4's content (content/exe4/compat), and what reads them: the codecs of EXE4's records and its recorded battles (traces), decoded into the engine's terms, and its saves and their import (a save into a side, by the game's facts). The engine never depends on it."
+
+[dependencies]
+# Files: the desktop's and a phone's, or the browser's tree.
+saito-files = { path = "../saito-files" }
+saito-battle.workspace = true
+saito-content-api = { path = "../saito-content-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+toml = "0.8"
+# A save's import (src/import.rs): the side it gives, by its game's facts.
+saito-match = { path = "../saito-match" }
+
+[dev-dependencies]
+# The tests' compat: this repository's, built in.
+exe4-compat = { path = ".", features = ["builtin"] }
+# The games' content, for the import's tests.
+saito-match = { path = "../saito-match", features = ["testing"] }
+
+[features]
+# This repository's content/exe4/compat compiled in (`Compat::exe4`), for tools and tests: the app reads the compat of
+# the content it plays at run time (`Compat::of_content`), and builds without content/.
+builtin = []
+# Recorded battles (the chip lab's EXE4 traces): reading them and decoding them.
+trace = ["dep:serde_json", "builtin"]

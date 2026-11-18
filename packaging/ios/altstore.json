@@ -1,0 +1,24 @@
+{
+  "name": "saito",
+  "subtitle": "Play Battle Network netbattles online.",
+  "description": "saito is rollback netplay for Mega Man Battle Network 4, 5 and 6 by EXESSR Hub.",
+  "iconURL": "https://github.com/masuexe/saito",
+  "website": "https://github.com/masuexe/saito",
+  "tintColor": "#F2334D",
+  "nsfw": false,
+  "apps": [
+    {
+      "name": "saito",
+      "bundleIdentifier": "top.exessrhub.saito",
+      "developerName": "EXESSR Hub",
+      "subtitle": "Play Battle Network netbattles online.",
+      "localizedDescription": "saito is rollback netplay for Mega Man Battle Network 4, 5 and 6 by EXESSR Hub. Make a build, then play a friend online, practice, or watch your old matches.\n\nYou'll need Mega Man Battle Network Legacy Collection Vol. 2 on Steam. saito uses the graphics and sound from it: a computer running saito on the same network sends it to your phone.",
+      "iconURL": "https://github.com/masuexe/saito",
+      "tintColor": "#F2334D",
+      "category": "games",
+      "versions": [],
+      "appPermissions": {}
+    }
+  ],
+  "news": []
+}

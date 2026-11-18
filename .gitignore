@@ -1,0 +1,10 @@
+/target
+*.gba
+*.srl
+*.sav
+# ROM-derived packs that earlier versions extracted to data/ (nothing writes them now; never commit them)
+/data/
+*.swp
+# Generated editor declarations; rebuild with .zed/generate-luau-definitions.py.
+/.zed/luau-globals.d.luau
+/.zed/luau-extract.d.luau

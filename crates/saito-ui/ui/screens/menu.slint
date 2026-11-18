@@ -1,0 +1,128 @@
+// The main menu (docs/design/app-ui.md §6): PLAY, REPLAYS, SETTINGS and EXIT (not in a phone's app, which the system
+// closes), each the word alone and large, as a fighting game's title screen has them; beside them the demo reel, a battle of the selected game playing itself
+// in a box that keeps its size. On a phone the reel is above the items; held sideways the words are at the left at
+// the phone's size and the reel at the right as large as the body's height takes.
+
+import { Theme, I18n } from "../theme.slint";
+import { Shell, Page, PadButton, Picture } from "../shell.slint";
+import { MenuItem } from "../widgets.slint";
+import { Arrive, Tween } from "../motion.slint";
+
+// What the main menu shows: src/screens/menu.rs sets these.
+export global MenuView {
+    // The reel is playing a battle (its DEMO mark shows).
+    in property <bool> playing;
+    // It counts the reel's battles: each fades in.
+    in property <int> reel-seq;
+}
+
+export component MenuScreen inherits Page {
+    // (The items' column and the reel are each centered in the body's height.)
+    property <length> column: Theme.phone ? self.body-width : Theme.sideways ? 280px : 416px;
+    property <length> reel-width: Theme.phone ? self.body-width : Theme.sideways ? min(self.body-width - root.column - 22px, self.body-height * 3 / 2) : 720px;
+    property <length> reel-height: self.reel-width * 2 / 3;
+    // A word's row (`MenuItem`'s, big), and the step from one to the next.
+    property <length> item: Theme.handheld ? 68px : 96px;
+    property <length> step: self.item + 8px;
+    // The words (three in a phone's app, without EXIT), 8 apart, centered: on a desktop about as tall as the reel
+    // beside them.
+    property <int> items: Theme.phone-app ? 3 : 4;
+    property <length> items-height: self.items * self.item + (self.items - 1) * 8px;
+    property <length> items-top: Theme.phone ? self.reel-height + 12px : (self.body-height - self.items-height) / 2;
+    property <length> reel-top: Theme.phone ? 0px : (self.body-height - self.reel-height) / 2;
+    logo: true;
+    hints: [
+        { key: "↑↓", pad: PadButton.move, text: @tr("Select") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Open") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Change game") },
+    ];
+    // (The parts assemble in turn as the menu arrives: the words, the reel.)
+    Arrive {
+        order: 0;
+        MenuItem {
+            x: 0;
+            y: root.items-top;
+            width: root.column;
+            nav: "play";
+            text: I18n.upper(@tr("Play"));
+            big: true;
+        }
+    }
+
+    Arrive {
+        order: 1;
+        MenuItem {
+            x: 0;
+            y: root.items-top + root.step;
+            width: root.column;
+            nav: "replays";
+            text: I18n.upper(@tr("Replays"));
+            big: true;
+        }
+    }
+
+    Arrive {
+        order: 2;
+        MenuItem {
+            x: 0;
+            y: root.items-top + 2 * root.step;
+            width: root.column;
+            nav: "settings";
+            text: I18n.upper(@tr("Settings"));
+            big: true;
+        }
+    }
+
+    if !Theme.phone-app: Arrive {
+        order: 3;
+        MenuItem {
+            x: 0;
+            y: root.items-top + 3 * root.step;
+            width: root.column;
+            nav: "exit";
+            text: I18n.upper(@tr("Exit"));
+            big: true;
+        }
+    }
+
+    // The reel. (`parent` here is the screen's root, where this is written; the page's body is where it is put.)
+    // Each battle of the reel fades in.
+    fade := Tween {
+        seq: MenuView.reel-seq;
+        duration: Theme.settle;
+    }
+
+    Arrive {
+        order: 2;
+        from-x: 24px;
+        Rectangle {
+            opacity: fade.t;
+            Picture {
+                x: root.body-width - root.reel-width;
+                y: root.reel-top;
+                width: root.reel-width;
+                height: root.reel-height;
+                ground: Theme.inset;
+            }
+        }
+
+        Rectangle {
+            x: root.body-width - root.reel-width + 12px;
+            y: root.reel-top + root.reel-height - 12px - self.height;
+            width: demo.preferred-width + 16px;
+            height: 22px;
+            visible: MenuView.playing;
+            background: Theme.shade;
+            demo := Text {
+                text: I18n.upper(@tr("Demo"));
+                color: Theme.text;
+                font-family: Theme.display;
+                font-size: 11px;
+                font-weight: Theme.display-bold;
+                letter-spacing: Theme.label-tracking;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

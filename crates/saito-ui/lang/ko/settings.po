@@ -1,0 +1,190 @@
+# Korean: Settings (ui/screens/settings.slint), and About, its subscreen (ui/screens/settings/about.slint).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Settings"
+msgstr "설정"
+
+msgid "Move"
+msgstr "이동"
+
+msgid "A · Pad confirms"
+msgstr "A · 패드 확인"
+
+msgid "B · Pad goes back"
+msgstr "B · 패드 뒤로"
+
+msgid "Next"
+msgstr "다음"
+
+# The groups: in the list at the left, and as each group's title on the page.
+
+msgid "General"
+msgstr "일반"
+
+msgid "Video"
+msgstr "화면"
+
+msgid "Audio"
+msgstr "오디오"
+
+msgid "Online"
+msgstr "온라인"
+
+msgid "Controls"
+msgstr "조작"
+
+msgid "About"
+msgstr "정보"
+
+msgid "Name"
+msgstr "이름"
+
+msgid "Shown to your opponent."
+msgstr "상대방에게 표시됩니다."
+
+msgid "Language"
+msgstr "언어"
+
+msgid "Picture size"
+msgstr "화면 크기"
+
+msgid "Largest that fits"
+msgstr "창에 맞추기"
+
+msgid "Full screen"
+msgstr "전체 화면"
+
+msgid "Reduce motion"
+msgstr "동작 줄이기"
+
+msgid "Graphics enhancements"
+msgstr "그래픽 향상"
+
+msgid "Sharp text"
+msgstr "선명한 텍스트"
+
+msgid "Chip names and messages drawn at full resolution."
+msgstr "칩 이름과 메시지를 고해상도로 그립니다."
+
+msgid "Sharp HUD"
+msgstr "선명한 HUD"
+
+msgid "Frames, banners and numbers redrawn at full resolution."
+msgstr "프레임, 배너, 숫자를 고해상도로 다시 그립니다."
+
+msgid "Smooth motion"
+msgstr "부드러운 움직임"
+
+msgid "Scrolling, gauges and banners move between the game's pixels."
+msgstr "스크롤, 게이지, 배너가 픽셀 사이를 부드럽게 이동합니다."
+
+msgid "Fill the window"
+msgstr "창 가득 채우기"
+
+msgid "The stage reaches the window's edges, the HUD with it."
+msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
+
+msgid "Music"
+msgstr "배경음"
+
+msgid "Sound effects"
+msgstr "효과음"
+
+msgid "Input delay"
+msgstr "입력 지연"
+
+msgid "In frames. Lower feels faster; higher rolls back less."
+msgstr "프레임 단위입니다. 낮을수록 반응이 빠르고, 높을수록 롤백이 줄어듭니다."
+
+msgid "Key"
+msgstr "키보드"
+
+msgid "Pad"
+msgstr "패드"
+
+msgid "Up"
+msgstr "위"
+
+msgid "Down"
+msgstr "아래"
+
+msgid "Left"
+msgstr "왼쪽"
+
+msgid "Right"
+msgstr "오른쪽"
+
+msgid "Press a key"
+msgstr "키를 누르세요"
+
+msgid "Press a button"
+msgstr "버튼을 누르세요"
+
+msgid "Reset controls"
+msgstr "조작 초기화"
+
+msgid "Version"
+msgstr "버전"
+
+msgid "Your files"
+msgstr "파일 저장 위치"
+
+msgid "Show folder"
+msgstr "폴더 열기"
+
+# The About group's last row: it opens About.
+msgid "Made with"
+msgstr "오픈소스 라이선스"
+
+msgid "Show licenses"
+msgstr "라이선스 보기"
+
+# ---- About ----
+
+# The app's line under its name: its version, then its license.
+msgid "{} · Mozilla Public License 2.0"
+msgstr "{} · Mozilla Public License 2.0"
+
+# Over the list of the fonts and the packages the app is made of.
+msgctxt "heading"
+msgid "Made with"
+msgstr "사용된 소프트웨어"
+
+# The footer: how many of each the list has.
+msgid "{n} package"
+msgid_plural "{n} packages"
+msgstr[0] "패키지 {n}개"
+
+msgid "{n} font"
+msgid_plural "{n} fonts"
+msgstr[0] "폰트 {n}종"
+
+msgid "Read"
+msgstr "읽기"
+
+# A font's row: in the place of a package's version.
+msgid "font"
+msgstr "폰트"
+
+msgid "Font"
+msgstr "폰트"
+
+msgid "No license stated"
+msgstr "명시된 라이선스 없음"
+
+msgid "Its package comes with no license file. Its license is the one named above."
+msgstr "이 패키지에는 라이선스 파일이 포함되어 있지 않습니다. 라이선스는 위에 명시된 것과 같습니다."
+
+msgid "Check for updates"
+msgstr "업데이트 확인"
+
+# The party battle's two navi changes (EXE5 DS's Y and X: the party panel's left and right buttons).
+msgid "Navi change left"
+msgstr "내비 체인지 (왼쪽)"
+
+msgid "Navi change right"
+msgstr "내비 체인지 (오른쪽)"

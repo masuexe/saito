@@ -1,0 +1,2396 @@
+//! [`CoreApi`]: what content can see and do. Every operation is generic
+//! (objects, sprites, collision, panels, the navi framework, the rules'
+//! services); none knows a particular chip.
+//!
+//! Engine-owned fields are named by enums ([`ObjectField`],
+//! [`ActorField`], [`SpriteField`], ...). Each has a name (what scripts
+//! write), a type (which conversions and wrapping apply) and whether
+//! content may write it. Flags and timers are named too
+//! ([`StatusFlag`], [`RequestFlag`], [`Key`] ...): content never handles
+//! the engine's bit values or offsets.
+
+use std::fmt;
+
+use crate::registry::{ChipHandle, Registry};
+use crate::state::{Block, FieldType, StateId, StateMut, TypeError, Value};
+use crate::types::{ObjectRef, PanelPos, SpriteId, Vec3};
+
+/// What a navi runs (`CoreApi::navi_action`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NaviAction {
+    /// A content action, by handle.
+    Content(u16),
+    /// One of the rules' own states or actions: `"entry"`,
+    /// `"take_control"`, `"deletion"`, `"flinch"`, `"paralysis"`, `"drag"`,
+    /// `"freeze"`, `"bubble"`, `"idle"`, `"move"`, `"dimming_chip"`,
+    /// `"hand_off_chip"`, `"instant_chip"`, `"form_change"`.
+    Engine(&'static str),
+}
+
+/// Where a spawned object goes in the update list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnAt {
+    /// Right after the object updating (it runs later this tick).
+    AfterCurrent,
+    /// `sub_8003374` / `sub_800333C`: at the end (it runs after everything
+    /// else this tick).
+    End,
+}
+
+/// An object's lifecycle state (the game's 0/4/8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lifecycle {
+    /// Spawned; its first update sets it up.
+    Init,
+    /// Running.
+    Update,
+    /// Ending; its next update frees it.
+    Destroy,
+    /// The fourth state (the game's 0xC) of kinds that have one after
+    /// `Destroy`: for them `Destroy` is a last running phase, and this one
+    /// frees them.
+    Finish,
+}
+
+impl Lifecycle {
+    pub fn name(self) -> &'static str {
+        match self {
+            Lifecycle::Init => "init",
+            Lifecycle::Update => "update",
+            Lifecycle::Destroy => "destroy",
+            Lifecycle::Finish => "finish",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Lifecycle> {
+        [Lifecycle::Init, Lifecycle::Update, Lifecycle::Destroy, Lifecycle::Finish].into_iter().find(|l| l.name() == s)
+    }
+}
+
+/// How a sprite's shadow (the first part of each frame) is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Shadow {
+    #[default]
+    Hidden,
+    Ground,
+    WithSprite,
+}
+
+impl Shadow {
+    pub const NAMES: [&'static str; 3] = ["hidden", "ground", "with_sprite"];
+    pub const ALL: [Shadow; 3] = [Shadow::Hidden, Shadow::Ground, Shadow::WithSprite];
+}
+
+/// Actor types by name (an actor record's type).
+pub const ACTOR_TYPES: [&str; 3] = ["virus", "navi", "player"];
+/// A navi's barrier as content sees it (CollisionData+0x06): none, up (any
+/// kind, its HP whatever it is), or popped (0x10: blown away by wind).
+pub const BARRIER_STATES: [&str; 3] = ["none", "up", "popped"];
+
+/// The custom gauge's speeds (NaviStats+0x08), by their byte.
+pub const GAUGE_SPEEDS: [&str; 3] = ["normal", "fast", "slow"];
+
+/// How a barrier behaves once raised (`sub_801A802` by the barrier byte):
+/// worn down and timed out (`plain`: Barrier, Barr100, Barr200, LifeAur,
+/// the auras), back with 1 HP 240 ticks after it is worn down and broken
+/// by elec (`bubble`: BblWrap), regenerating up to 200 HP (`regenerating`),
+/// or back whole a while after it is worn down, as the rules' barrier tick
+/// says (`regrowing`: EXE4's type 4, BlakBarr's).
+pub const BARRIER_BEHAVIORS: [&str; 4] = ["plain", "bubble", "regenerating", "regrowing"];
+
+/// `sub_801A7CC`'s row: what a barrier sets in the collision data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BarrierSpec {
+    /// Index into [`BARRIER_BEHAVIORS`].
+    pub behavior: u8,
+    /// Its HP (+0x16), the damage a hit must reach to wear it (+0x17), its
+    /// timer (+0x1A; 0xFFFF: none), and the element that breaks it (+0x14;
+    /// 0: none).
+    pub hp: u8,
+    pub threshold: u8,
+    pub timer: u16,
+    pub weak_element: u8,
+}
+
+/// A navi's drag reaction steps by name (BattleObject+0x0D: the game's 0,
+/// 4, 8).
+pub const DRAG_STEPS: [&str; 3] = ["start", "slide", "recover"];
+/// A navi's slide types (BattleObject+0x0E): none, a push's, by the arena's
+/// rows and the move's direction (ice's), the panel's own carry (a road's,
+/// EXE5's magnet's).
+pub const SLIDE_TYPES: [&str; 4] = ["none", "push", "rows", "panel"];
+/// Where a navi's slide is (the slide machine's state): to start
+/// (`sub_80166D0`, the game's 0), sliding toward its next panel
+/// (`sub_8016730`, 4).
+pub const SLIDE_STEPS: [&str; 2] = ["start", "sliding"];
+
+fn enum_type(names: &[&str]) -> FieldType {
+    FieldType::Enum(names.iter().map(|s| s.to_string()).collect())
+}
+
+macro_rules! named_fields {
+    (
+        $(#[$m:meta])*
+        pub enum $name:ident {
+            $( $(#[$vm:meta])* $var:ident = $str:literal, $ty:expr, $rw:ident; )*
+        }
+    ) => {
+        $(#[$m])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum $name { $( $(#[$vm])* $var, )* }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$var,)*];
+
+            /// The field's name in content.
+            pub fn name(self) -> &'static str {
+                match self { $($name::$var => $str,)* }
+            }
+
+            pub fn from_name(s: &str) -> Option<$name> {
+                match s { $($str => Some($name::$var),)* _ => None }
+            }
+
+            /// The field's type.
+            pub fn ty(self) -> FieldType {
+                #[allow(unused_imports)]
+                use FieldType::*;
+                match self { $($name::$var => $ty,)* }
+            }
+
+            /// Whether content may write the field.
+            pub fn writable(self) -> bool {
+                match self { $($name::$var => named_fields!(@rw $rw),)* }
+            }
+        }
+    };
+    (@rw rw) => { true };
+    (@rw ro) => { false };
+}
+
+named_fields! {
+    /// The fields every object has.
+    pub enum ObjectField {
+        /// The current action and phase; their meaning is the kind's.
+        Action = "action", U8, rw;
+        Phase = "phase", U8, rw;
+        PhaseInit = "phase_init", U8, rw;
+        PanelX = "panel_x", U8, rw;
+        PanelY = "panel_y", U8, rw;
+        /// The panel a move is going to.
+        FuturePanelX = "future_panel_x", U8, rw;
+        FuturePanelY = "future_panel_y", U8, rw;
+        /// 0 = left side, 1 = right side.
+        Alliance = "alliance", U8, rw;
+        /// Facing is `alliance ^ flip`.
+        Flip = "flip", U8, rw;
+        /// The requested animation, and the one the sprite has.
+        Anim = "anim", U8, rw;
+        AnimLoaded = "anim_loaded", U8, rw;
+        Element = "element", U8, rw;
+        Timer = "timer", U16, rw;
+        Timer2 = "timer2", U16, rw;
+        Hp = "hp", U16, rw;
+        MaxHp = "max_hp", U16, rw;
+        /// Attack power plus flag bits (the damage word's low half).
+        Damage = "damage", U16, rw;
+        /// The damage word's high half (the counter byte in its low byte).
+        Stamina = "stamina", U16, rw;
+        /// What it is taken for (none: a virus).
+        Identity = "identity", Ref(Registry::Identity, None), rw;
+        /// Holds an object's sprite (and more, by kind: `PreventAnim`).
+        PreventAnim = "prevent_anim", U8, rw;
+        /// BattleObject +0x1A: a player's chips left in its hand as the HUD
+        /// shows them; another actor's own count (EXE5's Jealousy reads it).
+        ChipsHeld = "chips_held", U8, rw;
+        /// BattleObject +0x2A: its chip (a player's: its hand's at the
+        /// cursor, which its HUD shows; none: the game's 0xFFFF).
+        Chip = "chip", Ref(Registry::Chip, None), rw;
+        Pos = "pos", Vec3, rw;
+        Vel = "vel", Vec3, rw;
+        Related1 = "related1", Object, rw;
+        Related2 = "related2", Object, rw;
+        /// The slot is in use.
+        Active = "active", Bool, ro;
+        /// It has a collision record (its CollisionData pointer is set).
+        HasCollision = "has_collision", Bool, ro;
+        /// Drawn this frame.
+        Visible = "visible", Bool, rw;
+        /// Keeps updating while the battle is paused.
+        RunWhilePaused = "run_while_paused", Bool, rw;
+        /// Keeps updating while the battle is dimmed.
+        RunWhileDimmed = "run_while_dimmed", Bool, rw;
+        /// The sprite doesn't animate.
+        NoSpriteUpdate = "no_sprite_update", Bool, rw;
+        /// A navi's drag reaction step (BattleObject+0x0D).
+        DragStep = "drag_step", enum_type(&DRAG_STEPS), rw;
+        /// A navi's slide type ([`SLIDE_TYPES`]), which its slide request
+        /// starts.
+        SlideType = "slide_type", enum_type(&SLIDE_TYPES), rw;
+        /// Where a navi's slide is ([`SLIDE_STEPS`]): to start, or sliding
+        /// toward its next panel.
+        SlideStep = "slide_step", enum_type(&SLIDE_STEPS), rw;
+        /// It holds a panel reservation (released when it is destroyed).
+        HoldsReservation = "holds_reservation", Bool, rw;
+    }
+}
+
+named_fields! {
+    /// An actor's (a navi's) fields: the attack in progress (the game's
+    /// AIAttackVars) and the actor data (AIData) content uses.
+    pub enum ActorField {
+        /// The sprite overlay attached for the current attack.
+        Overlay = "overlay", Object, rw;
+        /// The running action's phase (0, 4, 8...) and whether its entry
+        /// ran.
+        Step = "step", U8, rw;
+        StepInit = "step_init", U8, rw;
+        /// The chip being used, as its definition (none for weapons): what
+        /// a weapon that uses the chip asks for the chip's own parts, and
+        /// what an action that becomes another chip's sets.
+        AttackChip = "attack_chip", Ref(Registry::Chip, None), rw;
+        /// The attack's element byte (primary | secondary bits).
+        AttackElement = "attack_element", U8, rw;
+        /// The attack's damage (with its flag bits).
+        AttackDamage = "attack_damage", U16, rw;
+        /// The attack's bonus from its hand entry (AIAttackVars+6: the
+        /// Atk+ and charge bonuses), read-only.
+        AttackExtra = "attack_extra", U16, ro;
+        /// The attack's hit parameter (its hitbox's counter byte).
+        HitParam = "hit_param", U16, rw;
+        /// The attack's variant (AIAttackVars+3), as the anti-damage
+        /// counters read it.
+        AttackVariant = "attack_variant", U8, rw;
+        Charged = "charged", U8, rw;
+        /// Lockout the attack applies when it ends (kind 2: the chip
+        /// lockout; kind 3: the B+Back cooldown).
+        AttackLockout = "attack_lockout", U8, rw;
+        /// The Atk+ / cross bonus.
+        Extra = "extra", U16, rw;
+        /// The attack parameters' fourth byte (+0x0F): a dimming chip's
+        /// telop hidden from its user too.
+        TelopHidden = "telop_hidden", Bool, rw;
+        SpecialSource = "special_source", U8, rw;
+        /// Which `set_attack` kind started the action (0..5).
+        AttackKind = "attack_kind", U8, ro;
+        /// 1 while the action runs inside the side's wrapper (`sub_801B9E6`
+        /// runs the role `actions.wrapper` instead: EXE6's Beast Out rush).
+        Wrapped = "wrapped", U8, rw;
+        /// The wrapper's state starts over (`sub_801011A` clears it with the
+        /// attack's links); the wrapper clears it once it has.
+        WrapperFresh = "wrapper_fresh", Bool, rw;
+        /// The controller's state starts over (a form's `berserk` effect,
+        /// `sub_802D310`); the controller clears it once it has.
+        ControllerFresh = "controller_fresh", Bool, rw;
+        /// Its mood is held (`sub_8015BEC`): held tired or exhausted. What
+        /// another side's rules read (EXE6's counter, `sub_801A200`).
+        MoodHeld = "mood_held", Bool, ro;
+        /// The side's rules' `navi_tick` runs for it each tick.
+        Ticked = "ticked", Bool, rw;
+        /// Exhausted for the rest of the battle (EXE6's after Beast Over):
+        /// worn out, the mood can't change, 1 HP lost per tick (never the
+        /// last), no Full Synchro or anger.
+        Exhausted = "exhausted", Bool, rw;
+        /// +0x2C: an object a step or the wrapper turns to face in the panel
+        /// patterns 0x23, 0x31 and 0x33 (only the unused `sub_80116F6` sets
+        /// one).
+        FaceTarget = "face_target", Object, ro;
+        /// A per-action word some actions keep (a move's direction change).
+        Marker = "marker", U32, rw;
+        /// The attack's count (AIAttackVars+0x12): what an action counts
+        /// (its shots, swings, slashes, a hold's ticks, the recovery after
+        /// a shot), a word every action shares and none clears, so an
+        /// action that reads it before writing it reads what an earlier one
+        /// left.
+        AttackCount = "attack_count", U16, rw;
+        ActorType = "actor_type", enum_type(&ACTOR_TYPES), ro;
+        /// Form or AI variant.
+        AiIndex = "ai_index", U8, ro;
+        /// The ticks before a panel may carry the navi again (its slide of
+        /// type 3's end sets 5; `sub_801A36A` counts it down).
+        SlideCooldown = "slide_cooldown", U16, ro;
+        /// The target marker (EXE6's Beast Out lock-on marker).
+        TargetMarker = "target_marker", Object, rw;
+        /// The charge glow.
+        ChargeGlow = "charge_glow", Object, rw;
+        /// AIData+0x50 (EXE4's +0x5C): an object tied to the navi that the
+        /// full status reset ends (`sub_801390C`): EXE4's WindSoul's wind.
+        ResetLinkedObject = "reset_linked_object", Object, rw;
+        /// The Full Synchro aura.
+        FullSynchroAura = "full_synchro_aura", Object, rw;
+        /// The charge: 0 none, 1 charging, 2 full; its source (0 none, 1
+        /// A, 2 B); its counter. The source and the counter are writable:
+        /// EXE4's dark soul's AI shows a B charge as it dodges (0x0800E69C:
+        /// AIData +9 and its count, +0x32, of which the next tick's input
+        /// makes the level, 0x0800BB66), and the level with them (the
+        /// charge's reset, `sub_8012EA8`).
+        ChargeLevel = "charge_level", U8, rw;
+        ChargeSource = "charge_source", U8, rw;
+        ChargeCounter = "charge_counter", U16, rw;
+        /// EXE4's rapid presses (AIData +0x12, +0x11): the B presses
+        /// counted toward a form's `rapid_presses`, and the ticks left for
+        /// the next (the forced charged shot clears both as it ends).
+        RapidPresses = "rapid_presses", U8, rw;
+        RapidWindow = "rapid_window", U8, rw;
+        /// A buffered auto-step's direction (0 none).
+        BufferedMove = "buffered_move", U8, rw;
+        /// Ticks before the next chip can be used.
+        ChipLockout = "chip_lockout", U8, rw;
+        /// Ticks before the B+Back special can be input again.
+        BackSpecialCooldown = "back_special_cooldown", U8, rw;
+        /// The weapons the navi's buttons run (none: no weapon; writable:
+        /// chips change the buster's and charged shot's, EXE4's ProtoSoul's
+        /// status reset the B+Left special's, 0x0800E12C).
+        BusterWeapon = "buster_weapon", Ref(Registry::Weapon, None), rw;
+        ChargeShotWeapon = "charge_shot_weapon", Ref(Registry::Weapon, None), rw;
+        BackSpecialWeapon = "back_special_weapon", Ref(Registry::Weapon, None), rw;
+        /// AIData+0x32: the Beast Out counter is spent (BugFix sets it by
+        /// the navi's counter, `sub_8014446` / `sub_801443C`).
+        Tired = "tired", Bool, rw;
+        /// AIData+0x60: the barrier's visual (effect #7).
+        BarrierVisual = "barrier_visual", Object, rw;
+        /// EXE5's AIData+0x3C: DarkPlus's tint (0 none), which picks the
+        /// navi's status shader.
+        PlusTint = "plus_tint", U16, rw;
+        /// A B charge the side's rules arm in place of the charged shot's
+        /// (EXE5's Chaos Unison charge, AIData+0x12): the ticks to a full
+        /// charge (in place of the charged shot's by the Charge stat), the
+        /// glow it shows (seen and heard by its side alone) and the glow's
+        /// animation once full. Nil: no such charge (the weapons' load
+        /// drops them all); armed while the time is set.
+        BChargeTime = "b_charge_time", OptionalU8, rw;
+        BChargeGlow = "b_charge_glow", FieldType::Asset(crate::AssetKind::Sprite), rw;
+        BChargeAnim = "b_charge_anim", OptionalU8, rw;
+        /// EXE5's priming (AIData+0x0D): a form's `priming` chip used, its
+        /// next doubling waiting.
+        Primed = "primed", Bool, rw;
+        /// EXE5's no-charge drive (DarkInvs): its ticks left (AIData+0x36;
+        /// counted down in the intake while the navi has the no-charge
+        /// state, asking for the stun strike at 0; 0xFFFF holds), and the
+        /// auto battle AI driving it (AIData+0xF0, which VarSwrd's pick
+        /// reads).
+        NoChargeTimer = "no_charge_timer", U16, rw;
+        InAutoBattle = "in_auto_battle", Bool, rw;
+        /// The ticks of anger left (AIData's anger count), and the
+        /// consecutive ticks spent flinching or paralyzed (AIData+0x4C; 120
+        /// make MegaMan angry): what anger's end zeroes (`sub_80143A6`).
+        AngerTicks = "anger_ticks", U16, rw;
+        StunTicks = "stun_ticks", U32, rw;
+    }
+}
+
+named_fields! {
+    /// How an object's sprite is drawn, and where its animation is.
+    pub enum SpriteField {
+        Palette = "palette", U8, rw;
+        HFlip = "hflip", Bool, rw;
+        VFlip = "vflip", Bool, rw;
+        Shadow = "shadow", Enum(Shadow::NAMES.iter().map(|s| s.to_string()).collect()), rw;
+        /// With a ground shadow, the whole sprite is drawn as the shadow
+        /// is, under every object's sprite: a mark on the floor.
+        UnderObjects = "under_objects", Bool, rw;
+        /// Drawn solid white (a hit flash).
+        White = "white", Bool, rw;
+        ColorShader = "color_shader", U16, rw;
+        /// Blended at alpha/16, or not blended (nil).
+        Alpha = "alpha", OptionalU8, rw;
+        /// Mosaic blocks of n + 1 pixels, or none (nil).
+        Mosaic = "mosaic", OptionalU8, rw;
+        /// Priority against the background layers (0 = frontmost).
+        Priority = "priority", U8, rw;
+        /// Parts not drawn: bit 31 - i hides part i.
+        HiddenParts = "hidden_parts", U32, rw;
+        /// The animation the sprite plays.
+        Animation = "animation", U8, ro;
+        /// How many times the sprite has stepped since its animation
+        /// started (or since it was loaded): what an action that waits for
+        /// an animation counts (a sprite's timing is its sheet's, drawing's
+        /// alone).
+        Steps = "steps", U32, ro;
+    }
+}
+
+named_fields! {
+    /// An object's collision registration.
+    pub enum CollisionField {
+        /// The region its hits cover (a region definition), or none.
+        Region = "region", Ref(Registry::Region, None), rw;
+        /// The panel the region is anchored on (the game's CollisionData
+        /// PanelX/PanelY; `update_collision_panels` copies the object's).
+        PanelX = "panel_x", U8, rw;
+        PanelY = "panel_y", U8, rw;
+        /// The spark its hits show (a spark definition), or none.
+        HitEffect = "hit_effect", Ref(Registry::Spark, None), rw;
+        /// The primary element its hits carry (CollisionData+0x02; setup
+        /// takes the object's element's low nibble), and the secondary
+        /// elements (+0x19: its high nibble), which `sub_8019F8C` sets
+        /// again from an element byte.
+        Element = "element", U8, rw;
+        SecondaryElement = "secondary_element", U8, rw;
+        /// The status its hits carry (a status definition), or none.
+        StatusBase = "status_base", Ref(Registry::Status, None), rw;
+        /// The status it takes this window (its hits', a counter's, or one
+        /// the rules put in their place: the NaviCust's hit bug), or none.
+        StatusFinal = "status_final", Ref(Registry::Status, None), rw;
+        /// Bug code (low byte) and argument (high byte).
+        Bugs = "bugs", U16, rw;
+        /// The bug code and argument the last resolution's hits brought
+        /// (CollisionData+0x9C, +0x9D), which the navi takes.
+        InflictedBugs = "inflicted_bugs", U16, rw;
+        HitModBase = "hit_mod_base", U8, rw;
+        /// The damage it deals (the object's damage at setup).
+        SelfDamage = "self_damage", U16, rw;
+        /// What a panel type counts while the body stands on it (+0x1C:
+        /// poison's drain, `sub_801A186`); the standing effects zero it on a
+        /// type that has no `stand`.
+        StandingCount = "standing_count", U8, rw;
+        /// The counter byte (CollisionData+0x07: bits 0-6 counter
+        /// strength, bit 7 can't counter), which setup takes from the
+        /// damage word's high half.
+        CounterByte = "counter_byte", U8, rw;
+        /// The ticks left of its counter window (CollisionData+0x0D): a
+        /// hit with a counter byte counters it while they run.
+        CounterTimer = "counter_timer", U8, ro;
+        /// What the last resolution hit (writable: some kinds clear it).
+        HitFlags = "hit_flags", U32, rw;
+        /// Its hits reach while the battle is dimmed (its self flags'
+        /// 0x10000: what a setup while dimmed gives it, and a retype while
+        /// dimmed but EXE5's, 0x08016B9E, which leaves it out).
+        HitsWhileDimmed = "hits_while_dimmed", Bool, rw;
+        /// The damage taken this window.
+        FinalDamage = "final_damage", U16, ro;
+        /// Which way the region's anchor last moved (0 none, 1 up, 2 down,
+        /// 3 back, 4 forward, 5 other).
+        Direction = "direction", U8, ro;
+        /// The directions (1 << the hitter's flip) a guard blocked hits
+        /// from this window (CollisionData+0x03).
+        GuardDirs = "guard_dirs", U8, ro;
+        /// The secondary elements (sword 0x80, cursor 0x40, wind 0x20,
+        /// break 0x10) of what hit it this window.
+        DamageElements = "damage_elements", U8, ro;
+        /// The hit modifiers of what hit it this window (+0x0E,
+        /// HitModifierFinal): 0x3C the pushes, 0x40 a pushing hit.
+        HitModFinal = "hit_mod_final", U8, ro;
+        /// Its barrier ([`BARRIER_STATES`]; writable to none or popped: a
+        /// barrier goes up with `raise_barrier`), the barrier's HP byte, and
+        /// the hit modifier that popped it (+0x15).
+        Barrier = "barrier", enum_type(&BARRIER_STATES), rw;
+        BarrierHp = "barrier_hp", U8, ro;
+        BarrierPopHitMod = "barrier_pop_hit_mod", U8, ro;
+        /// A bubble is its barrier (BblWrap's, the barrier byte 8), and the
+        /// barrier's timer (+0x1A: a bubble's 0 while it is down).
+        Bubble = "bubble", Bool, ro;
+        BarrierTimer = "barrier_timer", U16, ro;
+        /// Its status visuals (+0x48, +0x4C): the confusion stars and the
+        /// blindness mark over it, which their statuses' ends take down.
+        ConfusionVisual = "confusion_visual", Object, rw;
+        BlindnessVisual = "blindness_visual", Object, rw;
+    }
+}
+
+/// Whose stats a navi's stats proxy reads (`battle.navi(side)`,
+/// `battle.member(side, m)`): a side's navi's, the one on the field, or a
+/// member's block of the side's party as the party keeps it (the member on
+/// the field's is as it was when it came in: its live stats are the
+/// side's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatsOf {
+    pub side: u8,
+    pub member: Option<u8>,
+}
+
+impl StatsOf {
+    /// The side's navi's.
+    pub fn side(side: u8) -> StatsOf {
+        StatsOf { side: side & 1, member: None }
+    }
+}
+
+/// A side's party, as content reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartyInfo {
+    /// Its members, 1 (the side's own navi alone) to 3.
+    pub count: u8,
+    /// The member on the field.
+    pub active: u8,
+    /// The switches the side made this round.
+    pub switches: u8,
+}
+
+named_fields! {
+    /// A side's navi stats that content reads (and the few it changes): the
+    /// engine's. (A game's own, its rules' `stats`, are read and written by
+    /// their names: [`CoreApi::navi_game_stats_mut`].)
+    pub enum NaviStat {
+        /// The form and the navi, as their definitions.
+        /// Writable: a game's form change puts the navi in its form.
+        Form = "form", Ref(Registry::Form, None), rw;
+        Navi = "navi", Ref(Registry::Navi, None), ro;
+        /// MegaMan's variant (+0x2B, which picks his move lag): his base HP
+        /// in hundreds, which a game's rules/save writes.
+        NaviVariant = "navi_variant", U8, rw;
+        /// The base form's element (patch cards write it).
+        Element = "element", U8, rw;
+        /// The buster's levels (writable: chips raise them).
+        Attack = "attack", U8, rw;
+        Rapid = "rapid", U8, rw;
+        Charge = "charge", U8, rw;
+        /// Writable: EXE5's dark chips set it (0x080127D6).
+        Mood = "mood", U8, rw;
+        /// The form the navi started the battle in (writable: a bug code
+        /// puts the base form there).
+        StartingForm = "starting_form", Ref(Registry::Form, None), rw;
+        /// The navi's base form.
+        BaseForm = "base_form", Ref(Registry::Form, None), ro;
+        /// The Regular chip's MB at most (+0x09, RegUp's), and the base HP
+        /// (+0x3E): the save's, which a game's rules/save writes as the
+        /// round is set up.
+        RegularMemory = "regular_memory", U8, rw;
+        MaxBaseHp = "max_base_hp", U16, rw;
+        /// The NaviCust's heal on chip use.
+        ChipRecovery = "chip_recovery", U16, rw;
+        /// NaviCust weapon stats: the buster shot's and the charged
+        /// shot's programs, each the projectile variant a shot is on a
+        /// lucky draw (none: no program).
+        BusterShot = "buster_shot", Ref(Registry::Record, Some("projectile-variant".into())), rw;
+        ChargeShotKind = "charge_shot_kind", Ref(Registry::Record, Some("projectile-variant".into())), rw;
+        /// The damage a B+Back special takes from the navi's stats
+        /// (NaviStats+0x48).
+        BackSpecialDamage = "back_special_damage", U16, rw;
+        /// NaviCust bugs: buster blanks and buster charged shots (of 16).
+        BusterBlanks = "buster_blanks", U8, rw;
+        BusterCharged = "buster_charged", U8, rw;
+        /// NaviCust bugs: the HP drain in the fight and while the custom
+        /// screen is open (levels), and what a step leaves behind.
+        HpDrain = "hp_drain", U8, rw;
+        CustomDrain = "custom_drain", U8, rw;
+        PanelTrail = "panel_trail", U8, rw;
+        // Written by the navi-changing dimming chips (off_802CCB4[38]).
+        /// The custom screen's size.
+        CustomLevel = "custom_level", U8, rw;
+        /// NaviCust bug: the hand shrinks from this turn on (0 none).
+        HandShrinkTurn = "hand_shrink_turn", U8, rw;
+        /// The weapons the navi starts rounds with: the charged shot, the
+        /// B+Back special (none: no weapon).
+        ChargeShotWeapon = "charge_shot_weapon", Ref(Registry::Weapon, None), rw;
+        BackSpecialWeapon = "back_special_weapon", Ref(Registry::Weapon, None), rw;
+        /// NaviCust: FloatShoes, AirShoes, UnderShirt.
+        FloatShoes = "float_shoes", Bool, rw;
+        AirShoes = "air_shoes", Bool, rw;
+        Undershirt = "undershirt", Bool, rw;
+        // Written by the patch cards at the round's start (rules/
+        // patch-cards.luau), with the writable ones above.
+        /// HP when the round starts, and its maximum (+0x40, +0x42).
+        Hp = "hp", U16, rw;
+        MaxHp = "max_hp", U16, rw;
+        /// The folder's Mega and Giga chip limits (+0x0B, +0x0C).
+        MegaLevel = "mega_level", U8, rw;
+        GigaLevel = "giga_level", U8, rw;
+        /// NaviCust SuperArmor and StatusGuard (+0x23, +0x52).
+        SuperArmor = "super_armor", Bool, rw;
+        StatusGuard = "status_guard", Bool, rw;
+        /// The B button's weapon (+0x04; none: no weapon).
+        BusterWeapon = "buster_weapon", Ref(Registry::Weapon, None), rw;
+        /// The barrier the navi enters with (+0x06; none: no barrier).
+        FirstBarrier = "first_barrier", Ref(Registry::Record, Some("barrier".into())), rw;
+        /// The custom gauge's speed (+0x08, [`GAUGE_SPEEDS`]).
+        Gauge = "gauge", enum_type(&GAUGE_SPEEDS), rw;
+        /// The supports (+0x0D's bits). With the NaviCust's support bug
+        /// (the byte 0xFF) there are none, and setting one leaves it so.
+        Rush = "rush", Bool, rw;
+        Beat = "beat", Bool, rw;
+        Tango = "tango", Bool, rw;
+        /// The support bug (+0x0D 0xFF): no supports, and none can be set.
+        /// Writable: a game's NaviCust rules bring it.
+        SupportBug = "support_bug", Bool, rw;
+        /// NaviCust bugs: steps go astray (+0x31, 1), a step's panel trail
+        /// level (+0x13), the status a hit gives (+0x16), the custom
+        /// screen's damage (+0x54), the emotion swings (+0x24), the battle
+        /// start's (+0x1A).
+        StepBug = "step_bug", U8, rw;
+        PanelTrailLevel = "panel_trail_level", U8, rw;
+        HitStatus = "hit_status", U8, rw;
+        CustomDamage = "custom_damage", U16, rw;
+        EmotionBug = "emotion_bug", U8, rw;
+        BattleStartBug = "battle_start_bug", U8, rw;
+        /// NaviCust bugs: random steps after a move (+0x11), damage at the
+        /// battle's start (+0x3D).
+        AutoStep = "auto_step", U8, rw;
+        StartingDamage = "starting_damage", U8, rw;
+        /// The folder the navi brings (+0x2D, 0 to 2), the folders'
+        /// Regular chips (+0x2E, +0x2F) and tag chips (+0x56 to +0x59),
+        /// entries as the save keeps them (0xFF none).
+        Folder = "folder", U8, rw;
+        Folder1Regular = "folder_1_regular", U8, rw;
+        Folder2Regular = "folder_2_regular", U8, rw;
+        Folder1TagA = "folder_1_tag_a", U8, rw;
+        Folder1TagB = "folder_1_tag_b", U8, rw;
+        Folder2TagA = "folder_2_tag_a", U8, rw;
+        Folder2TagB = "folder_2_tag_b", U8, rw;
+        /// The weapons of the A button's charge (+0x39) and of battle mode
+        /// 9's A button (+0x44); none: no weapon.
+        AChargeWeapon = "a_charge_weapon", Ref(Registry::Weapon, None), rw;
+        Mode9AWeapon = "mode9_a_weapon", Ref(Registry::Weapon, None), rw;
+        /// `sub_800FE52`: how many kinds of NaviCust bug the navi has
+        /// (astray steps, a panel trail, buster blanks, a hit status,
+        /// custom-screen damage, emotion swings, the two HP drains, a
+        /// battle-start hook, a shrinking hand).
+        BugKinds = "bug_kinds", U8, ro;
+    }
+}
+
+named_fields! {
+    /// An entry of a side's hand (the game's chip block), its fields by
+    /// entry.
+    pub enum HandField {
+        /// The chip (none: the hand ends before it).
+        Chip = "chip", Ref(Registry::Chip, None), rw;
+        /// Its base damage, and the Atk+ (or Navi+) bonus folded into it.
+        Damage = "damage", U16, rw;
+        AttackBonus = "attack_bonus", U16, rw;
+        /// The bonus a charge raises (the hand's +0x26: what a form's A
+        /// charge builds up, and what EXE4's souls' status resets give
+        /// their chips, 0x0800E1CA). The status reset clears it.
+        ChargeBonus = "charge_bonus", U16, rw;
+        /// The turn (custom screens opened before, from 0) it was picked in.
+        Turn = "turn", U8, rw;
+        /// Its marks (its modifier flags: what its game's chip-use rules
+        /// read at the use, and what its rules keep there: EXE4's install
+        /// marks each entry 0x04 as it takes a dark chip's cost, 0x0801EA1E).
+        Marks = "marks", U8, rw;
+    }
+}
+
+named_fields! {
+    /// Battle-wide state content reads.
+    pub enum BattleInfo {
+        /// A link (net) battle.
+        Link = "link", Bool, ro;
+        /// A battle against a ranked boss (battle effect 1: LifeSync does
+        /// nothing in one, `sub_80E72C8`).
+        BossRank = "boss_rank", Bool, ro;
+        /// The battle's effects (its settings' word), whose bits a game's
+        /// rules read by their own names (EXE5's 0x20000, a held light/dark
+        /// value; 0x100000, dark chips fizzle).
+        Effects = "effects", U32, ro;
+        Mode = "mode", U8, ro;
+        PanelPattern = "panel_pattern", U8, ro;
+        /// Every navi is in (the intro's bit 2).
+        NavisIn = "navis_in", Bool, ro;
+        /// Presentation only: the side the simulation's perspective is.
+        LocalSide = "local_side", U8, ro;
+        /// Custom screens opened so far.
+        Turn = "turn", U8, ro;
+        /// Battle flag 0x40: each player has a custom gauge (`sub_800A8F8`;
+        /// not in netbattles).
+        OwnGauges = "own_gauges", Bool, ro;
+        /// Battle flag 1: the fight is on (collision is live).
+        Fighting = "fighting", Bool, ro;
+        /// Battle flag 2: the custom gauge is full.
+        GaugeFull = "gauge_full", Bool, ro;
+        /// A link battle's last turns, from its 15th custom screen
+        /// (`sub_800A97A`).
+        LateTurns = "late_turns", Bool, ro;
+        /// A screen fade runs (`IsScreenFadeActive`).
+        ScreenFading = "screen_fading", Bool, ro;
+    }
+}
+
+macro_rules! named_flags {
+    ($(#[$m:meta])* pub enum $name:ident { $($(#[$vm:meta])* $var:ident = $str:literal,)* }) => {
+        $(#[$m])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum $name { $($(#[$vm])* $var,)* }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$var,)*];
+
+            pub fn name(self) -> &'static str {
+                match self { $($name::$var => $str,)* }
+            }
+
+            pub fn from_name(s: &str) -> Option<$name> {
+                match s { $($str => Some($name::$var),)* _ => None }
+            }
+        }
+    };
+}
+
+named_flags! {
+    /// Status flags an object with collision data carries.
+    pub enum StatusFlag {
+        Guard = "guard",
+        Invisible = "invisible",
+        Submerged = "submerged",
+        Invulnerable = "invulnerable",
+        AirShoe = "air_shoe",
+        FloatShoe = "float_shoe",
+        Moving = "moving",
+        Dead = "dead",
+        Flashing = "flashing",
+        Flinching = "flinching",
+        Paralyzed = "paralyzed",
+        Sliding = "sliding",
+        Blind = "blind",
+        Immobilized = "immobilized",
+        Confused = "confused",
+        Frozen = "frozen",
+        SuperArmor = "super_armor",
+        Undershirt = "undershirt",
+        MoveComplete = "move_complete",
+        Drag = "drag",
+        Anger = "anger",
+        /// An action is in use (attacks set it while they run).
+        UsingAction = "using_action",
+        AffectedByIce = "affected_by_ice",
+        Bubbled = "bubbled",
+        // Dimming chip subtype 20 (ElemTrap's trap).
+        /// Hit even while the battle is dimmed.
+        HitWhileDimmed = "hit_while_dimmed",
+        // VDoll's doll.
+        /// A field object being carried to be thrown (0x04000000).
+        Carried = "carried",
+        /// Untouchable (0x08000000): no hit reaches it and it hits nothing
+        /// (Falzar Beast Over's form, EXE5's DarkInvs drive).
+        Untouchable = "untouchable",
+    }
+}
+
+named_flags! {
+    /// Status timers an object with collision data carries.
+    pub enum StatusTimer {
+        Paralyze = "paralyze",
+        Confuse = "confuse",
+        Blind = "blind",
+        Immobilize = "immobilize",
+        /// Flashing (and invisible while it runs, with the invisible flag).
+        Flash = "flash",
+        Submerged = "submerged",
+        Invulnerable = "invulnerable",
+        Freeze = "freeze",
+        Bubble = "bubble",
+    }
+}
+
+named_flags! {
+    /// A navi's action requests (from input and from reactions).
+    pub enum RequestFlag {
+        Buster = "buster",
+        ChargedShot = "charged_shot",
+        Chip = "chip",
+        ChargedChip = "charged_chip",
+        BackSpecial = "back_special",
+        ForcedChargedShot = "forced_charged_shot",
+        RevertForm = "revert_form",
+        AntiDamageTriggered = "anti_damage_triggered",
+        AntiSwordTriggered = "anti_sword_triggered",
+        CutIn = "cut_in",
+        TurnL = "turn_l",
+        TurnR = "turn_r",
+        FormChange = "form_change",
+        BodyGuardTriggered = "body_guard_triggered",
+        AltChip = "alt_chip",
+        AHeld = "a_held",
+        BHeld = "b_held",
+        StunStrike = "stun_strike",
+        /// The rules caught a hit for their guard (their `hit_guard`; the
+        /// role `guard`).
+        Guard = "guard",
+        /// The rules hold a navi at 0 HP for their revival (the role
+        /// `revival`).
+        Revival = "revival",
+        /// The rules ask for their follow-up action (the role `follow_up`).
+        FollowUp = "follow_up",
+        SelectSpecial = "select_special",
+        NaviSwitch = "navi_switch",
+        SwitchKnockout = "switch_knockout",
+        Mode9A = "mode9_a",
+        /// The rules' takeover of the side's navi (EXE6's Cross special).
+        Takeover = "takeover",
+        Volley = "volley",
+        WeaknessHit = "weakness_hit",
+        /// The flinch request (the collision's flag2 0x4: a hit's).
+        Flinch = "flinch",
+        /// The slide request (the collision's flag2 0x10, not an action
+        /// request).
+        Slide = "slide",
+        /// The anger request (the collision's flag2 0x200): the navi gets
+        /// angry at its next status update, unless its mood is held
+        /// (`sub_8014326`).
+        Anger = "anger",
+        /// The drag request (the collision's flag2 0x100: a knockback's).
+        Drag = "drag",
+    }
+}
+
+named_flags! {
+    /// A navi's state bits.
+    pub enum NaviState {
+        Controllable = "controllable",
+        ChipInProgress = "chip_in_progress",
+        FormChange = "form_change",
+        RevertingForm = "reverting_form",
+        NoCharge = "no_charge",
+        CanTurn = "can_turn",
+        TrapArmed = "trap_armed",
+        SwitchingNavi = "switching_navi",
+        SwitchKnockout = "switch_knockout",
+        Switched = "switched",
+        Volley = "volley",
+        Uninterruptible = "uninterruptible",
+        FormBreaking = "form_breaking",
+        FormChangeSpriteHeld = "form_change_sprite_held",
+        HeatTrap = "heat_trap",
+        /// The rules' revival runs (the role `revival`'s action).
+        Reviving = "reviving",
+        /// The rules' follow-up runs (the role `follow_up`'s action).
+        FollowingUp = "following_up",
+        /// Gone from the field while its navi chip's navi acts
+        /// (`sub_80E1352` sets it, `sub_80E13DC` clears it).
+        Vanished = "vanished",
+        /// It dives: a panel that submerges (EXE5's sea) submerges it and
+        /// doesn't hold it at a move's end (EXE5's ToadSoul, 0x08011CB2).
+        /// The status reset ends it.
+        Dives = "dives",
+        /// In the air (EXE5's GyroMan over a panel that isn't solid): a
+        /// step it takes sets no animation.
+        Hovering = "hovering",
+    }
+}
+
+/// A folder a tool asks a side's rules of (`folder_check`, `folder_view`):
+/// whose side it is, its chips in order (handles and codes), its Regular and
+/// tag chips (entries of `chips`), whether it is all of a folder (else the
+/// chips so far, as a random folder is drawn: the rules about a whole
+/// folder wait), and for `folder_view` the chips the tool asks whether it
+/// can take one more of (`offered`: handles).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckedFolder {
+    pub side: u8,
+    pub chips: Vec<(u16, u8)>,
+    pub regular: Option<u8>,
+    pub tags: Option<(u8, u8)>,
+    pub complete: bool,
+    pub offered: Vec<u16>,
+}
+
+named_flags! {
+    /// A button.
+    pub enum Key {
+        A = "a",
+        B = "b",
+        Select = "select",
+        Start = "start",
+        Right = "right",
+        Left = "left",
+        Up = "up",
+        Down = "down",
+        R = "r",
+        L = "l",
+    }
+}
+
+named_flags! {
+    /// Which of a navi's button records: the normal one, or the one kept
+    /// while the battle is dimmed.
+    pub enum Pad {
+        Held = "held",
+        Pressed = "pressed",
+        DimmedHeld = "dimmed_held",
+        DimmedPressed = "dimmed_pressed",
+    }
+}
+
+named_fields! {
+    /// What the HUD shows, a side's: its console's, or its navi's as the
+    /// consoles show it. Presentation, but for the emotion window's glitch
+    /// (its flicker draws its console's RNG1). The last four every console
+    /// shows alike (`sub_801DACC` hides a draw task, `sub_801DA48` shows
+    /// it).
+    pub enum HudField {
+        /// The side's emotion window shows its base form's second set of
+        /// faces (EXE5's Hub Style, 0x0801AF8E).
+        FaceVariant = "face_variant", Bool, rw;
+        /// And whatever its form (EXE5's Chaos Unison look while its charge
+        /// is armed, 0x080125F6, which its rules set and clear).
+        FaceVariantAnyForm = "face_variant_any_form", Bool, rw;
+        /// The custom screen's enemy names show the side's navi by its
+        /// variant name (EXE5's Hub Style in a link battle, 0x0801AE3A).
+        NameVariant = "name_variant", Bool, rw;
+        /// The side's emotion window shows its count (its navi's stat of
+        /// the role `window_count`: EXE6's Beast Out turns), else its empty
+        /// box.
+        WindowCount = "window_count", Bool, rw;
+        /// The side's console starts its emotion window glitching (the
+        /// save's NaviCust bug flag, which the rules decide as the round is
+        /// set up).
+        EmotionWindowGlitch = "emotion_window_glitch", Bool, rw;
+        /// Its emotion window glitches now: the save's glitch, as it kept
+        /// it (BugFix's `sub_801E658` clears every console's).
+        EmotionWindowGlitching = "emotion_window_glitching", Bool, rw;
+        /// The chips' icons over the console's own navi (draw task 1).
+        ChipIcons = "chip_icons", Bool, rw;
+        /// The console's chip-icon table has the opponent's navi too (EXE5's
+        /// SearchSoul's status reset, 0x08011C0C; a status reset takes it
+        /// out again).
+        OpponentChipIcons = "opponent_chip_icons", Bool, rw;
+        /// The console's chip window (`sub_801DACC(0x40)` hides it).
+        ChipWindow = "chip_window", Bool, rw;
+        /// The custom gauge (draw task 4).
+        Gauge = "gauge", Bool, rw;
+        /// The emotion window (draw task 14).
+        EmotionWindow = "emotion_window", Bool, rw;
+        /// The own-gauges mode's gauge, drawn by its levels (draw task 17).
+        LevelGauge = "level_gauge", Bool, rw;
+        /// The HP box (draw task 7; its drawing only: the low-HP alarm
+        /// sounds on).
+        HpBox = "hp_box", Bool, rw;
+    }
+}
+
+impl HudField {
+    /// Every console shows it alike.
+    pub fn shared(self) -> bool {
+        matches!(self, HudField::Gauge | HudField::EmotionWindow | HudField::LevelGauge | HudField::HpBox)
+    }
+}
+
+named_flags! {
+    /// A screen fade content starts (`SetScreenFade`'s modes).
+    pub enum ScreenFade {
+        /// 0x44: the transformation sequencer's fade out (EXE5's dark
+        /// MegaMan's last stand's too), to full.
+        TransformOut = "transform_out",
+        /// 0x40: ... and its fade back in, to clear.
+        TransformIn = "transform_in",
+        /// 0x3C: a dimming's fade (`object_dimScreen`), a quarter of the
+        /// way (the DS's ToadMan rescue and shout heal).
+        Dim = "dim",
+        /// 0x38: a dimming's end (`object_undimScreen`).
+        Undim = "undim",
+    }
+}
+
+/// A custom screen's last pick (`custom.last_pick`): its slot (0-based),
+/// its chip as the screen checked it (the invalid chip for one with a code
+/// it hasn't), whether it is the folder's Regular chip or a link navi's own
+/// chip, and whether a button is attached to it
+/// (`custom.attach_to_last_pick`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CustomPick {
+    pub slot: u8,
+    pub chip: crate::ChipHandle,
+    pub regular: bool,
+    pub navi_chip: bool,
+    pub attached: bool,
+}
+
+/// A chip in a custom screen's slot (`custom.slot`): the chip as dealt and
+/// its code's number (A 0, `*` 26; none: the code outside the alphabet), the
+/// folder place it was dealt from (0-based; none: a chip from outside the
+/// folder), whether it is the folder's Regular chip, and whether it is
+/// picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CustomSlot {
+    pub chip: crate::ChipHandle,
+    pub code: Option<u8>,
+    pub place: Option<u8>,
+    pub regular: bool,
+    pub picked: bool,
+    /// Whether the hand's picks list it once picked (a dealt chip; an
+    /// offered one by its offer).
+    pub listed: bool,
+}
+
+/// What a side's custom screen reads of its player (`custom.player`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomPlayer {
+    /// The emotion the screen reads of its navi (its game's name).
+    pub emotion: String,
+    pub random_battle: bool,
+    /// The party member a switch on the screen took (EXE5 DS's state 0x40:
+    /// the screen's navi, its +0x10), whose navi the screen is for; none
+    /// while the screen is for the member on the field.
+    pub member: Option<u8>,
+}
+
+named_flags! {
+    /// A side's special in progress (the own-gauges mode;
+    /// `sub_802E4B8`): the SELECT special, or the rules' takeover of the
+    /// side's navi (EXE6's Cross special).
+    pub enum SideSpecial {
+        None = "none",
+        Select = "select",
+        Takeover = "takeover",
+    }
+}
+
+named_flags! {
+    /// A step of a dimming controller, run by the dimming service
+    /// (`dimming.rs`): a dimming chip's controller calls them from its
+    /// update, in the order its routine does.
+    pub enum DimmingStep {
+        /// `object_timefreezeBegin`: the controller's init; starts the
+        /// dimming if its side started it.
+        Begin = "begin",
+        /// `object_dimScreen`: dim the screen, then the next action.
+        DimScreen = "dim_screen",
+        /// `object_drawChipName`: the telop, the wait for a cut-in by
+        /// the other side, then the effect (the next action).
+        ShowTelop = "show_telop",
+        /// `sub_800BBA8`: a hidden chip's telop (the trap chips).
+        ShowHiddenTelop = "show_hidden_telop",
+        /// `object_undimScreen`: brighten the screen, then end.
+        UndimScreen = "undim_screen",
+        /// The Gregar and Falzar chips' controllers' first action, in
+        /// place of the dim (the Japanese ROMs' 0x080EDD0C and
+        /// 0x080EDED0): darken the field to black, then the next action.
+        FadeToBlack = "fade_to_black",
+        /// `sub_800BCF6`: back from black (to the dim, if the other side's
+        /// dimming still runs), then end.
+        FadeFromBlack = "fade_from_black",
+        /// `object_timefreezeEnd`: the controller's state 8; ends the
+        /// dimming once both sides are done, and frees the controller.
+        Finish = "finish",
+    }
+}
+
+/// How a form overlay's sprite steps once every navi is in (its Param3):
+/// `object_updateSprite` (and not while dimmed), `object_updateSpriteTimestop`,
+/// or `sub_801BCD0` (paused or not).
+pub const OVERLAY_STEPPINGS: [&str; 3] = ["normal", "while_dimmed", "always"];
+
+named_fields! {
+    /// The parameters of the engine's overlays, what a navi wears (a body
+    /// overlay, a form overlay, an idle overlay).
+    pub enum OverlayField {
+        /// Param3: how its sprite steps ([`OVERLAY_STEPPINGS`] by the
+        /// byte): a form overlay's as they say once every navi is in; a
+        /// body overlay's paused or not but for "normal"; an idle overlay
+        /// doesn't read it. Every object has the byte (the original sets it
+        /// on whatever a navi wears).
+        Stepping = "stepping", enum_type(&OVERLAY_STEPPINGS), rw;
+        /// ExtraVars[0] (`sub_80C4526(overlay, 1)`): a form overlay sits a
+        /// pixel higher and nearer than its owner, a body overlay in front
+        /// whatever its owner's animation, an idle overlay at its owner's
+        /// height.
+        Pinned = "pinned", Bool, rw;
+        /// A body overlay's ExtraVars word (EXE5's 0x080C451A), added to
+        /// its owner's animation (its depth read by the sum).
+        ExtraAnimOffset = "extra_anim_offset", U8, rw;
+    }
+}
+
+named_flags! {
+    /// A shared entry of an obstacle's action table (the obstacle
+    /// framework, `kinds/obstacle.rs`): what an obstacle kind's table runs
+    /// for the actions that aren't its own.
+    pub enum ObstacleAction {
+        /// `sub_80165B8`: back to idle.
+        ReturnToIdle = "return_to_idle",
+        /// `sub_8017E26`: pushed up to six panels, not into bodies or other
+        /// obstacles (and, pulled back, not into the puller's area).
+        Slide = "slide",
+        /// `sub_80166AE`, `sub_8016B02`, `sub_8016B36`, `sub_8016B72`: the
+        /// actor hit reactions (they need actor data).
+        Flinch = "flinch",
+        Paralyzed = "paralyzed",
+        Frozen = "frozen",
+        Bubbled = "bubbled",
+        // Subtypes 8, 17, 18 (Wind, Anubis, Otenko) and the obstacle framework:
+        /// `sub_8017CC0`: knocked back as far as the hit says, onto free
+        /// panels it reserves on the way.
+        KnockedBack = "knocked_back",
+    }
+}
+
+named_flags! {
+    /// What an obstacle's `obstacle.react` does with a body's, another
+    /// obstacle's or a breaking hit's touch (the dispatchers differ there).
+    pub enum ObstacleCrush {
+        /// `sub_801B394`: the HP drops to 0.
+        Breaks = "breaks",
+        /// `sub_801B4D4`: destroyed, the HP as it is.
+        Destroys = "destroys",
+        // Subtypes 8, 17, 18 (Wind, Anubis, Otenko) and the obstacle framework:
+        /// `sub_801B610`: bodies don't break it; obstacles and breaking
+        /// hits drop the HP to 0.
+        SparesBodies = "spares_bodies",
+        /// `sub_801B878` while its object's ExtraVars+4 is set (LilBoiler
+        /// erupting): such a touch is as any hit.
+        Ignores = "ignores",
+        /// EXE4's 0x08014058 (EXE6's `sub_801B4D4` but for these): an
+        /// obstacle's touch or a breaking hit destroys it, the HP as it is,
+        /// but no body's (hit flags 0x00800002, EXE6's 0x0C800002); and no
+        /// removal request is read.
+        DestroysSparingBodies = "destroys_sparing_bodies",
+    }
+}
+
+// Subtypes 8, 17, 18 (Wind, Anubis, Otenko) and the obstacle framework:
+named_flags! {
+    /// When `obstacle.react` holds an obstacle still while dimmed.
+    pub enum ObstacleHold {
+        /// `sub_801B394` and the others: once it has appeared (its
+        /// appearing action runs on while dimmed).
+        AfterAppearing = "after_appearing",
+        /// `sub_801B750`: always.
+        Always = "always",
+    }
+}
+
+named_flags! {
+    /// What a pushing hit (hit modifier 0x40) does in `obstacle.take_hits`.
+    pub enum ObstaclePush {
+        /// `sub_801AD9E`: pushes it, and its damage is forgotten.
+        ForgetsDamage = "forgets_damage",
+        /// `sub_801AD12`: pushes it, and the damage still lands.
+        KeepsDamage = "keeps_damage",
+        /// `sub_801ADFA`: as `keeps_damage`, and any hit from one side (but
+        /// hits of type 0x1000) pushes it a panel away.
+        AnyHit = "any_hit",
+        /// `sub_801AD6A`: it is never pushed.
+        Ignored = "ignored",
+    }
+}
+
+named_flags! {
+    /// How an obstacle is leaving the field (its collision `f2` word).
+    pub enum ObstacleRemoval {
+        /// Broken: its HP ran out, its time is up, the battle is over.
+        Broken = "broken",
+        /// A chip removed it.
+        Removed = "removed",
+        /// A chip made it blink out.
+        Vanished = "vanished",
+        /// A navi absorbed it.
+        Absorbed = "absorbed",
+    }
+}
+
+named_flags! {
+    /// What other objects ask of a field object (an obstacle: a rock, a
+    /// cube, a whirlwind...), in its collision's second flags word.
+    pub enum ObstacleFlag {
+        /// Break it at its next reaction.
+        Destroy = "destroy",
+        /// A hit made it flinch.
+        Flinch = "flinch",
+        /// A hit pushes it.
+        Pushed = "pushed",
+        /// Picked up to be thrown.
+        Thrown = "thrown",
+        /// Encased in ice or a bubble.
+        Encased = "encased",
+        /// A chip removes it.
+        Removed = "removed",
+        /// It blinks out.
+        Vanish = "vanish",
+        /// A side absorbs it (either side, side 0, side 1).
+        Absorbed = "absorbed",
+        AbsorbedBy0 = "absorbed_by_0",
+        AbsorbedBy1 = "absorbed_by_1",
+    }
+}
+
+named_flags! {
+    /// `sub_800F8CE`: how a removed obstacle's blink-out is going.
+    pub enum BlinkOut {
+        /// Not blinking out (removed some other way).
+        No = "no",
+        Blinking = "blinking",
+        Done = "done",
+    }
+}
+
+named_flags! {
+    /// What a chip asks of an obstacle (`sub_800F884`, `sub_800F898`;
+    /// EXE4's 0x0800B44C, ColdMan's: its flag2 0x2000 or
+    /// 0x4000, EXE6's 0x1000 or 0x2000).
+    pub enum ObstacleRequest {
+        Remove = "remove",
+        Vanish = "vanish",
+        /// Encased in ice: the role `hooks.encased` then puts an ice block
+        /// in its place.
+        EncaseInIce = "encase_in_ice",
+        /// Encased in a bubble: the role puts the bubble in its place.
+        EncaseInBubble = "encase_in_bubble",
+    }
+}
+
+/// What the engine runs for a content object in its place of the update
+/// order, instead of calling its kind's update (`Object:follow`,
+/// `Object:fly`): the update runs again once the drive ends or wakes it,
+/// so an object that only follows or flies makes no script call a tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Drive {
+    /// The kind's update runs.
+    #[default]
+    None,
+    Follow(Follow),
+    Fly(Fly),
+}
+
+/// Each tick: at `target`'s position plus `offset`; shown to each console
+/// as the target is (with `visibility`); wearing the target's sprite fields
+/// in `looks` as each console draws them. Once what `held` names of the
+/// target is empty it is hidden, its lifecycle is `destroy` and the drive
+/// ends (the update runs from the next tick); else it animates, unless the
+/// battle is paused, or dimmed without `while_dimmed`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Follow {
+    pub target: ObjectRef,
+    pub offset: Vec3,
+    /// Bit i: `SpriteField::ALL[i]`.
+    pub looks: u16,
+    pub visibility: bool,
+    pub held: Held,
+    pub while_dimmed: bool,
+}
+
+/// Where a followed object holds its follower: an object reference field
+/// of its own (an object's, or a navi's actor field), or a field of its
+/// state, by its place in the state's layout (while its state has that
+/// layout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Held {
+    Field(ObjectField),
+    Actor(ActorField),
+    State { layout: crate::StateId, field: u16 },
+}
+
+/// Each tick: its collision taken out, its hit sparks, then a panel's
+/// wait (its `phase_init` and `timer` count it, `timer2` ticks after the
+/// tick it enters on); then a step of a panel in its facing, its
+/// coordinates from the panel (with `climbs`, a pixel further down and a
+/// pixel higher than on the last), its collision's panels; its collision
+/// presented again, and it animates. Its update runs instead, and the
+/// drive ends, on a tick the battle is over, its collision was hit, taking
+/// its collision out would test it against something that came onto its
+/// panels since it was presented (which can hit it), or its step would
+/// leave the field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Fly {
+    pub climbs: bool,
+}
+
+/// A one-tick hit region (attack object #3), as `object_spawnCollisionRegion`
+/// takes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HitboxSpec {
+    pub panel: PanelPos,
+    pub element: u8,
+    pub z: i32,
+    /// The region it covers and the spark its hits show, or none.
+    pub region: Option<crate::RegionHandle>,
+    pub hit_effect: Option<crate::SparkHandle>,
+    /// Its collision types: what it reaches, what it is.
+    pub target: crate::CollisionHandle,
+    pub self_type: crate::CollisionHandle,
+    /// The damage word (damage | flag bits) and the counter byte.
+    pub damage: u16,
+    pub stamina: u16,
+    pub hit_mod: u8,
+    pub status: Option<crate::StatusHandle>,
+    pub bug: u8,
+    pub bug_arg: u8,
+}
+
+/// An afterimage (effect object #0x28, as `sub_80E33FA` spawns it): a copy
+/// of a sprite that stays behind, blinking unless `steady`, for `lifetime`
+/// ticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AfterimageSpec {
+    /// A sprite of its own, or None: a copy of the owner's (Param1 0xFF),
+    /// with its NameID and form overlay.
+    pub sprite: Option<SpriteId>,
+    pub anim: u8,
+    /// The game's flip value (bit 0 horizontal, bit 1 vertical).
+    pub flip: u8,
+    pub lifetime: u16,
+    pub color_shader: u16,
+    pub palette: u8,
+    pub shadow: Shadow,
+    pub steady: bool,
+    /// It ends early: 1 when its side leaves the forms whose afterimages
+    /// stay (EXE6's Beast forms), 2 when its owner's action drops below
+    /// 0x10 (0 never).
+    pub tether: u8,
+}
+
+/// A panel as content sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelInfo {
+    /// Its type: the game's number of it (`panel_type_name` names it).
+    pub kind: u8,
+    /// Its owner now, and at the start of the round.
+    pub alliance: u8,
+    pub home: u8,
+}
+
+/// A field column's stolen-area bookkeeping as content sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnInfo {
+    /// Whose home the column is.
+    pub home: u8,
+    /// Ticks before a stolen panel of it comes back.
+    pub timer: u16,
+}
+
+/// A side's defensive-chip record (the linked registry).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkedChip {
+    /// The chip (a handle of the chip registry); none: no record.
+    pub chip: Option<crate::ChipHandle>,
+    pub bonus: u16,
+    /// The damage word.
+    pub damage: u32,
+    /// The navi that used the chip; its deletion clears the record.
+    pub owner: Option<ObjectRef>,
+    /// The object that implements it, if any.
+    pub object: Option<ObjectRef>,
+}
+
+/// A side's damage-carry record (`dword_203CFB0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DamageCarryInfo {
+    /// The side's largest damage this tick, and last tick.
+    pub this_tick: u16,
+    pub previous: u16,
+    /// The object that set the record, and the target that takes last
+    /// tick's damage on top of its own.
+    pub source: Option<ObjectRef>,
+    pub target: Option<ObjectRef>,
+}
+
+/// Why an API call failed. Content errors are bugs in the content: the
+/// engine stops the battle, the same way on every machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiError {
+    Type {
+        field: &'static str,
+        error: TypeError,
+    },
+    ReadOnly(&'static str),
+    /// The object has no actor data (it isn't a navi).
+    NoActor(ObjectRef),
+    /// The object has no collision data.
+    NoCollision(ObjectRef),
+    /// The object has no content state (its kind isn't content).
+    NoState(ObjectRef),
+    /// Anything else, described.
+    Other(String),
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ApiError::Type { field, error } => write!(f, "field `{field}`: {error}"),
+            ApiError::ReadOnly(field) => write!(f, "field `{field}` is read-only"),
+            ApiError::NoActor(o) => write!(f, "{o:?} has no actor data"),
+            ApiError::NoCollision(o) => write!(f, "{o:?} has no collision data"),
+            ApiError::NoState(o) => write!(f, "{o:?} has no content state"),
+            ApiError::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl std::error::Error for ApiError {}
+
+pub type ApiResult<T> = Result<T, ApiError>;
+
+/// The engine, as content sees it. Implemented by the battle engine;
+/// called by content through a script runtime.
+///
+/// Every call acts at once: an object spawned by content runs later in
+/// the same tick, right after its spawner; a hit resolves when the later
+/// of two objects removes its collision. Nothing is batched or deferred.
+pub trait CoreApi {
+    // ---- The battle ------------------------------------------------------
+
+    /// Battle flag 4: the screen is dimmed and only objects that run while
+    /// dimmed update.
+    fn is_dimmed(&self) -> bool;
+    /// Battle flag 4 alone (EXE5's chaos failure dims the battle so with
+    /// none of a dimming's machinery: 0x080EE66A, 0x080EE76A).
+    fn set_dimmed(&mut self, on: bool);
+    /// EXE5's 0x08006AAE: the navi `identity` (actor type navi, with a
+    /// `body`) comes onto `panel` for `side`, brought by `summoner`, driven
+    /// by the rules of the summoner's side (their `controller` and
+    /// `navi_state`). None when a pool or the side's list of alive actors
+    /// is full.
+    fn spawn_navi(
+        &mut self,
+        identity: crate::IdentityHandle,
+        panel: PanelPos,
+        side: u8,
+        summoner: Option<ObjectRef>,
+    ) -> ApiResult<Option<ObjectRef>>;
+    fn is_paused(&self) -> bool;
+    /// `battle_isBattleOver`: a side has no navi left, or time is up.
+    fn is_battle_over(&self) -> bool;
+    /// `battle_isBattleOver` as the routines that read its Z flag see it:
+    /// over only once time is up (a KO reads as not over).
+    fn is_time_up(&self) -> bool;
+    /// The battle's count `which` (1 or 2) of fight ticks, modulo its
+    /// period (the rules' `flow.fight_cycles`), which grass heals by.
+    fn cycle(&self, which: u8) -> u8;
+    /// The shift a hit of element `hitter` takes against a body of element
+    /// `receiver` (the rules' `elements.weakness`).
+    fn weakness(&self, receiver: u8, hitter: u8) -> u8;
+    /// Add `amount` to `o`'s damage this window in `element` (0 to 4, 5 the
+    /// sixth slot), and to its raw damage too where `raw` (what barriers
+    /// and traps see).
+    fn add_damage(&mut self, o: ObjectRef, element: u8, amount: u16, raw: bool);
+    /// Add `amount` to `o`'s raw damage alone this window in `element`
+    /// (what barriers and traps see; none to its damage).
+    fn add_raw_damage(&mut self, o: ObjectRef, element: u8, amount: u16);
+    /// Add to `o`'s mood damage this window.
+    fn add_mood_damage(&mut self, o: ObjectRef, amount: u16);
+    /// Set hit modifier bits on `o` this window, both sides' too.
+    fn add_hit_mod(&mut self, o: ObjectRef, bits: u8);
+    /// Set hit modifier bits on `o` this window, the final modifier's alone
+    /// (EXE4's ice's push).
+    fn add_final_hit_mod(&mut self, o: ObjectRef, bits: u8);
+    /// Whether the form of `o`'s side has the trait named `name` (a form
+    /// definition's `traits`).
+    fn form_trait(&self, o: ObjectRef, name: &str) -> ApiResult<bool>;
+    /// `sub_80D8DEE` (EXE4's 0x080E0842): `side` loses the round: its actor
+    /// count (what the fight's result reads) to 0 and the round's time-up
+    /// byte set. (It also sets battle flag 8, which nothing in EXE4 reads.)
+    fn lose_round(&mut self, side: u8);
+    /// `sub_800ED90` and the chip record's flags (bit 1): the chip `user`
+    /// would use next deals damage (a player's at its hand's cursor, whose
+    /// empty hand reads `Rules::empty_hand`; another object's own chip).
+    fn next_chip_damages(&self, user: ObjectRef) -> bool;
+    fn battle_info(&self, f: BattleInfo) -> Value;
+    /// Report a sound effect both players hear (output only; nothing in
+    /// the simulation reads it).
+    fn play_sound(&mut self, sound: u16);
+    /// Report a sound only `side`'s player hears.
+    fn play_sound_for(&mut self, side: u8, sound: u16);
+    /// `sub_800AE90`: a warning marker on the HUD this tick (output only),
+    /// over the custom gauge or over the place `at` on the field, with
+    /// `sound` on every 16th frame of a console's own frame counter; on
+    /// `side`'s console only, or on both.
+    fn warn(&mut self, sound: u16, at: Option<Vec3>, side: Option<u8>);
+    /// `sub_801DC7C(dx, dy)`: `console`'s HUD (none: every console's)
+    /// numbers `o`'s HP under it (output only), `dx`, `dy` pixels from where
+    /// it projects `o`'s position; `damage`: the damage `o` took instead
+    /// (its max HP less its HP), uncentered.
+    fn show_hp(&mut self, o: ObjectRef, dx: i8, dy: i8, damage: bool, console: Option<u8>);
+    /// `sub_801DD34`: `o`'s HP number goes.
+    fn hide_hp(&mut self, o: ObjectRef);
+    /// `camera_initShakeEffect_80302a8`: both consoles' cameras shake for
+    /// `ticks` ticks at `magnitude` (0-3). Each shaking tick draws from
+    /// the consoles' own RNGs, which ChpShufl's re-deal reads.
+    fn shake_camera(&mut self, magnitude: u16, ticks: u16);
+    /// `sub_80302B6`: the cameras' second shake, `magnitude` (0-3) for
+    /// `ticks`.
+    fn shake_camera_secondary(&mut self, magnitude: u16, ticks: u16);
+    /// `battle_setFlags(0x20)` / `battle_clearFlags(0x20)`: the cameras
+    /// shake even while the battle is paused (EXE5's TomahawkSoul's change,
+    /// 0x08012138; the change's end clears it, 0x080121B6).
+    fn set_shake_through_pause(&mut self, on: bool);
+    /// `sub_8001382` / `sub_800138E` with a side's chips-enabled bit (the
+    /// intro bits' 0x04 for side 0, 0x08 for side 1, which a round starts
+    /// with set; `sub_800A772` reads them): the side's navi may use chips,
+    /// or not.
+    fn set_chips_enabled(&mut self, side: u8, on: bool);
+    /// `sub_80EA438`: a burst around `navi`'s panel (effect object #0x90,
+    /// which runs while paused).
+    fn spawn_burst(&mut self, navi: ObjectRef) -> Option<ObjectRef>;
+    /// HUD field `f` of side `side`'s.
+    fn hud(&self, f: HudField, side: u8) -> Value;
+    /// HUD field `f` of side `side`'s alone, or of every side's (none). An
+    /// error for a side's of a field every console shows alike.
+    fn set_hud(&mut self, f: HudField, side: Option<u8>, v: Value) -> ApiResult<()>;
+    /// `SetScreenFade(mode, speed)`: the screen fades from where it is.
+    fn screen_fade(&mut self, fade: ScreenFade, speed: u8);
+    /// One of a side's navi stats, or of a member's block of its party
+    /// (nil for a member it hasn't).
+    fn navi_stat(&self, of: StatsOf, stat: NaviStat) -> Value;
+    /// Change one of a side's navi stats (the writable ones), or a
+    /// member's block's.
+    fn set_navi_stat(&mut self, of: StatsOf, stat: NaviStat, v: Value) -> ApiResult<()>;
+    /// Side `side`'s party (`Battle::party`): its members, the one on the
+    /// field and the switches made.
+    fn party(&self, side: u8) -> PartyInfo;
+    /// Side `side`'s microphone level this tick, 0 to 255 (its input
+    /// record's): 255 where its player's input heard them
+    /// (`PlayerTick::mic_loud`: saito's microphone is silent or full),
+    /// else 0.
+    fn mic_level(&self, side: u8) -> u8;
+    /// While the round is set up (the rules' `round_setup`): a navi joins
+    /// side `side`'s party, with its fresh stats; its member number, which
+    /// `StatsOf` names its block by. Refused once the round has started,
+    /// for a full party, or a navi without fresh stats.
+    fn join_party(&mut self, side: u8, navi: u16) -> ApiResult<u8>;
+    /// A party's switch knockout's take-back (`take_back`: the in-battle
+    /// knockout, EXE5's action 0x4C, asks it at its step): the fallen
+    /// member's block keeps its stats, and member 0 comes back.
+    fn party_take_back(&mut self, navi: ObjectRef) -> ApiResult<()>;
+    /// A side's emotion (`sub_8015B54`).
+    fn emotion(&self, side: u8) -> String;
+    /// Set a side's mood, unless its navi's emotion is held (`sub_8015BEC`).
+    fn set_mood(&mut self, side: u8, mood: u8);
+    /// The folder a tool asks the side's rules to check (`folder_check`),
+    /// while it is checked.
+    fn checked_folder(&self) -> Option<CheckedFolder>;
+    /// What a hook a tool asked answered (`validate`, `folder_check`,
+    /// `folder_view`, `overview`): its value as plain data, which the
+    /// battle keeps for the tool that asked.
+    fn tool_answer(&mut self, answer: crate::Data);
+    /// A definition's name in the content's own strings (its locales'
+    /// language), else its key: for what the rules say to a tool.
+    fn def_name(&self, registry: crate::Registry, handle: u16) -> String;
+    /// `sub_802E4B8`: the side's SELECT special or takeover in progress.
+    fn side_special(&self, side: u8) -> SideSpecial;
+    /// The rules' takeover of side `side`'s navi starts, for `ticks`
+    /// (counted down in the navi's stage B, `sub_802E1D8`), or ends: while
+    /// it runs, idle asks the side's rules' `takeover` (EXE6's Cross
+    /// special: SideState +0x54 and +0x30).
+    fn take_over(&mut self, side: u8, ticks: u16);
+    /// The side's custom screen, in a custom hook of the rules (its button's
+    /// functions; docs/design/rules-in-luau.md §4.4): the refusal sound;
+    /// the shared machinery for the button pressed, in its `pressed` (the
+    /// picked chips scrapped: EXE6's DustCross; the chips not picked dealt
+    /// again: EXE6's ChpShufl); whether the last pick is a chip; the state
+    /// of the button pressed ("selectable", "unavailable", "selected").
+    fn custom_refuse(&mut self, side: u8) -> ApiResult<()>;
+    /// `custom.folder(side)`: the side's battle folder as its screen has
+    /// it, its 30 places in order, each chip with its code's number (A 0,
+    /// `*` 26; none: the code outside the alphabet), a used chip's place
+    /// empty until the screen deals; `custom.swap_folder(side, a, b)`: two
+    /// of its places swapped (0-based here); `custom.set_folder(side, place,
+    /// chip, code)`: a place written; `custom.hand_size(side)`: how many
+    /// chips the screen deals (as it deals, the framework's).
+    fn custom_folder(&self, side: u8) -> ApiResult<Vec<Option<(crate::ChipHandle, Option<u8>)>>>;
+    fn custom_swap_folder(&mut self, side: u8, a: u8, b: u8) -> ApiResult<()>;
+    fn custom_set_folder(&mut self, side: u8, place: u8, chip: crate::ChipHandle, code: Option<u8>) -> ApiResult<()>;
+    /// `custom.slot(side, slot)`: the chip in a slot of the screen (0 to
+    /// 11), dealt or offered; none: the slot holds no chip (it is empty, OK
+    /// or a button). `custom.picks(side)`: the picked slots, in order (a
+    /// button's slot where one is picked).
+    fn custom_slot(&self, side: u8, slot: u8) -> ApiResult<Option<CustomSlot>>;
+    fn custom_picks(&self, side: u8) -> ApiResult<Vec<u8>>;
+    /// `custom.offer(side, slot, chip, code, what)`: as the screen deals
+    /// (the rules' `deal`), a chip from outside the folder the screen shows
+    /// in a slot (0 to 11) once laid out (EXE4's dark chips); `code` the
+    /// code's number (A 0, `*` 26), none: the code outside the alphabet
+    /// (0x1B). `marks`: the marks its pick carries into its hand entry;
+    /// `listed`: whether the hand's picks list it (EXE4's chip offered
+    /// again, 0x0801F0B8 and 0x0801F118: marked 0x02 and not listed);
+    /// `shades`: whether the cursor on it shades the screen as on a dark
+    /// chip (EXE4's dark offer, 0x0801E4DE).
+    #[allow(clippy::too_many_arguments)]
+    fn custom_offer(&mut self, side: u8, slot: u8, chip: crate::ChipHandle, code: Option<u8>, marks: u8, listed: bool, shades: bool) -> ApiResult<()>;
+    fn custom_hand_size(&self, side: u8) -> ApiResult<u8>;
+    fn custom_sacrifice(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_redeal(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_last_pick_is_chip(&self, side: u8) -> ApiResult<bool>;
+    fn custom_cursor_state(&self, side: u8) -> ApiResult<&'static str>;
+    /// More of the side's custom screen, for the rules' buttons and windows
+    /// (§4.4): `custom_pick`, the button pressed is picked (in its
+    /// `pressed`). `by` (`custom_set_form`, `custom_form_taken`) is the
+    /// calling button's or window's name, whose pick holds the turn's form.
+    fn custom_pick(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_play(&mut self, side: u8, sound: &str) -> ApiResult<()>;
+    /// A sound of the rules' own the screen plays in its order, which only
+    /// `side`'s player hears (a window's or a button's: EXE6's Cross
+    /// window's, Beast Out's).
+    fn custom_play_sound(&mut self, side: u8, sound: u16) -> ApiResult<()>;
+    fn custom_set_column_icon(&mut self, side: u8, chip: Option<crate::ChipHandle>) -> ApiResult<()>;
+    /// `ticks`: the ticks it has had already.
+    fn custom_open_window(&mut self, side: u8, window: &str, ticks: u16) -> ApiResult<()>;
+    fn custom_window_tick(&self, side: u8) -> ApiResult<u16>;
+    fn custom_shake(&mut self, side: u8, magnitude: u16, ticks: u16) -> ApiResult<()>;
+    fn custom_frame(&self, side: u8) -> ApiResult<u32>;
+    fn custom_set_frame(&mut self, side: u8, frame: u32) -> ApiResult<()>;
+    fn custom_spin(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_fade(&mut self, side: u8, mode: &str, speed: u8) -> ApiResult<()>;
+    fn custom_set_face(&mut self, side: u8, form: Option<crate::FormHandle>) -> ApiResult<()>;
+    fn custom_pick_first(&mut self, side: u8, icon: Option<crate::ChipHandle>) -> ApiResult<()>;
+    fn custom_set_button_state(&mut self, side: u8, button: &str, state: &str) -> ApiResult<()>;
+    /// `custom.button_uses(side, button)` and `custom.set_button_uses(side,
+    /// button, uses)`: the uses the rules' button `button` has left on this
+    /// screen (its `uses` as the screen opened), for a button whose rules
+    /// count them (EXE4's SHUFFLE takes one as A is pressed, 0x08020376).
+    fn custom_button_uses(&self, side: u8, button: &str) -> ApiResult<u8>;
+    fn custom_set_button_uses(&mut self, side: u8, button: &str, uses: u8) -> ApiResult<()>;
+    fn custom_update_availability(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_draw_emblem(&mut self, side: u8, x: u32) -> ApiResult<()>;
+    /// The form a pick holds for the turn's start, with the transform
+    /// record's turns and Chaos flag (EXE5's Soul Unison; 0 and false
+    /// elsewhere), and which of the rules' buttons or windows (`by`, its
+    /// name) made the pick.
+    fn custom_set_form(&mut self, side: u8, by: &str, form: Option<crate::FormHandle>, turns: u8, alternate: bool) -> ApiResult<()>;
+    /// Whether a pick another button or window than `by` made holds the
+    /// turn's form.
+    fn custom_form_taken(&self, side: u8, by: &str) -> ApiResult<bool>;
+    fn custom_full(&self, side: u8) -> ApiResult<bool>;
+    fn custom_button_picked(&self, side: u8, button: &str) -> ApiResult<bool>;
+    /// The last pick, if it is a chip (dealt, or a link navi's own), as the
+    /// screen checked it (`custom.last_pick`).
+    fn custom_last_pick(&mut self, side: u8) -> ApiResult<Option<CustomPick>>;
+    /// The rules' button `button` takes the last pick's place, first in
+    /// the selection (EXE5's soul given for a chip, 0x080233E0); false when
+    /// the last pick isn't a chip (`custom.trade_last_pick`).
+    fn custom_trade_last_pick(&mut self, side: u8, button: &str) -> ApiResult<bool>;
+    /// The rules' button `button` is used on the last pick, a chip with
+    /// no button attached yet: the pick carries `modifiers` (the hand's
+    /// modifier bits) into the hand, and the button is picked until B takes
+    /// the chip back (EXE5's capsules, 0x080237B4); false when the last pick
+    /// isn't such a chip (`custom.attach_to_last_pick`).
+    fn custom_attach_to_last_pick(&mut self, side: u8, button: &str, modifiers: u8) -> ApiResult<bool>;
+    /// The last pick, a chip dealt from the folder, leaves the picks for
+    /// the rules' button `button`, which is picked (EXE5's Arm Change,
+    /// 0x080236C0: B, with the picks as they were, puts it back; at OK it
+    /// leaves the folder); false when the last pick isn't such a chip
+    /// (`custom.hold_last_pick`).
+    fn custom_hold_last_pick(&mut self, side: u8, button: &str) -> ApiResult<bool>;
+    /// The chip the rules' button `button` holds, as the screen checked
+    /// it (`custom.held_pick`).
+    fn custom_held_pick(&mut self, side: u8, button: &str) -> ApiResult<Option<crate::ChipHandle>>;
+    /// The held chip's icon in the column cell it left, shown or not
+    /// (`custom.set_held_icon`: EXE5's Arm Change's blink, 0x080236EC).
+    fn custom_set_held_icon(&mut self, side: u8, button: &str, shown: bool) -> ApiResult<()>;
+    /// The screen's fade (`custom.fade`'s, the screen's own) is still
+    /// running (`custom.fading`). (The dark chips' hover runs the same
+    /// record in the original, which the rules here don't wait on: it is the
+    /// player's layer's.)
+    fn custom_fading(&self, side: u8) -> ApiResult<bool>;
+    /// The screen's drawing, for a window of the rules: the window's sprites
+    /// (`sub_80279C8`: the emblem, the Regular chip's frame and the last
+    /// turns' block), the Regular chip's frame alone (`sub_802899C`), the
+    /// screen's cursor where it is (`sub_8028820`: EXE4's shuffle draws the
+    /// button's, 0x08020E08), the chip window showing the slot under the
+    /// cursor (`sub_8028476`), and the window's form list tab
+    /// (`sub_8026840`). Where the cursor is is the player's layer's, which
+    /// draws them.
+    fn custom_draw_window(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_draw_regular(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_draw_cursor(&mut self, side: u8) -> ApiResult<()>;
+    /// The icon of the chip a button holds (`custom_hold_last_pick`), over
+    /// the button (EXE5's 0x080254F4): nothing while none holds one.
+    fn custom_draw_held(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_show_chip_window(&mut self, side: u8) -> ApiResult<()>;
+    fn custom_set_form_list_tab(&mut self, side: u8, on: bool) -> ApiResult<()>;
+    /// The rules' buttons' states asked again (`sub_8028F48`).
+    fn custom_refresh_buttons(&mut self, side: u8) -> ApiResult<()>;
+    /// What the screen reads of its player that isn't the rules' setup: the
+    /// emotion it reads, and a random battle.
+    fn custom_player(&self, side: u8) -> ApiResult<CustomPlayer>;
+    fn end_takeover(&mut self, side: u8);
+    /// Its ticks left.
+    fn takeover_ticks(&self, side: u8) -> u16;
+    /// A side's player navi.
+    fn player(&self, side: u8) -> Option<ObjectRef>;
+    /// A side's combatants still in, in slot order.
+    fn alive_actors(&self, side: u8) -> Vec<ObjectRef>;
+    /// `sub_802EFEE`: the actor `side` tracks in the own-gauges mode
+    /// mode (its side state's +0x44), if any.
+    fn tracked(&self, side: u8) -> Option<ObjectRef>;
+    /// Slot `i` (from 0, of four) of a side's list of alive actors.
+    fn alive_actor_slot(&self, side: u8, i: u8) -> Option<ObjectRef>;
+    /// A side's count of alive navis (`sub_800A142` takes one off as a
+    /// deletion starts; a side at 0 has lost), read and written.
+    fn alive_count(&self, side: u8) -> u8;
+    fn set_alive_count(&mut self, side: u8, n: u8);
+    /// The objects of content kind `kind` (a kind handle) in the update
+    /// list, in update order, whatever their lifecycle state (the game's
+    /// walks of the list, such as `sub_80C67A4`).
+    fn objects_of_kind(&self, kind: u16) -> Vec<ObjectRef>;
+    /// `GetRNG2`: one draw of the simulation's RNG.
+    fn rng(&mut self) -> u32;
+    /// `GetPositiveSignedRNG2`: one draw, bit 31 cleared.
+    fn rng_positive(&mut self) -> u32;
+    /// `GetPositiveSignedRNG1` on `side`'s console: one draw of that
+    /// console's own RNG (RNG1), bit 31 cleared.
+    fn console_rng_positive(&mut self, side: u8) -> u32;
+    /// `sub_8000C72`: `n` entries shuffled over `rounds` rounds of two
+    /// `rng_positive` draws (`saito_battle::custom::folder::shuffle`): the
+    /// new order, each place the index (from 0) of the entry it now holds.
+    /// An error when 2 × rounds < n − 1.
+    fn shuffle_order(&mut self, n: usize, rounds: usize) -> ApiResult<Vec<usize>>;
+    /// `shuffle_order` on `side`'s console's RNG1 (`console_rng_positive`:
+    /// `sub_8000D12`, `sub_8000CA6`).
+    fn console_shuffle_order(&mut self, side: u8, n: usize, rounds: usize) -> ApiResult<Vec<usize>>;
+    /// `AddRandomVarianceToTwoCoords`: jitter x and z by up to mask/2
+    /// pixels (one draw).
+    fn jitter(&mut self, mask: u32, pos: Vec3) -> Vec3;
+    /// A side's hand: its cursor.
+    fn hand_cursor(&self, side: u8) -> u8;
+    /// `sub_800FC7C`: the cursor moves to the next chip.
+    fn advance_hand(&mut self, side: u8);
+    /// A field of entry `i` (from 0) of a side's hand (the hand from its
+    /// first chip, used ones too); nil past its entries.
+    fn hand_entry(&self, side: u8, i: u8, f: HandField) -> Value;
+    /// Set a field of entry `i` of a side's hand. An error past its entries.
+    fn set_hand_entry(&mut self, side: u8, i: u8, f: HandField, v: Value) -> ApiResult<()>;
+    /// The chip after `i` of a side's hand folds into the chip at `i` (its
+    /// damage and bonuses added) and leaves the hand, the chips after it
+    /// moving up one: with every per-slot field (`whole`: EXE4's WoodSoul's
+    /// status reset, 0x0800E294), or with their damage alone, each slot's
+    /// bonuses and marks staying (its custom screen's, 0x0801F242).
+    fn fold_hand_chip(&mut self, side: u8, i: u8, whole: bool);
+    /// A side's defensive-chip record.
+    fn linked(&self, side: u8) -> LinkedChip;
+    fn set_linked(&mut self, side: u8, rec: LinkedChip);
+    /// `sub_802CEA6`: clear it, telling its object to end.
+    fn clear_linked(&mut self, side: u8);
+    /// `sub_801EB18` (EXE4's 0x080164B4): the other player's console names
+    /// `chip` as used by `side` again, with its damage and bonus (the
+    /// rules' `effects.used_chip_ticks`): presentation only.
+    fn show_used_chip(&mut self, side: u8, chip: crate::ChipHandle, damage: u16, bonus: u16);
+    /// FullCust: the custom gauge is full.
+    fn fill_custom_gauge(&mut self);
+    /// `sub_801DFD0` (EXE5's CusVolt): the custom gauge drops by `n`, to 0
+    /// at least.
+    fn drain_custom_gauge(&mut self, n: u16);
+    /// `sub_801DF8C`: the custom gauge fills `rate` a tick (full at
+    /// 0x4000).
+    fn set_gauge_rate(&mut self, rate: u16);
+    /// A side's slow and fast gauge timers (`sub_802E070`+0x3C, +0x3A).
+    fn set_gauge_speed_ticks(&mut self, side: u8, slow: u16, fast: u16);
+    /// `sub_8010B78`: the damage a side's custom gauge gives (its own gauge
+    /// in the own-gauges mode, else the shared one).
+    fn gauge_damage(&self, side: u8) -> u16;
+    /// `sub_802E032`: add to a side's own custom gauge (battle flag 0x40),
+    /// up to full.
+    fn add_side_gauge(&mut self, side: u8, n: u16);
+    /// `sub_802E04E`: take from a side's own custom gauge (battle flag
+    /// 0x40), down to empty.
+    fn drain_side_gauge(&mut self, side: u8, n: u16);
+    /// `sub_8010488`'s special-source branch: add `n` to one of the bonuses
+    /// a side stores for its special chip (`index` 0: the Atk+ bonus a
+    /// damaging chip spends, +0x36; 1: the Navi+ bonus a navi chip spends,
+    /// +0x38). An index past them is an error.
+    fn add_special_bonus(&mut self, side: u8, index: u8, n: u16) -> ApiResult<()>;
+    /// `sub_800AB46`: bump a side's statistics counter.
+    fn bump_side_stat(&mut self, side: u8, index: u8, n: u8);
+    /// `sub_800AB2E`: set a side's statistics counter.
+    fn set_side_stat(&mut self, side: u8, index: u8, n: u8);
+    /// `sub_800AB3A`: a side's statistics counter.
+    fn side_stat(&self, side: u8, index: u8) -> u8;
+    /// The damage-carry record of the side that takes the damage
+    /// (`dword_203CFB0`; CopyDmg's): what that side took this tick and
+    /// last tick, the object that set it, and the target that also takes
+    /// last tick's damage.
+    fn damage_carry(&self, side: u8) -> DamageCarryInfo;
+    fn set_damage_carry(&mut self, side: u8, rec: DamageCarryInfo);
+
+    // ---- Panels -----------------------------------------------------------
+
+    fn panel_valid(&self, p: PanelPos) -> bool;
+    /// The center of a panel, 16.16 (x, y).
+    fn panel_center(&self, p: PanelPos) -> (i32, i32);
+    /// A panel's cached flags word (0 off the field).
+    fn panel_flags(&self, p: PanelPos) -> u32;
+    /// The flags word has every `require` bit and no `forbid` bit.
+    fn panel_check(&self, p: PanelPos, require: u32, forbid: u32) -> bool;
+    fn panel_info(&self, p: PanelPos) -> Option<PanelInfo>;
+    /// A side's registered field objects (the obstacles it owns: the
+    /// registry's three slots at BattleState+0xA0 + side * 0xC), in slot
+    /// order, empty slots left out.
+    fn side_field_objects(&self, side: u8) -> Vec<ObjectRef>;
+    /// A side's field-object registry slot `i` (from 0, of its three).
+    fn field_object_slot(&self, side: u8, i: u8) -> Option<ObjectRef>;
+    /// BattleState+0x40: the fight's ticks (capped), `sub_800A704`.
+    fn battle_time(&self) -> u32;
+    /// Every registered field object (the registry's eight slots at
+    /// BattleState+0xA0: each side's three, then the stage's two), in slot
+    /// order, empty slots left out.
+    fn all_field_objects(&self) -> Vec<ObjectRef>;
+    fn column_info(&self, x: u8) -> ColumnInfo;
+    fn set_column_timer(&mut self, x: u8, ticks: u16);
+    /// `object_setPanelAlliance`.
+    fn set_panel_alliance(&mut self, p: PanelPos, side: u8);
+    /// The game's number of the panel type it names `name` (its panel
+    /// rules' `numbers`), if it has one.
+    fn panel_type_named(&self, name: &str) -> Option<u8>;
+    /// The name of the game's panel type numbered `kind`.
+    fn panel_type_name(&self, kind: u8) -> String;
+    /// Panel `p`'s timer: what its type counts (an `expires` type's ticks
+    /// left; EXE4's pitfall's crumble), and setting it.
+    fn panel_timer(&self, p: PanelPos) -> u16;
+    fn set_panel_timer(&mut self, p: PanelPos, ticks: u16);
+    /// The field's cycle (EXE6's volcanos erupt by it: the panel rules'
+    /// `cycle`, counted down each panel update and back to its period at 0);
+    /// 0 in a game without one.
+    fn field_cycle(&self) -> u32;
+    /// A grounded body stands on panel `p`: one of its flags' bodies, and
+    /// none floating.
+    fn panel_body_grounded(&self, p: PanelPos) -> bool;
+    /// `_object_setPanelType` (`kind` the game's number of the type).
+    fn set_panel_type(&mut self, p: PanelPos, kind: u8);
+    /// `object_crackPanel`: crack a solid panel, or break a cracked,
+    /// unoccupied one.
+    fn crack_panel(&mut self, p: PanelPos) -> bool;
+    /// `object_breakPanel_dup2`: break a solid panel, or crack it while
+    /// something stands on it; with `sound` in place of the panel crack's
+    /// (`object_breakPanelLoud`).
+    fn break_panel(&mut self, p: PanelPos, sound: Option<u16>) -> bool;
+    /// `object_breakPanel`: break a solid panel nothing stands on (true);
+    /// leave any other alone.
+    fn break_empty_panel(&mut self, p: PanelPos) -> bool;
+    /// `object_isPanelSolid`: the panel is solid (something can stand on
+    /// it).
+    fn panel_solid(&self, p: PanelPos) -> bool;
+    /// `object_highlightPanel` (drawn only).
+    fn highlight_panel(&mut self, p: PanelPos);
+    /// Replace an object's whole header flag byte (in use 0x01, visible
+    /// 0x02, runs while paused 0x04, sprite not animating 0x08, runs while
+    /// dimmed 0x10, holds a reservation 0x20; 0x40 and 0x80 nothing reads):
+    /// what a spawner's bug leaves (the boulder's, `sub_80D2430`, reads the
+    /// byte from the wrong address). Everything else sets flags by name.
+    fn set_header_flags(&mut self, o: ObjectRef, flags: u8);
+    /// `object_reservePanel`.
+    fn reserve_panel(&mut self, o: ObjectRef, p: PanelPos) -> bool;
+    /// `object_removePanelReserve`.
+    fn unreserve_panel(&mut self, o: ObjectRef, p: PanelPos) -> bool;
+    /// `sub_800E618`: may `o` step onto `p`?
+    fn can_step(&self, o: ObjectRef, p: PanelPos) -> bool;
+    /// `sub_800A772`: its side's chips are enabled and its chip lockout
+    /// is over.
+    fn chips_enabled(&self, o: ObjectRef) -> ApiResult<bool>;
+    /// `sub_8010332`: the ticks a step of its ends with.
+    fn move_lag(&self, o: ObjectRef) -> ApiResult<u16>;
+    /// A panel that burns (its type's `burn`) burns `o`, an object not a
+    /// player's (held while the battle is dimmed): EXE5's 0x08016D80,
+    /// EXE4's 0x0801309E.
+    fn burn_on_panel(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// A navi no player controls leaves (EXE5's 0x08104306): no HP, the
+    /// damage-carry record forgets it, its reservation goes, it leaves its
+    /// side's lists and is destroyed.
+    fn leave(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_800E680`: could `o` stand on `p`, whichever side owns it?
+    fn can_stand_any_side(&self, o: ObjectRef, p: PanelPos) -> bool;
+    // Panel changes (dimming chip subtypes 2, 3, 5, 15 and 27).
+    /// `object_panel_setPoison` and its kind: a solid panel becomes type
+    /// `kind` in place (its flags keeping what the type mask doesn't own),
+    /// with `sound`; whether it was solid.
+    fn overwrite_panel(&mut self, p: PanelPos, kind: u8, sound: Option<u16>) -> bool;
+    /// `object_setPanelTypeBlink`: this frame the panel is drawn as type
+    /// `kind` (the game's number of the type) of side `side` (drawn only).
+    fn blink_panel(&mut self, p: PanelPos, kind: u8, side: u8);
+    /// The panel is drawn, or not, from now on (drawn only; its front edge
+    /// with it): the original's panel display byte's bit 0x40.
+    fn set_panel_visible(&mut self, p: PanelPos, visible: bool);
+    /// `object_breakPanel_dup1`: break a solid panel, or crack it when
+    /// something stands on it; true only when it broke.
+    fn shatter_panel(&mut self, p: PanelPos) -> bool;
+
+    // ---- Objects -----------------------------------------------------------
+
+    /// Spawn an object of kind `kind` (a handle of the kind registry): it
+    /// takes its pool's lowest free slot and goes into the update list
+    /// where `at` says (right after the object that spawned it, it runs
+    /// later this tick). Its content state starts zeroed. None if the pool
+    /// is full.
+    fn spawn_def(&mut self, kind: u16, pos: Vec3, at: SpawnAt) -> ApiResult<Option<ObjectRef>>;
+    /// The object's kind (a handle of the kind registry).
+    fn object_kind(&self, o: ObjectRef) -> Option<u16>;
+    /// What navi `o` runs: a content action (by handle), or one of the
+    /// rules' own states and actions (by name).
+    fn navi_action(&self, o: ObjectRef) -> ApiResult<NaviAction>;
+    /// `loc_80126EA`: chip `chip` (a handle) as the navi's attack: its
+    /// record's damage, hit parameter, lockout and element, no bonus, not
+    /// charged (the weapon routines that fire a chip; a use's
+    /// `sub_80126E4` without its count).
+    fn load_chip_attack(&mut self, o: ObjectRef, chip: u16) -> ApiResult<()>;
+    /// `sub_8010740`: in a link battle, the opponent's support Rush takes
+    /// `chip` from the navi `o` if the chip is one it cancels (flags2 bit
+    /// 2): the support comes and is spent. Whether it did.
+    fn rush_cancels(&mut self, o: ObjectRef, chip: u16) -> ApiResult<bool>;
+    /// Free the slot now (the object stops running).
+    fn free(&mut self, o: ObjectRef);
+    /// `object_genericDestroy`: release panel reservations and collision,
+    /// then free.
+    fn destroy(&mut self, o: ObjectRef);
+    fn lifecycle(&self, o: ObjectRef) -> Lifecycle;
+    /// Enter a lifecycle state, from its first action and phase (the
+    /// game's word store of state, action, phase and phase init).
+    fn set_lifecycle(&mut self, o: ObjectRef, l: Lifecycle);
+    /// Change only the lifecycle state, keeping the action and phase (the
+    /// game's byte store).
+    fn set_lifecycle_only(&mut self, o: ObjectRef, l: Lifecycle);
+    /// Put content object `o` on drive `d` (none: its update runs).
+    fn set_drive(&mut self, o: ObjectRef, d: Drive) -> ApiResult<()>;
+    /// Whether the engine calls side `side`'s rules' hook `hook` (each is
+    /// called from the round's setup until the rules say otherwise): one not
+    /// called answers nothing, as a hook the rules don't have.
+    fn listen(&mut self, side: u8, hook: crate::RulesHook, on: bool) -> ApiResult<()>;
+    /// The panel kinds (bit n: kind n) on which side `side`'s rules'
+    /// `navi_panel` is called for a navi standing on one (none at first).
+    fn listen_panels(&mut self, side: u8, kinds: u128) -> ApiResult<()>;
+    /// Switch to `action` from its first phase (the object's own action
+    /// byte; a navi's action is a definition: `set_content_attack`).
+    fn set_action(&mut self, o: ObjectRef, action: u8) -> ApiResult<()>;
+    fn get(&self, o: ObjectRef, f: ObjectField) -> ApiResult<Value>;
+    fn set(&mut self, o: ObjectRef, f: ObjectField, v: Value) -> ApiResult<()>;
+    /// Field `f` as side `side`'s console has it: the consoles each decide
+    /// `visible` (where the original's consoles clear it by rules of their
+    /// own side); the others read alike. ([`CoreApi::get`] reads the local
+    /// side's console's.)
+    fn get_for(&self, o: ObjectRef, f: ObjectField, side: u8) -> ApiResult<Value>;
+    /// Field `f` on side `side`'s console alone (presentation; setting it
+    /// with [`CoreApi::set`] is every console's). An error for a field
+    /// every console has alike: all but `visible`.
+    fn set_for(&mut self, o: ObjectRef, f: ObjectField, side: u8, v: Value) -> ApiResult<()>;
+    /// `sub_800EB6C` on `viewer`'s console: its player sees `side`'s
+    /// objects (its own side's always; the other side's unless its navi is
+    /// blind, a navi with no collision data yet as the game reads it then).
+    fn sees(&self, viewer: u8, side: u8) -> bool;
+    /// +1 facing right, -1 facing left.
+    fn facing(&self, o: ObjectRef) -> i32;
+    /// `object_setAnimation`: request animation `anim`, restarting it even
+    /// if it is current.
+    fn set_animation(&mut self, o: ObjectRef, anim: u8);
+    /// `object_updateSprite`: load a newly requested animation and step
+    /// the sprite, unless paused, dimmed (for objects that don't run while
+    /// dimmed) or held.
+    fn update_sprite(&mut self, o: ObjectRef);
+    /// `object_updateSpriteTimestop`: the same, but only skipped while
+    /// paused.
+    fn update_sprite_while_dimmed(&mut self, o: ObjectRef);
+    /// `sub_801BCD0`: the same, paused or not.
+    fn step_sprite(&mut self, o: ObjectRef);
+    /// `sub_801BC64`: `update_sprite`'s gating (dimming, holds), but paused
+    /// or not.
+    fn update_sprite_even_paused(&mut self, o: ObjectRef);
+    /// `object_updateSpritePaused`: load a newly requested animation and
+    /// step the sprite, paused or not, but not while dimmed (and whatever
+    /// `no_sprite_update` says).
+    fn update_sprite_while_paused(&mut self, o: ObjectRef);
+    /// `sub_801BC24`: load a newly requested animation (without stepping
+    /// it), else step the sprite; `update_sprite`'s gating but for holds.
+    fn load_or_step_sprite(&mut self, o: ObjectRef);
+    /// The object's sprite attach point `n`, in pixels, facing its way.
+    fn attach_point(&self, o: ObjectRef, n: u8) -> (i32, i32);
+    /// `object_setCoordinatesFromPanels`: x and y from the panel.
+    fn set_coordinates_from_panel(&mut self, o: ObjectRef);
+    /// `object_setPanelsFromCoordinates`.
+    fn set_panel_from_coordinates(&mut self, o: ObjectRef);
+    /// `object_updateCollisionPanels`.
+    fn update_collision_panels(&mut self, o: ObjectRef);
+    /// Onto the destination panel of a move: the panel, the reservation,
+    /// the coordinates and the collision.
+    fn snap_to_future_panel(&mut self, o: ObjectRef);
+    /// The object's content state (None for kinds the engine implements):
+    /// a freed object's is what it left, until its slot is taken again.
+    fn state_mut(&mut self, o: ObjectRef) -> Option<StateMut<'_>>;
+    /// The game's rules' state of side `side` (docs/design/rules-in-luau.md
+    /// §5): one block.
+    fn rules_state_mut(&mut self, side: u8) -> ApiResult<&mut Block>;
+    /// The side's player's setup of the rules: what the player brought,
+    /// read-only in battle.
+    fn rules_setup(&self, side: u8) -> ApiResult<&Block>;
+    /// Side `side`'s navi's stats of its game's own (the rules' `stats`):
+    /// one block in the navi's stats, by the rules' schema.
+    fn navi_game_stats_mut(&mut self, of: StatsOf) -> ApiResult<&mut crate::SmallBlock>;
+    /// `SpawnT4BattleObjectWithId0`: the one-shot effect `look`, turned as
+    /// each side's console turns it (`flips`, by side: the same flip
+    /// twice, or each console's own, where the original passes the
+    /// console's side).
+    fn spawn_effect(&mut self, pos: Vec3, look: crate::EffectHandle, flips: [u8; 2], palette_add: u8, priority: u8) -> Option<ObjectRef>;
+    /// `SpawnT4BattleObjectWithId0` called again straight after a spawn, at
+    /// height `z`: its X and Y what the object allocator left in their
+    /// registers, which the engine doesn't know.
+    fn spawn_effect_after_spawn(&mut self, z: i32, look: crate::EffectHandle, flip: u8, palette_add: u8, priority: u8) -> Option<ObjectRef>;
+    /// `sub_801BD3C`: the one-shot effect `look` on each field panel of
+    /// hit region `region` around (x, y), turned the way side `side`
+    /// faces, at height `z`; a whole-field region's from the bottom right,
+    /// on the ground.
+    fn spawn_region_effects(&mut self, x: i32, y: i32, region: crate::RegionHandle, side: u8, look: crate::EffectHandle, z: i32);
+    /// `object_spawnCollisionRegion`: a one-tick hit region spawned by
+    /// `owner`.
+    fn spawn_hitbox(&mut self, owner: ObjectRef, spec: &HitboxSpec) -> Option<ObjectRef>;
+    /// `sub_80E08C4`: hit spark `look` at `pos`.
+    fn spawn_spark(&mut self, owner: ObjectRef, pos: Vec3, look: crate::SparkHandle) -> Option<ObjectRef>;
+    /// `sub_80C468C`: a form overlay (actor 0x57) on `owner`: `sprite`,
+    /// following the owner's animation plus `anim_offset`; `stepping` 0
+    /// normal, 1 while dimmed, 2 always (Param3); a pixel nearer when
+    /// `pinned`; wearing the owner's palette when `owner_palette`.
+    fn spawn_form_overlay(
+        &mut self,
+        owner: ObjectRef,
+        sprite: SpriteId,
+        stepping: u8,
+        anim_offset: u8,
+        pinned: bool,
+        owner_palette: bool,
+    ) -> Option<ObjectRef>;
+    /// `sub_80E11E0`: a screen palette flash (effect object #0x0A) of
+    /// `variant` (0 white or red, 1 white over two layers) for `ticks`,
+    /// optionally going on while dimmed or paused.
+    fn spawn_palette_flash(&mut self, variant: u8, ticks: u8, while_dimmed: bool, while_paused: bool) -> Option<ObjectRef>;
+    /// `sub_80E33FA`: an afterimage of `owner`'s side at `pos` (a sprite of
+    /// its own, or a copy of the owner's).
+    fn spawn_afterimage(&mut self, owner: ObjectRef, pos: Vec3, spec: &AfterimageSpec) -> Option<ObjectRef>;
+    /// `sub_8010DF6`: put on `o` what `identity` wears (its `parts`: the
+    /// original's actor record's init hook's routine), kept in `o`'s second
+    /// related slot (CircusMan's second one in its second overlay). `arg`
+    /// (r2): they step even while paused.
+    fn add_parts(&mut self, o: ObjectRef, identity: crate::IdentityHandle, arg: u8);
+    /// `sub_8011044`: take them off (at their next update), if the
+    /// identity's death hook does.
+    fn remove_parts(&mut self, o: ObjectRef, identity: crate::IdentityHandle);
+    /// An overlay's parameter ([`OverlayField`]): an error for an object
+    /// that isn't the overlay it names (the Param3 any object has).
+    fn overlay_get(&self, o: ObjectRef, f: OverlayField) -> ApiResult<Value>;
+    fn overlay_set(&mut self, o: ObjectRef, f: OverlayField, v: Value) -> ApiResult<()>;
+
+    // ---- Navis and the attack in progress -------------------------------------
+
+    fn actor_get(&self, o: ObjectRef, f: ActorField) -> ApiResult<Value>;
+    fn actor_set(&mut self, o: ObjectRef, f: ActorField, v: Value) -> ApiResult<()>;
+    fn request(&self, o: ObjectRef, f: RequestFlag) -> ApiResult<bool>;
+    fn set_request(&mut self, o: ObjectRef, f: RequestFlag, on: bool) -> ApiResult<()>;
+    fn navi_state(&self, o: ObjectRef, f: NaviState) -> ApiResult<bool>;
+    fn set_navi_state(&mut self, o: ObjectRef, f: NaviState, on: bool) -> ApiResult<()>;
+    /// Whether `key` is in the navi's button record `pad`.
+    fn key(&self, o: ObjectRef, pad: Pad, key: Key) -> ApiResult<bool>;
+    /// The running content action's state, zeroed when an action of another
+    /// layout last used it.
+    fn action_state_mut(&mut self, o: ObjectRef) -> ApiResult<StateMut<'_>>;
+    /// The attack state as a state of layout `state` (zeroed unless an
+    /// action of that layout last used it): how an action's update sees it,
+    /// and how a weapon routine sets up the action it names before the
+    /// action starts.
+    fn attack_state_for(&mut self, o: ObjectRef, state: StateId) -> ApiResult<StateMut<'_>>;
+    /// The state layout of a content action (a handle of the action
+    /// registry).
+    fn action_schema(&self, action: u16) -> ApiResult<StateId>;
+    fn status(&self, o: ObjectRef, flag: StatusFlag) -> ApiResult<bool>;
+    fn set_status(&mut self, o: ObjectRef, flag: StatusFlag, on: bool) -> ApiResult<()>;
+    /// Clear the whole status word (CollisionData ObjectFlags1 = 0).
+    fn clear_statuses(&mut self, o: ObjectRef) -> ApiResult<()>;
+    fn status_timer(&self, o: ObjectRef, t: StatusTimer) -> ApiResult<u16>;
+    fn set_status_timer(&mut self, o: ObjectRef, t: StatusTimer, v: u16) -> ApiResult<()>;
+    /// `object_setDefaultCounterTime`: open the attack's counter window.
+    fn open_counter_window(&mut self, o: ObjectRef, ticks: u8);
+    /// `sub_801056A`: the reactive-defense abort attacks check after each
+    /// phase.
+    fn check_reactive_abort(&mut self, o: ObjectRef, guard: bool);
+    /// `sub_80F22F8`'s spawns: the two objects a navi keeps in battle mode
+    /// 9 (the roles' `mode9_attack` and `mode9_actor`).
+    fn spawn_mode9_objects(&mut self, o: ObjectRef);
+    /// `sub_80105F2`: a stance's own trap caught a hit (the AntiDmg
+    /// program's action 0x5A): its counter starts at the next tick, AntiDmg's
+    /// (0x47) or, for a sword hit, AntiSwrd's (0x48), with the stance's damage
+    /// word, lockout and variant.
+    fn start_stance_counter(&mut self, o: ObjectRef);
+    /// `sub_8011450`: restart the navi's form overlay with it after an
+    /// animation change.
+    fn refresh_form_overlay(&mut self, o: ObjectRef);
+    /// `object_exitAttackState`: back to the idle action with animation 0,
+    /// the attack's lockout handed on by the rules; with `keeps_lockout`,
+    /// none handed on (EXE4's 0x0800CA28).
+    fn exit_attack(&mut self, o: ObjectRef, keeps_lockout: bool);
+
+    // ---- What a game's rules do to a navi (docs/design/rules-in-luau.md §4.5) ----
+
+    /// `sub_800F46C` + `sub_800F2C6`: face the default way under the
+    /// standard column patterns, and the sprite with it.
+    fn face_default(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_80C4C3A` on the navi's aura: the Full Synchro aura goes.
+    fn end_full_synchro_aura(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_80158FA`: movement, reactions and the slower statuses end.
+    fn drop_statuses(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_801A264`: a navi's statuses end: their flags, requests and
+    /// timers (not the whole status word, as `clear_statuses`).
+    fn end_statuses(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_80144C0`: the full status reset (NaviCust state, hand bonuses,
+    /// hit modifier, region, charge, weapons, the form's flags, element,
+    /// body damage).
+    fn reset_status(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_8014080` (without `undershirt`, `sub_80140EE`'s): MegaMan's body
+    /// programs go (SuperArmor, FloatShoe, Undershirt, AirShoe, the B+Back
+    /// special); a link navi keeps its. Whether the navi changes form (and
+    /// lost them).
+    fn strip_body_programs(&mut self, o: ObjectRef, undershirt: bool) -> ApiResult<bool>;
+    /// `sub_801469C`: the form's flags back on the navi.
+    fn refresh_form_flags(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_801A554`'s work for a status now: its timer set and its
+    /// requests raised (a bug's paralysis and blindness, `sub_801A77A`).
+    fn take_status(&mut self, o: ObjectRef, status: crate::StatusHandle) -> ApiResult<()>;
+    /// The form the navi's side asked to change into at this turn's start
+    /// (none: none, or the base form).
+    fn form_change_target(&self, o: ObjectRef) -> Option<crate::FormHandle>;
+    /// The rules ask for the navi's change into `form` as the fight runs
+    /// (EXE4's dark soul, 0x0800B8B0: AIData +0x10 15): its side's target
+    /// this turn, and the form change's request.
+    fn ask_form_change(&mut self, o: ObjectRef, form: crate::FormHandle) -> ApiResult<()>;
+    /// The terms of the form change the side asked for: its turns, and
+    /// whether it is the alternate (the turn's transform record's +3, +1:
+    /// EXE5's soul's turns, and Chaos Unison).
+    fn form_change_terms(&self, o: ObjectRef) -> (u8, bool);
+    /// `sub_801171C`: back to the idle action (the animation untouched).
+    fn end_attack(&mut self, o: ObjectRef);
+    /// `object_setAttack0..5`: start the content action `action` (a handle
+    /// of the action registry); `kind` records which helper (1 buster, 2
+    /// chip or charged shot, 3 special, 4 move...).
+    fn set_content_attack(&mut self, o: ObjectRef, action: u16, kind: u8) -> ApiResult<()>;
+    /// `sub_801011A`: clear the attack's link bytes and unfreeze the
+    /// target marker.
+    fn reset_attack_links(&mut self, o: ObjectRef);
+    /// `sub_800FA54`: the held direction (1 up, 2 down, 3 back, 4
+    /// forward; 0 none).
+    fn held_direction(&self, o: ObjectRef) -> u8;
+    /// `sub_800F964`: where a step in `dir` would go, if it can.
+    fn step_target(&self, o: ObjectRef, dir: u8) -> Option<PanelPos>;
+    /// `sub_80116AE`: start a step toward `dir` from input.
+    fn start_move(&mut self, o: ObjectRef, dir: u8);
+    /// `sub_800EDD0`'s chip: the hand's chip at the cursor (none: the hand
+    /// is empty).
+    fn next_chip(&self, o: ObjectRef) -> ApiResult<Option<crate::ChipHandle>>;
+    /// `sub_800FB54`: use the chip the navi's requests ask for (as idle
+    /// does on A): whether its use started.
+    fn use_chip(&mut self, o: ObjectRef) -> ApiResult<bool>;
+    /// The attack `chip` starts (`sub_80127C0`'s dispatch: its action, or
+    /// the dimming, navi or instant chip's), in `set_attack` slot `kind`.
+    fn start_chip_attack(&mut self, o: ObjectRef, chip: crate::ChipHandle, kind: u8) -> ApiResult<()>;
+    /// `sub_80116AE(5, end_lag, 2)`: a step straight to `target` (column 0:
+    /// no step), then `end_lag` ticks; with `face`, EXE5's `sub_80116F6`'s
+    /// (the object a step turns to face in the panel patterns 0x23, 0x31
+    /// and 0x33).
+    fn start_move_to(&mut self, o: ObjectRef, target: PanelPos, end_lag: u16, face: Option<ObjectRef>) -> ApiResult<()>;
+    /// `sub_80117BA`: weapon `weapon`'s setup, and the action it names
+    /// started in `set_attack` slot `kind`.
+    fn start_weapon(&mut self, o: ObjectRef, weapon: crate::WeaponHandle, kind: u8) -> ApiResult<()>;
+    /// `sub_801B9E6`'s attack, from inside the wrapper (the role
+    /// `actions.wrapper`): run the action the navi runs.
+    fn run_wrapped(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_800FC30`: the next chip in the hand starts inside the wrapper
+    /// (prepared, its action started, `wrapped` 1): not one with the
+    /// `no_chain` trait, a dimming chip, or the empty hand. Whether it did.
+    fn chain_next_chip(&mut self, o: ObjectRef) -> ApiResult<bool>;
+    /// `sub_8013CC4`: the NaviCust panel-trail bugs on the panel the navi
+    /// leaves, `from`.
+    fn panel_trail(&mut self, o: ObjectRef, from: PanelPos) -> ApiResult<()>;
+    /// `sub_80E1654` (on) and `sub_80E1662` (off): the target marker holds
+    /// where it is, looking locked on, or follows its target again.
+    fn freeze_target_marker(&mut self, marker: ObjectRef, on: bool) -> ApiResult<()>;
+    /// `sub_800F2FC`: turn to face `target`'s column.
+    fn face_toward(&mut self, o: ObjectRef, target: ObjectRef) -> ApiResult<()>;
+    /// `object_canMove`: not immobilized, sliding or moving.
+    fn can_move(&self, o: ObjectRef) -> bool;
+    /// `sub_800E2FC`: heal `amount` HP with the recovery sparkle and
+    /// sound; with `anti_recovery`, an opponent's armed AntiRecv turns it
+    /// into damage instead (true when it did).
+    fn heal(&mut self, o: ObjectRef, amount: u16, anti_recovery: bool) -> bool;
+    /// `object_subtractHP`: the HP down by `amount`, to 0, by the
+    /// object's side's rules (EXE5's drains a player's side's gauge too, and
+    /// may hold a dark MegaMan at 1 HP: its last stand).
+    fn subtract_hp(&mut self, o: ObjectRef, amount: u16);
+    /// `sub_801265A`: the buster's damage (the attack level, with the
+    /// navi's and form's bonus, at most 10; 1 when worn out).
+    fn buster_damage(&self, o: ObjectRef) -> u16;
+    /// `sub_80127C0(0)`: fill the attack variables from the chip at the
+    /// hand's cursor (its damage, bonuses and modifiers).
+    fn prepare_chip(&mut self, o: ObjectRef);
+
+    // ---- Sprites -------------------------------------------------------------
+
+    /// `sprite_load`: load a sprite (its animation and look reset) and let
+    /// it animate (`no_sprite_update` off).
+    fn sprite_load(&mut self, o: ObjectRef, id: SpriteId);
+    /// Start animation `anim` from its first frame.
+    fn sprite_set_animation(&mut self, o: ObjectRef, anim: u8);
+    /// Advance the animation one tick (no gating).
+    fn sprite_step(&mut self, o: ObjectRef);
+    /// Draw `o`'s sprite where part `.1` of object `.0`'s sprite sits in its
+    /// frame (that part's offset added to `o`'s position, mirrored with the
+    /// owner's flip), or (none) where `o` is: what rides on another's sprite
+    /// (`sub_80030BA`'s place). Presentation: no tick reads it.
+    fn sprite_attach(&mut self, o: ObjectRef, to: Option<(ObjectRef, u8)>);
+    fn sprite_get(&self, o: ObjectRef, f: SpriteField) -> Value;
+    fn sprite_set(&mut self, o: ObjectRef, f: SpriteField, v: Value) -> ApiResult<()>;
+    /// Field `f` as side `side`'s console draws it: the consoles draw some
+    /// fields each its own way (where the original's consoles decide a look
+    /// by their own side), the palette, `hflip`, the color shader, the
+    /// alpha, the mosaic and the hidden parts; the others read alike.
+    /// ([`CoreApi::sprite_get`] reads the local side's console's.)
+    fn sprite_get_for(&self, o: ObjectRef, f: SpriteField, side: u8) -> Value;
+    /// Field `f` on side `side`'s console alone (presentation; setting the
+    /// field with [`CoreApi::sprite_set`] is every console's). An error for
+    /// a field every console draws alike.
+    fn sprite_set_for(&mut self, o: ObjectRef, f: SpriteField, side: u8, v: Value) -> ApiResult<()>;
+
+    // ---- Collision -------------------------------------------------------------
+
+    /// Give the object a collision slot; false if none is free.
+    fn create_collision(&mut self, o: ObjectRef) -> bool;
+    /// Set up the registration from the object: its side, panel, element
+    /// and damage, and what it is and reacts to (collision types).
+    fn setup_collision(&mut self, o: ObjectRef, self_type: crate::CollisionHandle, target_type: crate::CollisionHandle, hit_mod: u8);
+    /// `sub_801A082`: redo the types (and damage) of a registration.
+    fn reset_collision_types(&mut self, o: ObjectRef, self_type: crate::CollisionHandle, target_type: crate::CollisionHandle, hit_mod: u8);
+    fn collision_get(&self, o: ObjectRef, f: CollisionField) -> ApiResult<Value>;
+    /// The damage taken this window in element `element` (0 null, 1 fire,
+    /// 2 aqua, 3 elec, 4 wood, 5 the sixth slot), as totaled.
+    fn collision_element_damage(&self, o: ObjectRef, element: u8) -> ApiResult<u16>;
+    /// `sub_801A4DC`: the objects whose collisions hit `o`'s this window
+    /// (the registrations' parents), in slot order.
+    fn collision_hit_by(&self, o: ObjectRef) -> ApiResult<Vec<ObjectRef>>;
+    fn collision_set(&mut self, o: ObjectRef, f: CollisionField, v: Value) -> ApiResult<()>;
+    /// Register on the region's panels (clearing the last results).
+    fn present_collision(&mut self, o: ObjectRef);
+    /// Unregister, resolving hits against whatever is registered there.
+    fn remove_collision(&mut self, o: ObjectRef);
+    fn free_collision(&mut self, o: ObjectRef);
+    /// `object_setCollisionPanelsToCurrent`: the registration's panel
+    /// becomes the object's (its move direction kept).
+    fn set_collision_panel(&mut self, o: ObjectRef);
+    /// `object_highlightCurrentCollisionPanels`: highlight the panels the
+    /// registration's region covers.
+    fn highlight_collision_panels(&mut self, o: ObjectRef);
+    /// `object_spawnCollisionEffect`: the hit spark of a registration that
+    /// just hit something (one RNG draw when it shows).
+    fn hit_spark(&mut self, o: ObjectRef);
+    /// `sub_801156A`: an object with HP takes this tick's damage (the sum
+    /// of its hits by element): a guard spark if it blocked, then the HP
+    /// loss (not in mode 1), and a white flash while hit, with a sound in
+    /// modes 0 and 2. -1 when its HP ran out, 1 when hit in another mode,
+    /// else 0.
+    fn take_damage(&mut self, o: ObjectRef, mode: u8) -> i32;
+    /// `sub_801A7CC`: raise a barrier on `o` (its collision data).
+    fn raise_barrier(&mut self, o: ObjectRef, spec: BarrierSpec) -> ApiResult<()>;
+
+    // ---- Services ------------------------------------------------------------
+
+    /// Run a step of the dimming service for the controller `o`.
+    fn dimming(&mut self, o: ObjectRef, step: DimmingStep);
+    /// A telop for controller `o` whose effect may already run
+    /// (`sub_800BA8A`'s): its first tick starts it, naming `chip` unless the
+    /// controller's names one (none: the zeroed chip field's), once the other
+    /// side isn't mid-dimming (a record already running stays so); once the
+    /// banner is done and no cut-in holds the side, the side's dimming runs:
+    /// true. What follows is the caller's.
+    fn dimming_telop_running(&mut self, o: ObjectRef, chip: Option<crate::ChipHandle>) -> bool;
+    /// The navi that used `side`'s dimming chip (the record's +0xC; none
+    /// once the dimming changed sides).
+    fn dimming_user(&self, side: u8) -> Option<ObjectRef>;
+    /// `side`'s dimming runs its effect from now (the record's state 4).
+    fn dimming_run(&mut self, side: u8);
+    /// A telop for `side` naming `chip` without damage, and its sound; it
+    /// ends no used chip's name.
+    fn dimming_chip_telop(&mut self, side: u8, chip: Option<crate::ChipHandle>);
+    /// `side`'s telop is done.
+    fn dimming_telop_done(&self, side: u8) -> bool;
+    /// The dimming changes sides (`sub_800BE2C`'s): controller `o`'s side's
+    /// dimming is over, and `o` takes the other side, which owns, runs and
+    /// started it (its own controller is told to end).
+    fn dimming_turn(&mut self, o: ObjectRef);
+    /// `sub_800ABC6`: the trap's mark over `o`'s panel (the role
+    /// `effects.trap_mark` facing the local side's way, where the chip-use
+    /// rules' `anti_navi_sparkle` puts it), with its sound: its height.
+    fn trap_mark(&mut self, o: ObjectRef) -> i32;
+    /// `sub_800BF16`: `side` starts a dimming with `controller` (None: its
+    /// spawn failed), used by `user`; `no_cut_in`: the other side can't cut
+    /// in on it. For controllers that aren't a chip's (a trap springing).
+    /// `telop`: the chip its telop names (None: a zeroed chip field's, the
+    /// roles' `zeroed` chip) and the bonus shown with it (what the
+    /// controller's spawn stored at its +0x30 and +0x32; presentation
+    /// only).
+    fn start_dimming(
+        &mut self,
+        side: u8,
+        no_cut_in: bool,
+        controller: Option<ObjectRef>,
+        user: ObjectRef,
+        telop: Option<(Option<ChipHandle>, u16)>,
+    );
+    /// `sub_80E1352`: a navi chip's user vanishes while its navi acts.
+    fn hide_user(&mut self, user: ObjectRef);
+    /// `sub_80E13DC`: and comes back.
+    fn show_user(&mut self, user: ObjectRef);
+    /// `sub_80E1352(user, 0xF)`: `user` vanishes as with `hide_user`, but
+    /// its barrier visual, its confusion and blindness visuals and the HUD
+    /// stay (BugFix's glow).
+    fn hide_user_sparing(&mut self, user: ObjectRef);
+    /// `sub_80E146C`: an actor that isn't a player vanishes (its barrier
+    /// visual and its confusion and blindness visuals with it), and
+    /// `sub_80E14AC` it is back: EXE5's Django's coffin.
+    fn hide_actor(&mut self, o: ObjectRef);
+    fn show_actor(&mut self, o: ObjectRef);
+    /// `sub_80E1332`: a navi chip's user warps out (`out`) or back in (the
+    /// navi warp, actor 0x2D).
+    fn navi_warp(&mut self, user: ObjectRef, out: bool);
+    /// A chip's use springs the other side's armed AntiRecv (EXE6's
+    /// `loc_80E1968`, EXE4's 0x080E5554): the trap's mark over `user`
+    /// (`sub_800ABC6`), the other side's defensive-chip record spent
+    /// (`sub_802CEA6`), and AntiRecv's counterattack (the role
+    /// `kinds.anti_recovery`, `sub_80E37D2`) against `user` with the damage
+    /// word `damage`; `names_trap`: its telop names the record's chip. The
+    /// counterattack, none when the pool is full.
+    fn spring_anti_recovery(&mut self, user: ObjectRef, damage: u32, names_trap: bool) -> Option<ObjectRef>;
+
+    // ---- Obstacles (the obstacle framework) -------------------------------
+
+    /// `setFieldBattleObject_800F614`: register `o` as one of `side`'s
+    /// field objects of `class` (0: two a side, 1: one); a third class-0
+    /// one (a second class-1) evicts the oldest, whose HP drops to 0.
+    fn obstacle_register(&mut self, o: ObjectRef, side: u8, class: u8);
+    /// `sub_800F656`: forget `o` in the field-object registry.
+    fn obstacle_unregister(&mut self, o: ObjectRef);
+    /// `sub_801AD9E` and its variants (`push`): resolve this tick's hits.
+    fn obstacle_take_hits(&mut self, o: ObjectRef, push: ObstaclePush) -> ApiResult<()>;
+    /// `sub_800F672`: the lifetime; broken when it runs out or the battle
+    /// is over, blinking for its last three seconds.
+    fn obstacle_tick_lifetime(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `sub_801B394` and its variants (`crush`, `hold`): damage, removal
+    /// and status; the action the kind's own table runs now (None: a status
+    /// routine ran).
+    fn obstacle_react(&mut self, o: ObjectRef, crush: ObstacleCrush, hold: ObstacleHold) -> ApiResult<Option<u8>>;
+    /// Run a shared entry of the obstacle's action table.
+    fn obstacle_action(&mut self, o: ObjectRef, a: ObstacleAction) -> ApiResult<()>;
+    /// The byte the obstacle's game stores for action `a` of the
+    /// framework's numbering (EXE6's: the kind's own from 8; EXE5's own from
+    /// 6, with no frozen or bubbled entries).
+    fn obstacle_action_byte(&self, o: ObjectRef, a: u8) -> ApiResult<u8>;
+    /// The obstacle's action in the framework's numbering.
+    fn obstacle_current_action(&self, o: ObjectRef) -> u8;
+    /// How the obstacle is leaving.
+    fn obstacle_removal(&self, o: ObjectRef) -> ApiResult<ObstacleRemoval>;
+    /// `sub_800F8CE`: blink out for 20 ticks when it vanishes.
+    fn obstacle_blink_out(&mut self, o: ObjectRef) -> ApiResult<BlinkOut>;
+    /// `sub_800F90E`: absorbed, it flies to the absorbing side's navi as
+    /// an absorbed obstacle of look `look` (an absorbed-look record's
+    /// handle; the original's obstacle kind), with its animation and
+    /// palette.
+    fn obstacle_fly_to_absorber(&mut self, o: ObjectRef, look: u16) -> ApiResult<()>;
+    /// `sub_802EF5C`: the per-side target tracking some chips keep.
+    fn obstacle_release_tracking(&mut self, o: ObjectRef);
+    /// Whether one of the field's two stage-object slots is free
+    /// (`sub_8007450`'s test).
+    fn obstacle_stage_slot_free(&self) -> bool;
+    /// `o` takes the first free stage-object slot (`sub_8007450`'s store);
+    /// an error if both are taken.
+    fn obstacle_enter_stage(&mut self, o: ObjectRef) -> ApiResult<()>;
+    /// `o` leaves the stage-object slot it holds.
+    fn obstacle_leave_stage(&mut self, o: ObjectRef);
+    /// A chip's request of the obstacle `o`.
+    fn obstacle_request(&mut self, o: ObjectRef, request: ObstacleRequest);
+    /// `sub_80EFD74`: `absorber` pulls in every registered field object
+    /// (except NameID 0xDA and those already leaving).
+    fn obstacle_absorb_all(&mut self, absorber: ObjectRef);
+    /// `o` has a collision registration and isn't already leaving the field
+    /// (removed by a chip, blinking out or absorbed): the test `sub_80C9EE6`
+    /// and `sub_80EFD8C` make before taking an obstacle.
+    fn obstacle_present(&self, o: ObjectRef) -> bool;
+    /// The r3 the object update loop (`object_800372A`) leaves for the
+    /// object updating now: 4 × how many objects of the previous object's
+    /// pool it passed before that one this tick. Routines that never set
+    /// r3 spawn with it as a position (DustMan's junk).
+    fn loop_register(&self) -> u32;
+    /// `sub_800F6AC`: ask the field object `o` to be picked up by `side` and
+    /// thrown at panel (x, y) after shaking `shake` ticks, hitting with the
+    /// damage word `damage` (`sub_8018002` does it).
+    fn obstacle_throw(&mut self, o: ObjectRef, side: u8, x: u8, y: u8, shake: u8, damage: u32);
+    // ---- Field objects (obstacles) -------------------------------------------
+
+    /// Whether another object asked `flag` of the field object `o`.
+    fn obstacle_flag(&self, o: ObjectRef, flag: ObstacleFlag) -> ApiResult<bool>;
+}

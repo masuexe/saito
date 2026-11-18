@@ -1,0 +1,1968 @@
+// The components every screen is built from (docs/design/app-ui.md §4 and §5).
+//
+// Two things hold for all of them. A control never sizes itself by what it shows at the moment: a value has a
+// box of a set width and is cut with an ellipsis. And a control does nothing by itself: it has a name (`nav`),
+// and a click, an arrow or an edit goes to the app with that name (nav.slint), where the screen's Rust module
+// decides.
+//
+// Build cost (docs/app.md §14): a component used with nothing inside it is compiled once and shared by its uses;
+// one used with children inside it (`Panel { ... }`) is copied into each, and every `if` or `for` is a component
+// of its own. Sharing pays only for a component with much in it used in several places: one used in one place,
+// or a small one in a few, is copied in (its use given a bare child). So the pieces here with much in them are
+// leaves, a container holds what must be inside it and places a leaf for the rest (`Scroller`), and a part shown
+// or hidden is `visible`, not `if`.
+//
+// Motion (docs/app.md §10): each control moves by itself (a press flashes, a value slides in its box, a chosen
+// row's bar slides to the next), with the theme's durations. A screen writes no animation to get that.
+
+import { Theme, Audit, I18n } from "theme.slint";
+import { Nav, NavKind, Focusable, Drag } from "nav.slint";
+import { Tween, Pulse } from "motion.slint";
+
+// ---- Shapes ---------------------------------------------------------------------------------------------
+
+// A rectangle with one line around it and its bottom right corner cut at 45 degrees, the line following the
+// cut: 12 on a panel, 18 on a dialog or a menu, 9 on a button.
+export component Cut inherits Path {
+    in property <length> cut: 12px;
+    in property <brush> background: Theme.panel;
+    in property <brush> line: Theme.line;
+    // (The path is drawn inside the line's half width: its box is the element's less the line.)
+    property <float> w: max(1, (self.width - 1px) / 1px);
+    property <float> h: max(1, (self.height - 1px) / 1px);
+    property <float> c: self.cut / 1px;
+    fill: root.background;
+    stroke: root.line;
+    stroke-width: 1px;
+    viewbox-width: root.w;
+    viewbox-height: root.h;
+    MoveTo {
+        x: 0;
+        y: 0;
+    }
+
+    LineTo {
+        x: root.w;
+        y: 0;
+    }
+
+    LineTo {
+        x: root.w;
+        y: root.h - root.c;
+    }
+
+    LineTo {
+        x: root.w - root.c;
+        y: root.h;
+    }
+
+    LineTo {
+        x: 0;
+        y: root.h;
+    }
+
+    Close { }
+}
+
+// The arrows of a stepper and a select, drawn (no font has to have them).
+export component ArrowLeft inherits Path {
+    width: 5px;
+    height: 8px;
+    fill: Theme.cursor;
+    commands: "M 5 0 L 0 4 L 5 8 Z";
+}
+
+export component ArrowRight inherits Path {
+    width: 5px;
+    height: 8px;
+    fill: Theme.cursor;
+    commands: "M 0 0 L 5 4 L 0 8 Z";
+}
+
+export component ArrowDown inherits Path {
+    width: 8px;
+    height: 5px;
+    fill: Theme.muted;
+    commands: "M 0 0 L 8 0 L 4 5 Z";
+}
+
+// Back's chevron.
+export component Chevron inherits Path {
+    width: 5px;
+    height: 9px;
+    stroke: Theme.muted;
+    stroke-width: 1.5px;
+    commands: "M 4.5 0.5 L 0.5 4.5 L 4.5 8.5";
+}
+
+// ---- Text -----------------------------------------------------------------------------------------------
+
+// A label: 11, capitals (its text is set so: `I18n.upper`), tracked.
+export component Label inherits Text {
+    // (A label hidden isn't cut, whatever room it is left: a phone's Patch cards tab hides its title in none.)
+    property <bool> over: Theme.audit && self.visible && self.preferred-width > self.width + 0.5px;
+    color: Theme.muted;
+    font-family: Theme.display;
+    font-size: 11px;
+    font-weight: Theme.display-semibold;
+    letter-spacing: Theme.label-tracking;
+    vertical-alignment: center;
+    overflow: elide;
+    changed over => {
+        if over {
+            Audit.clipped(self.text);
+        }
+    }
+}
+
+// A line that says what its label can't (what a setting changes, what happens next): 13, muted, wrapped.
+export component Note inherits Text {
+    property <bool> over: Theme.audit && self.preferred-height > self.height + 0.5px;
+    color: Theme.muted;
+    font-family: Theme.body;
+    font-size: 13px;
+    vertical-alignment: center;
+    wrap: word-wrap;
+    changed over => {
+        if over {
+            Audit.clipped(self.text);
+        }
+    }
+}
+
+// A build's problem's mark (docs/design/app-ui.md §2.66): a square of the error red, as a tab's in the bar. It goes
+// before what says something is wrong with a build as it stands (a strip's top right, a phone's pane's header, a build's
+// line in a list, the lobby's, Play's); a refusal, why what was asked wasn't done, has none.
+export component ProblemMark inherits Rectangle {
+    width: 5px;
+    height: 5px;
+    background: Theme.bad;
+}
+
+// A reserved line for a message: 16 tall whether it says anything or not, in the error red. What it says fades
+// in. `mark`: what it says is a build's problem (the lobby's "This build can't be used", the build editor's inline
+// ones: `ProblemNote`), which has the problem's mark before it (`ProblemMark`).
+export component Message inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Theme.bad;
+    in property <TextHorizontalAlignment> horizontal-alignment: left;
+    in property <bool> mark;
+    property <length> lead: root.mark ? 9px : 0px;
+    property <bool> centered: root.horizontal-alignment == TextHorizontalAlignment.center;
+    height: 16px;
+    said := Text {
+        x: root.centered ? 0px : root.lead;
+        width: parent.width - (root.centered ? 0px : root.lead);
+        text: root.text;
+        color: root.tone;
+        font-family: Theme.body;
+        font-size: 12px;
+        horizontal-alignment: root.horizontal-alignment;
+        vertical-alignment: center;
+        overflow: elide;
+        opacity: root.text == "" ? 0 : 1;
+        animate opacity {
+            duration: Theme.brisk;
+            easing: ease-out;
+        }
+    }
+
+    // (Before the words wherever they start: at the left, where the middle's start, or where the right's start.)
+    ProblemMark {
+        x: root.centered ? max(0px, (root.width - min(said.preferred-width, root.width)) / 2 - 9px) : root.horizontal-alignment == TextHorizontalAlignment.right ? max(0px, root.width - min(said.preferred-width, said.width) - 9px) : 0px;
+        y: (root.height - 5px) / 2;
+        visible: root.mark && root.text != "";
+    }
+}
+
+// What is wrong with a build as it stands, said in its editor (docs/design/app-ui.md §2.66): at a strip's top right of
+// the item it describes (the ruleset's with the game's rules'), and on a phone, which has no strip, in the header of the
+// pane of the part of the build it is about (the game's rules' alone). One look for both: the problem's mark, then its
+// words in the error red, at the right of the place it has (which is there when it says nothing: nothing moves when it
+// does), cut with an ellipsis where they don't fit.
+export component ProblemNote inherits Message {
+    mark: true;
+    horizontal-alignment: right;
+}
+
+// Why what was asked of the item a build editor's strip describes wasn't done, or can't be ("Needs 70 MB", "Giga
+// limit reached", "Overlaps a program"): at the strip's top right in the error red, with no problem's mark (§2.66).
+// Every tab's strip has it in the same place. Where there is none, `problem`, what the build's problems have against
+// the item (the ruleset's among them), said as a problem is (`ProblemNote`).
+export component Refusal inherits Rectangle {
+    in property <string> text;
+    in property <string> problem;
+    height: 20px;
+    ProblemNote {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        visible: root.text == "";
+        text: root.problem;
+    }
+
+    Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: Theme.bad;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// A name or a value the app gives (a player, a build): one line, cut with an ellipsis.
+export component Value inherits Text {
+    color: Theme.text;
+    font-family: Theme.body;
+    font-size: 14px;
+    font-weight: 600;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// A code, a number, a time: fixed-width digits.
+export component Mono inherits Text {
+    color: Theme.text;
+    font-family: Theme.mono;
+    font-size: 13px;
+    font-weight: 700;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// A dialog's or a menu's heading.
+export component Heading inherits Text {
+    property <bool> over: Theme.audit && self.preferred-width > self.width + 0.5px;
+    color: Theme.text;
+    font-family: Theme.display;
+    font-size: 20px;
+    font-weight: Theme.display-bold;
+    letter-spacing: Theme.title-tracking * 0.7;
+    vertical-alignment: center;
+    overflow: elide;
+    changed over => {
+        if over {
+            Audit.clipped(self.text);
+        }
+    }
+}
+
+// A tag: PRACTICE, a new build's version.
+export component Pill inherits Rectangle {
+    in property <string> text;
+    in property <color> tone: Theme.muted;
+    height: 22px;
+    // (No text, no tag: it takes no room.)
+    width: root.text == "" ? 0px : label.preferred-width + 16px;
+    Rectangle {
+        border-width: root.text == "" ? 0px : 1px;
+        border-color: root.tone;
+    }
+
+    label := Text {
+        x: 8px;
+        text: root.text;
+        color: root.tone;
+        font-family: Theme.display;
+        font-size: 11px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.7px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// ---- Controls -------------------------------------------------------------------------------------------
+
+// A control's touch past its drawn box on a phone, so that what is tapped is 44 by 44 at least (docs/design/app-ui.md
+// §2.102), where growing the box would move what is around it: a press in it is a press on the control `nav`, as on
+// its `Focusable` (the focus goes there; a click is Enter on it). Given the box's size, it is around it, past each side
+// as far as takes it to 44 where it is short (none on a desktop); placed before the control's `Focusable`, which keeps
+// the box's own presses and the cursor's place. (A leaf, shared by its uses: docs/app.md §14.)
+export component Reach inherits TouchArea {
+    mouse-cursor: self.enabled && root.nav != "" ? MouseCursor.pointer : MouseCursor.default;
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <length> box-width;
+    in property <length> box-height;
+    property <length> reach-x: Theme.handheld ? max(0px, (44px - root.box-width) / 2) : 0px;
+    property <length> reach-y: Theme.handheld ? max(0px, (44px - root.box-height) / 2) : 0px;
+    x: -root.reach-x;
+    y: -root.reach-y;
+    width: root.box-width + 2 * root.reach-x;
+    height: root.box-height + 2 * root.reach-y;
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down && root.nav != "" {
+            Nav.point(root.nav, root.nav-index);
+        }
+    }
+    clicked => {
+        if root.nav != "" {
+            Nav.activate(root.nav, root.nav-index);
+        }
+    }
+}
+
+export enum ButtonKind {
+    normal,
+    // The main action: amber.
+    main,
+    // A quieter one: no fill.
+    ghost,
+    // A minor one, as text: no fill and no line, its words muted.
+    text,
+}
+
+// A button, 40 tall, as wide as its text and at least 120 (give it a `width` where it should be another: its
+// text is cut to it). `enabled` off is the unavailable look, and the focus passes it by. A press flashes its
+// fill and dips it 1; the main action has a slow sheen.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <ButtonKind> kind;
+    in property <bool> enabled: true;
+    // Its text in the error red (DELETE, LEAVE MATCH).
+    in property <bool> danger;
+    // 52 tall (a phone's READY).
+    in property <bool> big;
+    // A tool inside a panel or a bar (a build's EDIT and ⋯, the editor's tab bar's): 32 tall and as wide as its
+    // words, on a desktop; an upright phone's is the standard 40, to be tapped (sideways it stays compact, its tap
+    // reaching to 44 as every control's). (docs/design/app-ui.md §2.87: three sizes, compact, standard and big.)
+    in property <bool> compact;
+    // Its right side square, uncut: the left half of a split button, whose arrow beside it has the cut (WATCH).
+    in property <bool> square;
+    property <bool> small: root.compact && !Theme.phone;
+    property <length> inset: root.small ? 12px : 16px;
+    property <length> notch: root.square ? 0px : (root.small ? 7px : 9px);
+    out property <bool> focused: hit.focused;
+    // As wide as its text asks (what it is where no `width` is given it: a layout that gives it another on a
+    // phone alone reads this for the desktop's).
+    out property <length> natural-width: root.small ? max(32px, label.preferred-width + 2 * root.inset) : max(120px, label.preferred-width + 32px);
+    property <bool> over: Theme.audit && label.preferred-width > label.width + 0.5px;
+    property <brush> fill-main: hit.has-hover ? Theme.action.brighter(12%) : Theme.action;
+    property <brush> fill-ghost: hit.has-hover && root.enabled ? Theme.tint : transparent;
+    property <bool> bare: !root.enabled || root.kind == ButtonKind.ghost || root.kind == ButtonKind.text;
+    property <brush> fill-normal: hit.has-hover ? Theme.raised-hover : Theme.raised;
+    // A press: the pointer going down on it, or Enter while the cursor is on it.
+    property <int> presses;
+    property <int> key-press: Nav.press-seq;
+    property <bool> down: hit.pressed || reach.pressed;
+    property <length> dip: press.v > 0.4 ? 1px : 0px;
+    // The main action's sheen: a band of light across it every few seconds.
+    property <float> sheen: Theme.motion && root.kind == ButtonKind.main && root.enabled ? clamp(mod(animation-tick(), 3.6s) / 0.9s, 0, 1) : 0;
+    height: root.big ? 52px : root.small ? 32px : 40px;
+    width: root.natural-width;
+    press := Pulse {
+        seq: root.presses;
+    }
+
+    Cut {
+        y: root.dip;
+        cut: root.notch;
+        background: root.bare ? root.fill-ghost : (root.kind == ButtonKind.main ? root.fill-main : root.fill-normal);
+        line: root.kind == ButtonKind.text ? transparent : !root.enabled ? Theme.dim : (root.kind == ButtonKind.main ? Theme.action : Theme.line);
+    }
+
+    // (The sheen is kept off the cut corner, where it fades to nothing anyway.)
+    Rectangle {
+        x: 1px;
+        y: 1px + root.dip;
+        width: parent.width - 11px;
+        height: parent.height - 2px;
+        clip: true;
+        Rectangle {
+            x: root.sheen * (parent.width + 48px) - 48px;
+            width: 48px;
+            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff 50%, #ffffff00 100%);
+            opacity: 0.32 * sin(root.sheen * 180deg);
+        }
+    }
+
+    Cut {
+        y: root.dip;
+        cut: root.notch;
+        background: #ffffff;
+        line: transparent;
+        opacity: press.v * 0.38;
+    }
+
+    label := Text {
+        x: root.inset;
+        y: root.dip;
+        width: parent.width - 2 * root.inset;
+        height: parent.height;
+        text: root.text;
+        color: !root.enabled ? Theme.dim : root.kind == ButtonKind.main ? Theme.action-ink : root.danger ? Theme.bad : root.kind == ButtonKind.text && !hit.has-hover && !hit.focused ? Theme.muted : Theme.text;
+        font-family: Theme.display;
+        font-size: root.big ? 16px : root.small ? 12px : 13px;
+        font-weight: root.kind == ButtonKind.main ? Theme.display-bold : Theme.display-semibold;
+        letter-spacing: Theme.button-tracking;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (A phone's tap reaches past it to 44 by 44.)
+    reach := Reach {
+        box-width: root.width;
+        box-height: root.height;
+        enabled: root.enabled;
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        enabled: root.enabled;
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped(root.text);
+        }
+    }
+    changed key-press => {
+        if hit.focused {
+            root.presses += 1;
+        }
+    }
+    changed down => {
+        if root.down {
+            root.presses += 1;
+        }
+    }
+}
+
+// A list's ALL and NONE (docs/design/app-ui.md §2.69; the user: "the souls/crosses should be able to select
+// all/none"): two words in the version heads' letters at the right end of the line they are on, a hairline between,
+// each its own control (`all-nav` and `none-nav`, of `set`: the Navi tab's forms, the ruleset's sections); muted, dim
+// where it would do nothing, the cursor's color under the pointer. Each takes a little more than its line, a phone's
+// more to be tapped, and nothing moves for it.
+export component AllNone inherits Rectangle {
+    in property <string> all-nav;
+    in property <string> none-nav;
+    in property <int> set: -1;
+    in property <bool> all;
+    in property <bool> none;
+    property <length> reach: Theme.handheld ? 6px : 2px;
+    property <length> pad: 6px;
+    height: 16px;
+    width: all-word.preferred-width + none-word.preferred-width + 4 * root.pad + 1px;
+    visible: root.set >= 0;
+    all-word := Text {
+        x: root.pad;
+        width: self.preferred-width;
+        text: I18n.upper(@tr("All"));
+        color: all-hit.has-hover ? Theme.cursor : root.all ? Theme.muted : Theme.dim;
+        font-family: Theme.display;
+        font-size: 10px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: all-word.preferred-width + 2 * root.pad;
+        y: 3px;
+        width: 1px;
+        height: 10px;
+        background: Theme.line;
+    }
+
+    none-word := Text {
+        x: all-word.preferred-width + 3 * root.pad + 1px;
+        width: self.preferred-width;
+        text: I18n.upper(@tr("None"));
+        color: none-hit.has-hover ? Theme.cursor : root.none ? Theme.muted : Theme.dim;
+        font-family: Theme.display;
+        font-size: 10px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+
+    all-hit := Focusable {
+        x: 0;
+        y: -root.reach;
+        width: all-word.preferred-width + 2 * root.pad;
+        height: 16px + 2 * root.reach;
+        nav: root.set >= 0 ? root.all-nav : "";
+        nav-index: root.set;
+    }
+
+    none-hit := Focusable {
+        x: all-hit.width + 1px;
+        y: -root.reach;
+        width: none-word.preferred-width + 2 * root.pad;
+        height: 16px + 2 * root.reach;
+        nav: root.set >= 0 ? root.none-nav : "";
+        nav-index: root.set;
+    }
+}
+
+// A small word that is a control, on a line that was there (the build editor's CLEAR at the right end of a pane's
+// header: docs/design/app-ui.md §2.71), as the Navi tab's ALL and NONE are: in the panes' heads' letters, muted, the
+// cursor's color under the pointer; `enabled` off, dim, and the focus and the pointer pass it by. Its word is `pad` in
+// from each side of it; it takes a little more than its line (a phone's more, to be tapped), and nothing moves for it.
+export component WordButton inherits Rectangle {
+    in property <string> text;
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <bool> enabled: true;
+    out property <length> pad: 6px;
+    property <length> reach: Theme.handheld ? 6px : 2px;
+    height: 16px;
+    width: word.preferred-width + 2 * root.pad;
+    word := Text {
+        x: root.pad;
+        width: self.preferred-width;
+        text: root.text;
+        color: !root.enabled ? Theme.dim : hit.has-hover ? Theme.cursor : Theme.muted;
+        font-family: Theme.display;
+        font-size: 10px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+
+    hit := Focusable {
+        x: 0;
+        y: -root.reach;
+        width: root.width;
+        height: root.height + 2 * root.reach;
+        nav: root.nav;
+        nav-index: root.nav-index;
+        enabled: root.enabled;
+    }
+}
+
+// A value between two arrows: taken (Enter), Left and Right change it. The value's box has one width
+// (`value-width`), so the arrows stay where they are whatever it says. `locked` shows the value alone, in the
+// same place (the game's name where the game can't change). A new value slides in within the box, the way the
+// arrow pressed points, as the old one slides out. Where the row it is in is what is focused (a `Focusable` of
+// the row's own, of this name: a menu's rows), `focusable` is off: its arrows still step it.
+export component Stepper inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> value;
+    in property <length> value-width: 84px;
+    // Fixed-width digits (a number).
+    in property <bool> numeric;
+    // The header's game: larger, in the display face.
+    in property <bool> title;
+    in property <bool> locked;
+    in property <bool> enabled: true;
+    in property <bool> focusable: true;
+    out property <bool> focused: hit.focused;
+    // The value before this one, and the way it left.
+    property <string> last;
+    property <string> old;
+    property <int> dir: 1;
+    property <int> changes;
+    property <string> family: root.numeric ? Theme.mono : (root.title ? Theme.display : Theme.body);
+    property <length> face: root.title ? 16px : 14px;
+    property <int> weight: root.title ? Theme.display-bold : 700;
+    property <length> spacing: root.title ? 0.6px : 0px;
+    // A value too long for its box is drawn smaller to fit (in half pixels, the width taken as going with the
+    // size), down to `smallest`; past that, at the floor on two lines if the box's height holds them; past that,
+    // cut with an ellipsis, which the screenshot pass is told of. Each is measured once a value (the texts'
+    // preferred sizes), not each frame.
+    property <length> smallest: 11px;
+    property <length> size: measured.preferred-width <= root.value-width + 0.5px ? root.face : max(root.smallest, floor(root.face * (root.value-width / measured.preferred-width) / 0.5px) * 0.5px);
+    property <bool> one-line: at-size.preferred-width <= root.value-width + 0.5px;
+    property <bool> two-lines: !root.one-line && wrapped.preferred-height <= root.height;
+    out property <bool> cut: !root.one-line && !root.two-lines;
+    // (The value before, as it was drawn: it slides out so.)
+    property <length> old-size: root.face;
+    property <bool> old-two-lines;
+    // (How far a phone's arrows take a tap past them, up and down: to 44 tall.)
+    property <length> reach: Theme.handheld ? max(0px, (44px - root.height) / 2) : 0px;
+    height: 36px;
+    width: root.value-width + 72px;
+    horizontal-stretch: 0;
+    measured := Text {
+        visible: false;
+        text: root.value;
+        font-family: root.family;
+        font-size: root.face;
+        font-weight: root.weight;
+        letter-spacing: root.spacing;
+    }
+
+    at-size := Text {
+        visible: false;
+        text: root.value;
+        font-family: root.family;
+        font-size: root.size;
+        font-weight: root.weight;
+        letter-spacing: root.spacing;
+    }
+
+    wrapped := Text {
+        visible: false;
+        width: root.value-width;
+        text: root.value;
+        font-family: root.family;
+        font-size: root.smallest;
+        font-weight: root.weight;
+        letter-spacing: root.spacing;
+        wrap: word-wrap;
+    }
+
+    // (The header's game slides only when it changes: a screen's header is made anew with the screen, and the game it
+    // shows, the same as the last one's, stays still.)
+    slide := Tween {
+        seq: root.changes;
+        duration: Theme.brisk;
+        settled: root.title && root.changes == 0;
+    }
+
+    hit := Focusable {
+        nav: root.focusable ? root.nav : "";
+        nav-index: root.nav-index;
+        kind: NavKind.stepper;
+        enabled: root.enabled && !root.locked && root.focusable;
+    }
+
+    Rectangle {
+        x: 0;
+        width: 32px;
+        visible: !root.locked;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: left.pressed ? Theme.line : left.has-hover ? Theme.tint : transparent;
+        ArrowLeft { }
+
+        // (A phone's reaches past the arrow's box to 44 by 44: 8 out, 4 into the gap by the value.)
+        left := TouchArea {
+            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+            x: Theme.handheld ? -8px : 0px;
+            y: -root.reach;
+            width: Theme.handheld ? 44px : parent.width;
+            height: parent.height + 2 * root.reach;
+            enabled: root.enabled;
+            clicked => {
+                Nav.point(root.nav, root.nav-index);
+                Nav.step(root.nav, root.nav-index, -1);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 36px;
+        width: root.value-width;
+        clip: true;
+        Text {
+            x: (1 - slide.t) * root.dir * 18px;
+            width: parent.width;
+            text: root.value;
+            color: root.enabled ? Theme.text : Theme.dim;
+            font-family: root.family;
+            font-size: root.two-lines ? root.smallest : root.size;
+            font-weight: root.weight;
+            letter-spacing: root.spacing;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: root.two-lines ? word-wrap : no-wrap;
+            overflow: elide;
+            opacity: slide.t;
+        }
+
+        Text {
+            x: -slide.t * root.dir * 18px;
+            width: parent.width;
+            text: slide.linear < 1 ? root.old : "";
+            color: root.enabled ? Theme.text : Theme.dim;
+            font-family: root.family;
+            font-size: root.old-two-lines ? root.smallest : root.old-size;
+            font-weight: root.weight;
+            letter-spacing: root.spacing;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: root.old-two-lines ? word-wrap : no-wrap;
+            overflow: elide;
+            opacity: 1 - slide.t;
+        }
+    }
+
+    Rectangle {
+        x: root.value-width + 40px;
+        width: 32px;
+        visible: !root.locked;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: right.pressed ? Theme.line : right.has-hover ? Theme.tint : transparent;
+        ArrowRight { }
+
+        right := TouchArea {
+            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+            x: Theme.handheld ? -4px : 0px;
+            y: -root.reach;
+            width: Theme.handheld ? 44px : parent.width;
+            height: parent.height + 2 * root.reach;
+            enabled: root.enabled;
+            clicked => {
+                Nav.point(root.nav, root.nav-index);
+                Nav.step(root.nav, root.nav-index, 1);
+            }
+        }
+    }
+
+    property <length> last-size: root.face;
+    property <bool> last-two-lines;
+    // (The screenshot pass's check: a value cut even at the floor.)
+    property <bool> over: Theme.audit && root.cut;
+    init => {
+        root.last = root.value;
+        root.last-size = root.size;
+        root.last-two-lines = root.two-lines;
+    }
+    changed value => {
+        root.old = root.last;
+        root.old-size = root.last-size;
+        root.old-two-lines = root.last-two-lines;
+        root.last = root.value;
+        root.last-size = root.size;
+        root.last-two-lines = root.two-lines;
+        root.dir = Nav.step-dir;
+        root.changes += 1;
+    }
+    changed over => {
+        if over {
+            Audit.clipped(root.value);
+        }
+    }
+}
+
+// One of two: off and on, enhanced and original; or of three, where it has a third. Taken (Enter), Left and Right
+// choose. The chosen part's tint and underline slide across to another.
+export component Seg inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> first;
+    in property <string> second;
+    // (None: two.)
+    in property <string> third;
+    // 0 the first, 1 the second, 2 the third.
+    in property <int> chosen;
+    // Off: it can't be changed now (the focus passes it by), and says so by its look.
+    in property <bool> enabled: true;
+    out property <bool> focused: hit.focused;
+    property <length> first-width: max(44px, a.preferred-width + 24px);
+    property <length> second-width: max(44px, b.preferred-width + 24px);
+    property <length> third-width: root.third == "" ? 0px : max(44px, c.preferred-width + 24px) + 1px;
+    // (How far a phone's tap on a part reaches past it, up and down: to 44 tall.)
+    property <length> reach: Theme.handheld ? max(0px, (44px - root.height) / 2) : 0px;
+    height: 36px;
+    width: root.first-width + root.second-width + 1px + root.third-width;
+    horizontal-stretch: 0;
+    Rectangle {
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: Theme.line;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        kind: NavKind.stepper;
+        enabled: root.enabled;
+    }
+
+    // What marks the chosen part.
+    Rectangle {
+        x: root.chosen == 0 ? 0px : root.chosen == 1 ? root.first-width + 1px : root.first-width + root.second-width + 2px;
+        width: root.chosen == 0 ? root.first-width : root.chosen == 1 ? root.second-width : root.third-width - 1px;
+        background: root.enabled ? Theme.tint : transparent;
+        animate x, width {
+            duration: Theme.brisk;
+            easing: ease-out;
+        }
+        Rectangle {
+            y: parent.height - 2px;
+            height: 2px;
+            background: root.enabled ? Theme.cursor : Theme.dim;
+        }
+    }
+
+    a := Text {
+        x: 0;
+        width: root.first-width;
+        text: root.first;
+        color: root.chosen == 0 ? (root.enabled ? Theme.cursor : Theme.muted) : (root.enabled ? Theme.muted : Theme.dim);
+        font-family: Theme.display;
+        font-size: 13px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.5px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color {
+            duration: Theme.brisk;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+        x: 0;
+        y: -root.reach;
+        width: root.first-width;
+        height: root.height + 2 * root.reach;
+        enabled: root.enabled;
+        clicked => {
+            Nav.point(root.nav, root.nav-index);
+            Nav.choose(root.nav, root.nav-index, 0);
+        }
+    }
+
+    Rectangle {
+        x: root.first-width;
+        width: 1px;
+        background: Theme.line;
+    }
+
+    b := Text {
+        x: root.first-width + 1px;
+        width: root.second-width;
+        text: root.second;
+        color: root.chosen == 1 ? (root.enabled ? Theme.cursor : Theme.muted) : (root.enabled ? Theme.muted : Theme.dim);
+        font-family: Theme.display;
+        font-size: 13px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.5px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color {
+            duration: Theme.brisk;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+        x: root.first-width + 1px;
+        y: -root.reach;
+        width: root.second-width;
+        height: root.height + 2 * root.reach;
+        enabled: root.enabled;
+        clicked => {
+            Nav.point(root.nav, root.nav-index);
+            Nav.choose(root.nav, root.nav-index, 1);
+        }
+    }
+
+    if root.third != "": Rectangle {
+        x: root.first-width + 1px + root.second-width;
+        width: 1px;
+        background: Theme.line;
+    }
+
+    c := Text {
+        visible: root.third != "";
+        x: root.first-width + root.second-width + 2px;
+        width: max(0px, root.third-width - 1px);
+        text: root.third;
+        color: root.chosen == 2 ? (root.enabled ? Theme.cursor : Theme.muted) : (root.enabled ? Theme.muted : Theme.dim);
+        font-family: Theme.display;
+        font-size: 13px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.5px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color {
+            duration: Theme.brisk;
+        }
+    }
+
+    if root.third != "": TouchArea {
+        x: root.first-width + root.second-width + 2px;
+        y: -root.reach;
+        width: root.third-width - 1px;
+        height: root.height + 2 * root.reach;
+        enabled: root.enabled;
+        clicked => {
+            Nav.point(root.nav, root.nav-index);
+            Nav.choose(root.nav, root.nav-index, 2);
+        }
+    }
+}
+
+// A level from 0 to `maximum`: taken (Enter), Left and Right step it; a click or a drag sets it. Its number has a box of its
+// own, so the bar keeps its length.
+export component Slider inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <int> value;
+    in property <int> maximum: 100;
+    out property <bool> focused: hit.focused;
+    property <length> track: self.width - 48px;
+    property <length> filled: root.track * clamp(root.value / root.maximum, 0, 1);
+    height: 40px;
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        kind: NavKind.stepper;
+    }
+
+    Rectangle {
+        x: 0;
+        y: 18px;
+        width: root.track;
+        height: 4px;
+        background: Theme.raised;
+    }
+
+    Rectangle {
+        x: 0;
+        y: 18px;
+        width: root.filled;
+        height: 4px;
+        background: Theme.cursor;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Theme.glow;
+    }
+
+    Rectangle {
+        x: root.filled - 4px;
+        y: 10px;
+        width: 8px;
+        height: 20px;
+        background: Theme.text;
+    }
+
+    Mono {
+        x: root.track + 12px;
+        width: 36px;
+        text: root.value;
+        horizontal-alignment: right;
+    }
+
+    // (A phone's reaches past the track's 40 to 44 tall.)
+    drag := TouchArea {
+        mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+        x: 0;
+        y: Theme.handheld ? -2px : 0px;
+        width: root.track;
+        height: root.height + (Theme.handheld ? 4px : 0px);
+        function set() {
+            Nav.choose(root.nav, root.nav-index, round(clamp(self.mouse-x / self.width, 0, 1) * root.maximum));
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                Nav.point(root.nav, root.nav-index);
+                set();
+            }
+        }
+        moved => {
+            if self.pressed {
+                set();
+            }
+        }
+    }
+}
+
+// A box with its value and an arrow: Enter (a click) opens its choices as a list; the arrows walk past it, as a
+// button's do (the user: "don't allow pressing left/right on dropdowns to change them, it affects navigation too
+// much"). Where the row it is in is what is focused (a `Focusable` of the row's own), `focusable` is off. One whose
+// choices are pictures (`pictured`: Practice's Arena and Background, which open as a grid of them) shows the chosen one's
+// picture small before its value, the box's height less 6 at each side and fifteen sevenths as wide (the field's
+// band of the battle's picture, 240 by 112); `random`, the first choice, which has none, a question mark in its place.
+export component Select inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> value;
+    // A muted note after the value (a build's ruleset no longer there: "(missing)").
+    in property <string> note;
+    in property <bool> enabled: true;
+    in property <bool> focusable: true;
+    in property <bool> pictured;
+    in property <image> picture;
+    in property <bool> random;
+    out property <bool> focused: hit.focused;
+    property <length> thumb-height: root.height - 12px;
+    property <length> thumb-width: root.pictured ? root.thumb-height * 15 / 7 : 0px;
+    height: 40px;
+    Rectangle {
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: hit.has-hover ? Theme.muted : Theme.line;
+    }
+
+    Rectangle {
+        x: 6px;
+        y: 6px;
+        width: root.thumb-width;
+        height: root.thumb-height;
+        visible: root.pictured;
+        background: Theme.panel;
+        Image {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            source: root.picture;
+            image-fit: fill;
+        }
+
+        Text {
+            visible: root.random;
+            text: "?";
+            color: Theme.dim;
+            font-family: Theme.display;
+            font-size: 16px;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            border-width: 1px;
+            border-color: Theme.line;
+        }
+    }
+
+    value := Value {
+        x: root.pictured ? root.thumb-width + 14px : 12px;
+        width: root.note == "" ? parent.width - self.x - 32px : min(self.preferred-width, parent.width - self.x - 32px - noted.preferred-width - 6px);
+        text: root.value;
+        color: root.enabled ? Theme.text : Theme.dim;
+        font-weight: 400;
+    }
+
+    noted := Text {
+        x: value.x + value.width + 6px;
+        width: max(0px, parent.width - self.x - 32px);
+        visible: root.note != "";
+        text: root.note;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    ArrowDown {
+        x: parent.width - 20px;
+    }
+
+    // (A phone's tap reaches past it to 44 tall.)
+    Reach {
+        box-width: root.width;
+        box-height: root.height;
+        enabled: root.enabled && root.focusable;
+        nav: root.focusable ? root.nav : "";
+        nav-index: root.nav-index;
+    }
+
+    hit := Focusable {
+        nav: root.focusable ? root.nav : "";
+        nav-index: root.nav-index;
+        kind: NavKind.button;
+        enabled: root.enabled && root.focusable;
+    }
+}
+
+// A text field (rules 7 and 8). The arrows walk past it; Enter or a typed letter starts editing; while it is
+// edited Left and Right move the caret, Enter confirms, Esc restores the text it had, Up or Down confirm and
+// move on. Its text is cut at the inner padding (12) and scrolls to keep the caret in view.
+//
+// `text` is the app's: the screen's Rust module gets each change (`edit`) and sets it, so what the field holds
+// is what the app kept (a name cut to its length, a code in capitals).
+export component Field inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> text;
+    in property <string> placeholder;
+    // Its line in the error red (the reason is in the reserved line by it).
+    in property <bool> error;
+    // A code: fixed-width, larger, tracked.
+    in property <bool> code;
+    // A screen's name in the header (`Header`'s `title-nav`): in the title's face, size and tracking.
+    in property <bool> heading;
+    in property <bool> enabled: true;
+    out property <bool> focused: hit.focused;
+    out property <bool> editing: hit.focused && Nav.editing;
+    property <int> seq: Nav.edit-seq;
+    property <length> scroll;
+    property <string> family: root.heading ? Theme.display : root.code ? Theme.mono : Theme.body;
+    property <length> face: root.heading ? (Theme.handheld ? 16px : 20px) : root.code ? 16px : 14px;
+    property <int> weight: root.heading ? Theme.display-bold : root.code ? 700 : 400;
+    property <length> tracking: root.heading ? (Theme.handheld ? min(1.2px, Theme.title-tracking) : Theme.title-tracking) : root.code ? 1.3px : 0px;
+    height: 40px;
+    Rectangle {
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: root.editing ? Theme.cursor : root.error ? Theme.bad : hit.has-hover ? Theme.muted : Theme.line;
+        drop-shadow-blur: root.editing ? 10px : 0px;
+        drop-shadow-color: root.editing ? Theme.glow : transparent;
+    }
+
+    // (A phone's tap reaches past it to 44 tall.)
+    Reach {
+        box-width: root.width;
+        box-height: root.height;
+        enabled: root.enabled;
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        kind: NavKind.field;
+        enabled: root.enabled;
+    }
+
+    // What it holds, while it isn't edited. (A code's field says what goes in it in words: the body face.)
+    Text {
+        property <bool> as-code: root.code && root.text != "";
+        x: 12px;
+        width: parent.width - 24px;
+        visible: !root.editing;
+        text: root.text == "" ? root.placeholder : root.text;
+        color: root.text == "" || !root.enabled ? Theme.dim : Theme.text;
+        font-family: root.code && !self.as-code ? Theme.body : root.family;
+        font-size: root.code && !self.as-code ? 14px : root.face;
+        font-weight: root.code && !self.as-code ? 400 : root.weight;
+        letter-spacing: root.code && !self.as-code ? 0px : root.tracking;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // The edit itself: clipped at the padding, moved to keep the caret in view.
+    Rectangle {
+        x: 12px;
+        width: parent.width - 24px;
+        clip: true;
+        // (In a browser the edit is an HTML input laid over the field, for the input method: this one is hidden, and
+        // so is the text while it is edited. The app's page::text_entry.)
+        input := TextInput {
+            x: min(0px, max(parent.width - self.width, root.scroll));
+            width: max(parent.width, self.preferred-width + 2px);
+            visible: root.editing && !Theme.web;
+            enabled: root.editing && !Theme.web;
+            color: Theme.text;
+            font-family: root.family;
+            font-size: root.face;
+            font-weight: root.weight;
+            letter-spacing: root.tracking;
+            vertical-alignment: center;
+            single-line: true;
+            text-cursor-width: 2px;
+            selection-background-color: Theme.line;
+            selection-foreground-color: Theme.text;
+            edited => {
+                Nav.edited(root.nav, root.nav-index, self.text);
+                // (The app may keep the same text it held before, a code already six long or a name at its
+                // length: then `text` doesn't change, and the field takes it back here.)
+                if self.text != root.text {
+                    self.text = root.text;
+                    self.set-selection-offsets(100000, 100000);
+                }
+            }
+            accepted => {
+                Nav.edit-done(root.nav, root.nav-index, self.text);
+            }
+            cursor-position-changed(at) => {
+                if at.x + root.scroll < 0px {
+                    root.scroll = -at.x;
+                } else if at.x + root.scroll > parent.width - 2px {
+                    root.scroll = parent.width - 2px - at.x;
+                }
+            }
+        }
+    }
+
+    // An edit begins: with the letter typed, or with the text as it is, all selected.
+    changed seq => {
+        if hit.focused && Nav.editing {
+            Nav.edit-began(root.nav, root.nav-index, root.text);
+            root.scroll = 0px;
+            input.text = Nav.edit-seed == "" ? root.text : Nav.edit-seed;
+            if !Theme.web {
+                input.focus();
+            }
+            if Nav.edit-seed == "" {
+                input.select-all();
+            } else {
+                input.set-selection-offsets(100000, 100000);
+            }
+        }
+    }
+    // It ends: the keys go back to the app.
+    changed editing => {
+        if !root.editing {
+            input.clear-focus();
+        }
+    }
+    // The app kept another text than was typed (cut, or in capitals): the field holds what was kept.
+    changed text => {
+        if root.editing && input.text != root.text {
+            input.text = root.text;
+            input.set-selection-offsets(100000, 100000);
+        }
+    }
+    // (In a browser the input laid over the field is told what the app kept of each change it heard, whether or not
+    // that changed the text.)
+    property <int> heard: Nav.edit-heard;
+    changed heard => {
+        if root.editing && Theme.web {
+            Nav.edit-kept(root.text);
+        }
+    }
+}
+
+// ---- Rows -----------------------------------------------------------------------------------------------
+
+// What marks the chosen row of a list: a tint and a bar at its left. A list shows one of these for its chosen
+// row and slides it to the next (`ListView` does, for its `chosen`; a short list of `Row`s places one itself:
+// `Marker { y: chosen * pitch; height: Theme.row; animate y { duration: Theme.quick; easing: ease-out; } }`).
+export component Marker inherits Rectangle {
+    Rectangle {
+        background: @linear-gradient(90deg, Theme.tint 0%, Theme.clear 85%);
+    }
+
+    Rectangle {
+        x: 0;
+        width: 2px;
+        background: Theme.cursor;
+    }
+}
+
+// A row's own back: lit under the pointer, and marked where the row is the chosen one and no `Marker` slides
+// over its list.
+export component RowBack inherits Rectangle {
+    in property <bool> chosen;
+    in property <bool> hover;
+    Rectangle {
+        background: root.chosen ? @linear-gradient(90deg, Theme.tint 0%, Theme.clear 85%) : root.hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Rectangle {
+        x: 0;
+        width: 2px;
+        background: root.chosen ? Theme.cursor : transparent;
+    }
+}
+
+// A row's clicks, where the rows are a `ListView`'s (the list is what is focusable, not each row).
+export component RowTouch inherits TouchArea {
+    mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+    in property <string> nav;
+    in property <int> nav-index;
+    // The list its row can be dragged in to another place (`Drag`), or none.
+    in property <string> drag;
+    // It holds something of the build: a right click on it removes that, as Del does.
+    in property <bool> removable;
+    // A right click on it opens its menu (Play's builds: `Nav.choose("row-menu", row, 0)`, once the press has
+    // brought the focus to it).
+    in property <bool> menu;
+    // The pointer over it describes what it holds, as the focus on it does (`Nav.hover`); a row of a list that
+    // scrolls under the pointer is another row, and says so.
+    in property <bool> describes;
+    changed has-hover => {
+        if root.describes {
+            Nav.hover(nav, nav-index, self.has-hover);
+        }
+    }
+    changed nav-index => {
+        if root.describes && self.has-hover {
+            Nav.hover(nav, nav-index, true);
+        }
+    }
+    clicked => {
+        Drag.clicked(root.drag, nav, nav-index);
+    }
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.down {
+            Nav.point(nav, nav-index);
+        }
+        if root.menu && e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+            Nav.choose("row-menu", nav-index, 0);
+        }
+        Drag.pointer(root.drag, nav-index, e, self.absolute-position, self.mouse-x, self.mouse-y, root.removable);
+    }
+    moved => {
+        if self.pressed {
+            Drag.move(root.drag, self.absolute-position, self.mouse-x, self.mouse-y);
+        }
+    }
+}
+
+// A list row of one text, 44 tall: a row of a short list, each focusable by itself (`nav-index` its place).
+export component Row inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> text;
+    in property <bool> chosen;
+    out property <bool> focused: hit.focused;
+    height: Theme.row;
+    RowBack {
+        chosen: root.chosen;
+        hover: hit.has-hover;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Value {
+        x: 12px;
+        width: parent.width - 24px;
+        text: root.text;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+}
+
+// An item of a menu: the main menu's (`big`: 96 tall, a phone's 68, in `Theme.menu-word`) and a menu overlay's (48
+// tall). The one the cursor or the pointer is on is lit: its bar grows and its tint sweeps in from the left.
+export component MenuItem inherits Rectangle {
+    in property <string> text;
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <bool> big;
+    in property <bool> danger;
+    out property <bool> on: Nav.shown ? hit.focused : hit.has-hover;
+    property <bool> over: Theme.audit && label.preferred-width > label.width + 0.5px;
+    height: !root.big ? 48px : (Theme.handheld ? 68px : 96px);
+    Rectangle {
+        x: 0;
+        width: root.on ? parent.width : 0px;
+        background: @linear-gradient(90deg, Theme.tint 0%, Theme.clear 100%);
+        opacity: root.on ? 1 : 0;
+        animate width, opacity {
+            duration: Theme.brisk;
+            easing: ease-out;
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: root.on ? parent.height : 0px;
+        background: Theme.cursor;
+        animate height {
+            duration: Theme.quick;
+            easing: ease-out;
+        }
+    }
+
+    label := Text {
+        x: root.big && !Theme.handheld ? 24px : 16px;
+        width: parent.width - self.x - 8px;
+        text: root.text;
+        color: root.danger ? Theme.bad : (root.on || !root.big ? Theme.text : Theme.muted);
+        font-family: Theme.display;
+        font-size: !root.big ? 14px : Theme.menu-word;
+        font-weight: Theme.display-bold;
+        letter-spacing: !root.big ? 0.9px : Theme.menu-tracking;
+        vertical-alignment: center;
+        overflow: elide;
+        animate color {
+            duration: Theme.quick;
+        }
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped(root.text);
+        }
+    }
+}
+
+// A row of a menu overlay: a label and a value between arrows (the practice menu's).
+export component OptionRow inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <string> label;
+    in property <string> value;
+    in property <length> value-width: 170px;
+    height: Theme.row;
+    Value {
+        x: 12px;
+        width: parent.width - root.value-width - 104px;
+        text: root.label;
+    }
+
+    Stepper {
+        x: parent.width - self.width - 8px;
+        nav: root.nav;
+        nav-index: root.nav-index;
+        value: root.value;
+        value-width: root.value-width;
+    }
+}
+
+// ---- Frames ---------------------------------------------------------------------------------------------
+
+// A tab of a `TabBar`: its word, whether it can be gone to (one that can't stays in its place, greyed), and
+// whether something in it is wrong (a mark in the error red by its word).
+export struct Tab {
+    text: string,
+    enabled: bool,
+    flagged: bool,
+}
+
+// One tab.
+component TabItem inherits Rectangle {
+    in property <string> nav;
+    in property <int> nav-index;
+    in property <Tab> tab;
+    in property <bool> chosen;
+    in property <bool> upper;
+    property <bool> over: Theme.audit && label.preferred-width > label.width + 0.5px;
+    height: 40px;
+    width: label.preferred-width + (Theme.handheld ? 20px : 32px);
+    label := Text {
+        text: root.upper ? I18n.upper(root.tab.text) : root.tab.text;
+        color: !root.tab.enabled ? Theme.dim : (root.chosen ? Theme.text : Theme.muted);
+        font-family: Theme.display;
+        font-size: Theme.handheld ? 11px : 13px;
+        font-weight: Theme.display-bold;
+        letter-spacing: Theme.cjk ? 0.3px : (Theme.handheld ? 0.6px : 1px);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color {
+            duration: Theme.brisk;
+        }
+    }
+
+    // (Something in the tab is wrong: the problem's mark at its word's upper right.)
+    ProblemMark {
+        x: parent.width - (Theme.handheld ? 9px : 13px);
+        y: 9px;
+        visible: root.tab.flagged && root.tab.enabled;
+    }
+
+    hit := Focusable {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        enabled: root.tab.enabled;
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped(root.tab.text);
+        }
+    }
+}
+
+// A row of tabs over what they switch (a build's editor): the chosen one's underline slides to the next. Each
+// tab is a control (`nav`, its index its place); the screen switches on `activate`, and on the shoulders. Where
+// the tabs are wider than the bar (five of them on a phone, or four in a long language), the bar is a window on
+// them, which moves to keep the chosen tab whole and in its middle: no tab's word is ever cut, and the one
+// before and the one after show enough to be tapped.
+export component TabBar inherits Rectangle {
+    in property <string> nav;
+    in property <[Tab]> tabs;
+    in property <int> chosen;
+    // It is in the header's row (a phone held sideways): no line of its own under it (the header's is), and its ends
+    // fade into the header's bar.
+    in property <bool> headed;
+    // Its tabs' words are set in capitals here (a ruleset's categories, by their names as the game has them).
+    in property <bool> upper;
+    property <color> fade: root.headed ? Theme.ground-top.mix(Theme.bar.with-alpha(1), 0.28) : Theme.ground-top;
+    // Where the chosen tab is: the underline's place.
+    property <length> under-x;
+    property <length> under-width;
+    // How wide the tabs are, side by side (what is right of them is free: the build editor's says the ruleset's
+    // problems there).
+    out property <length> tabs-width: row.preferred-width;
+    // How far the tabs are moved to the left.
+    property <length> shift: clamp(root.under-x + root.under-width / 2 - self.width / 2, 0px, max(0px, row.preferred-width - self.width));
+    height: 40px;
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        visible: !root.headed;
+        background: Theme.line;
+    }
+
+    Rectangle {
+        clip: true;
+        Rectangle {
+            x: -root.shift;
+            width: max(root.width, row.preferred-width);
+            animate x {
+                duration: Theme.brisk;
+                easing: ease-out;
+            }
+            row := HorizontalLayout {
+                alignment: start;
+                spacing: Theme.handheld ? 0px : 4px;
+                for tab[i] in root.tabs: TabItem {
+                    property <int> picked: root.chosen;
+                    function say() {
+                        if i == root.chosen {
+                            root.under-x = self.x;
+                            root.under-width = self.width;
+                        }
+                    }
+                    nav: root.nav;
+                    nav-index: i;
+                    tab: tab;
+                    chosen: i == root.chosen;
+                    upper: root.upper;
+                    init => {
+                        say();
+                    }
+                    changed picked => {
+                        say();
+                    }
+                    changed x => {
+                        say();
+                    }
+                    changed width => {
+                        say();
+                    }
+
+                    Rectangle { }  // (Copied in: docs/app.md §14.)
+                }
+            }
+
+            Rectangle {
+                x: root.under-x;
+                y: parent.height - 3px;
+                width: root.under-width;
+                height: 3px;
+                background: Theme.cursor;
+                animate x, width {
+                    duration: Theme.brisk;
+                    easing: ease-out;
+                }
+            }
+        }
+
+        // Where there are more tabs past an end of the window, that end fades: a tab's word there is on its way
+        // out, not cut by an edge.
+        Rectangle {
+            x: 0px;
+            width: 36px;
+            height: parent.height - 1px;
+            y: 0px;
+            visible: root.shift > 0px;
+            background: @linear-gradient(90deg, root.fade 0%, root.fade.with-alpha(0) 100%);
+        }
+
+        Rectangle {
+            x: parent.width - self.width;
+            width: 36px;
+            height: parent.height - 1px;
+            y: 0px;
+            visible: root.shift < row.preferred-width - root.width;
+            background: @linear-gradient(90deg, root.fade.with-alpha(0) 0%, root.fade 100%);
+        }
+    }
+}
+
+// A panel's back: the cut corner, the line, and the short cyan accent at its top left, which draws from the
+// left as the panel arrives. `side` gives it a player's color along its top in place of the accent (1 or 2).
+export component PanelBack inherits Rectangle {
+    in property <length> cut: 12px;
+    in property <bool> accent: true;
+    in property <int> side;
+    in property <brush> fill: Theme.panel;
+    draw := Tween {
+        delay: 60ms;
+        duration: Theme.settle;
+    }
+
+    Cut {
+        cut: root.cut;
+        background: root.fill;
+    }
+
+    Rectangle {
+        y: 1px;
+        height: 70%;
+        visible: root.side != 0;
+        background: root.side == 1 ? @linear-gradient(180deg, Theme.p1-tint 0%, transparent 100%) : @linear-gradient(180deg, Theme.p2-tint 0%, transparent 100%);
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: (root.side != 0 ? parent.width : 72px) * draw.t;
+        height: 2px;
+        visible: root.accent || root.side != 0;
+        background: root.side == 1 ? Theme.p1 : root.side == 2 ? Theme.p2 : @linear-gradient(90deg, Theme.cursor 0%, Theme.clear 100%);
+    }
+}
+
+// What a build holds sits in one of these (rule 11); the list to pick from beside it has no frame.
+export component Panel inherits Rectangle {
+    in property <length> cut: 12px;
+    in property <bool> accent: true;
+    in property <int> side;
+    PanelBack {
+        cut: root.cut;
+        accent: root.accent;
+        side: root.side;
+    }
+
+    @children
+}
+
+// A line across.
+export component Rule inherits Rectangle {
+    height: 1px;
+    background: Theme.line;
+}
+
+// A group's title over its line (a settings group, a menu's section). It sits nearer its own group than the
+// one above: 8 of room over it, but for a page's first.
+export component GroupTitle inherits Rectangle {
+    in property <string> text;
+    in property <bool> first;
+    property <length> lead: root.first ? 0px : 8px;
+    height: 22px + root.lead;
+    Label {
+        x: 0;
+        y: root.lead;
+        width: parent.width;
+        height: 20px;
+        text: root.text;
+    }
+
+    Rule {
+        y: parent.height - 1px;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+}
+
+// A progress bar: 4 tall, its fill lit, filling smoothly under a highlight that moves along it.
+export component Bar inherits Rectangle {
+    // 0 to 1.
+    in property <float> value;
+    // Whether the fill slides to a new value: for a value that moves in steps. One that moves every frame (an
+    // export's) is shown as it is: a slide begun again each frame never gets anywhere.
+    in property <bool> smooth: true;
+    property <float> sweep: Theme.motion && root.value < 1 ? mod(animation-tick(), 1.1s) / 1.1s : 0;
+    height: 4px;
+    Rectangle {
+        background: Theme.raised;
+    }
+
+    fill := Rectangle {
+        x: 0;
+        width: parent.width * clamp(root.value, 0, 1);
+        background: Theme.cursor;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Theme.glow;
+        clip: true;
+        animate width {
+            duration: root.smooth ? Theme.brisk : 0ms;
+            easing: ease-out;
+        }
+        Rectangle {
+            x: root.sweep * (parent.width + 56px) - 56px;
+            width: 56px;
+            background: @linear-gradient(90deg, #ffffff00 0%, #ffffffc0 50%, #ffffff00 100%);
+            visible: Theme.motion && root.value < 1;
+        }
+    }
+}
+
+// The connection's four bars: how many are lit (0 to 4), green, then amber, then red as the link worsens.
+export component Bars inherits Rectangle {
+    in property <int> level: 4;
+    property <color> tone: root.level >= 3 ? Theme.good : root.level == 2 ? Theme.action : Theme.bad;
+    width: 22px;
+    height: 14px;
+    Rectangle {
+        x: 0;
+        y: 9px;
+        width: 4px;
+        height: 5px;
+        background: root.level >= 1 ? root.tone : Theme.dim;
+    }
+
+    Rectangle {
+        x: 6px;
+        y: 6px;
+        width: 4px;
+        height: 8px;
+        background: root.level >= 2 ? root.tone : Theme.dim;
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 3px;
+        width: 4px;
+        height: 11px;
+        background: root.level >= 3 ? root.tone : Theme.dim;
+    }
+
+    Rectangle {
+        x: 18px;
+        y: 0;
+        width: 4px;
+        height: 14px;
+        background: root.level >= 4 ? root.tone : Theme.dim;
+    }
+}
+
+// ---- Scrolling ------------------------------------------------------------------------------------------
+
+// The scrollbar's thumb, in the 12 reserved at a scrolling thing's right whether or not it shows.
+component Thumb inherits Rectangle {
+    in property <length> view;
+    in property <length> content;
+    in property <length> scroll;
+    width: 4px;
+    Rectangle {
+        x: 0;
+        y: root.content > 0 ? parent.height * root.scroll / root.content : 0px;
+        height: root.content > 0 ? parent.height * root.view / root.content : 0px;
+        visible: root.content > root.view + 0.5px;
+        background: Theme.line;
+    }
+}
+
+// What a scrolling page or a list does besides holding what it scrolls, in one leaf of its own (each container
+// is copied into every use, as everything with something put inside it is; this is compiled once): it is
+// registered for the focus and tells the app where it is, it scrolls what the app asks for into view smoothly,
+// it works out which of a list's rows are in view, and it draws a list's chosen mark and the scrollbar's thumb.
+// The container places it over its whole box, behind the flickable, and links the flickable's `content-y` to
+// its own. (The mark is drawn behind the rows as it was inside the flickable: in a clip of the flickable's box,
+// where the flickable puts what it scrolls.)
+component Scroller inherits Rectangle {
+    in property <string> nav;
+    // A list (the app is told its rows), or else a page.
+    in property <bool> list;
+    // A list's rows: how many, their pitch and their height; and the row marked, or -1.
+    in property <int> count;
+    in property <length> pitch;
+    in property <length> row-height;
+    in property <int> chosen: -1;
+    // How tall what is scrolled is, as the container says it.
+    in property <length> content;
+    // The flickable's own, linked both ways: a drag moves it, a reveal sets it.
+    in-out property <length> content-y;
+    // The flickable's width (12 at the right are the scrollbar's, whether or not it shows) and its content's
+    // height (never less than the view).
+    out property <length> view-width: self.width - 12px;
+    out property <length> content-height: max(self.height, root.content);
+    out property <length> scroll: -root.content-y;
+    // Where what is scrolled is put from where the flickable has it, while a reveal slides it there.
+    out property <length> offset: root.slid * (1 - slide.t);
+    // The first row to make, and how many: those in view, and those a slide under way passes.
+    out property <int> first: max(0, floor(min(root.scroll, root.scroll - root.offset) / root.pitch));
+    out property <int> shown: max(0, min(root.count - root.first, ceil((self.height + abs(root.offset)) / root.pitch) + 1));
+    // The row the focus is on, or -1.
+    out property <int> focused-row: Nav.id == root.nav ? Nav.index : -1;
+    property <int> seq: Nav.reveal-seq;
+    property <[int]> token;
+    property <length> ax: self.absolute-position.x;
+    property <length> ay: self.absolute-position.y;
+    property <length> slid;
+    property <int> slides;
+    // A row being dragged into it (`Drag.into`: one of its own, or a library's) near its top or bottom edge, or a
+    // little past it: it scrolls that way, and where the row would land is asked again. -1 up, 1 down, 0 neither.
+    property <length> edge: 32px;
+    property <int> edging: !Drag.on || Drag.into != root.nav || Drag.x < root.ax || Drag.x > root.ax + self.width ? 0 : (Drag.y < root.ay + root.edge && Drag.y > root.ay - 3 * root.edge) ? -1 : (Drag.y > root.ay + self.height - root.edge && Drag.y < root.ay + self.height + 3 * root.edge) ? 1 : 0;
+    function place() {
+        if root.list {
+            Nav.page(root.nav, root.ax, root.ay, root.view-width, self.height, root.content-height, root.scroll);
+            Nav.list(root.nav, root.count, root.pitch, root.row-height, root.scroll, root.view-width);
+        } else {
+            Nav.page(root.nav, root.ax, root.ay, root.view-width, self.height, root.content, root.scroll);
+        }
+    }
+    slide := Tween {
+        seq: root.slides;
+        duration: Theme.brisk;
+    }
+
+    Timer {
+        interval: 16ms;
+        running: root.edging != 0;
+        triggered => {
+            root.content-y = clamp(root.content-y - root.edging * 8px, min(0px, root.height - root.content-height), 0px);
+            Drag.over();
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.view-width;
+        height: root.height;
+        clip: true;
+        Rectangle {
+            x: 0;
+            y: root.content-y + root.offset;
+            width: root.view-width;
+            height: root.content-height;
+            Marker {
+                x: 0;
+                y: max(0, root.chosen) * root.pitch;
+                height: root.row-height;
+                visible: root.chosen >= 0 && root.chosen < root.count;
+                animate y {
+                    duration: Theme.quick;
+                    easing: ease-out;
+                }
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+    }
+
+    Thumb {
+        x: parent.width - 4px;
+        view: root.height;
+        content: root.content-height;
+        scroll: root.scroll - root.offset;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    init => {
+        token = Nav.register(root.nav, 0, root.list ? NavKind.list : NavKind.page);
+        place();
+    }
+    changed ax => {
+        place();
+    }
+    changed ay => {
+        place();
+    }
+    changed width => {
+        place();
+    }
+    changed height => {
+        place();
+    }
+    changed count => {
+        if root.list {
+            place();
+        }
+    }
+    changed content => {
+        place();
+    }
+    changed scroll => {
+        place();
+        Nav.scrolled();
+    }
+    changed seq => {
+        if Nav.reveal-id == root.nav {
+            root.slid = root.content-y;
+            root.content-y = clamp(root.content-y - Nav.reveal-dy, min(0px, self.height - root.content-height), 0px);
+            root.slid = Nav.reveal-slides ? clamp(root.slid - root.content-y, -self.height, self.height) : 0px;
+            root.slides += 1;
+        }
+    }
+}
+
+// A page that scrolls (the settings). The controls it holds have its name as their prefix (`set.name` on the
+// page `set.`): the app scrolls the focused one into view, and passes by those out of view when the focus comes
+// from outside. Put what it holds inside it, `view-width` wide, and say how tall that is. A scroll the app asks
+// for is smooth: the page is put where it goes at once, and what it holds slides there.
+export component ScrollPage inherits Rectangle {
+    in property <string> nav;
+    in property <length> content-height;
+    // A mouse's drag scrolls it (a touch's always does).
+    in property <bool> mouse-pan: true;
+    out property <length> view-width: flick.width;
+    out property <length> scroll: scroller.scroll;
+    scroller := Scroller {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        nav: root.nav;
+        content: root.content-height;
+        content-y <=> flick.content-y;
+    }
+
+    flick := Flickable {
+        x: 0;
+        y: 0;
+        width: scroller.view-width;
+        content-width: self.width;
+        content-height: scroller.content-height;
+        mouse-drag-pan-enabled: root.mouse-pan;
+        Rectangle {
+            y: scroller.offset;
+            @children
+        }
+    }
+}
+
+// A list of rows of one height (rule 9), of any length: only the rows in view exist. The list is what is
+// focused (`Nav.id` its name, `Nav.index` the row), Up and Down go through its rows, and the focused row is
+// scrolled into view, smoothly. `chosen` is the row marked (the build shown beside the list): its bar and tint
+// slide to the next. Its rows are the screen's own, laid out by what the list says:
+//
+//     list := ListView { nav: "builds"; count: View.rows.length; row-height: 52px; chosen: View.chosen; }
+//     // inside it:
+//     for slot in list.shown: BuildRow {
+//         property <int> at: list.first + slot;
+//         y: self.at * list.pitch;  width: list.row-width;
+//         build: View.rows[self.at];
+//         nav: "builds";  nav-index: self.at;
+//     }
+//
+// A row holds its own `RowTouch` (as `BuildRow` and the folder's rows do). A row used in one list is copied into
+// it (its use is given a bare child); one in several lists (`BuildRow`) is shared (docs/app.md §14). What the
+// list does besides holding its rows is a `Scroller`, compiled once.
+export component ListView inherits Rectangle {
+    in property <string> nav;
+    in property <int> count;
+    in property <length> row-height: Theme.row;
+    in property <length> gap: 2px;
+    // The row marked, or -1.
+    in property <int> chosen: -1;
+    // A mouse's drag scrolls it (a touch's always does).
+    in property <bool> mouse-pan: true;
+    out property <length> pitch: root.row-height + root.gap;
+    out property <length> scroll: scroller.scroll;
+    out property <int> first: scroller.first;
+    out property <int> shown: scroller.shown;
+    out property <length> row-width: flick.width;
+    out property <int> focused-row: scroller.focused-row;
+    scroller := Scroller {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        nav: root.nav;
+        list: true;
+        count: root.count;
+        pitch: root.pitch;
+        row-height: root.row-height;
+        chosen: root.chosen;
+        content: root.count * root.pitch - root.gap;
+        content-y <=> flick.content-y;
+    }
+
+    flick := Flickable {
+        x: 0;
+        y: 0;
+        width: scroller.view-width;
+        content-width: self.width;
+        content-height: scroller.content-height;
+        mouse-drag-pan-enabled: root.mouse-pan;
+        Rectangle {
+            y: scroller.offset;
+            @children
+        }
+    }
+}

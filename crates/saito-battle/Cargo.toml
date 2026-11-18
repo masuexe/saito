@@ -1,0 +1,40 @@
+[package]
+name = "saito-battle"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "saito: a Battle Network battle engine in Rust, reimplemented from Mega Man Battle Network 6 with the game's content as a separate pack"
+
+[dependencies]
+saito-content-api = { path = "../saito-content-api" }
+# The content scripts' runtime (docs/design/scripting.md): a content pack's
+# Luau scripts implement its object kinds, actions and hooks.
+saito-luau = { path = "../saito-luau" }
+# Content types (de)serialize themselves; the loader (saito-content) reads
+# content packs with them, and the scripts read them as data.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+# The test content's strings (`content::testing`: testdata/content/locales).
+toml = "0.8"
+
+[features]
+# `content::testing`: a small hand-authored content set for other crates'
+# tests and examples (made up, not EXE6's data).
+test-content = []
+# Luau's native code generator, selectable with `Behaviors::load`'s
+# options (deterministic, but not faster for this content:
+# docs/design/scripting.md §7).
+luau-jit = ["saito-luau/jit"]
+# Count and time the engine's calls into Luau, by what is called
+# (`behavior::profile`): what docs/design/rules-in-luau.md §6.5 measures
+# with rollback_cost. Off, it costs nothing.
+luau-profile = []
+
+[[example]]
+name = "content_bench"
+required-features = ["test-content"]
+
+[[example]]
+name = "luau_ops"
+required-features = ["test-content"]

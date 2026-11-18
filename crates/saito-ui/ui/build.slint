@@ -1,0 +1,1158 @@
+// What any screen shows of a build (docs/design/app-ui.md §6, "The build overview"; docs/app.md §8): a version's
+// tag (a new build's starting group's: a build itself has none, docs/design/versions.md §3.3), a chip's row, a
+// build's row in a list, and the build overview, which the Builds screen, the Play screen and
+// each player's panel in a match all show. The app fills their models from a build (`crate::builds::overview`,
+// `crate::builds::shelf`); nothing here knows a game.
+//
+// Build cost (docs/app.md §14): the rows are leaves, each under one `for`.
+
+import { Theme, Audit, I18n } from "theme.slint";
+import { Label, Pill, PanelBack, Mono, RowTouch, ProblemMark } from "widgets.slint";
+
+// A version's tag: the version's name as the game's strings have it, in capitals, in the version's own color
+// (the game's builds data's groups state both: `crate::builds::Kit::version_tags`). No text: no tag.
+export struct VersionTag {
+    text: string,
+    tone: color,
+}
+
+// The mark of a thing that is one version's own (docs/design/versions.md §4: a Giga chip, a soul, a Cross, a Beast
+// form, a card's variant), in a row of the build editor: its version's tag, small (16 tall), the name framed in its
+// color; `short`, where the row has no room for the name, a square of the color alone. No text: no mark, and no
+// room taken. `natural-width` is what the name takes.
+export component VersionMark inherits Rectangle {
+    in property <VersionTag> tag;
+    in property <bool> short;
+    out property <length> natural-width: label.preferred-width + 10px;
+    width: root.tag.text == "" ? 0px : root.short ? 8px : root.natural-width;
+    height: root.short ? 8px : 16px;
+    Rectangle {
+        visible: root.tag.text != "";
+        background: root.short ? root.tag.tone : transparent;
+        border-width: 1px;
+        border-color: root.tag.tone;
+    }
+
+    label := Text {
+        x: 5px;
+        width: max(0px, parent.width - 10px);
+        visible: !root.short;
+        text: I18n.upper(root.tag.text);
+        color: root.tag.tone;
+        font-family: Theme.display;
+        font-size: 9px;
+        font-weight: Theme.display-bold;
+        letter-spacing: 0.6px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// What colors a chip's name: its class, which has no column of its own (a Program Advance's colors it as a Standard
+// chip's: its class is the strip's word for it, in the auto battle data's).
+export enum ChipKind {
+    standard,
+    mega,
+    giga,
+    program-advance,
+}
+
+// A folder's entry marked: its Regular chip, or one of its two tag chips.
+export enum ChipMark {
+    none,
+    regular,
+    tag1,
+    tag2,
+}
+
+// A folder's entry, as a row shows it.
+export struct ChipCell {
+    // (An entry with no chip: a folder being made.)
+    there: bool,
+    icon: image,
+    name: string,
+    kind: ChipKind,
+    mark: ChipMark,
+    element: image,
+    code: string,
+    // The folder's rules have something against the entry: its name is in the error red (an empty entry's box, which
+    // has no name), as every item of a build is marked that has a problem (docs/design/app-ui.md §2.66).
+    flagged: bool,
+    // The version its chip is one's own (a Giga chip's), marked after its name; none (no text) outside the editor.
+    version: VersionTag,
+}
+
+// A number of the overview: as the build leaves it, and what the build's installed parts added to it. A stat of the
+// game's rules' own, after the eight, has its name (in the game's strings: "Soul time"); the eight's are the
+// overview's own.
+export struct StatLine {
+    label: string,
+    value: string,
+    added: string,
+}
+
+// One of the forms a build has, as the overview's row of them shows it: its face, and the version it is one's own
+// (its color, the mark under the face).
+export struct SheetForm {
+    face: image,
+    version: VersionTag,
+}
+
+// One of a build's partners (a party battle's: EXE5's), as the overview's rows of them show it: its face and name,
+// and its PartyCust programs by name on a line under them (the user: "there's no need to show the slot gauge or hp
+// for the party navi").
+export struct SheetPartner {
+    face: image,
+    name: string,
+    version: VersionTag,
+    programs: [string],
+}
+
+// A NaviCust program a build has installed, as the overview lists them: once for each of its colors, its name after
+// a square of the color, and how many copies of it in that color.
+export struct SheetProgram {
+    name: string,
+    tone: color,
+    copies: int,
+}
+
+// A list of a build's auto battle data (EXE4's, EXE5's), as the overview says it: its name in the game's words
+// ("First"), and its chips' names in order (none: it holds none).
+export struct SheetList {
+    name: string,
+    chips: [string],
+}
+
+// A build, as the overview shows it.
+export struct BuildSheet {
+    // Over the name, where the sheet is a player's in a match: YOU, OPPONENT. Else none.
+    label: string,
+    // The build's name (in a match, the player's).
+    name: string,
+    navi: string,
+    // The presets of the build's choices, after the navi ("MegaMan · Light": EXE4's and EXE5's MegaMan is Light or
+    // Dark), by their names in the game's strings; empty where it makes none.
+    presets: string,
+    // The face the round starts the navi with.
+    face: image,
+    // The forms it has, in its facts' order and each fact's own (EXE6's Beast form, then its Crosses; EXE4's and
+    // EXE5's souls); none for a navi that doesn't change form.
+    forms: [SheetForm],
+    // Its partners, a row each under the forms (none: no party).
+    party: [SheetPartner],
+    // HP, Attack, Rapid, Charge, Custom, Mega chips, Giga chips, Regular memory; then any of the game's rules' own
+    // (EXE5's Soul time).
+    stats: [StatLine],
+    // The abilities and the bugs, every one of each (the sheet puts each part on a line, by `I18n.join`).
+    abilities: [string],
+    bugs: [string],
+    // The NaviCust's programs (`navicust`: the build has a NaviCust, its game's setup taking one and its navi being
+    // the game's own).
+    navicust: bool,
+    programs: [SheetProgram],
+    // The patch cards' names, in the list's order (EXE4's in their slots') (`patch-cards`: the build has them, as it
+    // has a NaviCust).
+    patch-cards: bool,
+    cards: [string],
+    // The auto battle data's lists, in the game's order (none: the build has no such data).
+    auto-battle: [SheetList],
+    // How many of the folder's entries have a chip, and the entries.
+    count: int,
+    chips: [ChipCell],
+}
+
+// What part of a build a problem is about, by the fact it names (the app's `builds::words`): the navi, its forms
+// (its souls, Crosses or Cybeast), the navi's level, the folder, a tab's facts; none where the problem names no
+// fact, or one with no word of its own. A problem's sentence says what it is about by it.
+export enum BuildPart {
+    none,
+    navi,
+    forms,
+    level,
+    folder,
+    navicust,
+    patch-cards,
+    auto-battle,
+    party,
+}
+
+// A build in a list: its name, its navi and whether it is ready ("MegaMan · ready", or what is wrong, in the
+// error red), and the ruleset it is made for by its name (`ruleset-missing`: one no longer there, which says so).
+export struct BuildEntry {
+    name: string,
+    status: string,
+    bad: bool,
+    ruleset: string,
+    ruleset-missing: bool,
+}
+
+// The ruleset a build is made for, as its row and its box name it at its status line's right end, muted: its name,
+// "(missing)" after one no longer there. As wide as it is, half its line at most.
+export component RulesetNote inherits Text {
+    in property <BuildEntry> build;
+    in property <length> room;
+    width: min(self.preferred-width, root.room / 2);
+    height: 16px;
+    text: root.build.ruleset == "" ? "" : root.build.ruleset-missing ? @tr("{} (missing)", root.build.ruleset) : root.build.ruleset;
+    color: Theme.muted;
+    font-family: Theme.body;
+    font-size: 12px;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// What the builds' views say in words, for the app to ask (`crate::builds::words`): a typed problem's sentence
+// with its numbers, a refusal's reason, a bug's level. Short, in the player's words.
+export global BuildWords {
+    // ---- A build in a list.
+    public pure function ready(navi: string) -> string {
+        return @tr("{} · ready", navi);
+    }
+    public pure function problems(navi: string, n: int) -> string {
+        return @tr("{} · {n} problem" | "{} · {n} problems" % n, navi);
+    }
+    public pure function unreadable() -> string {
+        return @tr("Can't be read");
+    }
+    // ---- A bug's level or amount, and a list with nothing or too much in it.
+    public pure function level(n: int) -> string {
+        return @tr("Lv {}", n);
+    }
+    public pure function amount-of(amount: int, of: int) -> string {
+        return @tr("{} of {}", amount, of);
+    }
+    public pure function more(n: int) -> string {
+        return @tr("+{} more", n);
+    }
+    public pure function megabytes(n: int) -> string {
+        return @tr("{} MB", n);
+    }
+    // ---- A chip's class, and its facts in the folder's strip.
+    public pure function class(kind: ChipKind, dark: bool) -> string {
+        if dark {
+            return @tr("Dark");
+        }
+        if kind == ChipKind.mega {
+            return @tr("Mega");
+        }
+        if kind == ChipKind.giga {
+            return @tr("Giga");
+        }
+        if kind == ChipKind.program-advance {
+            return @tr("Program Advance");
+        }
+        return @tr("Standard");
+    }
+    public pure function attack(n: int) -> string {
+        return @tr("{} attack", n);
+    }
+    public pure function in-folder(n: int) -> string {
+        return @tr("{} in folder", n);
+    }
+    // ---- A card with variants (Bass-Cross MegaMan's, each version's: docs/design/versions.md §2.1), its variant's
+    // name after its own.
+    public pure function card-variant(card: string, variant: string) -> string {
+        return @tr("{} ({})", card, variant);
+    }
+    // ---- Why a chip can't go into the folder now: the end of its library row.
+    public pure function folder-full() -> string {
+        return @tr("Folder full");
+    }
+    public pure function copies-at-most(limit: int) -> string {
+        return @tr("{n} copy at most" | "{n} copies at most" % limit);
+    }
+    public pure function class-limit(kind: ChipKind) -> string {
+        if kind == ChipKind.giga {
+            return @tr("Giga limit reached");
+        }
+        if kind == ChipKind.mega {
+            return @tr("Mega limit reached");
+        }
+        return @tr("Limit reached");
+    }
+    public pure function dark-limit() -> string {
+        return @tr("Dark limit reached");
+    }
+    // ---- Why an entry can't go into a list of a build now (a patch card): the end of its library row.
+    public pure function installed() -> string {
+        return @tr("Installed");
+    }
+    public pure function needs-megabytes(n: int) -> string {
+        return @tr("Needs {} MB", n);
+    }
+    // ---- What is wrong with a build, each kind with its numbers.
+    public pure function folder-size(used: int, limit: int) -> string {
+        return @tr("{} chips, a folder has {}", used, limit);
+    }
+    public pure function chip-not-allowed(chip: string) -> string {
+        return @tr("{} can't be in a folder", chip);
+    }
+    public pure function chip-not-playable(chip: string) -> string {
+        return @tr("{} can't be played in auto battle", chip);
+    }
+    // A chip in a list of the auto battle data that holds another class of chip: the list's name, as the game's
+    // strings have it ("Cannon can't be in the Mega list").
+    public pure function chip-not-in-list(chip: string, list: string) -> string {
+        return @tr("{} can't be in the {} list", chip, list);
+    }
+    public pure function chip-code(chip: string, code: string) -> string {
+        return @tr("{} has no code {}", chip, code);
+    }
+    public pure function copies(chip: string, used: int, limit: int) -> string {
+        return @tr("{} {}, limit {}", used, chip, limit);
+    }
+    public pure function class-over(kind: ChipKind, used: int, limit: int) -> string {
+        if kind == ChipKind.giga {
+            return @tr("{} Giga chips, limit {}", used, limit);
+        }
+        if kind == ChipKind.mega {
+            return @tr("{} Mega chips, limit {}", used, limit);
+        }
+        return @tr("{} chips, limit {}", used, limit);
+    }
+    public pure function dark-over(used: int, limit: int) -> string {
+        return @tr("{} Dark chips, limit {}", used, limit);
+    }
+    public pure function regular-memory(chip: string, used: int, limit: int) -> string {
+        return @tr("{} is {} MB, Regular memory is {} MB", chip, used, limit);
+    }
+    public pure function tag-memory(used: int, limit: int) -> string {
+        return @tr("Tag chips are {} MB, Tag memory is {} MB", used, limit);
+    }
+    public pure function regular-entry() -> string {
+        return @tr("The Regular chip's slot is empty");
+    }
+    public pure function tag-entries() -> string {
+        return @tr("Tag chips are two slots with a chip");
+    }
+    public pure function tag-regular() -> string {
+        return @tr("The Regular chip can't be a tag chip");
+    }
+    public pure function no-tags() -> string {
+        return @tr("This game has no tag chips");
+    }
+    // A thing the ruleset doesn't allow (docs/design/app-ui.md §2.59): a chip, a navi, a program, a card, a soul.
+    public pure function not-allowed(thing: string) -> string {
+        return @tr("{} isn't allowed", thing);
+    }
+    // ... and why it can't go into the build now: the end of its library row, its card's line.
+    public pure function not-allowed-here() -> string {
+        return @tr("Not allowed");
+    }
+    // A build of two versions' things under one version per build. It names neither the versions nor a thing of them:
+    // every one is in the mix, and marked where it is (docs/design/app-ui.md §2.66); the versions' names made the line
+    // too long ("Mixes Team ProtoMan and Team Colonel").
+    public pure function mixed() -> string {
+        return @tr("Mixed versions");
+    }
+    public pure function range(value: int, least: int, most: int) -> string {
+        return @tr("{} is outside {} to {}", value, least, most);
+    }
+    // (A part of a build, in a sentence about something in it.)
+    pure function part-name(part: BuildPart) -> string {
+        if part == BuildPart.folder {
+            return @tr("the folder");
+        }
+        if part == BuildPart.navicust {
+            return @tr("the NaviCust");
+        }
+        if part == BuildPart.patch-cards {
+            return @tr("the patch cards");
+        }
+        if part == BuildPart.auto-battle {
+            return @tr("the auto battle data");
+        }
+        if part == BuildPart.party {
+            return @tr("the party");
+        }
+        return "";
+    }
+    public pure function not-taken(part: BuildPart) -> string {
+        if part == BuildPart.level {
+            return @tr("This navi has no level");
+        }
+        if part == BuildPart.forms {
+            return @tr("This navi doesn't change form");
+        }
+        if part-name(part) != "" {
+            return @tr("This navi can't use {}", part-name(part));
+        }
+        return @tr("This navi can't use it");
+    }
+    public pure function missing(part: BuildPart) -> string {
+        if part == BuildPart.navi {
+            return @tr("No navi chosen");
+        }
+        if part == BuildPart.forms {
+            return @tr("No form chosen");
+        }
+        if part == BuildPart.level {
+            return @tr("No level chosen");
+        }
+        if part-name(part) != "" {
+            return @tr("Something in {} isn't chosen", part-name(part));
+        }
+        return @tr("Something isn't chosen");
+    }
+    public pure function twice(part: BuildPart) -> string {
+        if part-name(part) != "" {
+            return @tr("Something in {} is there twice", part-name(part));
+        }
+        return @tr("Something is there twice");
+    }
+    public pure function budget(used: int, limit: int) -> string {
+        return @tr("{} MB, limit {}", used, limit);
+    }
+    // (A party's partner's PartyCust programs against its gauge.)
+    public pure function gauge-over(used: int, limit: int) -> string {
+        return @tr("Programs fill {} slots, the gauge has {}", used, limit);
+    }
+    public pure function off-board() -> string {
+        return @tr("A piece is off the board");
+    }
+    public pure function overlap() -> string {
+        return @tr("Two pieces overlap");
+    }
+    public pure function wrong-slot(entry: string, own: string) -> string {
+        return @tr("{} belongs in slot {}", entry, own);
+    }
+    public pure function other-game() -> string {
+        return @tr("Made for another game");
+    }
+    // (`game`: the game's name as shown, EXE6.)
+    public pure function foreign(part: BuildPart, game: string) -> string {
+        if part == BuildPart.navi {
+            return @tr("This navi isn't {}'s", game);
+        }
+        if part == BuildPart.forms {
+            return @tr("A form isn't {}'s", game);
+        }
+        if part == BuildPart.folder {
+            return @tr("A chip in the folder isn't {}'s", game);
+        }
+        if part-name(part) != "" {
+            return @tr("Something in {} isn't {}'s", part-name(part), game);
+        }
+        return @tr("Something here isn't {}'s", game);
+    }
+    public pure function invalid(part: BuildPart) -> string {
+        if part == BuildPart.navi {
+            return @tr("This navi can't be used");
+        }
+        if part == BuildPart.forms {
+            return @tr("This form can't be used");
+        }
+        if part == BuildPart.level {
+            return @tr("This level can't be used");
+        }
+        if part-name(part) != "" {
+            return @tr("Something in {} can't be used", part-name(part));
+        }
+        return @tr("Something here can't be used");
+    }
+    public pure function internal() -> string {
+        return @tr("It couldn't be checked. Details are in the log file");
+    }
+    // ---- A save made a build: the preset it was put on, where that changed what the save held.
+    public pure function imported-as(preset: string, navi: string) -> string {
+        return @tr("Imported as {} {}", preset, navi);
+    }
+}
+
+// A chip's row, 26 tall (`big`: 40, a phone's list): its number in the folder, its icon, its name (Mega blue, Giga
+// pink), REG or TAG1 or TAG2, its element, its code. The overview's rows, and the folder editor's. `chosen` marks
+// it (the slot a folder editor is filling).
+export component ChipRow inherits Rectangle {
+    in property <ChipCell> chip;
+    // Its number, from 1; 0: no number (a player's panel in a match).
+    in property <int> number;
+    in property <bool> big;
+    in property <bool> chosen;
+    in property <bool> hover;
+    property <length> gap: root.number > 0 ? 8px : 6px;
+    property <length> pad: root.number > 0 ? 8px : 4px;
+    property <length> icon-x: root.number > 0 ? root.pad + 22px + root.gap : root.pad;
+    property <length> code-x: self.width - root.pad - 18px;
+    property <length> element-x: root.code-x - root.gap - 16px;
+    property <length> mark-width: root.number > 0 ? 34px : 30px;
+    property <length> mark-x: root.element-x - root.gap - root.mark-width;
+    height: root.big ? 40px : Theme.chip-row;
+    Rectangle {
+        background: root.chosen ? @linear-gradient(90deg, Theme.tint 0%, Theme.clear 85%) : root.hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Rectangle {
+        x: 0;
+        width: 2px;
+        background: root.chosen ? Theme.cursor : transparent;
+    }
+
+    Text {
+        x: root.pad;
+        width: 22px;
+        text: root.number <= 0 ? "" : (root.number < 10 ? "0\{root.number}" : "\{root.number}");
+        color: Theme.dim;
+        font-family: Theme.mono;
+        font-size: 11px;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
+
+    // (An empty entry: where its chip's icon would be.)
+    Rectangle {
+        x: root.icon-x;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        border-width: root.chip.there ? 0px : 1px;
+        border-color: root.chip.flagged ? Theme.bad : Theme.line;
+        Image {
+            source: root.chip.icon;
+            image-rendering: pixelated;
+        }
+    }
+
+    // (A name has the mark's room too where the entry has no mark: nothing beside it moves. Its version's mark
+    // follows it, a square of its color where the name and the mark's name don't both fit.)
+    property <length> name-room: max(0px, (root.chip.mark == ChipMark.none ? root.element-x : root.mark-x) - root.gap - name.x);
+    name := Text {
+        x: root.icon-x + 16px + root.gap;
+        width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
+        text: root.chip.name;
+        color: root.chip.flagged ? Theme.bad : root.chip.kind == ChipKind.mega ? Theme.mega : root.chip.kind == ChipKind.giga ? Theme.giga : Theme.text;
+        font-family: Theme.body;
+        font-size: root.big ? 14px : 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    version := VersionMark {
+        x: name.x + min(name.width, name.preferred-width) + 6px;
+        y: (parent.height - self.height) / 2;
+        tag: root.chip.version;
+        short: name.preferred-width + 6px + self.natural-width > root.name-room;
+    }
+
+    Text {
+        x: root.mark-x;
+        width: root.mark-width;
+        text: root.chip.mark == ChipMark.regular ? "REG" : root.chip.mark == ChipMark.tag1 ? "TAG1" : root.chip.mark == ChipMark.tag2 ? "TAG2" : "";
+        color: root.chip.mark == ChipMark.regular ? Theme.reg : Theme.tag;
+        font-family: Theme.body;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Image {
+        x: root.element-x;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.chip.element;
+        image-rendering: pixelated;
+    }
+
+    Text {
+        x: root.code-x;
+        width: 18px;
+        text: root.chip.code;
+        color: Theme.code;
+        font-family: Theme.mono;
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A build's row in a list, 52 tall: its name over its status, the ruleset it is made for at the status's right
+// end. The list is a `ListView`
+// (`row-height: 52px`), which marks the chosen row; a click on the row is the list's row `nav-index` of `nav`.
+// (Its touch is its own. It is in three lists, and smaller shared than copied into each: docs/app.md §14.)
+export component BuildRow inherits Rectangle {
+    in property <BuildEntry> build;
+    in property <string> nav;
+    in property <int> nav-index;
+    // A right click on it opens the build's menu (Play's list).
+    in property <bool> menu;
+    height: 52px;
+    Rectangle {
+        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+    }
+
+    Text {
+        x: 12px;
+        y: 8px;
+        width: parent.width - 24px;
+        height: 20px;
+        text: root.build.name;
+        color: Theme.text;
+        font-family: Theme.body;
+        font-size: 14px;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // (A build with problems: their mark before the words, as the editor's header has it.)
+    ProblemMark {
+        x: 12px;
+        y: 28px + 5.5px;
+        visible: root.build.bad;
+    }
+
+    Text {
+        x: root.build.bad ? 21px : 12px;
+        y: 28px;
+        width: parent.width - 24px - (root.build.bad ? 9px : 0px) - (made-for.width > 0 ? made-for.width + 12px : 0px);
+        height: 16px;
+        text: root.build.status;
+        color: root.build.bad ? Theme.bad : Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    made-for := RulesetNote {
+        x: parent.width - 12px - self.width;
+        y: 28px;
+        build: root.build;
+        room: parent.width - 24px;
+    }
+
+    touch := RowTouch {
+        nav: root.nav;
+        nav-index: root.nav-index;
+        menu: root.menu;
+    }
+}
+
+// One of the overview's numbers: its label, its value, and what was added in cyan.
+component StatRow inherits Rectangle {
+    in property <string> label;
+    in property <StatLine> stat;
+    // The narrow sheet: the value straight after the label's column.
+    in property <bool> narrow;
+    property <bool> over: Theme.audit && name.preferred-width > name.width + 0.5px;
+    height: 16px;
+    name := Text {
+        x: 0;
+        width: root.narrow ? 108px : parent.width - 96px;
+        text: root.label;
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    value := Text {
+        x: root.narrow ? 112px : parent.width - 92px;
+        width: root.narrow ? self.preferred-width : 44px;
+        text: root.stat.value;
+        color: Theme.text;
+        font-family: Theme.mono;
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: root.narrow ? left : right;
+        vertical-alignment: center;
+    }
+
+    Text {
+        x: value.x + value.width + 8px;
+        width: 40px;
+        text: root.stat.added;
+        color: Theme.cursor;
+        font-family: Theme.mono;
+        font-size: 11px;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
+
+    changed over => {
+        if over {
+            Audit.clipped(root.label);
+        }
+    }
+}
+
+// A part's name under the overview's stats: on the narrow sheet in the stats' label column, at its words' left (as a
+// stat's label); on the wide sheet a title over them (as a Label).
+component PartLabel inherits Text {
+    in property <bool> narrow;
+    in property <string> label;
+    height: root.narrow ? 16px : 14px;
+    text: root.narrow ? root.label : I18n.upper(root.label);
+    color: Theme.muted;
+    font-family: root.narrow ? Theme.body : Theme.display;
+    font-size: root.narrow ? 13px : 11px;
+    font-weight: root.narrow ? 400 : Theme.display-semibold;
+    letter-spacing: root.narrow ? 0px : Theme.label-tracking;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+// A part's words under the overview's stats: every item whole, wrapped (as tall as they wrap to); "None" where it has
+// none.
+component PartWords inherits Text {
+    in property <[string]> items;
+    in property <color> tone: Theme.text;
+    height: max(16px, self.preferred-height);
+    text: root.items.length == 0 ? @tr("None") : I18n.join(root.items);
+    color: root.items.length == 0 ? Theme.dim : root.tone;
+    font-family: Theme.body;
+    font-size: 13px;
+    font-weight: 600;
+    vertical-alignment: center;
+    wrap: word-wrap;
+}
+
+// The build overview (docs/design/app-ui.md §6, "The build overview"): the build's name, its navi with its choices'
+// presets ("MegaMan · Light"), and its face; its forms, a row of their faces each with its version's mark under it (a
+// bar in its color); its partners (EXE5's party), each its face and name over its PartyCust programs' names; its stats,
+// with what the NaviCust and the patch cards added beside each in cyan, a stat of the game's rules' own (EXE5's Soul
+// time) after the eight; then each part of the build in words, every item of it whole: its abilities, its bugs (by name
+// and level, purple), its NaviCust's programs (each once for each of its colors, a square of the color before its
+// name, "×3" after it where it has more than one copy), its patch cards' names, and its auto battle data's lists, a
+// line a list ("None" for an empty one); a part the build doesn't have (its game's, or its navi's: a NaviCust is the
+// game's own navi's) isn't there; and its folder's 30 chips in two columns. It is framed (what a build holds is: rule
+// 11), and takes the size it is given.
+//
+// The wide sheet (792 by 540 at least, the Play screen's; the user: "you should also unify it with the regular builds
+// screen", mockup U1) has two columns under the header: at the left (240 wide) the forms (six to a row), the partners,
+// STATS, and each part as its title over its words; at the right FOLDER and the chips, numbered. Where the left column
+// runs past the frame it alone scrolls, in its place under the header, by the wheel and a drag over it, a thumb along
+// its right edge saying where it is; the folder stays in view.
+//
+// Narrower than 620 it is the narrow sheet (the user: "when i hold tab to see the builds entire sections are missing
+// like auto battle, partycust specifics, etc.", mockup D), which a player's panel in a match is (430 wide), and the
+// replay viewer's: one column, as tall as it takes (`sheet-height`), its screen scrolling it: the header with the
+// navi at its right; the forms six to a row; the partners; the stats in two columns of four (the rules' own two to a
+// row under them); each part a line, its name in the stats' label column and its words beside it, wrapped; then the
+// chips, unnumbered. Narrower than 400, a phone's, the stats and the folder are one column (eight rows, thirty) and
+// the forms as many to a row as the width takes. `side` gives it a player's color along its top (1 or 2).
+export component BuildOverview inherits Rectangle {
+    in property <BuildSheet> build;
+    in property <int> side;
+    // Room the wide sheet's header leaves at its right for the buttons a screen puts there (Play's EDIT and ⋯).
+    in property <length> tools;
+    property <length> room: root.tools > 0 ? root.tools + 12px : 0px;
+    out property <bool> narrow: self.width < 620px;
+    // (A phone's sheet is too narrow for two columns of chips with their names whole, or of stats with their
+    // labels whole.)
+    out property <bool> single: self.width < 400px;
+    property <int> column: root.single ? 30 : 15;
+    property <length> pad: 16px;
+    property <length> inner: self.width - 2 * root.pad;
+    // ---- The column of everything but the folder: under the header, the narrow sheet's whole width, the wide
+    // sheet's 240 at the left. What is in it is placed from its top.
+    property <length> column-top: root.narrow ? root.pad + 56px : root.pad + 58px;
+    property <length> column-width: root.narrow ? root.inner : 240px;
+    // The forms' row: faces at their size (32 by 16), 6 apart, the version's mark 2 under each; six to a row (the
+    // stats' column's width on the wide sheet), a phone's as many as fit; rows 22 apart, and 4 after the last.
+    property <int> form-fit: root.single ? max(1, floor((root.inner + 6px) / 38px)) : 6;
+    property <int> form-rows: ceil(root.build.forms.length / root.form-fit);
+    property <length> forms-rows-height: root.form-rows == 0 ? 0px : root.form-rows * 22px + 4px;
+    // The partners under the forms, and 4 after the last: then the forms and they take the room the forms took alone.
+    property <length> forms-height: root.forms-rows-height + (root.build.party.length == 0 ? 0px : party.height + 4px);
+    // The stats: on the narrow sheet two columns of four (the game's rules' own two to a row under them), on a
+    // phone's and the wide sheet a column, the wide sheet's under STATS.
+    property <int> more-stats: max(0, root.build.stats.length - 8);
+    property <int> stat-rows: root.narrow && !root.single ? 4 + ceil(root.more-stats / 2) : 8 + root.more-stats;
+    property <length> stats-top: root.forms-height + (root.narrow ? 0px : 32px);
+    // The parts under the stats, each its name and its words, as tall as they wrap to: on the narrow sheet the name
+    // at the words' left and 6 under them, on the wide sheet a title over them 10 under what is above.
+    property <length> words-x: root.narrow ? 112px : 0px;
+    property <length> words-dy: root.narrow ? 0px : 30px;
+    property <length> label-dy: root.narrow ? 0px : 10px;
+    property <length> abilities-top: root.stats-top + root.stat-rows * 22px;
+    property <length> bugs-top: root.abilities-top + root.part-height(abilities.height);
+    property <length> navicust-top: root.bugs-top + root.part-height(bugs.height);
+    property <length> cards-top: root.navicust-top + (root.build.navicust ? root.part-height(root.build.programs.length == 0 ? 16px : programs.height) : 0px);
+    property <length> auto-top: root.cards-top + (root.build.patch-cards ? root.part-height(cards.height) : 0px);
+    // (The auto battle data: its name, on the narrow sheet a line of its own, then its lists, a line each, and 4 more
+    // under the last on the narrow sheet.)
+    property <length> auto-height: root.build.auto-battle.length == 0 ? 0px : (root.narrow ? 19px + lists.height + 4px : 30px + lists.height);
+    out property <length> column-height: root.auto-top + root.auto-height;
+    // ---- The wide sheet's column scrolls where it is taller than the frame leaves it: `scroll` is how far (0 or
+    // less), a new build at its top; `view` is how tall the column's frame is and `span` how far it can scroll.
+    // The wheel and a drag over it scroll it, and a screen may (Play's, by the right stick and Shift's scrolls).
+    out property <length> view: root.height - root.column-top - root.pad;
+    out property <length> span: root.narrow ? 0px : max(0px, root.column-height - root.view);
+    in-out property <length> scroll;
+    property <length> held-at;
+    // ---- The folder: two columns of fifteen; on the narrow sheet under the column, on the wide at the right.
+    // (The stats' column is 240 and the gap 24, where the mockups have 200 and 32: a label 40% longer than
+    // "Regular memory" has to fit beside its number.)
+    property <length> chips-x: root.narrow ? root.pad : root.pad + 264px;
+    property <length> chips-y: root.narrow ? root.column-top + root.column-height + 12px : root.pad + 56px + 12px + 22px;
+    property <length> chip-width: root.single ? root.inner : ((root.narrow ? root.inner : root.inner - 264px) - 12px) / 2;
+    out property <length> sheet-height: !root.narrow ? 540px : root.chips-y + root.column * (Theme.chip-row + 2px) - 2px + root.pad;
+    property <[string]> stat-labels: [@tr("HP"), @tr("Attack"), @tr("Rapid"), @tr("Charge"), @tr("Custom"), @tr("Mega chips"), @tr("Giga chips"), @tr("Regular memory")];
+    // (Two columns of stats have a shorter label for the last: its column is 108.)
+    property <[string]> narrow-labels: [@tr("HP"), @tr("Attack"), @tr("Rapid"), @tr("Charge"), @tr("Custom"), @tr("Mega chips"), @tr("Giga chips"), @tr("Regular")];
+    // How tall a part is whose words are `words` tall.
+    pure function part-height(words: length) -> length {
+        return root.narrow ? words + 6px : 30px + words;
+    }
+    changed build => {
+        root.scroll = 0;
+    }
+    PanelBack {
+        side: root.side;
+    }
+
+    // The face, the name over the navi.
+    Image {
+        x: root.pad;
+        y: root.pad + 12px;
+        width: root.narrow ? 0px : 64px;
+        height: 32px;
+        source: root.build.face;
+        image-rendering: pixelated;
+    }
+
+    Label {
+        x: root.pad;
+        y: root.pad;
+        width: root.inner;
+        height: 14px;
+        text: root.narrow ? root.build.label : "";
+    }
+
+    // (The narrow sheet has the navi at its right.)
+    name := Text {
+        x: root.narrow ? root.pad : root.pad + 80px;
+        y: root.narrow ? root.pad + (root.build.label == "" ? 8px : 16px) : root.pad + 6px;
+        width: root.narrow ? root.inner - root.room - navi.width - 12px : min(self.preferred-width, root.inner - 80px - root.room);
+        height: 26px;
+        text: root.build.name;
+        color: Theme.text;
+        font-family: Theme.body;
+        font-size: 20px;
+        font-weight: 900;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    navi := Text {
+        x: root.narrow ? root.width - root.pad - root.room - self.width : root.pad + 80px;
+        y: root.narrow ? root.pad + 11px : root.pad + 34px;
+        width: root.narrow ? min(self.preferred-width, 180px) : root.inner - 80px - root.room;
+        height: root.narrow ? 22px : 16px;
+        text: root.build.presets == "" ? root.build.navi : @tr("{} · {}", root.build.navi, root.build.presets);
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // The column: on the wide sheet as tall as the frame leaves it, what runs past it out of view.
+    Rectangle {
+        x: root.pad;
+        y: root.column-top;
+        width: root.column-width;
+        height: root.narrow ? root.column-height : root.view;
+        clip: !root.narrow;
+        Rectangle {
+            x: 0;
+            y: max(root.scroll, -root.span);
+            width: root.column-width;
+            height: root.column-height;
+            // The forms: their faces, each with its version's mark under it.
+            for form[i] in root.build.forms: Rectangle {
+                x: mod(i, root.form-fit) * 38px;
+                y: floor(i / root.form-fit) * 22px;
+                width: 32px;
+                height: 20px;
+                Image {
+                    x: 0;
+                    y: 0;
+                    width: 32px;
+                    height: 16px;
+                    source: form.face;
+                    image-rendering: pixelated;
+                }
+
+                Rectangle {
+                    y: 18px;
+                    height: 2px;
+                    visible: form.version.text != "";
+                    background: form.version.tone;
+                }
+            }
+
+            // The partners: each its face (its version's mark under it, as a form's) and name, and under them its
+            // PartyCust programs, muted, as many lines as they wrap to.
+            party := VerticalLayout {
+                x: 0;
+                y: root.forms-rows-height;
+                width: root.column-width;
+                height: self.preferred-height;
+                alignment: start;
+                for partner in root.build.party: Rectangle {
+                    height: 22px + (partner.programs.length == 0 ? 0px : max(18px, partner-programs.preferred-height));
+                    Image {
+                        x: 0;
+                        y: 0;
+                        width: 32px;
+                        height: 16px;
+                        source: partner.face;
+                        image-rendering: pixelated;
+                    }
+
+                    Rectangle {
+                        x: 0;
+                        y: 18px;
+                        width: 32px;
+                        height: 2px;
+                        visible: partner.version.text != "";
+                        background: partner.version.tone;
+                    }
+
+                    Text {
+                        x: 38px;
+                        y: 0;
+                        width: max(0px, parent.width - 38px);
+                        height: 20px;
+                        text: partner.name;
+                        color: Theme.text;
+                        font-family: Theme.body;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    partner-programs := Text {
+                        x: 38px;
+                        y: 20px;
+                        width: max(0px, parent.width - 38px);
+                        height: max(18px, self.preferred-height);
+                        text: I18n.join(partner.programs);
+                        color: Theme.muted;
+                        font-family: Theme.body;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // The stats: a column of eight; on the narrow sheet two of four; on a phone's a column again. Any after
+            // the eight follow: under them, or on the narrow sheet two to a row under the columns.
+            Label {
+                x: 0;
+                y: root.forms-height + 10px;
+                width: 200px;
+                height: 14px;
+                text: root.narrow ? "" : I18n.upper(@tr("Stats"));
+            }
+
+            for stat[i] in root.build.stats: StatRow {
+                x: root.narrow && !root.single ? (i < 8 ? floor(i / 4) : mod(i - 8, 2)) * (root.inner / 2) : 0px;
+                y: root.stats-top + (root.narrow && !root.single ? (i < 8 ? mod(i, 4) : 4 + floor((i - 8) / 2)) : i) * 22px;
+                width: root.single ? root.inner : root.narrow ? root.inner / 2 - 8px : 240px;
+                narrow: root.narrow && !root.single;
+                label: stat.label != "" ? stat.label : root.narrow && !root.single ? root.narrow-labels[i] : root.stat-labels[i];
+                stat: stat;
+            }
+
+            // The parts: each its name and its words.
+            PartLabel {
+                x: 0;
+                y: root.abilities-top + root.label-dy;
+                width: root.narrow ? 108px : root.column-width;
+                narrow: root.narrow;
+                label: @tr("Abilities");
+            }
+
+            abilities := PartWords {
+                x: root.words-x;
+                y: root.abilities-top + root.words-dy;
+                width: root.column-width - root.words-x;
+                items: root.build.abilities;
+            }
+
+            PartLabel {
+                x: 0;
+                y: root.bugs-top + root.label-dy;
+                width: root.narrow ? 108px : root.column-width;
+                narrow: root.narrow;
+                label: @tr("Bugs");
+            }
+
+            bugs := PartWords {
+                x: root.words-x;
+                y: root.bugs-top + root.words-dy;
+                width: root.column-width - root.words-x;
+                items: root.build.bugs;
+                tone: Theme.bug;
+            }
+
+            // (The NaviCust's programs as they fit along the line, each whole.)
+            PartLabel {
+                x: 0;
+                y: root.navicust-top + root.label-dy;
+                width: root.narrow ? 108px : root.column-width;
+                visible: root.build.navicust;
+                narrow: root.narrow;
+                label: @tr("NaviCust");
+            }
+
+            PartWords {
+                x: root.words-x;
+                y: root.navicust-top + root.words-dy;
+                width: root.column-width - root.words-x;
+                visible: root.build.navicust && root.build.programs.length == 0;
+                items: [];
+            }
+
+            programs := FlexboxLayout {
+                x: root.words-x;
+                y: root.navicust-top + root.words-dy;
+                width: root.column-width - root.words-x;
+                height: self.preferred-height;
+                visible: root.build.navicust;
+                spacing-horizontal: 11px;
+                spacing-vertical: 0px;
+                for program in root.build.programs: Rectangle {
+                    width: program-name.width + 13px;
+                    height: 19px;
+                    Rectangle {
+                        x: 0;
+                        y: 5px;
+                        width: 9px;
+                        height: 9px;
+                        background: program.tone;
+                    }
+
+                    program-name := Text {
+                        x: 13px;
+                        y: 0;
+                        width: self.preferred-width;
+                        height: 19px;
+                        text: program.copies > 1 ? @tr("{} ×{}", program.name, program.copies) : program.name;
+                        color: Theme.text;
+                        font-family: Theme.body;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            PartLabel {
+                x: 0;
+                y: root.cards-top + root.label-dy;
+                width: root.narrow ? 108px : root.column-width;
+                visible: root.build.patch-cards;
+                narrow: root.narrow;
+                label: @tr("Patch cards");
+            }
+
+            cards := PartWords {
+                x: root.words-x;
+                y: root.cards-top + root.words-dy;
+                width: root.column-width - root.words-x;
+                visible: root.build.patch-cards;
+                items: root.build.cards;
+            }
+
+            // (The auto battle data's lists, each its name in the game's words and its chips, a line each.)
+            PartLabel {
+                x: 0;
+                y: root.auto-top + root.label-dy;
+                width: root.narrow ? 108px : root.column-width;
+                visible: root.build.auto-battle.length > 0;
+                narrow: root.narrow;
+                label: @tr("Auto battle");
+            }
+
+            lists := VerticalLayout {
+                x: 0;
+                y: root.auto-top + (root.narrow ? 19px : 30px);
+                width: root.column-width;
+                height: self.preferred-height;
+                alignment: start;
+                for list in root.build.auto-battle: Rectangle {
+                    height: max(16px, list-name.preferred-height, list-chips.height) + 2px;
+                    list-name := Text {
+                        x: root.narrow ? 12px : 0px;
+                        y: 0;
+                        width: root.narrow ? 96px : 68px;
+                        height: self.preferred-height;
+                        text: list.name;
+                        color: Theme.muted;
+                        font-family: Theme.body;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    list-chips := PartWords {
+                        x: root.narrow ? 112px : 72px;
+                        y: 0;
+                        width: parent.width - self.x;
+                        items: list.chips;
+                    }
+                }
+            }
+        }
+    }
+
+    // (A wheel or a drag over the wide sheet's column scrolls it.)
+    TouchArea {
+        x: root.pad;
+        y: root.column-top;
+        width: root.column-width + 8px;
+        height: root.view;
+        enabled: root.span > 0;
+        scroll-event(e) => {
+            root.scroll = clamp(max(root.scroll, -root.span) + e.delta-y, -root.span, 0px);
+            return accept;
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.held-at = max(root.scroll, -root.span);
+            }
+        }
+        moved => {
+            root.scroll = clamp(root.held-at + self.mouse-y - self.pressed-y, -root.span, 0px);
+        }
+    }
+
+    // Where the column is, as a thumb along its right edge.
+    Rectangle {
+        x: root.pad + 244px;
+        y: root.column-top + root.view * (-max(root.scroll, -root.span)) / max(1px, root.column-height);
+        width: 4px;
+        height: root.view * root.view / max(1px, root.column-height);
+        visible: root.span > 0.5px;
+        background: Theme.line;
+    }
+
+    // The folder: two columns of fifteen.
+    Label {
+        x: root.chips-x;
+        y: root.pad + 56px + 12px;
+        width: root.single ? root.chip-width : 2 * root.chip-width + 12px;
+        height: 14px;
+        text: root.narrow ? "" : @tr("FOLDER · {n} CHIP" | "FOLDER · {n} CHIPS" % root.build.count);
+    }
+
+    for chip[i] in root.build.chips: ChipRow {
+        x: root.chips-x + floor(i / root.column) * (root.chip-width + 12px);
+        y: root.chips-y + mod(i, root.column) * (Theme.chip-row + 2px);
+        width: root.chip-width;
+        chip: chip;
+        number: root.narrow && !root.single ? 0 : i + 1;
+    }
+}

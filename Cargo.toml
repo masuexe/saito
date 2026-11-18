@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["crates/saito-luau/wasm/libc"]
+
+[workspace.package]
+# The app's version, which saito, saito-frontend and saito-extract take: the lobby and replays compare saito-frontend's (builds of one minor version play together), and a pack's fingerprint has saito-extract's line.
+version = "0.26.1"
+edition = "2024"
+license = "MPL-2.0"
+
+[workspace.dependencies]
+m4a = { path = "crates/m4a" }
+saito-battle = { path = "crates/saito-battle" }
+cpal = "0.18"
+# Rollback netcode core (vendored in crates/getgud).
+getgud = { path = "crates/getgud" }
+# Netplay transport (vendored in crates/rennet).
+rennet = { path = "crates/rennet" }
+
+[profile.dev]
+opt-level = 1
+
+# The app's Slint compiled to Rust: one large module that any edit to a .slint file compiles again whole. Without
+# optimization and debug info that takes a fifth of the time (docs/app.md §14, measured), and what it does at run
+# time (setting properties, laying out) is the Slint library's, which stays optimized.
+[profile.dev.package.saito-ui]
+opt-level = 0
+debug = false
+
+[profile.release]
+debug = 1
+
+[patch.crates-io]
+# Supply the file API stubs that stock mlua needs on bare Wasm.
+libc = { path = "crates/saito-luau/wasm/libc" }

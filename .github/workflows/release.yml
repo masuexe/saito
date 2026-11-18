@@ -1,0 +1,429 @@
+# The app's releases (packaging/; docs/app.md §19, "Packaging"): Velopack's, for each system and architecture on a
+# channel of its own (win-x64, win-arm64; macos-arm64, macos-x64; linux-x64, linux-arm64): a Windows installer, the
+# macOS app zipped and a Linux AppImage, each with the update package and feed the installed app's updater reads
+# (crates/saito's updates.rs); and the phones' packages: Android's APK, `saito-android.apk`, signed
+# with the release key (the Android job says how), and iOS's IPA, `saito-ios.ipa`, unsigned, which the player's
+# sideloading tool signs as it installs it, with its AltStore source, `altstore.json` (AltStore and SideStore read
+# the latest release's: https://github.com/masuexe/saito/releases/latest/download/altstore.json).
+# Run by hand on main (Actions → Release → Run workflow, or `gh workflow run release.yml --ref main`):
+# it packages the version Cargo.toml says, tags that commit `v<version>` and publishes the release, which the installed
+# apps see at once (the user: "you should just publish the release instead of drafting it"); with `publish` off, the
+# packages alone, as the run's artifacts. It runs on main, not on a tag, so that its Rust caches are main's, which
+# every later run can restore: a cache saved on a tag is that tag's alone, and each release started cold (the user:
+# "it looks like rust cache doesn't actually ever work"). Each package bundles the ffmpeg
+# packaging/ffmpeg.sha256 pins (nettaisen/ffmpeg-build's release, built by that repository's own workflow),
+# which the packaging scripts download and check. No package holds the games' content: the app downloads it from
+# the games' sites (docs/design/content-deployment.md §5), and builds without the content submodules, so the jobs
+# check none out.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Tag the version Cargo.toml says and publish the release (on main)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Velopack's vpk: the version crates/saito's velopack is.
+  VPK_VERSION: 1.3.39-g8d2844f
+
+jobs:
+  icons:
+    name: Icons
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install librsvg and ImageMagick
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends librsvg2-bin imagemagick
+      - name: Make the icons from docs/logo/saito-icon.svg
+        run: packaging/icons.sh "$RUNNER_TEMP/icons"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+          if-no-files-found: error
+
+  # Each Windows architecture's installer, built and packaged natively in a job of its own (packaging/windows/
+  # package.ps1), on its own channel (win-x64, win-arm64), with its own Rust cache.
+  windows:
+    name: Windows installer (${{ matrix.arch }})
+    needs: icons
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # (One architecture failing leaves the other's job to finish: the release waits for both either way.)
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      # (Windows on Arm: ring and aws-lc-sys compile their C and assembly for arm64 with LLVM's clang and clang-cl,
+      # which the image has; on the PATH for the build.)
+      - name: LLVM
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $llvm = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path "$llvm\clang-cl.exe")) {
+            choco install llvm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "installing LLVM failed" }
+          }
+          Add-Content $env:GITHUB_PATH $llvm
+          & "$llvm\clang-cl.exe" --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.arch }}
+      # (crates/saito/build.rs lists the packages offline: every one is fetched first.)
+      - name: Fetch the crates
+        run: cargo fetch --locked
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # (Into the runner's temp folder, put on the PATH for the steps after: the same on every system.)
+      - name: Velopack's vpk
+        shell: pwsh
+        run: |
+          dotnet tool install vpk --version $env:VPK_VERSION --tool-path (Join-Path $env:RUNNER_TEMP 'vpk')
+          if ($LASTEXITCODE -ne 0) { throw "installing vpk failed" }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'vpk')
+      # Optional: a code-signing certificate (base64 of a .pfx) in the secrets WINDOWS_CERTIFICATE and
+      # WINDOWS_CERTIFICATE_PASSWORD. Skipped without it: no program of the release is signed.
+      - name: Signing certificate
+        if: env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'certificate.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          "WINDOWS_CERTIFICATE_PATH=$path" >> $env:GITHUB_ENV
+      - name: Package
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: packaging\windows\package.ps1 -Arch ${{ matrix.arch }} -Icon "$env:RUNNER_TEMP\icons\saito.ico"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-windows-${{ matrix.arch }}
+          path: target/package/windows/${{ matrix.arch }}/releases/*
+          if-no-files-found: error
+
+  # Each Mac architecture's app, built and packaged in a job of its own (packaging/macos/package.sh), on its own
+  # channel (macos-arm64, macos-x64), with its own Rust cache. (Up to 0.18.1 a universal app went up too, on the channel
+  # osx: docs/app.md §19.)
+  macos:
+    name: macOS app (${{ matrix.arch }})
+    needs: icons
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [aarch64, x86_64]
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.arch }}-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.arch }}
+      - name: Fetch the crates
+        run: cargo fetch --locked
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # (Into the runner's temp folder, put on the PATH for the steps after: the same on every system.)
+      - name: Velopack's vpk
+        shell: pwsh
+        run: |
+          dotnet tool install vpk --version $env:VPK_VERSION --tool-path (Join-Path $env:RUNNER_TEMP 'vpk')
+          if ($LASTEXITCODE -ne 0) { throw "installing vpk failed" }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'vpk')
+      # Optional: a Developer ID Application certificate (base64 of a .p12) in MACOS_CERTIFICATE, its password in
+      # MACOS_CERTIFICATE_PASSWORD; with APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD (an app-specific password)
+      # the disk image is notarized too. Skipped without it: the app is signed ad hoc, and the player allows it
+      # once (System Settings → Privacy & Security → Open Anyway).
+      - name: Signing certificate
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application[^"]*\)".*/\1/p' | head -n 1)
+          echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          # (With the Apple ID's app-specific password, a notarytool profile in that keychain, which vpk notarizes the
+          # app with.)
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
+            xcrun notarytool store-credentials saito --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
+            echo "MACOS_NOTARY_PROFILE=saito" >> "$GITHUB_ENV"
+          fi
+      - name: Package
+        env:
+          SAITO_ICONS: ${{ runner.temp }}/icons
+          SAITO_MACOS_ARCH: ${{ matrix.arch }}
+        run: packaging/macos/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-macos-${{ matrix.arch }}
+          path: target/package/macos/${{ matrix.arch }}/releases/*
+          if-no-files-found: error
+
+  # Each Linux architecture's AppImage, built and packaged natively in a job of its own (packaging/linux/package.sh),
+  # on its own channel (linux-x64, linux-arm64), with its own Rust cache.
+  linux:
+    name: Linux AppImage (${{ matrix.arch }})
+    needs: icons
+    # (The oldest images GitHub has: the program needs the glibc it was built against, or a later one.)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+      # ALSA (cpal), fontconfig (Slint's text), udev (SDL's gamepads), Wayland and xkbcommon (the window); squashfs-tools
+      # for vpk's AppImage.
+      - name: Libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake pkg-config libasound2-dev libfontconfig1-dev libudev-dev libwayland-dev libxkbcommon-dev squashfs-tools
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.arch }}
+      - name: Fetch the crates
+        run: cargo fetch --locked
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # (Into the runner's temp folder, put on the PATH for the steps after: the same on every system.)
+      - name: Velopack's vpk
+        shell: pwsh
+        run: |
+          dotnet tool install vpk --version $env:VPK_VERSION --tool-path (Join-Path $env:RUNNER_TEMP 'vpk')
+          if ($LASTEXITCODE -ne 0) { throw "installing vpk failed" }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'vpk')
+      - name: Package
+        env:
+          SAITO_ICONS: ${{ runner.temp }}/icons
+          SAITO_LINUX_ARCH: ${{ matrix.arch }}
+        run: packaging/linux/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-linux-${{ matrix.arch }}
+          path: target/package/linux/${{ matrix.arch }}/releases/*
+          if-no-files-found: error
+
+  # The APK for Android phones on arm64 (packaging/android/package.sh; docs/app.md §7), with the runner's SDK and
+  # NDK, signed with the release key from the secrets: ANDROID_KEYSTORE (the keystore, base64),
+  # ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS. Every release's APK is signed with that one key, as Android
+  # installs an update only over an app signed with the same key.
+  android:
+    name: Android APK
+    needs: icons
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+      # ($ANDROID_HOME and $ANDROID_NDK_HOME are the runner's.)
+      - name: Android platform and build tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
+      # (The JDK Gradle and AGP run on, which also keeps Gradle's downloads between runs, keyed by the build's files.)
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            packaging/android/*.gradle.kts
+            packaging/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target aarch64-linux-android --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # (crates/saito/build.rs lists the packages offline: every one is fetched first.)
+      - name: Fetch the crates
+        run: cargo fetch --locked
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE" ] || { echo "::error::no ANDROID_KEYSTORE secret: the APK is signed with the release key"; exit 1; }
+          base64 --decode <<<"$ANDROID_KEYSTORE" > "$RUNNER_TEMP/saito.keystore"
+          echo "SAITO_ANDROID_KEYSTORE=$RUNNER_TEMP/saito.keystore" >> "$GITHUB_ENV"
+      - name: Package
+        env:
+          SAITO_ICONS: ${{ runner.temp }}/icons
+          SAITO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SAITO_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: packaging/android/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-android
+          path: target/package/android/saito-android.apk
+          if-no-files-found: error
+
+  # iOS's app (packaging/ios/package.sh), the IPA, unsigned: a sideloading tool (AltStore, SideStore, Sideloadly)
+  # signs it with the player's own Apple ID as it installs it.
+  ios:
+    name: iOS app
+    needs: icons
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: icons
+          path: ${{ runner.temp }}/icons
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-ios
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ios-device
+      - name: Fetch the crates
+        run: cargo fetch --locked
+      - name: Package
+        env:
+          SAITO_ICONS: ${{ runner.temp }}/icons
+          SAITO_IOS: device
+        run: packaging/ios/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-ios
+          path: target/package/ios/device/saito-ios.ipa
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: [windows, macos, linux, android, ios]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      # The version Cargo.toml says, tagged on the commit the packages were built from: a tag of that name already on
+      # another commit stops the release.
+      - name: Tag
+        id: tag
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # (The commit a tag already there is on: an annotated tag's peeled ref, else the ref itself.)
+          refs=$(git ls-remote --tags origin)
+          peeled=$(echo "$refs" | awk -v r="refs/tags/$tag^{}" '$2 == r { print $1 }')
+          plain=$(echo "$refs" | awk -v r="refs/tags/$tag" '$2 == r { print $1 }')
+          at=${peeled:-$plain}
+          if [ -z "$at" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "saito $version" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          elif [ "$at" != "$GITHUB_SHA" ]; then
+            echo "::error::$tag is already on $at, not on $GITHUB_SHA: bump the version"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: saito-*
+          path: releases
+          merge-multiple: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      # (Into the runner's temp folder, put on the PATH for the steps after: the same on every system.)
+      - name: Velopack's vpk
+        shell: pwsh
+        run: |
+          dotnet tool install vpk --version $env:VPK_VERSION --tool-path (Join-Path $env:RUNNER_TEMP 'vpk')
+          if ($LASTEXITCODE -ne 0) { throw "installing vpk failed" }
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'vpk')
+      # Each package's channel (win-x64, win-arm64; macos-arm64, macos-x64; linux-x64, linux-arm64) goes up into the one
+      # release, a draft until all are in (a run again merges into it); then it is published, the latest, and the
+      # installed apps see it. (vpk uploads a channel's files alone, as its feed names them: the phones' packages in the
+      # same folder go up after.) (Up to 0.19.1 the same apps went up again on the channels before, win, osx-arm64,
+      # osx-x64 and linux: the bridge, docs/app.md §19, "Updates".)
+      - name: Upload
+        env:
+          VPK_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          for channel in win-x64 win-arm64 macos-arm64 macos-x64 linux-x64 linux-arm64; do
+            vpk upload github --outputDir releases --channel "$channel" --repoUrl "https://github.com/$GITHUB_REPOSITORY" \
+              --tag "$TAG" --releaseName "saito $VERSION" --merge
+          done
+      # The phones' packages, named without the version as the desktop's are, so that the latest release's are always
+      # at the same address; and the AltStore source of the IPA (packaging/ios/altstore.py), which names this
+      # release's IPA by its tag.
+      - name: Upload the APK, the IPA and its AltStore source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          python3 -I packaging/ios/altstore.py releases/saito-ios.ipa \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/saito-ios.ipa" > releases/altstore.json
+          gh release upload "$TAG" releases/saito-android.apk releases/saito-ios.ipa releases/altstore.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

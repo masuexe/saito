@@ -1,0 +1,58 @@
+--!strict
+-- What the rules need from the test pack by role
+-- (docs/design/content-model-v2.md §7.4): AntiDmg's counter and the
+-- charged shot a navi's request starts are the pack's own tickers; the
+-- rest is the test content's (EXE6's modules), which this pack's content
+-- comes with.
+
+local absorbed_obstacle = require("../../objects/absorbed_obstacle")
+local beast_rush = require("../../rules/beast/rush")
+local dust_beast_scatter = require("../../navis/megaman/forms/dustcross_beast/scatter")
+local encased_bubble = require("../../objects/encased_bubble/bubble")
+local falling_rock = require("../../objects/falling_rock")
+local ground_drill = require("../../navis/megaman/forms/groundcross/drill")
+local slash_beast_lunge = require("../../navis/megaman/forms/slashcross_beast/lunge")
+local stun_strike = require("../../lib/swords/stun_strike")
+local test_chips = require("../../chips/test")
+local turn = require("../../navis/megaman/turn")
+local defined = require("../../rules/role_definitions")
+local statuses = require("../../rules/status")
+local ticker = require("../lib/ticker")
+
+return {
+    actions = {
+        anti_damage_counter = ticker.action { id = "test/anti-damage-counter", length = 4 },
+        forced_charged_shot = ticker.action { id = "test/forced-charged-shot", length = 3 },
+        stun_strike = stun_strike.action,
+        switch_protect = ground_drill.action,
+        turn = turn.action,
+        switch_knockout = slash_beast_lunge.action,
+        wrapper = beast_rush.action,
+        ungrounded = dust_beast_scatter.action,
+    },
+    kinds = {
+        absorbed_obstacle = absorbed_obstacle.kind,
+        falling_rock = falling_rock.kind,
+    },
+    chips = {
+        -- What a zeroed chip field reads: the test content's blank chip.
+        zeroed = test_chips["test/blank"],
+    },
+    -- The engine's test content's statuses, lock-on modes, effects, sparks,
+    -- region and collision types, which this pack's content comes with.
+    statuses = {
+        damage_word_paralysis = statuses.paralyze_90,
+        counter_paralysis = statuses.paralyze_150,
+    },
+    effects = defined.effects,
+    sparks = defined.sparks,
+    regions = defined.regions,
+    collision = defined.collision,
+    sounds = defined.sounds,
+    music = defined.music,
+    sprites = defined.sprites,
+    banners = defined.banners,
+    hooks = {
+        encased = encased_bubble.replace,
+    },
+}

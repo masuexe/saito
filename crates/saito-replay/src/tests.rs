@@ -1,0 +1,273 @@
+use super::*;
+
+fn head() -> Head {
+    Head { engine: "0.1.0".into(), game: "exe6".into(), content: 0x0123_4567_89AB_CDEF, start: 42 }
+}
+
+fn info() -> Info {
+    Info { when: 1_790_000_000, side: 1, kind: MatchKind::Online, open_setups: false, names: ["Lan".into(), String::new()] }
+}
+
+/// OK's number in a word's choice (bits 13 to 18: `PlayerTick::word`).
+const OK: u32 = 25;
+
+/// A set of two rounds: input that changes now and then (a custom screen's
+/// choice now and then), side 1's screen delay changing once, a digest
+/// every 60 ticks and at each round's end.
+fn ticks() -> Vec<Tick> {
+    let mut out: Vec<Tick> = (0..300u32)
+        .map(|i| Tick {
+            inputs: [
+                if i % 20 < 5 { 0x001 } else if i % 70 == 11 { OK << 13 } else { 0 },
+                if i % 33 < 3 { 0x220 } else if i % 50 == 7 { 0x1600 } else { 0x200 },
+            ],
+            delays: [0, if i < 120 { 4 } else { 2 }],
+            digest: (i % 60 == 59).then_some(i as u64 * 7),
+            ..Tick::default()
+        })
+        .collect();
+    out[149].round_ended = true;
+    out[149].digest = Some(1);
+    out[299].round_ended = true;
+    out[299].set_ended = true;
+    out[299].digest = Some(2);
+    out
+}
+
+fn written_with(info: &Info, ticks: &[Tick]) -> Vec<u8> {
+    let mut w = Writer::new(Vec::new(), &head(), b"the match", info).unwrap();
+    for t in ticks {
+        w.tick(t).unwrap();
+    }
+    w.into_inner()
+}
+
+fn written(ticks: &[Tick]) -> Vec<u8> {
+    written_with(&info(), ticks)
+}
+
+/// Why bytes don't read, as a reader is told.
+fn refused(bytes: &[u8]) -> String {
+    Replay::read(bytes).unwrap_err().to_string()
+}
+
+/// A replay reads back as it was written, each round where its mark is; a
+/// tick that changes nothing is one byte.
+#[test]
+fn a_replay_reads_back() {
+    let ticks = ticks();
+    let bytes = written(&ticks);
+    let r = Replay::read(&bytes).unwrap();
+    assert_eq!((r.head, r.match_bytes.as_slice(), r.info), (head(), b"the match".as_slice(), info()));
+    assert_eq!((r.ticks, r.end), (ticks.clone(), End::Set));
+    let r = Replay::read(&bytes).unwrap();
+    assert_eq!(r.rounds().iter().map(|t| t.len()).collect::<Vec<_>>(), [150, 150]);
+    assert_eq!(r.round_starts(), [0, 150]);
+    let header = bytes.len() - written(&[]).len();
+    assert!(header < 300 * 2, "{header} bytes of input");
+    // (The head, the info, the match, the input: a reader that wants who
+    // played when reads no match.)
+    let at = |tag: &[u8]| bytes.windows(4).position(|w| w == tag).unwrap();
+    assert!(at(b"SHED") < at(b"SINF") && at(b"SINF") < at(b"SMTC") && at(b"SMTC") < at(b"STCK"));
+}
+
+/// A round starts on the tick after a round's end, but for a mark on the
+/// input's last tick: a set cut after its second round's end has two
+/// rounds, not a third of no ticks.
+#[test]
+fn a_round_starts_after_each_rounds_end() {
+    let mut cut = ticks();
+    cut[299].set_ended = false;
+    let r = Replay::read(&written(&cut)).unwrap();
+    assert_eq!((r.end, r.round_starts()), (End::Open, vec![0, 150]));
+    let r = Replay::read(&written(&cut[..200])).unwrap();
+    assert_eq!(r.round_starts(), [0, 150]);
+    let r = Replay::read(&written(&[])).unwrap();
+    assert_eq!(r.round_starts(), [0]);
+}
+
+/// The kind of match and open setups are the info's, each read back as
+/// written; a byte neither holds is refused.
+#[test]
+fn the_info_says_the_kind_of_match_and_open_setups() {
+    for (kind, open_setups) in [(MatchKind::Offline, true), (MatchKind::Online, true), (MatchKind::Online, false)] {
+        let info = Info { kind, open_setups, ..info() };
+        let r = Replay::read(&written_with(&info, &ticks())).unwrap();
+        assert_eq!(r.info, info);
+    }
+    let blank = Info { when: 0, side: 1, kind: MatchKind::Offline, open_setups: true, names: Default::default() };
+    assert_eq!(Info::of(MatchKind::Offline, 1), blank);
+    // The info's body: when (8 bytes), the side, the kind, open setups.
+    let bytes = written(&[]);
+    let body = bytes.windows(4).position(|w| w == b"SINF").unwrap() + 8;
+    assert_eq!(bytes[body + 8..body + 11], [1, 1, 0]);
+    let mut kind = bytes.clone();
+    kind[body + 9] = 2;
+    assert_eq!(refused(&kind), "the info's kind of match is 2, not 0 (offline) or 1 (online)");
+    let mut open = bytes.clone();
+    open[body + 10] = 2;
+    assert_eq!(refused(&open), "the info's open setups is 2, not 0 or 1");
+}
+
+/// All a replay says of a side is its player's name and the match's bytes:
+/// the head and the info are their listed fields and nothing more, so
+/// there is no place a build's name could be.
+#[test]
+fn a_replay_holds_no_more_of_a_side_than_its_name_and_setup() {
+    let bytes = written(&[]);
+    let string = |s: &str| 1 + s.len();
+    let (h, i) = (head(), info());
+    let head_len = string(&h.engine) + string(&h.game) + 8 + 8;
+    let info_len = 8 + 1 + 1 + 1 + string(&i.names[0]) + string(&i.names[1]);
+    let section = |tag: &[u8], at: usize| -> usize {
+        assert_eq!(&bytes[at..at + 4], tag);
+        u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize
+    };
+    let mut at = 5;
+    assert_eq!(section(b"SHED", at), head_len);
+    at += 8 + head_len;
+    assert_eq!(section(b"SINF", at), info_len);
+    at += 8 + info_len;
+    assert_eq!(section(b"SMTC", at), b"the match".len());
+    at += 8 + b"the match".len();
+    assert_eq!(&bytes[at..], b"STCK");
+}
+
+/// A file cut short: every whole tick before the cut, and the cut said;
+/// one that stops between ticks is open; the head cut short is damaged.
+#[test]
+fn a_cut_file_reads_to_its_cut() {
+    let ticks = ticks();
+    let bytes = written(&ticks);
+    let start = written(&[]).len();
+    // (Tick 59's record: its control, then its digest.)
+    let at = written(&ticks[..59]).len();
+    let r = Replay::read(&bytes[..at + 3]).unwrap();
+    assert_eq!((r.ticks.len(), r.end), (59, End::Cut));
+    let r = Replay::read(&bytes[..at]).unwrap();
+    assert_eq!((r.ticks.len(), r.end), (59, End::Open));
+    assert_eq!(Replay::read(&bytes[..start - 1]).unwrap_err(), ReadError::Damaged("the file ends inside its input".into()));
+    assert_eq!(refused(&bytes[..20]), "the file ends inside its head");
+    assert_eq!(refused(&bytes[..4]), "the file ends inside its start");
+}
+
+/// What isn't a replay, a replay of another layout (another version of
+/// saito's) and what no writer writes are each refused as what they are,
+/// saying what.
+#[test]
+fn a_file_that_doesnt_read_is_refused_as_what_it_is() {
+    let bytes = written(&ticks());
+    let start = written(&[]).len();
+    assert_eq!(Replay::read(b"PK\x03\x04").unwrap_err(), ReadError::NotAReplay);
+    assert_eq!(refused(b"PK\x03\x04"), "not a replay (no \"STRP\" at its start)");
+    assert_eq!(Replay::read(b"").unwrap_err(), ReadError::NotAReplay);
+    let mut legacy_saito = bytes.clone();
+    legacy_saito[..5].copy_from_slice(b"NTRP\x02");
+    assert_eq!(Replay::read(&legacy_saito).unwrap_err(), ReadError::NotAReplay);
+    assert_eq!(Head::read(&legacy_saito), None);
+    for other in [0, 1, 2, 0x54] {
+        let mut layout = bytes.clone();
+        layout[4] = other;
+        assert_eq!(Replay::read(&layout).unwrap_err(), ReadError::OtherLayout { layout: other });
+        assert_eq!(refused(&layout), format!("a replay of layout {other}; this reads layout {LAYOUT}"));
+    }
+    let mut bits = bytes.clone();
+    bits[start] |= 0x80;
+    assert_eq!(Replay::read(&bits).unwrap_err(), ReadError::Damaged("tick 0: its record's bits 0xc3 are none a writer writes".into()));
+    let mut more = bytes.clone();
+    more.push(0);
+    assert_eq!(refused(&more), "1 bytes after the set's end");
+    let mut tag = bytes.clone();
+    tag[5..9].copy_from_slice(b"HEAP");
+    assert_eq!(refused(&tag), "no head where it goes (\"HEAP\" there)");
+}
+
+/// A writer refuses what a reader would.
+#[test]
+fn a_writer_refuses_what_isnt_a_set() {
+    let mut w = Writer::new(Vec::new(), &head(), b"", &info()).unwrap();
+    let end = Tick { round_ended: true, ..Tick::default() };
+    assert!(w.tick(&end).is_err());
+    assert!(w.tick(&Tick { set_ended: true, digest: Some(0), ..Tick::default() }).is_err());
+    w.tick(&Tick { set_ended: true, digest: Some(9), ..end }).unwrap();
+    assert!(w.ended());
+    assert!(w.tick(&Tick::default()).is_err());
+}
+
+/// The head names what a replay plays on, and what differs is said as what
+/// it is.
+#[test]
+fn the_head_says_what_it_plays_on() {
+    let h = head();
+    assert_eq!(h.require("0.1.0", "exe6", h.content), Ok(()));
+    let game = h.require("0.1.0", "exe5", h.content).unwrap_err();
+    assert_eq!(game, Mismatch::Game { replay: "exe6".into(), here: "exe5".into() });
+    assert_eq!(game.to_string(), "the replay is of exe6, not exe5");
+    let content = h.require("0.1.0", "exe6", 1).unwrap_err();
+    assert_eq!(content, Mismatch::Content { replay: h.content, here: 1 });
+    assert_eq!(content.to_string(), "the replay was made on other content (its hash 0123456789abcdef, this one's 0000000000000001)");
+    let engine = h.require("0.2.0", "exe6", h.content).unwrap_err();
+    assert_eq!(engine, Mismatch::Engine { replay: "0.1.0".into(), here: "0.2.0".into() });
+    assert_eq!(engine.to_string(), "the replay was made on saito 0.1.0, this is 0.2.0");
+    // (A patch release plays it.)
+    assert_eq!(h.require("0.1.7", "exe6", h.content), Ok(()));
+    assert_eq!((line("0.7.3"), line("1.2.0-rc.1"), line("1.2")), ("0.7", "1.2", "1.2"));
+}
+
+/// A file's head reads by itself, whatever is wrong after it: a file cut
+/// inside its info, or one whose ticks no writer writes, still says its
+/// game. Bytes that aren't a replay, another layout's, and a file that
+/// ends inside its head say nothing.
+#[test]
+fn a_head_reads_whatever_follows_it() {
+    let bytes = written(&ticks());
+    assert_eq!(Head::read(&bytes), Some(head()));
+    let info_at = bytes.windows(4).position(|w| w == b"SINF").unwrap();
+    let cut = &bytes[..info_at + 6];
+    assert!(Replay::read(cut).is_err());
+    assert_eq!(Head::read(cut), Some(head()));
+    let mut wrong = written(&[]);
+    wrong.push(0xE0);
+    assert!(Replay::read(&wrong).is_err());
+    assert_eq!(Head::read(&wrong), Some(head()));
+    let mut other = bytes.clone();
+    other[4] = 1;
+    assert_eq!(Head::read(&other), None);
+    assert_eq!(Head::read(b"not a replay"), None);
+    assert_eq!(Head::read(&bytes[..info_at - 3]), None);
+}
+
+/// A side's screen delay is written as it changes, a byte after the inputs
+/// (control bit 5 for side 0, 6 for side 1), and carried by the reader; an
+/// input is LEB128: A alone one byte, a word with a custom screen's choice
+/// (bits 13 to 18) three, any 32-bit word at most five; a word cut short is
+/// the file's cut, one past 32 bits damage.
+#[test]
+fn screen_delays_and_inputs_read_back() {
+    // (A held, the highest choice's number.)
+    let choice: u32 = 1 | 49 << 13;
+    let ticks = [
+        Tick { inputs: [0, 0], delays: [4, 0], ..Tick::default() },
+        Tick { inputs: [choice, 0], delays: [4, 0], ..Tick::default() },
+        Tick { inputs: [choice, 1], delays: [2, 7], ..Tick::default() },
+        Tick { inputs: [u32::MAX, 1], delays: [2, 7], ..Tick::default() },
+        Tick { inputs: [0, 0], delays: [2, 7], round_ended: true, set_ended: true, digest: Some(3) },
+    ];
+    let bytes = written(&ticks);
+    let start = written(&[]).len();
+    // Side 0's delay alone; side 0's input alone (three bytes); both
+    // delays and side 1's input (a byte); side 0's input (five bytes).
+    assert_eq!(bytes[start..start + 2], [0x20, 4]);
+    assert_eq!(bytes[start + 2..start + 6], [0x01, 0x81, 0xC0, 0x18]);
+    assert_eq!(bytes[start + 6..start + 10], [0x62, 0x01, 2, 7]);
+    assert_eq!(bytes[start + 10..start + 16], [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
+    let r = Replay::read(&bytes).unwrap();
+    assert_eq!(r.ticks, ticks);
+    // Cut inside side 0's input: the ticks before it.
+    let r = Replay::read(&bytes[..start + 4]).unwrap();
+    assert_eq!((r.ticks.len(), r.end), (1, End::Cut));
+    // Past 32 bits.
+    let mut past = bytes[..start + 10].to_vec();
+    past.extend_from_slice(&[0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F]);
+    assert_eq!(refused(&past), "an input in its input is past 32 bits");
+}
