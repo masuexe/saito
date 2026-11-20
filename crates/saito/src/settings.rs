@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 pub const NAME_LENGTH: usize = saito_frontend::lobby::NAME_LENGTH;
 
 /// The signaling server used when neither `$SAITO_SIGNAL` nor `Settings::signaling_server` is set.
-pub const DEFAULT_SIGNAL_SERVER: &str = "ws://111.229.100.54:8787";
+pub const DEFAULT_SIGNAL_SERVER: &str = "wss://matchmaking.exessrhub.top";
 
 /// The longest signaling server URL kept in settings.
 pub const SIGNAL_SERVER_LENGTH: usize = 256;
