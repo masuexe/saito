@@ -380,6 +380,7 @@ component CellView inherits Rectangle {
     property <bool> empty: !root.cell.filled;
     in property <length> gap;
     property <color> edge: Theme.piece-edge;
+    property <length> rim: Theme.handheld ? 1.5px : 2px;
     Rectangle {
         visible: root.cell.kind == CellKind.board && root.empty;
         background: root.command ? Theme.command-line : Theme.inset;
@@ -408,6 +409,53 @@ component CellView inherits Rectangle {
         visible: root.cell.filled && root.cell.kind == CellKind.out;
         tone: Theme.piece-mark;
         edge: transparent;
+    }
+
+    // Inner dark rim along each outer edge of the piece (plus concave corners), so adjacent pieces — especially
+    // same-color ones — separate cleanly from intra-piece cell seams.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.rim;
+        visible: root.cell.filled && root.cell.top;
+        background: root.edge;
+    }
+
+    Rectangle {
+        x: 0;
+        y: parent.height - root.rim;
+        width: parent.width;
+        height: root.rim;
+        visible: root.cell.filled && root.cell.bottom;
+        background: root.edge;
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.rim;
+        height: parent.height;
+        visible: root.cell.filled && root.cell.left;
+        background: root.edge;
+    }
+
+    Rectangle {
+        x: parent.width - root.rim;
+        y: 0;
+        width: root.rim;
+        height: parent.height;
+        visible: root.cell.filled && root.cell.right;
+        background: root.edge;
+    }
+
+    for corner[i] in [root.cell.top-left, root.cell.top-right, root.cell.bottom-left, root.cell.bottom-right]: Rectangle {
+        x: mod(i, 2) == 0 ? 0 : parent.width - root.rim;
+        y: i < 2 ? 0 : parent.height - root.rim;
+        width: root.rim;
+        height: root.rim;
+        visible: root.cell.filled && corner == Crossing.edge;
+        background: root.edge;
     }
 
     // The gaps round a placed cell: within its piece the piece's color under the plus part's mark, dark along the
