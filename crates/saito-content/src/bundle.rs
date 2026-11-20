@@ -514,10 +514,10 @@ mod tests {
             assert_eq!(BUNDLED.len(), 3);
             let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
             for game in ["exe4", "exe5", "exe6"] {
-                let stored = store.newest(game, "0.26").expect(game);
+                let stored = store.newest(game, "0.1").expect(game);
                 assert_eq!(bundled_id(game), Some(stored.id));
             }
-            let stored_exe6 = store.newest("exe6", "0.26").unwrap();
+            let stored_exe6 = store.newest("exe6", "0.1").unwrap();
             assert_eq!(
                 crate::store::content_hash(&stored_exe6.dir, "exe6").unwrap(),
                 crate::store::content_hash(&repo, "exe6").unwrap(),

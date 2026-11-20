@@ -37,6 +37,12 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
@@ -322,6 +328,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "imagesize"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -496,6 +508,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "midly"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "207d755f4cb882d20c4da58d707ca9130a0c9bc5061f657a4f299b8e36362b7a"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,146 +581,6 @@ name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
-
-[[package]]
-name = "saito-assets"
-version = "0.1.0"
-dependencies = [
- "resvg",
-]
-
-[[package]]
-name = "saito-battle"
-version = "0.1.0"
-dependencies = [
- "saito-content-api",
- "saito-luau",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "toml",
-]
-
-[[package]]
-name = "saito-content"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "saito-assets",
- "saito-battle",
- "saito-content-api",
- "saito-extract",
- "saito-files",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "toml",
- "toml_edit",
-]
-
-[[package]]
-name = "saito-content-api"
-version = "0.1.0"
-dependencies = [
- "saito-files",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "saito-extract"
-version = "0.26.1"
-dependencies = [
- "log",
- "m4a",
- "saito-assets",
- "saito-content-api",
- "saito-files",
- "saito-luau",
- "steamlocate",
- "toml",
- "zip",
-]
-
-[[package]]
-name = "saito-files"
-version = "0.1.0"
-dependencies = [
- "cfg_aliases",
- "jni",
- "js-sys",
- "log",
- "ndk-context",
- "saito-threads",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-time",
-]
-
-[[package]]
-name = "saito-gym"
-version = "0.1.0"
-dependencies = [
- "saito-training",
- "numpy",
- "pyo3",
-]
-
-[[package]]
-name = "saito-luau"
-version = "0.1.0"
-dependencies = [
- "luau0-src",
- "mlua",
- "mlua-sys",
- "saito-content-api",
-]
-
-[[package]]
-name = "saito-match"
-version = "0.1.0"
-dependencies = [
- "saito-battle",
- "saito-content-api",
- "serde",
- "toml",
- "toml_edit",
-]
-
-[[package]]
-name = "saito-netplay"
-version = "0.1.0"
-dependencies = [
- "getgud",
- "saito-battle",
- "saito-content-api",
- "rennet",
-]
-
-[[package]]
-name = "saito-threads"
-version = "0.1.0"
-dependencies = [
- "cfg_aliases",
- "futures-channel",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "saito-training"
-version = "0.1.0"
-dependencies = [
- "saito-battle",
- "saito-content",
- "saito-content-api",
- "saito-match",
- "saito-netplay",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "num-complex"
@@ -817,11 +695,24 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "crc32fast",
  "fdeflate",
  "flate2",
@@ -954,7 +845,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -1014,6 +905,152 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "saito-assets"
+version = "0.1.0"
+dependencies = [
+ "resvg",
+]
+
+[[package]]
+name = "saito-battle"
+version = "0.1.0"
+dependencies = [
+ "saito-content-api",
+ "saito-luau",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "toml",
+]
+
+[[package]]
+name = "saito-content"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "hound",
+ "m4a",
+ "midly",
+ "png 0.17.16",
+ "saito-assets",
+ "saito-battle",
+ "saito-content-api",
+ "saito-extract",
+ "saito-files",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "saito-content-api"
+version = "0.1.0"
+dependencies = [
+ "saito-files",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "saito-extract"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "m4a",
+ "saito-assets",
+ "saito-content-api",
+ "saito-files",
+ "saito-luau",
+ "steamlocate",
+ "toml",
+ "zip",
+]
+
+[[package]]
+name = "saito-files"
+version = "0.1.0"
+dependencies = [
+ "cfg_aliases",
+ "jni",
+ "js-sys",
+ "log",
+ "ndk-context",
+ "saito-threads",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "saito-gym"
+version = "0.1.0"
+dependencies = [
+ "numpy",
+ "pyo3",
+ "saito-training",
+]
+
+[[package]]
+name = "saito-luau"
+version = "0.1.0"
+dependencies = [
+ "luau0-src",
+ "mlua",
+ "mlua-sys",
+ "saito-content-api",
+]
+
+[[package]]
+name = "saito-match"
+version = "0.1.0"
+dependencies = [
+ "saito-battle",
+ "saito-content-api",
+ "serde",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "saito-netplay"
+version = "0.1.0"
+dependencies = [
+ "getgud",
+ "rennet",
+ "saito-battle",
+ "saito-content-api",
+]
+
+[[package]]
+name = "saito-threads"
+version = "0.1.0"
+dependencies = [
+ "cfg_aliases",
+ "futures-channel",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "saito-training"
+version = "0.1.0"
+dependencies = [
+ "saito-battle",
+ "saito-content",
+ "saito-content-api",
+ "saito-match",
+ "saito-netplay",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "same-file"
@@ -1280,7 +1317,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
- "png",
+ "png 0.18.1",
  "tiny-skia-path",
 ]
 
@@ -1452,6 +1489,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "web-sys"
+version = "0.3.106"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]
