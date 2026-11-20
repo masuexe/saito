@@ -40,7 +40,8 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 2. **Develop**
    - Before implementing a specific item (e.g., `S-002`), call `smartsheet_update_records` to set its `状态` to `开发中`.
 3. **Resolve**
-   - After implementation and passing build/test verification, update `状态` to `已完成` and record a concise summary (or related commit/version) in `维护者备注`.
+   - Always include the board item ID (e.g., `(S-002)`) in the git commit message.
+   - After implementation, passing build/test verification, and committing, update `状态` to `已完成` and record the commit hash (e.g., `commit abc603f`) plus a concise summary in `维护者备注`.
 4. **Safety Constraints**
    - Never delete community-submitted records.
    - Only update maintainer fields (`状态`, `优先级`, `维护者备注`); preserve original submission content and submitter information.
