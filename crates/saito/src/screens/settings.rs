@@ -38,7 +38,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
         "set.key" | "set.button" | "set.reset" => 4,
-        "set.folder" | "set.about" => 5,
+        "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
     })
 }
@@ -90,6 +90,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_signaling_server(s.signaling_server.as_str().into());
     view.set_default_signaling_server(DEFAULT_SIGNAL_SERVER.into());
     view.set_data_folder(crate::paths::data().display().to_string().into());
+    view.set_can_send_nearby(saito_nearby::can_offer() && shell.games.rom_source().is_some());
     binding.show(shell);
 }
 
@@ -250,9 +251,16 @@ pub struct Settings {
     binding: Binding,
     /// About, shown in the page's place while it is open.
     about: about::About,
+    /// Target `IP:port` entered for manual nearby transfer.
+    nearby_target: String,
 }
 
 impl Settings {
+    fn try_send_nearby(&self, shell: &mut Shell) {
+        if !crate::nearby::send_to(shell, &self.nearby_target) {
+            shell.sound.play(Cue::Refused);
+        }
+    }
 
     fn set_reduce_motion(&mut self, shell: &mut Shell, reduce: bool) {
         shell.set_reduce_motion(reduce);
@@ -290,6 +298,7 @@ impl Screen for Settings {
 
     fn show(&mut self, shell: &mut Shell) {
         show_values(shell, &self.binding);
+        shell.ui().global::<SettingsView>().set_nearby_target(self.nearby_target.as_str().into());
         if self.about.is_open() {
             self.about.show(shell);
         }
@@ -321,6 +330,7 @@ impl Screen for Settings {
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
             "set.folder" => show_folder(&crate::paths::data()),
+            "set.nearby.send" => self.try_send_nearby(shell),
             "set.about" => self.about.open(shell),
             _ => {}
         }
@@ -393,7 +403,18 @@ impl Screen for Settings {
                     shell.save_settings();
                 }
             }
+            "set.nearby" => {
+                let clean: String = text.chars().filter(|c| !c.is_control() && !c.is_whitespace()).collect();
+                self.nearby_target = clean;
+                view.set_nearby_target(self.nearby_target.as_str().into());
+            }
             _ => {}
+        }
+    }
+
+    fn submitted(&mut self, shell: &mut Shell, id: &str, _index: i32) {
+        if id == "set.nearby" {
+            self.try_send_nearby(shell);
         }
     }
 

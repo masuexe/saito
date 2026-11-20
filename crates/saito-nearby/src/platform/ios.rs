@@ -7,7 +7,7 @@
 // (On macOS, for the tests, the module is built but isn't the system's.)
 #![cfg_attr(not(target_os = "ios"), allow(dead_code))]
 
-use crate::{SERVICE, Seen};
+use crate::{Seen, protocol};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -28,9 +28,24 @@ const NO_ERROR: Error = 0;
 type BrowseReply = extern "C" fn(DNSServiceRef, Flags, u32, Error, *const c_char, *const c_char, *const c_char, *mut c_void);
 type ResolveReply = extern "C" fn(DNSServiceRef, Flags, u32, Error, *const c_char, *const c_char, u16, u16, *const u8, *mut c_void);
 type AddrInfoReply = extern "C" fn(DNSServiceRef, Flags, u32, Error, *const c_char, *const libc::sockaddr, u32, *mut c_void);
+type RegisterReply = extern "C" fn(DNSServiceRef, Flags, Error, *const c_char, *const c_char, *const c_char, *mut c_void);
 
 // libSystem's (libsystem_dnssd), linked by default on Apple's systems.
 unsafe extern "C" {
+    fn DNSServiceRegister(
+        sd_ref: *mut DNSServiceRef,
+        flags: Flags,
+        interface: u32,
+        name: *const c_char,
+        regtype: *const c_char,
+        domain: *const c_char,
+        host: *const c_char,
+        port: u16,
+        txt_len: u16,
+        txt_record: *const c_void,
+        reply: Option<RegisterReply>,
+        context: *mut c_void,
+    ) -> Error;
     fn DNSServiceBrowse(
         sd_ref: *mut DNSServiceRef,
         flags: Flags,
@@ -225,14 +240,67 @@ extern "C" fn on_address(_: DNSServiceRef, flags: Flags, _: u32, error: Error, _
     }
 }
 
+/// Never offers the Legacy Collection itself: a phone only seeks (though it advertises `_saito-ask._tcp` while
+/// seeking so an offerer can connect outbound to it).
 pub const OFFERS: bool = false;
 pub const SEEKS: bool = true;
 
-/// Never made: a phone doesn't offer.
-pub struct Advertised;
+/// An active DNS-SD registration, deallocated on drop.
+pub struct Advertised(Operation);
 
-pub fn advertise(_name: &str, _port: u16) -> Result<Advertised, String> {
-    Err("a phone doesn't offer".into())
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+fn txt_record(entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (k, v) in entries {
+        let mut entry = format!("{k}={v}");
+        if entry.len() > 255 {
+            entry.truncate(truncate_utf8(&entry, 255).len());
+        }
+        out.push(entry.len() as u8);
+        out.extend_from_slice(entry.as_bytes());
+    }
+    out
+}
+
+/// Advertise `service` with device `name` on `port` through DNS-SD.
+pub fn advertise(service: &str, name: &str, port: u16) -> Result<Advertised, String> {
+    let cleaned: String = name.chars().filter(|c| !c.is_control() && *c != '.').collect();
+    let shown = truncate_utf8(cleaned.trim(), 50).trim();
+    let shown = if shown.is_empty() { "saito" } else { shown };
+    let instance = CString::new(shown).map_err(|e| format!("name: {e}"))?;
+    let regtype = CString::new(format!("{service}.")).map_err(|e| format!("service: {e}"))?;
+    let version = protocol::VERSION.to_string();
+    let txt = txt_record(&[("v", &version), ("n", name.trim())]);
+    let mut sd_ref = std::ptr::null_mut();
+    // SAFETY: terminated CStrings, txt points to txt.len() bytes for this call (copied by mDNSResponder), null
+    // domain/host/callback are allowed by dns_sd.h, and port is in network byte order (`to_be`).
+    let error = unsafe {
+        DNSServiceRegister(
+            &mut sd_ref,
+            0,
+            0,
+            instance.as_ptr(),
+            regtype.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            port.to_be(),
+            txt.len() as u16,
+            txt.as_ptr().cast(),
+            None,
+            std::ptr::null_mut(),
+        )
+    };
+    started(sd_ref, error, "advertising").map(Advertised)
 }
 
 /// UIDevice's name: the model's ("iPhone"), as iOS tells apps without an entitlement Apple grants.
@@ -288,15 +356,16 @@ impl Drop for Browsing {
     }
 }
 
-/// Browse for devices offering; what is found and lost is told to `seen`, and so is the browse's end where the system
+/// Browse for `service`; what is found and lost is told to `seen`, and so is the browse's end where the system
 /// ends it (the local network not allowed): here, only a thread that won't start fails.
-pub fn browse(seen: Sender<Seen>) -> Result<Browsing, String> {
+pub fn browse(service: &str, seen: Sender<Seen>) -> Result<Browsing, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
+    let service = service.to_string();
     std::thread::Builder::new()
         .name("saito-nearby-browse".into())
         .spawn(move || {
-            if let Err(end) = run(&seen, &stopped) {
+            if let Err(end) = run(&service, &seen, &stopped) {
                 log::warn!("nearby: {end:?}");
                 let _ = seen.send(end);
             }
@@ -306,8 +375,8 @@ pub fn browse(seen: Sender<Seen>) -> Result<Browsing, String> {
 }
 
 /// Browse till `stop`; the end, where it ends otherwise.
-fn run(seen: &Sender<Seen>, stop: &AtomicBool) -> Result<(), Seen> {
-    let regtype = CString::new(format!("{SERVICE}.")).expect("no NUL");
+fn run(service: &str, seen: &Sender<Seen>, stop: &AtomicBool) -> Result<(), Seen> {
+    let regtype = CString::new(format!("{service}.")).map_err(|why| Seen::Failed { why: why.to_string() })?;
     let mut state = Browsed::default();
     // The callback's way to the state, and this function's too (so neither invalidates the other's).
     let heard = &raw mut state;
@@ -326,12 +395,10 @@ fn run(seen: &Sender<Seen>, stop: &AtomicBool) -> Result<(), Seen> {
             return Err(stopped(error, "browsing"));
         }
         for (instance, interface, added) in changes {
-            // (One resolved already, found on another interface too: the same service.)
-            if added && let Some(entry) = found.get_mut(&instance) {
-                entry.0.insert(interface);
-                continue;
-            }
             if added {
+                if found.get(&instance).is_some_and(|entry| entry.0.contains(&interface)) {
+                    continue;
+                }
                 let (name, addrs) = match resolve(&instance, interface) {
                     Ok(resolved) => resolved,
                     Err(why) => {
@@ -347,7 +414,7 @@ fn run(seen: &Sender<Seen>, stop: &AtomicBool) -> Result<(), Seen> {
                         entry.2.push(addr);
                     }
                 }
-                if seen.send(Seen::Found { key: instance.key(), name: entry.1.clone(), addrs: entry.2.clone() }).is_err() {
+                if !entry.2.is_empty() && seen.send(Seen::Found { key: instance.key(), name: entry.1.clone(), addrs: entry.2.clone() }).is_err() {
                     return Ok(());
                 }
             } else if let Some(entry) = found.get_mut(&instance) {
@@ -373,9 +440,9 @@ mod tests {
     #[test]
     #[ignore]
     fn the_system_finds_the_desktops_offer() {
-        let advertised = super::super::desktop::advertise("test computer", 4321).unwrap();
+        let advertised = super::super::desktop::advertise(crate::SERVICE, "test computer", 4321).unwrap();
         let (tell, heard) = std::sync::mpsc::channel();
-        let _browsing = browse(tell).unwrap();
+        let _browsing = browse(crate::SERVICE, tell).unwrap();
         let until = Instant::now() + Duration::from_secs(10);
         while Instant::now() < until {
             if let Ok(Seen::Found { name, addrs, .. }) = heard.recv_timeout(Duration::from_millis(100))

@@ -10,14 +10,14 @@ pub const SEEKS: bool = false;
 /// Never made: a page doesn't offer.
 pub struct Advertised;
 
-pub fn advertise(_name: &str, _port: u16) -> Result<Advertised, String> {
+pub fn advertise(_service: &str, _name: &str, _port: u16) -> Result<Advertised, String> {
     Err("a browser doesn't offer".into())
 }
 
 /// A browse that finds nothing.
 pub struct Browsing;
 
-pub fn browse(_seen: Sender<Seen>) -> Result<Browsing, String> {
+pub fn browse(_service: &str, _seen: Sender<Seen>) -> Result<Browsing, String> {
     Ok(Browsing)
 }
 

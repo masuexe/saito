@@ -211,6 +211,7 @@ export global Shell {
     in property <NearbyState> nearby;
     in property <string> nearby-name;
     in property <float> nearby-progress;
+    in property <string> nearby-address;
 
     // The two cards before a battle.
     in property <bool> versus;
@@ -446,6 +447,9 @@ export global NearbyWords {
         return @tr("Couldn't send the Legacy Collection to {}", name);
     }
     out property <string> failed-message: @tr("Details are in the log file.");
+    public pure function this-device(address: string) -> string {
+        return @tr("This device: {}", address);
+    }
 }
 
 // An update of the app (src/updates.rs; docs/app.md §19, "Updates"): the loading screen's lines as the app starts,

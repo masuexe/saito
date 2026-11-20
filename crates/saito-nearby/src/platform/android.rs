@@ -11,14 +11,41 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
+/// Never offers the Legacy Collection itself: a phone only seeks (though it advertises `_saito-ask._tcp` while
+/// seeking so an offerer can connect outbound to it).
 pub const OFFERS: bool = false;
 pub const SEEKS: bool = true;
 
-/// Never made: a phone doesn't offer.
+/// Advertised via NsdManager until dropped.
 pub struct Advertised;
 
-pub fn advertise(_name: &str, _port: u16) -> Result<Advertised, String> {
-    Err("a phone doesn't offer".into())
+impl Drop for Advertised {
+    fn drop(&mut self) {
+        let stopped = java(|env, activity| {
+            let class = helper(env, activity)?;
+            env.call_static_method(&class, jni_str!("stopAdvertising"), jni_sig!("()V"), &[])?;
+            Ok(())
+        });
+        if let Err(why) = stopped {
+            log::warn!("nearby: stopping the advertisement: {why}");
+        }
+    }
+}
+
+/// Advertise `service` with device `name` on `port` via NsdManager.
+pub fn advertise(service: &str, name: &str, port: u16) -> Result<Advertised, String> {
+    java(|env, activity| {
+        let class = helper(env, activity)?;
+        let service = env.new_string(service)?;
+        let name = env.new_string(name)?;
+        env.call_static_method(
+            &class,
+            jni_str!("advertise"),
+            jni_sig!("(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;I)V"),
+            &[JValue::Object(activity), JValue::Object(&service), JValue::Object(&name), JValue::Int(port as jint)],
+        )?;
+        Ok(Advertised)
+    })
 }
 
 /// Where what is heard goes, while browsing.
@@ -61,12 +88,12 @@ impl Drop for Browsing {
     }
 }
 
-/// Browse for devices offering; what is found and lost is told to `seen`.
-pub fn browse(seen: Sender<Seen>) -> Result<Browsing, String> {
+/// Browse for `service`; what is found and lost is told to `seen`.
+pub fn browse(service: &str, seen: Sender<Seen>) -> Result<Browsing, String> {
     *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(seen);
     let started = java(|env, activity| {
         let class = helper(env, activity)?;
-        let service = env.new_string(crate::SERVICE)?;
+        let service = env.new_string(service)?;
         env.call_static_method(&class, jni_str!("start"), jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)V"), &[JValue::Object(activity), JValue::Object(&service)])?;
         Ok(())
     });
@@ -123,11 +150,11 @@ fn helper<'local>(env: &mut Env<'local>, activity: &JObject) -> jni::errors::Res
 }
 
 /// `SaitoNearby.found`: a service resolved: its key (the instance's name), the device's name (the TXT record's), and
-/// an address of its host (said as text) and the port.
+/// newline-separated IPv4 host addresses and the port.
 extern "system" fn found<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, key: JString<'local>, name: JString<'local>, host: JString<'local>, port: jint) {
     env.with_env(|env| -> jni::errors::Result<()> {
         let (key, name, host) = (key.try_to_string(env)?, name.try_to_string(env)?, host.try_to_string(env)?);
-        let addrs: Vec<SocketAddr> = host.parse::<IpAddr>().ok().map(|ip| SocketAddr::new(ip, port as u16)).into_iter().collect();
+        let addrs: Vec<SocketAddr> = host.lines().filter_map(|line| line.parse::<IpAddr>().ok()).map(|ip| SocketAddr::new(ip, port as u16)).collect();
         let name = if name.is_empty() { key.clone() } else { name };
         tell(Seen::Found { key, name, addrs });
         Ok(())

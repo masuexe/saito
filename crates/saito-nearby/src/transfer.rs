@@ -1,24 +1,129 @@
-//! The two sides of a transfer, each on a thread of its own: the asker's ([`receive`]) and the offerer's, which
-//! accepts connections ([`Offerer::accept`]) and serves each ([`Offerer::serve`]).
+//! The two sides of a transfer, each on a thread of its own: the asker's ([`receive_stream`], plus
+//! [`Seeker`] accepting reverse connections from an offerer) and the offerer's ([`Offerer::accept`], [`Offerer::serve`]).
 
 use crate::{ANSWER_WAIT, Answers, Connections, Event, Request, protocol};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// How long a connection may go silent mid-transfer.
 const SILENCE: Duration = Duration::from_secs(30);
 /// How long connecting to one of a peer's addresses may take.
 const CONNECTING: Duration = Duration::from_secs(4);
+/// Stagger between launching parallel connection attempts across multiple resolved addresses.
+const STAGGER: Duration = Duration::from_millis(120);
 
-/// The asker's side: connect, say who asks, and read the answer and the files.
-pub fn receive(me: &str, addrs: &[SocketAddr], name: &str, tell: &Sender<Event>) -> Result<Event, String> {
-    let mut stream = addrs
-        .iter()
-        .find_map(|a| TcpStream::connect_timeout(a, CONNECTING).ok())
-        .ok_or_else(|| format!("connecting to {name} at {addrs:?} failed"))?;
+/// Best-effort local RFC1918 LAN IPv4 address (probing private ranges first to skip proxy/VPN TUN adapters).
+pub(crate) fn local_ipv4() -> Option<Ipv4Addr> {
+    for target in ["192.168.255.254:80", "10.255.255.254:80", "172.31.255.254:80"] {
+        if let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0))
+            && socket.connect(target).is_ok()
+            && let Ok(SocketAddr::V4(local)) = socket.local_addr()
+        {
+            let ip = *local.ip();
+            if !ip.is_loopback() && !ip.is_unspecified() && ip.is_private() {
+                return Some(ip);
+            }
+        }
+    }
+    if let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0))
+        && socket.connect("1.1.1.1:80").is_ok()
+        && let Ok(SocketAddr::V4(local)) = socket.local_addr()
+    {
+        let ip = *local.ip();
+        if !ip.is_loopback() && !ip.is_unspecified() {
+            return Some(ip);
+        }
+    }
+    None
+}
+
+fn addr_rank(addr: SocketAddr, local: Option<Ipv4Addr>) -> u8 {
+    let IpAddr::V4(ip) = addr.ip() else {
+        return 4;
+    };
+    if let Some(l) = local {
+        let lo = l.octets();
+        let io = ip.octets();
+        if lo[..3] == io[..3] {
+            return 0;
+        }
+        if lo[..2] == io[..2] {
+            return 1;
+        }
+    }
+    if ip.is_private() || ip.is_loopback() {
+        2
+    } else {
+        3
+    }
+}
+
+/// Order resolved addresses so same-subnet LAN IPv4 addresses are attempted first, removing duplicates.
+pub(crate) fn sort_addrs(addrs: &[SocketAddr], local: Option<Ipv4Addr>) -> Vec<SocketAddr> {
+    let mut ranked: Vec<(u8, usize, SocketAddr)> = Vec::new();
+    for (idx, &addr) in addrs.iter().enumerate() {
+        if !ranked.iter().any(|(_, _, existing)| *existing == addr) {
+            ranked.push((addr_rank(addr, local), idx, addr));
+        }
+    }
+    ranked.sort_by_key(|(rank, idx, _)| (*rank, *idx));
+    ranked.into_iter().map(|(_, _, addr)| addr).collect()
+}
+
+/// Dial `addrs` with LAN-first ordering and staggered parallel attempts so blackholed virtual NICs don't stall LAN IPs.
+pub(crate) fn connect_any(addrs: &[SocketAddr]) -> Option<TcpStream> {
+    let mut ordered = sort_addrs(addrs, local_ipv4());
+    ordered.truncate(12);
+    if ordered.is_empty() {
+        return None;
+    }
+    if ordered.len() == 1 {
+        return TcpStream::connect_timeout(&ordered[0], CONNECTING).ok();
+    }
+    let (tx, rx) = mpsc::channel::<Result<TcpStream, ()>>();
+    let mut active = 0usize;
+    for (i, addr) in ordered.into_iter().enumerate() {
+        if i > 0 {
+            match rx.recv_timeout(STAGGER) {
+                Ok(Ok(stream)) => return Some(stream),
+                Ok(Err(())) => active = active.saturating_sub(1),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        active += 1;
+        let tx = tx.clone();
+        if std::thread::Builder::new()
+            .name("saito-nearby-dial".into())
+            .spawn(move || {
+                let res = TcpStream::connect_timeout(&addr, CONNECTING).map_err(|_| ());
+                let _ = tx.send(res);
+            })
+            .is_err()
+        {
+            active -= 1;
+        }
+    }
+    drop(tx);
+    let deadline = Instant::now() + CONNECTING;
+    while active > 0 {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
+        match rx.recv_timeout(left) {
+            Ok(Ok(stream)) => return Some(stream),
+            Ok(Err(())) => active -= 1,
+            Err(_) => break,
+        }
+    }
+    None
+}
+
+/// Run the asker protocol over an already-connected TCP stream.
+pub fn receive_stream(me: &str, mut stream: TcpStream, name: &str, tell: &Sender<Event>) -> Result<Event, String> {
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_nodelay(true);
     stream.set_write_timeout(Some(SILENCE)).map_err(|e| e.to_string())?;
     protocol::write_hello(&mut stream, me).map_err(|e| format!("asking: {e}"))?;
@@ -42,6 +147,54 @@ pub fn receive(me: &str, addrs: &[SocketAddr], name: &str, tell: &Sender<Event>)
             Event::Received { name, files }
         }
     })
+}
+
+/// The seeker's listener side: accepts reverse connections from offerers that dial us outbound.
+pub struct Seeker {
+    pub me: String,
+    pub tell: Sender<Event>,
+    pub transferring: Arc<AtomicBool>,
+    pub known_peers: Arc<Mutex<HashMap<IpAddr, String>>>,
+}
+
+impl Seeker {
+    pub fn accept(self, listener: TcpListener, stop: &AtomicBool) {
+        while !stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, peer_addr)) => {
+                    let seeker = Seeker {
+                        me: self.me.clone(),
+                        tell: self.tell.clone(),
+                        transferring: self.transferring.clone(),
+                        known_peers: self.known_peers.clone(),
+                    };
+                    let _ = std::thread::Builder::new().name("saito-nearby-recv".into()).spawn(move || seeker.serve(stream, peer_addr));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => {
+                    log::warn!("nearby: accepting reverse connection: {e}");
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+    }
+
+    fn serve(self, stream: TcpStream, peer_addr: SocketAddr) {
+        if self.transferring.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let name = self
+            .known_peers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&peer_addr.ip())
+            .cloned()
+            .unwrap_or_else(|| peer_addr.ip().to_string());
+        let _ = self.tell.send(Event::Connected { name: name.clone() });
+        let event = receive_stream(&self.me, stream, &name, &self.tell).unwrap_or_else(|why| Event::Failed { name, why });
+        self.transferring.store(false, Ordering::Relaxed);
+        let _ = self.tell.send(event);
+    }
 }
 
 /// The offerer's side: what each connection's thread shares.
@@ -78,7 +231,7 @@ impl Offerer {
     }
 
     /// One connection: hear who asks, ask the player, and send or say no.
-    fn serve(self, mut stream: TcpStream) {
+    pub(crate) fn serve(self, mut stream: TcpStream) {
         let _ = stream.set_nonblocking(false);
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(SILENCE));

@@ -443,6 +443,9 @@ msgstr "문제가 발생했습니다"
 msgid "Details are in the log file."
 msgstr "자세한 내용은 로그 파일을 확인하세요."
 
+msgid "This device: {}"
+msgstr "이 기기: {}"
+
 # The battle music list's first choice (Practice): each round's background's music.
 msgid "By background"
 msgstr "배경에 맞추기"

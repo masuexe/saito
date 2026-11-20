@@ -418,6 +418,9 @@ msgstr "出现错误"
 msgid "Details are in the log file."
 msgstr "详情请查看日志文件。"
 
+msgid "This device: {}"
+msgstr "本机地址：{}"
+
 # The battle music list's first choice (Practice): each round's background's music.
 msgid "By background"
 msgstr "随背景"

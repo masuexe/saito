@@ -11,10 +11,11 @@
 
 use crate::shell::{Dialog, Shell, button};
 use saito_extract::RomSource;
-use saito_nearby::{Event, File, Peer, Request};
+use saito_nearby::{Event, File, Peer, Request, Seeker};
 use saito_ui::{ButtonKind, NearbyState, NearbyWords};
 use slint::ComponentHandle;
 use std::collections::{HashSet, VecDeque};
+use std::net::SocketAddr;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use web_time::{Duration, Instant};
 
@@ -32,6 +33,12 @@ pub struct Nearby {
     link: saito_nearby::Nearby,
     offering: bool,
     seeking: Option<Seeking>,
+    /// Seeking devices found while offering (used for outbound reverse connections when firewalls drop inbound TCP).
+    seekers: Vec<(Seeker, String)>,
+    /// Seeking devices already attempted in this discovery cycle (cleared if lost).
+    passed_seekers: HashSet<Seeker>,
+    /// Manual `IP:port` target initiated from Settings, so a connection failure can notify the player.
+    manual_reach: Option<String>,
     /// The asks heard, waiting for the player to be asked: one at a time, when no dialog nor battle is up.
     asks: VecDeque<(Request, String)>,
     /// The ask put to the player, from its dialog's opening till the send's end.
@@ -66,11 +73,14 @@ struct Seeking {
     passed: HashSet<Peer>,
     /// The one asked, while its answer or its files come, or while what it sent is checked.
     asking: Option<Peer>,
+    /// True while receiving or awaiting an answer over a reverse connection from an offerer.
+    connected: bool,
     /// When the next ask may be made.
     wait: Option<Instant>,
-    /// What the note says: the state, the computer's name, the transfer's progress.
+    /// What the note says: the state, the computer's name, our local seek address, the transfer's progress.
     state: NearbyState,
     name: String,
+    address: String,
     progress: f32,
     /// The copies received being checked and kept, on a thread: how many were.
     keeping: Option<Receiver<Result<usize, String>>>,
@@ -78,8 +88,29 @@ struct Seeking {
 
 impl Default for Nearby {
     fn default() -> Nearby {
-        Nearby { link: saito_nearby::Nearby::new(), offering: false, seeking: None, asks: VecDeque::new(), asked: None }
+        Nearby {
+            link: saito_nearby::Nearby::new(),
+            offering: false,
+            seeking: None,
+            seekers: Vec::new(),
+            passed_seekers: HashSet::new(),
+            manual_reach: None,
+            asks: VecDeque::new(),
+            asked: None,
+        }
     }
+}
+
+/// Manually connect outbound to `text` (`IP:port`) when offering, as fallback when multicast discovery is blocked.
+pub fn send_to(shell: &mut Shell, text: &str) -> bool {
+    let Ok(addr) = text.trim().parse::<SocketAddr>() else { return false };
+    if !shell.nearby.offering {
+        return false;
+    }
+    let target = addr.to_string();
+    shell.nearby.manual_reach = Some(target.clone());
+    shell.nearby.link.reach_at(target, vec![addr]);
+    true
 }
 
 /// A frame of the app's: offer while the games' ROMs are found, look while none are, hear what happened, and say it.
@@ -96,13 +127,18 @@ pub fn frame(shell: &mut Shell, now: Instant) {
         nearby.link.offer(offer);
         if offer {
             crate::errors::log("the Legacy Collection nearby", &format_args!("offered as {}", saito_nearby::device_name()));
+        } else {
+            nearby.seekers.clear();
+            nearby.passed_seekers.clear();
+            nearby.manual_reach = None;
         }
     }
     match (&mut nearby.seeking, seek) {
         (None, true) => {
             crate::errors::log("the Legacy Collection nearby", &"looking for a computer that has it");
             nearby.link.seek(true);
-            nearby.seeking = Some(Seeking::new(now));
+            let address = nearby.link.seek_address().map(|a| a.to_string()).unwrap_or_default();
+            nearby.seeking = Some(Seeking::new(now, address));
         }
         (Some(_), false) => {
             nearby.link.seek(false);
@@ -112,6 +148,7 @@ pub fn frame(shell: &mut Shell, now: Instant) {
             // (A no-op while it looks; else it starts again.)
             nearby.link.seek(true);
             seeking.started = now;
+            seeking.address = nearby.link.seek_address().map(|a| a.to_string()).unwrap_or_default();
         }
         _ => {}
     }
@@ -124,15 +161,40 @@ pub fn frame(shell: &mut Shell, now: Instant) {
     if let Some(seeking) = &mut shell.nearby.seeking {
         seeking.ask_next(&mut shell.nearby.link, now);
     }
+    reach_seeker(shell);
     ask_player(shell);
     show(shell);
+}
+
+fn reach_seeker(shell: &mut Shell) {
+    let busy_ui = shell.nearby.asked.is_some() || !shell.nearby.asks.is_empty() || shell.dialog.is_some() || shell.battle.is_some() || shell.loading_battle();
+    if !shell.nearby.offering || busy_ui {
+        return;
+    }
+    let Some(seeker) = shell.nearby.seekers.iter().find_map(|(s, _)| (!shell.nearby.passed_seekers.contains(s)).then_some(*s)) else {
+        return;
+    };
+    shell.nearby.passed_seekers.insert(seeker);
+    shell.nearby.link.reach(seeker);
 }
 
 /// What happened, for the side it is of.
 fn hear(shell: &mut Shell, event: Event, now: Instant) {
     let nearby = &mut shell.nearby;
     match event {
-        Event::Asked { request, name } => nearby.asks.push_back((request, name)),
+        Event::SeekerFound { seeker, name } => {
+            if !nearby.seekers.iter().any(|(s, _)| *s == seeker) {
+                nearby.seekers.push((seeker, name));
+            }
+        }
+        Event::SeekerLost { seeker } => {
+            nearby.seekers.retain(|(s, _)| *s != seeker);
+            nearby.passed_seekers.remove(&seeker);
+        }
+        Event::Asked { request, name } => {
+            nearby.manual_reach = None;
+            nearby.asks.push_back((request, name));
+        }
         Event::Sending { request, done, total } => {
             if nearby.asked.as_ref().is_some_and(|a| a.request == request) {
                 shell.dialog_progress(DIALOG, Some(done as f32 / total.max(1) as f32));
@@ -155,8 +217,15 @@ fn hear(shell: &mut Shell, event: Event, now: Instant) {
                 show_failed(shell, &name);
             }
         }
-        Event::Failed { name, why } if nearby.seeking.as_ref().is_none_or(|s| s.asking.is_none()) || name.is_empty() => {
+        Event::Failed { name, why } if nearby.seeking.as_ref().is_none_or(|s| !s.is_asking()) || name.is_empty() => {
             crate::errors::log("the Legacy Collection nearby", &format_args!("{name}: {why}"));
+            let manual_failed = nearby.manual_reach.as_deref() == Some(name.as_str());
+            if manual_failed {
+                nearby.manual_reach = None;
+            }
+            if manual_failed {
+                open_failed(shell, &name);
+            }
         }
         Event::OtherVersion { name, version } if nearby.seeking.is_none() => {
             crate::errors::log("sending the Legacy Collection", &format_args!("{name} asked with version {version} of the transfer's"));
@@ -170,19 +239,25 @@ fn hear(shell: &mut Shell, event: Event, now: Instant) {
 }
 
 impl Seeking {
-    fn new(now: Instant) -> Seeking {
+    fn new(now: Instant, address: String) -> Seeking {
         Seeking {
             since: now,
             started: now,
             found: Vec::new(),
             passed: HashSet::new(),
             asking: None,
+            connected: false,
             wait: None,
             state: NearbyState::Looking,
             name: String::new(),
+            address,
             progress: 0.0,
             keeping: None,
         }
+    }
+
+    fn is_asking(&self) -> bool {
+        self.asking.is_some() || self.connected
     }
 
     fn say(&mut self, state: NearbyState, name: String) {
@@ -198,7 +273,14 @@ impl Seeking {
                 self.found.retain(|(p, _)| *p != peer);
                 self.passed.remove(&peer);
             }
-            Event::Receiving { done, total } if self.asking.is_some() => {
+            Event::Connected { name } => {
+                self.asking = None;
+                self.connected = true;
+                self.wait = None;
+                self.progress = 0.0;
+                self.say(NearbyState::Asking, name);
+            }
+            Event::Receiving { done, total } if self.is_asking() => {
                 self.state = NearbyState::Receiving;
                 self.progress = done as f32 / total.max(1) as f32;
             }
@@ -210,28 +292,34 @@ impl Seeking {
             }
             Event::Declined { name } => {
                 self.passed.extend(self.asking.take());
+                self.connected = false;
                 self.say(NearbyState::Declined, name);
             }
             Event::Busy { name } => {
                 self.asking = None;
+                self.connected = false;
                 self.wait = Some(now + ASK_AGAIN);
                 self.say(NearbyState::Busy, name);
             }
             Event::OtherVersion { name, version } => {
                 crate::errors::log("receiving the Legacy Collection", &format_args!("{name} has version {version} of the transfer's"));
                 self.passed.extend(self.asking.take());
+                self.connected = false;
                 self.say(NearbyState::OtherVersion, name);
             }
             Event::Failed { name, why } => {
                 crate::errors::log("receiving the Legacy Collection", &format_args!("{name}: {why}"));
                 // (Asked again after the others found, which are asked at once: one long gone may be found till the
                 // system's cache lets it go.)
-                if let Some(at) = self.found.iter().position(|(p, _)| Some(*p) == self.asking) {
+                let failed_peer = self.asking.take();
+                self.connected = false;
+                if let Some(peer) = failed_peer
+                    && let Some(at) = self.found.iter().position(|(p, _)| *p == peer)
+                {
                     let failed = self.found.remove(at);
                     self.found.push(failed);
                 }
-                let others = self.found.iter().any(|(p, _)| Some(*p) != self.asking && !self.passed.contains(p));
-                self.asking = None;
+                let others = self.found.iter().any(|(p, _)| Some(*p) != failed_peer && !self.passed.contains(p));
                 self.wait = (!others).then(|| now + ASK_AGAIN);
                 self.say(NearbyState::Unreachable, name);
             }
@@ -239,14 +327,14 @@ impl Seeking {
                 crate::errors::log("looking for a computer nearby", &"the local network isn't allowed");
                 self.say(NearbyState::NotAllowed, String::new());
             }
-            Event::Asked { .. } | Event::Receiving { .. } | Event::Sending { .. } | Event::Sent { .. } | Event::NotSent { .. } => {}
+            Event::SeekerFound { .. } | Event::SeekerLost { .. } | Event::Asked { .. } | Event::Receiving { .. } | Event::Sending { .. } | Event::Sent { .. } | Event::NotSent { .. } => {}
         }
     }
 
     /// Ask the first computer found that isn't passed over, unless one is being asked or it is too soon; with none to
     /// ask, the note says it is looking, or what to check, unless it says why the last one asked didn't send.
     fn ask_next(&mut self, link: &mut saito_nearby::Nearby, now: Instant) {
-        if self.asking.is_some() || self.keeping.is_some() || self.wait.is_some_and(|w| now < w) {
+        if self.is_asking() || self.keeping.is_some() || self.wait.is_some_and(|w| now < w) {
             return;
         }
         match self.found.iter().find(|(p, _)| !self.passed.contains(p)).cloned() {
@@ -294,6 +382,7 @@ fn keep_received(shell: &mut Shell) {
     };
     seeking.keeping = None;
     let peer = seeking.asking.take();
+    seeking.connected = false;
     let playable = match kept {
         Ok(kept) => {
             crate::errors::log("receiving the Legacy Collection", &format_args!("{kept} ROMs kept from {}", seeking.name));
@@ -395,6 +484,19 @@ fn show_failed(shell: &mut Shell, name: &str) {
     shell.sound.play(crate::sound::Cue::Refused);
 }
 
+/// Open the failure dialog when a manual `IP:port` reach fails before opening a request dialog.
+fn open_failed(shell: &mut Shell, name: &str) {
+    if shell.dialog.is_some() || shell.battle.is_some() || shell.loading_battle() {
+        return;
+    }
+    let ui = shell.ui();
+    let words = ui.global::<NearbyWords>();
+    let (title, message) = (words.invoke_failed_title(name.into()).to_string(), words.get_failed_message().to_string());
+    let ok = ui.global::<saito_ui::Errors>().invoke_ok();
+    shell.open_dialog(Dialog { tag: DIALOG, title, message, buttons: vec![button(&ok, ButtonKind::Main)], focus: 0, cancel: 0 }, None, false);
+    shell.sound.play(crate::sound::Cue::Refused);
+}
+
 /// A button of the dialog: Send (it stays up, the copies made on a thread, then sent) or Not now; Cancel, which stops
 /// the send; OK, once it failed. All but Send close it.
 pub fn pressed(shell: &mut Shell, choice: usize) {
@@ -444,15 +546,18 @@ fn make_copies(source: RomSource, codes: Vec<String>, name: String) -> Receiver<
 fn show(shell: &Shell) {
     let ui = shell.ui();
     let global = ui.global::<saito_ui::Shell>();
-    let (state, name, progress) = match &shell.nearby.seeking {
-        Some(s) => (s.state, s.name.as_str(), s.progress),
-        None => (NearbyState::None, "", 0.0),
+    let (state, name, address, progress) = match &shell.nearby.seeking {
+        Some(s) => (s.state, s.name.as_str(), s.address.as_str(), s.progress),
+        None => (NearbyState::None, "", "", 0.0),
     };
     if global.get_nearby() != state {
         global.set_nearby(state);
     }
     if global.get_nearby_name() != name {
         global.set_nearby_name(name.into());
+    }
+    if global.get_nearby_address() != address {
+        global.set_nearby_address(address.into());
     }
     global.set_nearby_progress(progress);
 }

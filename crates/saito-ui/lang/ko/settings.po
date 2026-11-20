@@ -194,3 +194,9 @@ msgstr "시그널링 서버"
 
 msgid "Leave blank for the default server. Include ws:// or wss://."
 msgstr "비워 두면 기본 서버를 사용합니다. ws:// 또는 wss://를 포함하세요."
+
+msgid "Send to phone"
+msgstr "휴대폰으로 보내기"
+
+msgid "Enter the address shown on the phone to send the Legacy Collection over Wi-Fi."
+msgstr "휴대폰에 표시된 주소를 입력하면 Wi-Fi로 어드밴스드 컬렉션을 보낼 수 있습니다."

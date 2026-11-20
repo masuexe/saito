@@ -5,7 +5,7 @@
 //! On Windows the first offer brings up the firewall's prompt for saito (it listens for TCP and for multicast DNS):
 //! allowed on private networks, phones find the computer; denied, they don't, and the phone says to check it.
 
-use crate::{SERVICE, Seen, protocol};
+use crate::{Seen, protocol};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,8 +33,30 @@ pub fn device_name() -> String {
     if name.is_empty() { "saito".into() } else { name }
 }
 
-fn service_type() -> String {
-    format!("{SERVICE}.local.")
+fn service_type(service: &str) -> String {
+    format!("{service}.local.")
+}
+
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+fn instance_and_txt_name(name: &str) -> (String, String) {
+    let cleaned: String = name.chars().filter(|c| !c.is_control() && *c != '.').collect();
+    let trimmed = cleaned.trim();
+    // DNS instance label limit is 63 UTF-8 bytes; reserve 5 bytes for " {4-hex-tag}".
+    let shown = truncate_utf8(trimmed, 50).trim();
+    let shown = if shown.is_empty() { "saito".to_string() } else { shown.to_string() };
+    // DNS TXT "n=<name>" entry limit is 255 bytes ("n=" takes 2 bytes).
+    let txt_name = truncate_utf8(name.trim(), 253).to_string();
+    (shown, txt_name)
 }
 
 fn daemon() -> Result<ServiceDaemon, String> {
@@ -68,18 +90,18 @@ impl Drop for Advertised {
     }
 }
 
-/// Advertise this device as offering, on `port`: the instance named for the device (and a tag), its own host name
-/// (so as not to answer for the computer's), on every interface's addresses, the TXT record saying the protocol's
+/// Advertise this device under `service` on `port`: the instance named for the device (and a tag), its own host
+/// name (so as not to answer for the computer's), on every interface's addresses, the TXT record saying the protocol's
 /// version (`v`) and the device's name (`n`).
-pub fn advertise(name: &str, port: u16) -> Result<Advertised, String> {
+pub fn advertise(service: &str, name: &str, port: u16) -> Result<Advertised, String> {
     let daemon = daemon()?;
     let tag = tag();
-    let shown: String = name.chars().filter(|c| !c.is_control() && *c != '.').take(40).collect();
+    let (shown, txt_name) = instance_and_txt_name(name);
     let instance = format!("{shown} {tag}");
     let host = format!("saito-{tag}.local.");
     let version = protocol::VERSION.to_string();
-    let properties = [("v", version.as_str()), ("n", name)];
-    let info = ServiceInfo::new(&service_type(), &instance, &host, (), port, &properties[..])
+    let properties = [("v", version.as_str()), ("n", txt_name.as_str())];
+    let info = ServiceInfo::new(&service_type(service), &instance, &host, (), port, &properties[..])
         .map_err(|e| format!("the advertisement: {e}"))?
         .enable_addr_auto();
     let fullname = info.get_fullname().to_string();
@@ -98,10 +120,10 @@ impl Drop for Browsing {
     }
 }
 
-/// Browse for devices offering; what is found and lost is told to `seen`.
-pub fn browse(seen: Sender<Seen>) -> Result<Browsing, String> {
+/// Browse for `service`; what is found and lost is told to `seen`.
+pub fn browse(service: &str, seen: Sender<Seen>) -> Result<Browsing, String> {
     let daemon = daemon()?;
-    let ty = service_type();
+    let ty = service_type(service);
     let events = daemon.browse(&ty).map_err(|e| format!("browsing: {e}"))?;
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
@@ -133,4 +155,27 @@ pub fn browse(seen: Sender<Seen>) -> Result<Browsing, String> {
         })
         .map_err(|e| format!("no thread: {e}"))?;
     Ok(Browsing { stop })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_cjk_instance_name_fits_dns_labels() {
+        let long = "这是一台名字超级长的测试电脑设备名称超越六十三字节".repeat(3);
+        let (shown, txt_name) = instance_and_txt_name(&long);
+        let instance = format!("{shown} abcd");
+        assert!(instance.len() <= 63, "instance label {} bytes > 63", instance.len());
+        assert!(txt_name.len() <= 253, "TXT value {} bytes > 253", txt_name.len());
+        let info = ServiceInfo::new(
+            &service_type("_saito._tcp"),
+            &instance,
+            "saito-abcd.local.",
+            (),
+            12345,
+            [("v", "1"), ("n", txt_name.as_str())].as_slice(),
+        );
+        assert!(info.is_ok(), "ServiceInfo rejected clamped CJK name: {info:?}");
+    }
 }

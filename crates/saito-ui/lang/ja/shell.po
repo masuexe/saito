@@ -418,6 +418,9 @@ msgstr "問題が発生しました"
 msgid "Details are in the log file."
 msgstr "詳しくはログファイルをご覧ください。"
 
+msgid "This device: {}"
+msgstr "この端末：{}"
+
 # The battle music list's first choice (Practice): each round's background's music.
 msgid "By background"
 msgstr "背景に合わせる"

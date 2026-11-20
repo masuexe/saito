@@ -6,13 +6,18 @@ use std::time::{Duration, Instant};
 
 fn wait_for(nearby: &mut Nearby, what: impl Fn(&Event) -> bool) -> Event {
     let until = Instant::now() + Duration::from_secs(10);
+    let mut seen = Vec::new();
     while Instant::now() < until {
-        if let Some(event) = nearby.poll().into_iter().find(|e| what(e)) {
-            return event;
+        let batch = nearby.poll();
+        for event in &batch {
+            if what(event) {
+                return event.clone();
+            }
         }
+        seen.extend(batch);
         std::thread::sleep(Duration::from_millis(10));
     }
-    panic!("no such event in time");
+    panic!("no such event in time; seen: {seen:?}");
 }
 
 fn files() -> Vec<File> {
@@ -113,4 +118,62 @@ fn an_ask_of_nothing_fails() {
     assert!(matches!(wait_for(&mut asker, |e| matches!(e, Event::Failed { .. })), Event::Failed { name, .. } if name == "computer"));
     asker.ask_at("computer".into(), at);
     assert!(matches!(wait_for(&mut asker, |e| matches!(e, Event::Failed { .. })), Event::Failed { why, .. } if why.contains("connecting")));
+}
+
+/// An offerer reaches a seeker over loopback (reverse TCP): the seeker emits Connected, the offerer prompts
+/// the player and sends, and the seeker receives the files whole.
+#[test]
+fn reverse_connect_sends_files() {
+    let (mut offerer, _) = offerer();
+    let mut seeker = Nearby::named("phone".into(), false);
+    seeker.seek(true);
+    let seek_port = seeker.seek_port().expect("seeking listener");
+    let seek_at = vec![SocketAddr::from(([127, 0, 0, 1], seek_port))];
+
+    offerer.reach_at("phone".into(), seek_at);
+    assert!(matches!(wait_for(&mut seeker, |e| matches!(e, Event::Connected { .. })), Event::Connected { .. }));
+    let Event::Asked { request, name } = wait_for(&mut offerer, |e| matches!(e, Event::Asked { .. })) else { unreachable!() };
+    assert_eq!(name, "phone");
+    offerer.answer(request, Some(files()));
+    let Event::Received { files: got, .. } = wait_for(&mut seeker, |e| matches!(e, Event::Received { .. })) else { unreachable!() };
+    assert_eq!(got, files());
+    assert!(matches!(wait_for(&mut offerer, |e| matches!(e, Event::Sent { .. })), Event::Sent { request: r, name } if r == request && name == "phone"));
+}
+
+/// Reverse connection succeeds immediately even while an outbound `ask_at` is in flight (`asking_out` held).
+#[test]
+fn reverse_connect_succeeds_while_ask_at_stalls() {
+    let (mut offerer, _) = offerer();
+    let mut seeker = Nearby::named("phone".into(), false);
+    seeker.seek(true);
+    let seek_port = seeker.seek_port().expect("seeking listener");
+
+    // Simulate an in-flight outbound dial (`ask_at` blocked on firewall timeout) without holding `transferring`.
+    seeker.asking_out.store(true, std::sync::atomic::Ordering::Relaxed);
+    offerer.reach_at("phone".into(), vec![SocketAddr::from(([127, 0, 0, 1], seek_port))]);
+    assert!(matches!(wait_for(&mut seeker, |e| matches!(e, Event::Connected { .. })), Event::Connected { .. }));
+    let Event::Asked { request, .. } = wait_for(&mut offerer, |e| matches!(e, Event::Asked { .. })) else { unreachable!() };
+    offerer.answer(request, Some(files()));
+    let Event::Received { files: got, .. } = wait_for(&mut seeker, |e| matches!(e, Event::Received { .. })) else { unreachable!() };
+    assert_eq!(got, files());
+}
+
+/// When an address list contains unreachable endpoints before a live offerer endpoint, `connect_any` still reaches the live offerer quickly.
+#[test]
+fn connect_any_skips_unreachable_addresses() {
+    let (mut offerer, mut at) = offerer();
+    let closed_port_a = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let closed_port_b = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let live = at.pop().unwrap();
+    let addrs = vec![
+        SocketAddr::from(([127, 0, 0, 1], closed_port_a)),
+        SocketAddr::from(([127, 0, 0, 1], closed_port_b)),
+        live,
+    ];
+    let mut asker = Nearby::named("phone".into(), false);
+    asker.ask_at("computer".into(), addrs);
+    let Event::Asked { request, .. } = wait_for(&mut offerer, |e| matches!(e, Event::Asked { .. })) else { unreachable!() };
+    offerer.answer(request, Some(files()));
+    let Event::Received { files: got, .. } = wait_for(&mut asker, |e| matches!(e, Event::Received { .. })) else { unreachable!() };
+    assert_eq!(got, files());
 }

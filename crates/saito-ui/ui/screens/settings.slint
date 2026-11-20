@@ -5,7 +5,7 @@
 
 import { Theme, Audit, I18n } from "../theme.slint";
 import { Nav, NavKind, Focusable } from "../nav.slint";
-import { Shell, Page, PadButton, FaceButton } from "../shell.slint";
+import { Shell, Page, PadButton, FaceButton, NearbyWords } from "../shell.slint";
 import { Label, Note, Mono, Button, ButtonKind, Field, Select, Seg, Slider, Stepper, Row, Marker, GroupTitle, ScrollPage, Reach } from "../widgets.slint";
 import { Arrive } from "../motion.slint";
 import { AboutPage, AboutOverlay } from "settings/about.slint";
@@ -43,6 +43,8 @@ export global SettingsView {
     in property <int> asking-key: -1;
     in property <int> asking-button: -1;
     in property <string> data-folder;
+    in property <bool> can-send-nearby;
+    in property <string> nearby-target;
     // About is shown in the page's place.
     in property <bool> about;
     // The picture size that isn't a number, as the list of sizes says it.
@@ -608,6 +610,32 @@ component SettingsPage inherits Page {
                         y: 4px;
                         nav: "set.folder";
                         text: I18n.upper(@tr("Show folder"));
+                    }
+                }
+
+                if SettingsView.can-send-nearby: Rectangle {
+                    height: row21.height;
+                    row21 := SettingLabel {
+                        label: @tr("Send to phone");
+                        note: @tr("Enter the address shown on the phone to send the Legacy Collection over Wi-Fi.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Field {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width - send-btn.width - 8px;
+                        nav: "set.nearby";
+                        text: SettingsView.nearby-target;
+                        placeholder: "192.168.1.25:54321";
+                    }
+
+                    send-btn := Button {
+                        x: root.control-x + root.control-width - self.width;
+                        y: 4px;
+                        nav: "set.nearby.send";
+                        text: I18n.upper(NearbyWords.send);
                     }
                 }
 

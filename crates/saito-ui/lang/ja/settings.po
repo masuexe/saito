@@ -195,3 +195,9 @@ msgstr "シグナリングサーバー"
 
 msgid "Leave blank for the default server. Include ws:// or wss://."
 msgstr "空欄の場合は既定のサーバーを使用します。ws:// または wss:// を含めてください。"
+
+msgid "Send to phone"
+msgstr "スマートフォンに送信"
+
+msgid "Enter the address shown on the phone to send the Legacy Collection over Wi-Fi."
+msgstr "スマートフォンに表示されたアドレスを入力すると、Wi-Fi 経由でアドバンスドコレクションを送信できます。"

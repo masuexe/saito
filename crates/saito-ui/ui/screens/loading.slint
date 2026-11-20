@@ -117,4 +117,14 @@ export component LoadingScreen inherits Rectangle {
         kind: ButtonKind.main;
         text: Errors.choose-folder();
     }
+
+    Mono {
+        x: (parent.width - root.column) / 2;
+        y: root.top + 236px + root.steps;
+        width: root.column;
+        height: 18px;
+        visible: root.wants-folder && !root.updating && !root.receiving && Shell.nearby-address != "";
+        text: NearbyWords.this-device(Shell.nearby-address);
+        horizontal-alignment: center;
+    }
 }

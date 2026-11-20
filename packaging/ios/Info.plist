@@ -102,6 +102,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_saito._tcp</string>
+		<string>_saito-ask._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>saito looks on your network for a computer running saito with the Legacy Collection, which can send it here.</string>
