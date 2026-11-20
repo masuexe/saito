@@ -34,6 +34,8 @@ export global SettingsView {
     in property <int> music;
     in property <int> effects;
     in property <int> input-delay;
+    in property <string> signaling-server;
+    in property <string> default-signaling-server;
     // Each action's key and pad button, by their names, in the actions' order.
     in property <[string]> keys;
     in property <[PadBinding]> buttons;
@@ -476,6 +478,25 @@ component SettingsPage inherits Page {
                         value: SettingsView.input-delay;
                         value-width: 48px;
                         numeric: true;
+                    }
+                }
+
+                Rectangle {
+                    height: row20.height;
+                    row20 := SettingLabel {
+                        label: @tr("Signaling server");
+                        note: @tr("Leave blank for the default server. Include ws:// or wss://.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Field {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width;
+                        nav: "set.server";
+                        text: SettingsView.signaling-server;
+                        placeholder: SettingsView.default-signaling-server;
                     }
                 }
 

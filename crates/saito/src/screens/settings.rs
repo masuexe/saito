@@ -10,7 +10,7 @@ mod about;
 
 use crate::input::{Action, Bindings, KeyPress, Scroll, key_cap, key_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
-use crate::settings::{MAX_INPUT_DELAY, clean_name};
+use crate::settings::{DEFAULT_SIGNAL_SERVER, MAX_INPUT_DELAY, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
 use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
@@ -36,7 +36,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.name" | "set.language" | "set.updates" => 0,
         "set.picture" | "set.fullscreen" | "set.motion" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
-        "set.delay" => 3,
+        "set.delay" | "set.server" => 3,
         "set.key" | "set.button" | "set.reset" => 4,
         "set.folder" | "set.about" => 5,
         _ => return None,
@@ -87,6 +87,8 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
     view.set_input_delay(s.input_delay as i32);
+    view.set_signaling_server(s.signaling_server.as_str().into());
+    view.set_default_signaling_server(DEFAULT_SIGNAL_SERVER.into());
     view.set_data_folder(crate::paths::data().display().to_string().into());
     binding.show(shell);
 }
@@ -373,14 +375,25 @@ impl Screen for Settings {
     }
 
     fn edit(&mut self, shell: &mut Shell, id: &str, _index: i32, text: &str, done: bool) {
-        if id != "set.name" {
-            return;
-        }
-        let name = clean_name(text);
         let ui = shell.ui();
-        ui.global::<SettingsView>().set_name(name.as_str().into());
-        if done {
-            shell.set_name(&name);
+        let view = ui.global::<SettingsView>();
+        match id {
+            "set.name" => {
+                let name = clean_name(text);
+                view.set_name(name.as_str().into());
+                if done {
+                    shell.set_name(&name);
+                }
+            }
+            "set.server" => {
+                let server = if done { clean_signaling_server(text) } else { clean_signaling_server_draft(text) };
+                view.set_signaling_server(server.as_str().into());
+                if done {
+                    shell.settings.signaling_server = server;
+                    shell.save_settings();
+                }
+            }
+            _ => {}
         }
     }
 

@@ -413,10 +413,10 @@ impl Play {
         self.builds.get(self.chosen)
     }
 
-    /// Where links are made: as the environment says (the screenshot pass has a server of its own, in the
-    /// process).
-    fn net() -> Net {
-        tour::net().unwrap_or_else(Net::of_environment)
+    /// Where links are made: as the environment or settings say (the screenshot pass has a server of its own,
+    /// in the process).
+    fn net(shell: &Shell) -> Net {
+        tour::net().unwrap_or_else(|| Net::resolve(&shell.settings.signaling_server))
     }
 
     // ---- The builds --------------------------------------------------------------------------------------
@@ -544,7 +544,7 @@ impl Play {
         };
         // (A host sets the match's settings from the start: the lobby starts on them.)
         let hosting = matches!(way, Way::Invite | Way::Host);
-        let session = Session::open(way, &Play::net()).map_err(|e| UserError::of_link(doing, &e))?;
+        let session = Session::open(way, &Play::net(shell)).map_err(|e| UserError::of_link(doing, &e))?;
         self.waiting = if hosting { self.opening_settings(shell) } else { None };
         // (A direct host waits at once: there is no server to hear from.)
         self.stage = if session.way == Way::Host { Stage::Waiting } else { Stage::Meeting };

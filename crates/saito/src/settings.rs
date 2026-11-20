@@ -12,6 +12,12 @@ use std::collections::BTreeMap;
 /// The most a name is, as the lobby carries it.
 pub const NAME_LENGTH: usize = saito_frontend::lobby::NAME_LENGTH;
 
+/// The signaling server used when neither `$SAITO_SIGNAL` nor `Settings::signaling_server` is set.
+pub const DEFAULT_SIGNAL_SERVER: &str = "ws://111.229.100.54:8787";
+
+/// The longest signaling server URL kept in settings.
+pub const SIGNAL_SERVER_LENGTH: usize = 256;
+
 /// What the file keeps.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,6 +51,8 @@ pub struct Settings {
     /// Netplay's input delay, in frames: the value the lobby starts with (the library's
     /// `NetOptions::input_delay`).
     pub input_delay: u32,
+    /// Custom signaling server URL (`ws://...` or `wss://...`); empty uses `DEFAULT_SIGNAL_SERVER`.
+    pub signaling_server: String,
     /// The folder the player chose the Legacy Collection's install in, where Steam doesn't list it (docs/app.md
     /// §17); none: Steam's alone.
     pub legacy_collection: Option<std::path::PathBuf>,
@@ -72,6 +80,7 @@ impl Default for Settings {
             music: 80,
             effects: 100,
             input_delay: saito_frontend::netplay::DEFAULT_INPUT_DELAY,
+            signaling_server: String::new(),
             keys: BTreeMap::new(),
             legacy_collection: None,
             pad: BTreeMap::new(),
@@ -118,6 +127,17 @@ pub fn clean_name(name: &str) -> String {
     name.chars().filter(|c| !c.is_control()).take(NAME_LENGTH).collect()
 }
 
+/// A signaling server URL while being typed: no control characters, [`SIGNAL_SERVER_LENGTH`] at most.
+/// Untrimmed so the UI field doesn't jump its caret mid-edit.
+pub fn clean_signaling_server_draft(url: &str) -> String {
+    url.chars().filter(|c| !c.is_control()).take(SIGNAL_SERVER_LENGTH).collect()
+}
+
+/// A signaling server URL as it is saved or used: trimmed, no control characters, [`SIGNAL_SERVER_LENGTH`] at most.
+pub fn clean_signaling_server(url: &str) -> String {
+    clean_signaling_server_draft(url.trim())
+}
+
 impl Settings {
     /// The settings as the file has them (the defaults where it isn't there or doesn't read).
     pub fn load() -> Settings {
@@ -126,6 +146,7 @@ impl Settings {
         s.music = s.music.min(100);
         s.effects = s.effects.min(100);
         s.input_delay = s.input_delay.min(MAX_INPUT_DELAY);
+        s.signaling_server = clean_signaling_server(&s.signaling_server);
         s
     }
 
@@ -187,6 +208,7 @@ mod tests {
             music: 30,
             full_screen: true,
             input_delay: 2,
+            signaling_server: "wss://signal.example.com".into(),
             legacy_collection: Some("Steam Library/Legacy Collection Vol. 2".into()),
             ..Settings::default()
         };
@@ -196,7 +218,10 @@ mod tests {
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
         let other: Settings = toml::from_str("music = 40\nunknown = 1\n").unwrap();
         assert_eq!(other, Settings { music: 40, ..Settings::default() });
+        assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");
+        assert_eq!(clean_signaling_server("  ws://127.0.0.1:8787\n "), "ws://127.0.0.1:8787");
+        assert_eq!(clean_signaling_server("   "), "");
     }
 
     /// The bindings kept are those that differ from the defaults, and read back.

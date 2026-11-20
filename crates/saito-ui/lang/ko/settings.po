@@ -188,3 +188,9 @@ msgstr "내비 체인지 (왼쪽)"
 
 msgid "Navi change right"
 msgstr "내비 체인지 (오른쪽)"
+
+msgid "Signaling server"
+msgstr "시그널링 서버"
+
+msgid "Leave blank for the default server. Include ws:// or wss://."
+msgstr "비워 두면 기본 서버를 사용합니다. ws:// 또는 wss://를 포함하세요."

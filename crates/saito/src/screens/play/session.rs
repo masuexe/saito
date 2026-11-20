@@ -56,11 +56,29 @@ pub struct Net {
 }
 
 impl Net {
-    /// The player's: the signaling server `$SAITO_SIGNAL` names (`ws://127.0.0.1:8787` for signaling/ run by
-    /// `npx wrangler dev`), or none (direct connect only), and the link library's own way of connecting.
-    pub fn of_environment() -> Net {
-        let server = std::env::var("SAITO_SIGNAL").ok().filter(|s| !s.is_empty());
+    /// The player's: `$SAITO_SIGNAL` when set, else `configured` from settings, else
+    /// [`crate::settings::DEFAULT_SIGNAL_SERVER`].
+    pub fn resolve(configured: &str) -> Net {
+        Self::resolve_with_env(std::env::var("SAITO_SIGNAL").ok().as_deref(), configured)
+    }
+
+    fn resolve_with_env(env_server: Option<&str>, configured: &str) -> Net {
+        let pick = |raw: &str| {
+            let cleaned = crate::settings::clean_signaling_server(raw);
+            (!cleaned.is_empty()).then_some(cleaned)
+        };
+        let server = env_server
+            .and_then(pick)
+            .or_else(|| pick(configured))
+            .or_else(|| pick(crate::settings::DEFAULT_SIGNAL_SERVER));
         Net { server, config: Config::default(), port: DIRECT_PORT }
+    }
+
+    /// The player's: the signaling server `$SAITO_SIGNAL` names (`ws://127.0.0.1:8787` for signaling/ run by
+    /// `npx wrangler dev`), or [`crate::settings::DEFAULT_SIGNAL_SERVER`], and the link library's own way of connecting.
+    #[cfg(test)]
+    pub fn of_environment() -> Net {
+        Self::resolve("")
     }
 }
 
@@ -323,11 +341,26 @@ mod tests {
     #[test]
     fn what_can_be_said_at_once_is() {
         if std::env::var_os("SAITO_SIGNAL").is_none() {
-            assert_eq!(Net::of_environment().server, None);
+            assert_eq!(Net::of_environment().server.as_deref(), Some(crate::settings::DEFAULT_SIGNAL_SERVER));
         }
         let none = Net { server: None, config: Config::default(), port: 0 };
         assert_eq!(Session::open(Way::Invite, &none).err().map(|e| e.kind), Some(ErrorKind::ServerUnreachable));
         let server = Net { server: Some("ws://127.0.0.1:9".into()), ..none };
         assert_eq!(Session::open(Way::Code("!!".into()), &server).err().map(|e| e.kind), Some(ErrorKind::NoSuchRoom));
+    }
+
+    #[test]
+    fn signaling_server_resolution_precedence() {
+        let def = crate::settings::DEFAULT_SIGNAL_SERVER;
+        assert_eq!(Net::resolve_with_env(None, "").server.as_deref(), Some(def));
+        assert_eq!(Net::resolve_with_env(Some("  "), "   ").server.as_deref(), Some(def));
+        assert_eq!(
+            Net::resolve_with_env(None, " wss://custom.example/ ").server.as_deref(),
+            Some("wss://custom.example/")
+        );
+        assert_eq!(
+            Net::resolve_with_env(Some("ws://127.0.0.1:8787"), "wss://custom.example/").server.as_deref(),
+            Some("ws://127.0.0.1:8787")
+        );
     }
 }

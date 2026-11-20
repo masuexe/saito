@@ -189,3 +189,9 @@ msgstr "ナビチェンジ（左）"
 
 msgid "Navi change right"
 msgstr "ナビチェンジ（右）"
+
+msgid "Signaling server"
+msgstr "シグナリングサーバー"
+
+msgid "Leave blank for the default server. Include ws:// or wss://."
+msgstr "空欄の場合は既定のサーバーを使用します。ws:// または wss:// を含めてください。"

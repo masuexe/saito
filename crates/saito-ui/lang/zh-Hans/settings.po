@@ -188,3 +188,9 @@ msgstr "领航员更换（左）"
 
 msgid "Navi change right"
 msgstr "领航员更换（右）"
+
+msgid "Signaling server"
+msgstr "信令服务器"
+
+msgid "Leave blank for the default server. Include ws:// or wss://."
+msgstr "留空则使用默认服务器。需包含 ws:// 或 wss://。"
