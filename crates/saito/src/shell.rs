@@ -976,6 +976,9 @@ impl Shell {
     fn window_fit(&self) -> Option<Scale> {
         let ui = self.ui();
         let window = ui.window();
+        #[cfg(target_os = "android")]
+        let size = crate::activity::live_size(&ui).unwrap_or_else(|| window.size());
+        #[cfg(not(target_os = "android"))]
         let size = window.size();
         if size.width == 0 || size.height == 0 {
             return None;
@@ -1013,7 +1016,10 @@ impl Shell {
     /// Whether `fit` differs from the layout's: another window size, or another scale for Slint.
     fn unfitted(&self, fit: &Scale) -> bool {
         let ui = self.ui();
-        fit.size != self.scale.size || (ui.window().scale_factor() - fit.os * fit.unit).abs() > 0.0005
+        let cached = ui.window().size();
+        fit.size != self.scale.size
+            || fit.size != (cached.width, cached.height)
+            || (ui.window().scale_factor() - fit.os * fit.unit).abs() > 0.0005
     }
 
     /// Whether the layout no longer fits the window (a phone's safe area changed, which no window event says).
@@ -1027,6 +1033,18 @@ impl Shell {
     /// shorter than the reference and scrolled. True if the layout turned between the desktop's, the upright
     /// phone's and the sideways one.
     fn fit_window(&mut self) -> bool {
+        #[cfg(target_os = "android")]
+        {
+            let ui = self.ui();
+            let window = ui.window();
+            if let Some(live) = crate::activity::live_size(&ui)
+                && live != window.size()
+            {
+                // Sync Slint's cached WinitWindowAdapter size with the live ANativeWindow size
+                // when winit dropped MainEvent::WindowResized while paused.
+                window.set_size(live);
+            }
+        }
         let Some(fit) = self.window_fit() else { return false };
         let ui = self.ui();
         let window = ui.window();
@@ -1042,6 +1060,8 @@ impl Shell {
             // (Slint's own scale is the system's times the unit: its `px` are the UI's units.)
             window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: factor });
             window.dispatch_event(slint::platform::WindowEvent::Resized { size: size.to_logical(factor) });
+            #[cfg(target_os = "android")]
+            crate::activity::safe_area(&ui);
         }
         ui.global::<Theme>().set_phone(phone);
         ui.global::<Theme>().set_sideways(sideways);

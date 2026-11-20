@@ -215,6 +215,7 @@ component ProgramLine inherits Rectangle {
         note: root.row-data.why != "" ? root.row-data.why : root.row-data.note;
         bad: root.row-data.why != "" || root.row-data.bad;
         end: root.navi ? "" : root.row-data.blocks;
+        end-width: root.navi ? 0px : 52px;
         dx: root.dx;
         if root.navi: Image {
             x: 0;

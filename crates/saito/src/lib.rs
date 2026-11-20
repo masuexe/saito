@@ -236,10 +236,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
                 EventResult::Propagate
             }
-            // (Android's app back in front: its sound starts again, as the sound hears from `lifecycle`.)
+            // (Android's app back in front: its sound starts again, as the sound hears from `lifecycle`, and the
+            // layout re-checks the native window size in case a resize arrived while paused, e.g. returning from a
+            // portrait file picker to a landscape activity.)
             #[cfg(target_os = "android")]
             WindowEvent::Focused(true) => {
                 lifecycle::came_back();
+                let state = state.clone();
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Ok(mut app) = state.try_borrow_mut() {
+                        app.resized();
+                    }
+                });
                 EventResult::Propagate
             }
             // (`SAITO_PLAY_STATS`: whether the system says the window is covered, for the clock's figures.)

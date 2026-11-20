@@ -20,7 +20,7 @@
 use i_slint_backend_winit::winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use i_slint_backend_winit::winit::platform::android::EventLoopBuilderExtAndroid;
 use i_slint_backend_winit::winit::platform::android::activity::AndroidApp;
-use i_slint_backend_winit::{CustomApplicationHandler, EventResult, SlintEvent};
+use i_slint_backend_winit::{CustomApplicationHandler, EventResult, SlintEvent, WinitWindowAccessor};
 use saito_ui::AppWindow;
 use slint::ComponentHandle;
 use jni::EnvUnowned;
@@ -126,6 +126,15 @@ pub(crate) fn run(ui: &AppWindow) -> Result<(), slint::PlatformError> {
     ui.show()?;
     slint::run_event_loop_until_quit()?;
     ui.hide()
+}
+
+/// The activity's native window size in physical pixels right now: winit 0.30 drops `MainEvent::WindowResized`
+/// when it arrives while the activity is paused (e.g. returning from a portrait system picker to a landscape
+/// activity, where `surfaceChanged` runs between `InitWindow` and `Resume`), leaving Slint's cached window size
+/// stale. `winit::Window::inner_size()` reads `ANativeWindow_getWidth/Height` directly.
+pub(crate) fn live_size(ui: &AppWindow) -> Option<slint::PhysicalSize> {
+    let size = ui.window().with_winit_window(|w| w.inner_size())?;
+    (size.width > 0 && size.height > 0).then(|| slint::PhysicalSize::new(size.width, size.height))
 }
 
 /// The safe area's insets into the UI (`safe-left` and the rest, Slint's `safe-area-insets` on the other systems,
