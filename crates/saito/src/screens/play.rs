@@ -1093,6 +1093,11 @@ impl Play {
         self.show_match(shell);
     }
 
+    fn set_keyboard_only_custom(&mut self, shell: &mut Shell, on: bool) {
+        settings::set_keyboard_only_custom(shell, on);
+        self.show_match(shell);
+    }
+
     fn set_levels(&mut self, shell: &mut Shell, music: u32, effects: u32) {
         (shell.settings.music, shell.settings.effects) = (music.min(100), effects.min(100));
         shell.set_sound_levels(shell.settings.music, shell.settings.effects);
@@ -1975,6 +1980,7 @@ impl Screen for Play {
             "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, None);
             }
+            "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, !shell.settings.keyboard_only_custom),
             "menu.keys.key" | "menu.keys.button" => self.binding.ask(shell, index, id == "menu.keys.button"),
             "menu.reset" => {
                 self.binding.reset(shell);
@@ -2024,6 +2030,7 @@ impl Screen for Play {
             "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, Some(by > 0));
             }
+            "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, by > 0),
             "name.version" => self.step_version(shell, by),
             _ => {}
         }
@@ -2056,6 +2063,7 @@ impl Screen for Play {
             "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, Some(choice == 1));
             }
+            "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, choice == 1),
             _ => {}
         }
     }

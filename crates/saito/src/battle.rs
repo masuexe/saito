@@ -467,11 +467,12 @@ impl Shell {
         });
         let faces = |n| kit.as_ref().map(|k| k.pictures.navi(n)).unwrap_or_default();
         b.party.show(&shell, b.stage.player.battle(), &b.game, b.viewer, faces, keys);
-        // The custom screen by pointer: the picture takes it while the battle has the keys and its screen something
-        // to point at (the window at rest); a phone held sideways gives its pad's keys over the window way while the
-        // screen is open (docs/design/custom-screen-actions.md §5).
-        shell.set_screen_pointer(false);
-        shell.set_picture_hand(false);
+        // The custom screen by pointer: the picture takes it while the battle has the keys, pure keyboard mode is
+        // off, and its screen has something to point at; keep the landscape touch pad active while open (S-016).
+        let has_keys = b.playing() && !b.kept && self.dialog.is_none();
+        let pointer = has_keys && !self.settings.keyboard_only_custom && b.stage.player.takes_pointer();
+        shell.set_screen_pointer(pointer);
+        shell.set_picture_hand(pointer && b.stage.player.pointer_on_target());
         shell.set_pad_gives_way(false);
         self.touch.give_way(0);
         if let Some(net) = b.stage.player.net_status() {
@@ -507,8 +508,38 @@ impl Shell {
         (ticks, event.map(|e| (owner, e)))
     }
 
-    /// Custom screen pointer selection in live battles is disabled (custom screen uses buttons/pad alone).
-    pub fn picture_pointer(&mut self, _kind: i32, _button: i32, _x: f32, _y: f32) {}
+    /// The pointer on the battle's picture (`Shell.picture-pointer`: its kind, its button, its place in the
+    /// picture in logical pixels; the mouse's and a finger's alike), to the battle's player in the frame's pixels:
+    /// the local player's custom screen's (`Player::point`), while the battle has the keys and pure keyboard mode is off.
+    pub fn picture_pointer(&mut self, kind: i32, button: i32, x: f32, y: f32) {
+        if self.settings.keyboard_only_custom {
+            return;
+        }
+        use saito_frontend::pointer::{PointerButton, PointerEvent, PointerKind};
+        let ui = self.ui();
+        let shell = ui.global::<saito_ui::Shell>();
+        let (width, height) = (shell.get_picture_width(), shell.get_picture_height());
+        let dialog = self.dialog.is_some();
+        let Some(b) = self.battle.as_mut().filter(|b| b.playing() && !b.kept && !dialog) else { return };
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let size = b.stage.player.renderer().frame_size();
+        let kind = match kind {
+            0 => PointerKind::Down,
+            1 => PointerKind::Up,
+            2 => PointerKind::Moved,
+            3 => PointerKind::Cancel,
+            _ => PointerKind::Left,
+        };
+        let button = match button {
+            0 => PointerButton::Primary,
+            1 => PointerButton::Secondary,
+            _ => PointerButton::Other,
+        };
+        let (x, y) = (x / width * size.width as f32, y / height * size.height as f32);
+        b.stage.player.point(PointerEvent { kind, button, x, y });
+    }
 
     fn fill_mobile_aspect(&self) -> bool {
         cfg!(any(target_os = "ios", target_os = "android")) && self.settings.picture_size == 0 && !self.settings.fill_window

@@ -212,3 +212,9 @@ msgstr "横屏虚拟按键"
 
 msgid "Show on-screen controls in landscape."
 msgstr "在手机横屏战斗中显示屏幕虚拟按键。"
+
+msgid "Keyboard-only custom screen"
+msgstr "纯键盘选卡模式"
+
+msgid "Disable mouse and touch chip selection on the custom screen."
+msgstr "关闭选卡界面的鼠标和触屏点选芯片功能，仅使用按键选择。"

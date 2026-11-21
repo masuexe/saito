@@ -27,6 +27,7 @@ export global SettingsView {
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> check-updates;
+    in property <bool> keyboard-only-custom;
     in property <bool> landscape-touch-pad: true;
     // The graphics enhancements, each on or off.
     in property <bool> sharp-text;
@@ -592,6 +593,25 @@ component SettingsPage inherits Page {
                         y: 4px;
                         nav: "set.reset";
                         text: I18n.upper(@tr("Reset controls"));
+                    }
+                }
+
+                Rectangle {
+                    height: keyboard-only-row.height;
+                    keyboard-only-row := SettingLabel {
+                        label: @tr("Keyboard-only custom screen");
+                        note: @tr("Disable mouse and touch chip selection on the custom screen.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.keyboard-only";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.keyboard-only-custom ? 1 : 0;
                     }
                 }
 

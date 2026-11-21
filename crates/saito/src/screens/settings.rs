@@ -37,7 +37,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.picture" | "set.fullscreen" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
-        "set.key" | "set.button" | "set.reset" | "set.landscape-pad" => 4,
+        "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" => 4,
         "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
     })
@@ -82,6 +82,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_check_updates(s.check_updates);
+    view.set_keyboard_only_custom(s.keyboard_only_custom);
     view.set_landscape_touch_pad(s.landscape_touch_pad);
     view.set_sharp_text(s.sharp_text);
     view.set_sharp_hud(s.sharp_hud);
@@ -143,6 +144,17 @@ pub fn set_full_screen(shell: &mut Shell, on: bool) {
     shell.settings.full_screen = on;
     shell.save_settings();
     shell.ui().window().set_fullscreen(on);
+}
+
+pub fn set_keyboard_only_custom(shell: &mut Shell, on: bool) {
+    shell.settings.keyboard_only_custom = on;
+    shell.save_settings();
+    if on {
+        let ui = shell.ui();
+        let s = ui.global::<saito_ui::Shell>();
+        s.set_screen_pointer(false);
+        s.set_picture_hand(false);
+    }
 }
 
 /// The controls' bindings being changed: the button whose key or pad button is asked for, its box saying so. Enter
@@ -332,6 +344,10 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
+            "set.keyboard-only" => {
+                set_keyboard_only_custom(shell, !shell.settings.keyboard_only_custom);
+                self.show(shell);
+            }
             "set.landscape-pad" => {
                 shell.set_landscape_touch_pad(!shell.settings.landscape_touch_pad);
                 self.show(shell);
@@ -367,6 +383,10 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.keyboard-only" => {
+                set_keyboard_only_custom(shell, by > 0);
+                self.show(shell);
+            }
             "set.landscape-pad" => {
                 shell.set_landscape_touch_pad(by > 0);
                 self.show(shell);
@@ -391,6 +411,10 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
+            "set.keyboard-only" => {
+                set_keyboard_only_custom(shell, choice == 1);
+                self.show(shell);
+            }
             "set.landscape-pad" => {
                 shell.set_landscape_touch_pad(choice == 1);
                 self.show(shell);

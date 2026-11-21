@@ -33,6 +33,8 @@ pub struct Settings {
     pub full_screen: bool,
     /// On-screen virtual touch pad shown over the battle in mobile landscape.
     pub landscape_touch_pad: bool,
+    /// Pure keyboard mode on the custom screen: disables mouse/touch chip selection.
+    pub keyboard_only_custom: bool,
     /// Motion turned down: everything is a cut. None: as the system asks.
     pub reduce_motion: Option<bool>,
     /// An installed app asks saito's GitHub releases at start whether a newer one is out (saito-updater).
@@ -76,6 +78,7 @@ impl Default for Settings {
             picture_size: 0,
             full_screen: false,
             landscape_touch_pad: true,
+            keyboard_only_custom: false,
             reduce_motion: None,
             check_updates: true,
             sharp_text: true,
@@ -220,6 +223,7 @@ mod tests {
             language: Some("ja".into()),
             music: 30,
             full_screen: true,
+            keyboard_only_custom: true,
             input_delay: 2,
             signaling_server: "wss://signal.example.com".into(),
             legacy_collection: Some("Steam Library/Legacy Collection Vol. 2".into()),
@@ -232,6 +236,7 @@ mod tests {
         let other: Settings = toml::from_str("music = 40\nunknown = 1\n").unwrap();
         assert_eq!(other, Settings { music: 40, ..Settings::default() });
         assert!(other.landscape_touch_pad, "default landscape touch pad on");
+        assert!(!other.keyboard_only_custom, "default mouse custom selection enabled");
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");
         assert_eq!(clean_signaling_server("  ws://127.0.0.1:8787\n "), "ws://127.0.0.1:8787");
