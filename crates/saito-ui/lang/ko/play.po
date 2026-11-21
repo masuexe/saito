@@ -287,3 +287,7 @@ msgstr "LIVE"
 msgid "{} · {}s"
 msgstr "{}명 · 지연{}초"
 
+
+msgctxt "sides"
+msgid "Both"
+msgstr "양쪽"

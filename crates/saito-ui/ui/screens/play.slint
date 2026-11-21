@@ -1240,15 +1240,15 @@ export component PlayScreen inherits Page {
             }
 
             ProblemMark {
-                x: Theme.phone ? 0px : root.side-x;
+                x: Theme.phone ? 0px : Theme.sideways ? spectate-btn.x + spectate-btn.width + 12px : root.side-x;
                 y: root.line-y + (Theme.phone ? 6px : 6.5px);
                 visible: PlayView.message-problem && PlayView.message != "";
             }
 
             Note {
-                x: (Theme.phone ? 0px : root.side-x) + (PlayView.message-problem ? 9px : 0px);
+                x: (Theme.phone ? 0px : Theme.sideways ? spectate-btn.x + spectate-btn.width + 12px : root.side-x) + (PlayView.message-problem ? 9px : 0px);
                 y: root.line-y;
-                width: (Theme.phone ? root.body-width : Theme.sideways ? root.side-width - 12px - 160px : root.side-width) - (PlayView.message-problem ? 9px : 0px);
+                width: (Theme.phone ? root.body-width : Theme.sideways ? max(0px, (Theme.web ? root.body-width : root.body-width - 160px) - (spectate-btn.x + spectate-btn.width + 12px) - 8px) : root.side-width) - (PlayView.message-problem ? 9px : 0px);
                 height: Theme.phone ? 40px : 18px;
                 vertical-alignment: Theme.phone ? top : center;
                 text: PlayView.message;
@@ -1474,16 +1474,16 @@ export component PlayScreen inherits Page {
 
             // Host spectator controls (visibility + anti-ghosting delay) for signaling rooms.
             if PlayView.host && !PlayView.invite-direct: Rectangle {
-                x: 0;
-                y: Theme.sideways ? root.buttons-top - 52px : root.buttons-top + (Theme.phone ? 114px : 92px);
-                width: root.body-width;
-                height: 36px;
+                x: Theme.sideways ? (connection.width + 14px) : 0px;
+                y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 114px : 92px);
+                width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
+                height: Theme.sideways ? 30px : 36px;
                 property <length> total: spec-vis.width + 10px + spec-delay.width;
 
                 spec-vis := Button {
                     x: (parent.width - parent.total) / 2;
                     y: 0;
-                    height: 34px;
+                    height: Theme.sideways ? 28px : 34px;
                     compact: true;
                     nav: "lobby.spectate";
                     kind: ButtonKind.ghost;
@@ -1493,7 +1493,7 @@ export component PlayScreen inherits Page {
                 spec-delay := Button {
                     x: spec-vis.x + spec-vis.width + 10px;
                     y: 0;
-                    height: 34px;
+                    height: Theme.sideways ? 28px : 34px;
                     compact: true;
                     nav: "lobby.spectate-delay";
                     kind: ButtonKind.ghost;
@@ -1588,34 +1588,35 @@ export component PlayScreen inherits Page {
                 x: 0;
                 y: 0;
                 width: parent.width;
-                height: parent.height - 48px;
+                height: parent.height - (Theme.phone ? 88px : 48px);
             }
 
-            // Bottom spectator HUD bar
+            // Bottom spectator HUD bar (two compact rows on portrait phone; single row on sideways/desktop)
             Rectangle {
+                property <length> seg-w: Theme.phone ? (parent.width - 28px) / 3 : 0px;
                 x: 0;
-                y: parent.height - 44px;
+                y: parent.height - (Theme.phone ? 84px : 44px);
                 width: parent.width;
-                height: 44px;
+                height: Theme.phone ? 84px : 44px;
 
                 PanelBack {
                     accent: false;
                 }
 
                 Mono {
-                    x: 12px;
-                    y: 0;
-                    width: 110px;
-                    height: parent.height;
+                    x: Theme.phone ? 10px : 12px;
+                    y: Theme.phone ? 4px : 0px;
+                    width: Theme.phone ? 96px : 104px;
+                    height: Theme.phone ? 36px : parent.height;
                     text: PlayView.watch-catching-up ? @tr("Catching up…") : PlayView.watch-delay > 0 ? @tr("DELAY {}s", PlayView.watch-delay) : @tr("LIVE");
                     color: PlayView.watch-catching-up ? Theme.cursor : Theme.good;
                 }
 
                 Note {
-                    x: 126px;
-                    y: 0;
-                    width: max(0px, view-p1.x - 136px);
-                    height: parent.height;
+                    x: Theme.phone ? 110px : 120px;
+                    y: Theme.phone ? 4px : 0px;
+                    width: max(0px, (Theme.phone ? watch-leave-btn.x - 118px : view-p1.x - 130px));
+                    height: Theme.phone ? 36px : parent.height;
                     text: PlayView.watch-players;
                     color: Theme.text;
                     wrap: no-wrap;
@@ -1623,9 +1624,10 @@ export component PlayScreen inherits Page {
                 }
 
                 view-p1 := Button {
-                    x: view-p2.x - self.width - 6px;
-                    y: 5px;
-                    height: 34px;
+                    x: Theme.phone ? 8px : view-p2.x - self.width - 6px;
+                    y: Theme.phone ? 44px : 6px;
+                    width: Theme.phone ? parent.seg-w : self.natural-width;
+                    height: Theme.phone ? 36px : 32px;
                     compact: true;
                     nav: "watch.view-p1";
                     kind: PlayView.watch-view == 0 ? ButtonKind.main : ButtonKind.ghost;
@@ -1633,9 +1635,10 @@ export component PlayScreen inherits Page {
                 }
 
                 view-p2 := Button {
-                    x: view-both.x - self.width - 6px;
-                    y: 5px;
-                    height: 34px;
+                    x: Theme.phone ? 14px + parent.seg-w : view-both.x - self.width - 6px;
+                    y: view-p1.y;
+                    width: Theme.phone ? parent.seg-w : self.natural-width;
+                    height: view-p1.height;
                     compact: true;
                     nav: "watch.view-p2";
                     kind: PlayView.watch-view == 1 ? ButtonKind.main : ButtonKind.ghost;
@@ -1643,19 +1646,21 @@ export component PlayScreen inherits Page {
                 }
 
                 view-both := Button {
-                    x: watch-leave-btn.x - self.width - 10px;
-                    y: 5px;
-                    height: 34px;
+                    x: Theme.phone ? 20px + 2 * parent.seg-w : watch-leave-btn.x - self.width - 10px;
+                    y: view-p1.y;
+                    width: Theme.phone ? parent.seg-w : self.natural-width;
+                    height: view-p1.height;
                     compact: true;
                     nav: "watch.view-both";
                     kind: PlayView.watch-view == 2 ? ButtonKind.main : ButtonKind.ghost;
-                    text: @tr("Both");
+                    text: @tr("sides" => "Both");
                 }
 
                 watch-leave-btn := Button {
-                    x: parent.width - self.width - 10px;
-                    y: 5px;
-                    height: 34px;
+                    x: parent.width - self.width - (Theme.phone ? 8px : 10px);
+                    y: Theme.phone ? 4px : 6px;
+                    width: Theme.phone ? 96px : self.natural-width;
+                    height: Theme.phone ? 36px : 32px;
                     compact: true;
                     nav: "watch.leave";
                     kind: ButtonKind.ghost;
@@ -2342,7 +2347,7 @@ export component PlayOverlay inherits Rectangle {
     if PlayView.spectate-browser: spec := DialogFrame {
         title: @tr("Spectate match");
         wide: true;
-        content-height: 360px;
+        content-height: 372px;
 
         Label {
             x: 0;

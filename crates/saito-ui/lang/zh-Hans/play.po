@@ -287,3 +287,7 @@ msgstr "实时"
 msgid "{} · {}s"
 msgstr "{} 人 · 延迟{}秒"
 
+
+msgctxt "sides"
+msgid "Both"
+msgstr "双方"

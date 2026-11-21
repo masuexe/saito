@@ -287,3 +287,7 @@ msgstr "LIVE"
 msgid "{} · {}s"
 msgstr "{}人 · 遅延{}秒"
 
+
+msgctxt "sides"
+msgid "Both"
+msgstr "両方"
