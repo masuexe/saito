@@ -143,6 +143,7 @@ pub struct Battle {
 
 /// The keys of a phone's pad held sideways that are over the custom screen's window, by bit: SELECT, the four
 /// directions, R and L (A, B and START stay).
+#[cfg(test)]
 pub(crate) const PAD_OVER_WINDOW: u16 = 1 << 2 | 0xF << 4 | 1 << 8 | 1 << 9;
 
 impl Battle {
@@ -469,14 +470,10 @@ impl Shell {
         // The custom screen by pointer: the picture takes it while the battle has the keys and its screen something
         // to point at (the window at rest); a phone held sideways gives its pad's keys over the window way while the
         // screen is open (docs/design/custom-screen-actions.md §5).
-        let has_keys = b.playing() && !b.kept && self.dialog.is_none();
         shell.set_screen_pointer(false);
         shell.set_picture_hand(false);
-        let sideways = cfg!(any(target_os = "ios", target_os = "android")) && !self.scale.phone;
-        let local = b.stage.player.battle().setup.local_side;
-        let away = if sideways && has_keys && b.stage.player.battle().presented(local).is_some() { PAD_OVER_WINDOW } else { 0 };
-        shell.set_pad_gives_way(away != 0);
-        self.touch.give_way(away);
+        shell.set_pad_gives_way(false);
+        self.touch.give_way(0);
         if let Some(net) = b.stage.player.net_status() {
             // (The bars are the library's quality, from the round trip and how steady it is; while the link
             // is down, the seconds until it gives up, or those it has been down where it never does.)
