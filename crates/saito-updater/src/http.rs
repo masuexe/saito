@@ -191,7 +191,6 @@ pub async fn get_streaming(client: &reqwest::Client, url: &str, limit: u64, mut 
 }
 
 /// GET `url` into memory, up to `limit` bytes.
-#[cfg_attr(target_os = "android", allow(dead_code))]
 pub async fn get_bytes(client: &reqwest::Client, url: &str, limit: u64) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     get_streaming(client, url, limit, |piece, _| {

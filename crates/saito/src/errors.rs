@@ -85,6 +85,8 @@ pub enum UserError {
     /// A game's content couldn't be downloaded, and the app has none of it (docs/design/content-deployment.md
     /// §5): `game` is the game, as shown.
     DownloadFailed { game: String },
+    /// An in-app update couldn't be downloaded or installed (S-015).
+    UpdateFailed,
     /// Anything else: the details are in the log.
     Other,
 }
@@ -122,6 +124,7 @@ impl UserError {
             UserError::NoLegacyCollection => (ErrorKind::NoLegacyCollection, ""),
             UserError::IncompleteCollection { game } => (ErrorKind::IncompleteLegacyCollection, game),
             UserError::DownloadFailed { game } => (ErrorKind::DownloadFailed, game),
+            UserError::UpdateFailed => (ErrorKind::UpdateFailed, ""),
             UserError::Other => (ErrorKind::Other, ""),
         }
     }

@@ -438,3 +438,12 @@ msgstr "无法下载更新。下次启动时将重试。"
 
 msgid "Pad"
 msgstr "手柄"
+
+msgid "Update failed"
+msgstr "更新失败"
+
+msgid "The update couldn't be installed. It's tried again next start."
+msgstr "无法安装更新，将在下次启动时重试。"
+
+msgid "The update couldn't be installed. It's tried again next start. Details are in the log file."
+msgstr "无法安装更新，将在下次启动时重试。详情请查看日志文件。"

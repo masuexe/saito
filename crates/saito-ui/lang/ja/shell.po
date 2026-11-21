@@ -438,3 +438,12 @@ msgstr "更新をダウンロードできませんでした。次回の起動時
 
 msgid "Pad"
 msgstr "パッド"
+
+msgid "Update failed"
+msgstr "アップデートに失敗しました"
+
+msgid "The update couldn't be installed. It's tried again next start."
+msgstr "アップデートをインストールできませんでした。次回起動時に再試行します。"
+
+msgid "The update couldn't be installed. It's tried again next start. Details are in the log file."
+msgstr "アップデートをインストールできませんでした。次回起動時に再試行します。詳細はログファイルにあります。"

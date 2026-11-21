@@ -42,7 +42,7 @@ android {
         kotlin.srcDirs(crates.listFiles()!!.map { it.resolve("android") }.filter { it.isDirectory }.sorted())
         jniLibs.srcDir(out.resolve("jniLibs"))
         assets.srcDir(out.resolve("assets"))
-        res.srcDir(out.resolve("res"))
+        res.srcDirs(out.resolve("res"), "res")
     }
 
     signingConfigs {

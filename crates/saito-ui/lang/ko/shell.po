@@ -463,3 +463,12 @@ msgstr "업데이트를 다운로드하지 못했습니다. 다음 실행 시 �
 
 msgid "Pad"
 msgstr "패드"
+
+msgid "Update failed"
+msgstr "업데이트 실패"
+
+msgid "The update couldn't be installed. It's tried again next start."
+msgstr "업데이트를 설치할 수 없습니다. 다음 실행 시 다시 시도합니다."
+
+msgid "The update couldn't be installed. It's tried again next start. Details are in the log file."
+msgstr "업데이트를 설치할 수 없습니다. 다음 실행 시 다시 시도합니다. 자세한 내용은 로그 파일을 확인하세요."

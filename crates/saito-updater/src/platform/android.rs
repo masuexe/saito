@@ -1,17 +1,9 @@
 //! Android's updates: the newest release's APK (the release's one `.apk`, every release's signed with the one release
 //! key: packaging/android), asked of GitHub's API for the app's releases ([`crate::Releases`], `newer`) against the
-//! installed app's version (the APK's `versionName`, as Android says it), downloaded into the app's cache folder,
-//! checked by the SHA-256 GitHub says, and handed to the system's installer by
-//! `android/saito/updater/SaitoUpdater.kt`: a session of Android's `PackageInstaller` that asks for no confirmation
-//! (`USER_ACTION_NOT_REQUIRED`: the app updates itself, with `UPDATE_PACKAGES_WITHOUT_USER_ACTION`, and targets API 33
-//! or later). Android installs it without a word, and ends the app; the player opens it again. The first time, where
-//! the player hasn't let the app install apps (Settings' "Install unknown apps", which `REQUEST_INSTALL_PACKAGES` asks
-//! for), Android asks: its screen leads to the setting, then asks to update. Android checks the APK is signed with the
-//! installed app's key.
-//!
-//! The release and the APK come over reqwest (as the app's own files do: rustls with ring's provider, Android's
-//! certificate checks, which the app sets up as it starts), each on a thread of its own with a tokio runtime of its
-//! own. The installer's answer comes back through the native method registered here, on Java's main thread.
+//! installed app's version (the APK's `versionName`, as Android says it), downloaded into the app's cache folder
+//! (reusing an already-verified cached APK across unknown-apps permission grants), checked by the SHA-256 GitHub says,
+//! and handed to the system's installer by `android/saito/updater/SaitoUpdater.kt` (via `PackageInstaller` session or
+//! `FileProvider` `ACTION_VIEW` fallback).
 
 use crate::{Releases, Told};
 use jni::objects::{JClass, JObject, JString, JValue};
@@ -19,11 +11,10 @@ use jni::sys::jint;
 use jni::{Env, EnvUnowned, NativeMethod, jni_sig, jni_str};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
-use std::time::Duration;
 
 /// The most of the release's JSON read (its assets and its notes: some tens of kilobytes).
 const MAX_RELEASE: u64 = 1 << 20;
@@ -93,13 +84,26 @@ fn numbers(version: &str) -> Option<[u64; 3]> {
     parts.next().is_none().then_some(numbers)
 }
 
-/// How long a connection may take to be made, and a download may hear nothing, before it fails (and the loading
-/// screen goes on).
-const CONNECT_WAIT: Duration = Duration::from_secs(10);
-const READ_WAIT: Duration = Duration::from_secs(30);
+/// Verify that `path` exists and its streaming SHA-256 digest matches lowercase hex `expected`.
+fn verify_sha256(path: &Path, expected: &str) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else { return false };
+    let mut sum = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => sum.update(&buf[..n]),
+            Err(_) => return false,
+        }
+    }
+    format!("{:x}", sum.finalize()) == expected
+}
 
 /// `PackageInstaller.STATUS_FAILURE_ABORTED`: the player turned the update down.
 const ABORTED: jint = 3;
+
+/// `SaitoUpdater.HANDED_OFF`: control handed off to Android's external `ACTION_VIEW` package installer UI.
+const HANDED_OFF: jint = -100;
 
 /// Where the installer's answer goes, while the update is being installed.
 static ANSWER: Mutex<Option<Sender<Told>>> = Mutex::new(None);
@@ -123,16 +127,19 @@ pub fn check(releases: &Releases, tell: Sender<Told>) -> bool {
     started.is_ok()
 }
 
-/// The release at `latest` (GitHub's API), against the installed app's version.
+/// The release at `latest` (GitHub's API), against the installed app's version; cleans up stale cached APKs once up to date.
 async fn ask(latest: &str) -> Result<Option<Found>, String> {
     let installed = installed()?;
-    let mut json = Vec::new();
-    get(latest, MAX_RELEASE, |piece, _| {
-        json.extend_from_slice(piece);
-        Ok(())
-    })
-    .await?;
-    newer(&json, &installed)
+    let client = crate::http::client()?;
+    let json = crate::http::get_bytes(&client, latest, MAX_RELEASE).await?;
+    let found = newer(&json, &installed)?;
+    if found.is_none()
+        && let Ok(path) = apk()
+    {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("apk.part"));
+    }
+    Ok(found)
 }
 
 /// Where the update's APK is downloaded: the app's cache folder.
@@ -141,19 +148,13 @@ fn apk() -> Result<PathBuf, String> {
     Ok(dir.join("saito-update.apk"))
 }
 
-/// Download `found`'s APK on a thread, telling how far.
+/// Download `found`'s APK on a thread, telling how far (or reusing an already-verified cached APK).
 pub fn download(_releases: &Releases, found: &Found, tell: Sender<Told>) {
     let found = found.clone();
     let failed = tell.clone();
     let started = on_thread("saito-updater: downloading", async move {
         let done = match apk() {
-            Ok(path) => {
-                let fetched = fetch(&found, &path, &tell).await;
-                if fetched.is_err() {
-                    let _ = std::fs::remove_file(&path);
-                }
-                fetched
-            }
+            Ok(path) => fetch(&found, &path, &tell).await,
             Err(why) => Err(why),
         };
         let _ = tell.send(Told::Downloaded(done));
@@ -163,42 +164,55 @@ pub fn download(_releases: &Releases, found: &Found, tell: Sender<Told>) {
     }
 }
 
-/// `found`'s APK written to `path`, its SHA-256 the one the release says.
+/// `found`'s APK written atomically to `path`, its SHA-256 matching the release; returns immediately if cached and valid.
 async fn fetch(found: &Found, path: &Path, tell: &Sender<Told>) -> Result<(), String> {
-    let written = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut file = std::fs::File::create(path).map_err(written)?;
-    let mut sum = Sha256::new();
-    let mut said = 0;
-    get(&found.url, found.size, |piece, got| {
-        sum.update(piece);
-        file.write_all(piece).map_err(written)?;
-        // (Told by the percent: no more often.)
-        let percent = got * 100 / found.size.max(1);
-        if percent != said {
-            said = percent;
-            let _ = tell.send(Told::Progress(percent as f32 / 100.0));
-        }
-        Ok(())
-    })
-    .await?;
-    let sum = format!("{:x}", sum.finalize());
-    if sum != found.sha256 {
-        return Err(format!("the APK downloaded has the SHA-256 {sum}, where the release says {}", found.sha256));
+    if verify_sha256(path, &found.sha256) {
+        let _ = tell.send(Told::Progress(1.0));
+        return Ok(());
     }
-    Ok(())
+    let part = path.with_extension("apk.part");
+    let written = |e: std::io::Error| format!("{}: {e}", part.display());
+    let client = crate::http::client()?;
+    let res = async {
+        let mut file = std::fs::File::create(&part).map_err(written)?;
+        let mut sum = Sha256::new();
+        let mut said = 0;
+        crate::http::get_streaming(&client, &found.url, found.size, |piece, got| {
+            sum.update(piece);
+            file.write_all(piece).map_err(written)?;
+            // (Told by the percent: no more often.)
+            let percent = got * 100 / found.size.max(1);
+            if percent != said {
+                said = percent;
+                let _ = tell.send(Told::Progress(percent as f32 / 100.0));
+            }
+            Ok(())
+        })
+        .await?;
+        file.flush().map_err(written)?;
+        drop(file);
+        let sum = format!("{:x}", sum.finalize());
+        if sum != found.sha256 {
+            return Err(format!("the APK downloaded has the SHA-256 {sum}, where the release says {}", found.sha256));
+        }
+        std::fs::rename(&part, path).map_err(|e| format!("{} -> {}: {e}", part.display(), path.display()))?;
+        Ok(())
+    }
+    .await;
+    if res.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    res
 }
 
-/// Hand the APK to the system's installer, on a thread (the APK is copied into its session): its answer comes back
-/// through `SaitoUpdater.ended`, unless the update is installed, which ends the app.
+/// Hand the APK to the system's installer, on a thread: keeps the verified APK cached in case Android kills or prompts for
+/// permission so the next launch can resume without re-downloading.
 pub fn install(_releases: &Releases, found: Found, tell: Sender<Told>) -> Result<(), String> {
     let path = apk()?;
     log::info!("installing saito {}", found.version);
     *ANSWER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tell.clone());
     let spawned = std::thread::Builder::new().name("saito-updater: installing".into()).spawn(move || {
-        let committed = commit(&path);
-        // (The session has its own copy by now, or there is none.)
-        let _ = std::fs::remove_file(&path);
-        if let Err(why) = committed {
+        if let Err(why) = commit(&path) {
             let _ = tell.send(Told::NotInstalled { why, declined: false });
         }
     });
@@ -211,37 +225,6 @@ fn on_thread(name: &str, work: impl Future<Output = ()> + Send + 'static) -> Res
     let runtime = runtime.map_err(|e| format!("a runtime for the update: {e}"))?;
     let spawned = std::thread::Builder::new().name(name.into()).spawn(move || runtime.block_on(work));
     spawned.map(drop).map_err(|e| format!("a thread for the update: {e}"))
-}
-
-/// GET `url`, at most `limit` bytes of it, each piece of the body handed to `take` as it comes, with how many bytes have
-/// come so far; what `take` says went wrong ends it.
-async fn get(url: &str, limit: u64, mut take: impl FnMut(&[u8], u64) -> Result<(), String>) -> Result<(), String> {
-    use futures_util::StreamExt;
-    // (Err: the app has installed it already, which serves as well.)
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    // (GitHub's API answers no request that doesn't say what it comes from.)
-    let client = reqwest::Client::builder().user_agent("saito").connect_timeout(CONNECT_WAIT).read_timeout(READ_WAIT);
-    let client = client.build().map_err(|e| format!("an HTTP client: {e}"))?;
-    let said = |e: reqwest::Error| format!("{url}: {e}");
-    let response = client.get(url).send().await.map_err(said)?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("{url}: {status}"));
-    }
-    if response.content_length().is_some_and(|n| n > limit) {
-        return Err(format!("{url}: over {limit} bytes"));
-    }
-    let mut got = 0;
-    let mut pieces = response.bytes_stream();
-    while let Some(piece) = pieces.next().await {
-        let piece = piece.map_err(said)?;
-        got += piece.len() as u64;
-        if got > limit {
-            return Err(format!("{url}: over {limit} bytes"));
-        }
-        take(&piece, got)?;
-    }
-    Ok(())
 }
 
 /// `SaitoUpdater.version`: the installed app's version, as Android says it.
@@ -316,7 +299,7 @@ extern "system" fn ended<'local>(mut env: EnvUnowned<'local>, _class: JClass<'lo
     let message = env.with_env(|env| message.try_to_string(env)).resolve::<jni::errors::LogErrorAndDefault>();
     if let Some(tell) = ANSWER.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let why = format!("{message} (the installer's status {status})");
-        let _ = tell.send(Told::NotInstalled { why, declined: status == ABORTED });
+        let _ = tell.send(Told::NotInstalled { why, declined: status == ABORTED || status == HANDED_OFF });
     }
 }
 
@@ -345,6 +328,17 @@ mod tests {
     fn with_apk(tag: &str) -> Vec<u8> {
         let digest = format!("sha256:{}", SUM.to_ascii_uppercase());
         release(tag, &[("saito-ios.ipa", Some("sha256:00")), ("saito-android.apk", Some(&digest)), ("altstore.json", None)])
+    }
+
+    #[test]
+    fn verifies_cached_apk_sha256_streaming() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("saito-update.apk");
+        assert!(!verify_sha256(&file, "00"));
+        std::fs::write(&file, b"hello saito").unwrap();
+        let expected = format!("{:x}", Sha256::digest(b"hello saito"));
+        assert!(verify_sha256(&file, &expected));
+        assert!(!verify_sha256(&file, "0000"));
     }
 
     #[test]

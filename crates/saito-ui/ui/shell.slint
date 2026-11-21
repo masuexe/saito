@@ -390,6 +390,7 @@ export enum ErrorKind {
     download-failed,
     // No game's content is published for this version of saito yet (the loading screen's note).
     content-unpublished,
+    update-failed,
     other,
 }
 
@@ -574,6 +575,9 @@ export global Errors {
             }
             return @tr("{}'s content couldn't be downloaded. Check your connection, then start saito again.", detail);
         }
+        if kind == ErrorKind.update-failed {
+            return @tr("The update couldn't be installed. It's tried again next start.");
+        }
         return @tr("Something went wrong. Details are in the log file.");
     }
     // A dialog's title for it, and its message under the title.
@@ -667,6 +671,9 @@ export global Errors {
         }
         if kind == ErrorKind.download-failed {
             return @tr("{}'s content couldn't be downloaded", detail);
+        }
+        if kind == ErrorKind.update-failed {
+            return @tr("Update failed");
         }
         return @tr("Something went wrong");
     }
@@ -763,6 +770,9 @@ export global Errors {
         }
         if kind == ErrorKind.download-failed {
             return @tr("Check your connection, then start saito again.");
+        }
+        if kind == ErrorKind.update-failed {
+            return @tr("The update couldn't be installed. It's tried again next start. Details are in the log file.");
         }
         return @tr("Details are in the log file.");
     }

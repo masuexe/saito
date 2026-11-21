@@ -2250,6 +2250,9 @@ impl App {
                     view.set_update_note(note);
                 }
                 shell.set_updating(words.get_failed());
+                if !was_manual && self.shell.scale.handheld() && !self.shell.still && self.shell.dialog.is_none() {
+                    self.shell.fail(UserError::UpdateFailed);
+                }
             }
             Status::Checking => {
                 if !self.shell.manual_update {
