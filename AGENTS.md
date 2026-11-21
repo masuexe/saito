@@ -26,10 +26,9 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 | `详细描述 / 复现步骤` | `fLw0GD` | text | Context, expected behavior, or reproduction steps |
 | `截图` | `fbqdLX` | image | Screenshots (readable by agents via `image_value.items[].image_url`) |
 | `附件` | `fvfeZn` | attachment | Legacy attachments (unreadable via MCP; kept for historical records) |
-| `提交人` | `fAZmBI` | text | Submitter's QQ nickname |
-| `创建人` | `fxO0vR` | createdUser | Auto-recorded submitter account (used for row-level self-edit permissions) |
+| `创建人` | `fxO0vR` | createdUser | Auto-recorded submitter account (web UI & row-level self-edit permissions; omitted in MCP records) |
 | `维护者备注` | `fikdq2` | text | Technical evaluation, fix summary, or rejection reason |
-| `提交时间` | `fFlBj3` | createdTime | Automatically recorded timestamp |
+| `提交时间` | `fFlBj3` | createdTime | Automatically recorded timestamp (web UI; omitted in MCP records) |
 
 ---
 
