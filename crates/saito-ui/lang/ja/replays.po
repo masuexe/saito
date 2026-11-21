@@ -303,3 +303,10 @@ msgstr "MP4 動画"
 msgid "Builds"
 msgstr "構築"
 
+# Compatibility notices for replays recorded on another engine version.
+msgid "Recorded on v{} · compatibility mode"
+msgstr "v{} で記録 · 互換モードで再生"
+
+msgid "Recorded on v{} · playback may differ from original"
+msgstr "v{} で記録 · 元の対戦と異なる場合があります"
+

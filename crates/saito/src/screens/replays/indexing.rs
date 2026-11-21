@@ -21,6 +21,7 @@
 //! when the one before it ends; one that ends short of the end ends the index where it got.
 
 use saito_frontend::game::Loaded;
+use saito_frontend::replay::Compat;
 use saito_frontend::viewer::{BattlePart, ConsoleSound, IndexPart, KEYFRAME_EVERY, Viewer};
 use web_time::Instant;
 use std::path::PathBuf;
@@ -54,7 +55,7 @@ impl Indexing {
     /// Start the threads for the replay at `path`, played on `game` (each console's sound on a thread of its own,
     /// where the game has sound, with `music` by the rounds' backgrounds as the viewer has it). None if they
     /// couldn't start.
-    pub fn start(mut game: Loaded, music: Option<std::sync::Arc<saito_audio::RoundMusic>>, path: PathBuf) -> Option<Indexing> {
+    pub fn start(mut game: Loaded, music: Option<std::sync::Arc<saito_audio::RoundMusic>>, path: PathBuf, compat: Compat) -> Option<Indexing> {
         let (send, parts) = mpsc::channel();
         let sounds = ConsoleSound::of_with(&game, music);
         // (The battle's thread plays it silent: the sound is the other threads'.)
@@ -72,9 +73,9 @@ impl Indexing {
                     let doing = doing.clone();
                     started = started.and_then(|()| saito_threads::spawn(&format!("index sound {}", k + 1), move || sound(console, gets, &doing, on)));
                 }
-                started.and_then(|()| saito_threads::spawn("index", move || battle(game, path, next)))
+                started.and_then(|()| saito_threads::spawn("index", move || battle(game, path, compat, next)))
             }
-            None => saito_threads::spawn("index", move || battle(game, path, |part| send.send(part.into_part()).is_ok())),
+            None => saito_threads::spawn("index", move || battle(game, path, compat, |part| send.send(part.into_part()).is_ok())),
         };
         match started {
             Ok(()) => Some(Indexing { parts, began: Instant::now() }),
@@ -112,7 +113,7 @@ impl Indexing {
 /// The battle's thread: a silent viewer of the replay, playing it through a part at a time, each handed `on` as it
 /// is made (false: the next thread has ended). It ends at the replay's end, when the next thread has ended, or when
 /// the engine stops it outside a tick (a tick's own stop is where the replay ends: its last part is whole).
-fn battle(mut game: Loaded, path: PathBuf, mut on: impl FnMut(BattlePart) -> bool) {
+fn battle(mut game: Loaded, path: PathBuf, compat: Compat, mut on: impl FnMut(BattlePart) -> bool) {
     let doing = format!("indexing {}", path.display());
     // (Nothing is drawn: no text to lay out.)
     game.font = None;
@@ -120,7 +121,7 @@ fn battle(mut game: Loaded, path: PathBuf, mut on: impl FnMut(BattlePart) -> boo
         Ok(replay) => replay,
         Err(why) => return crate::errors::log(&doing, &why),
     };
-    let mut viewer = match saito_frontend::session::in_engine(|| Viewer::open(&game, &replay, None)) {
+    let mut viewer = match saito_frontend::session::in_engine(|| Viewer::open_compat(&game, &replay, None, compat)) {
         Ok(Ok(viewer)) => viewer,
         Ok(Err(refused)) => return crate::errors::log(&doing, &refused),
         Err(panic) => return crate::errors::log(&doing, &format_args!("the engine stopped: {}", saito_frontend::session::panic_message(panic.as_ref()))),

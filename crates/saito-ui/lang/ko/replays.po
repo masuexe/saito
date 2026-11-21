@@ -291,3 +291,10 @@ msgstr "MP4 동영상"
 # The viewer: both builds, over the picture.
 msgid "Builds"
 msgstr "빌드"
+
+# Compatibility notices for replays recorded on another engine version.
+msgid "Recorded on v{} · compatibility mode"
+msgstr "v{}에서 기록 · 호환 모드로 재생"
+
+msgid "Recorded on v{} · playback may differ from original"
+msgstr "v{}에서 기록 · 원래 대전과 다를 수 있습니다"

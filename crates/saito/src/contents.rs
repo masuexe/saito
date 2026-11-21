@@ -128,6 +128,12 @@ pub fn find(game: &str, hash: ContentHash) -> Option<Stored> {
     contents().store.playing(game, line(), hash)
 }
 
+/// Game `game`'s bundle that plays `hash` for a replay recorded on `replay_line`,
+/// preferring `replay_line` and falling back to any other stored engine line.
+pub fn find_for_replay(game: &str, replay_line: &str, hash: ContentHash) -> Option<Stored> {
+    contents().store.playing_preferring(game, replay_line, hash)
+}
+
 /// The revision of game `game`'s content that plays `hash`, as far as is known: a stored bundle's, else its
 /// index's (as last read).
 pub fn revision_of(game: &str, hash: ContentHash) -> Option<u32> {
@@ -144,6 +150,11 @@ pub fn verify(dir: &Path, hash: ContentHash) -> Result<(), String> {
 /// [`verify`], of store `store`.
 fn verify_in(store: &Store, dir: &Path, hash: ContentHash) -> Result<(), String> {
     let Some(stored) = stored_in(store, dir) else { return Ok(()) };
+    // A historical bundle from another engine line may hash differently under this engine's
+    // content model; never delete or overwrite its recorded hash when loading it for replay.
+    if stored.record.line != line() {
+        return Ok(());
+    }
     if let Some(published) = stored.record.published
         && published != hash
     {
@@ -191,6 +202,12 @@ pub fn published(game: &str, hash: ContentHash) -> Option<Published> {
     contents().published(game, hash)
 }
 
+/// Game `game`'s published bundle that plays `hash` for a replay recorded on `replay_line`,
+/// preferring `replay_line` and falling back to any other published line.
+pub fn published_for_replay(game: &str, replay_line: &str, hash: ContentHash) -> Option<Published> {
+    contents().published_for_replay(game, replay_line, hash)
+}
+
 /// Read game `game`'s index from its site (where the catalog as last read says it is), and keep it.
 pub async fn fetch_index(game: &str) -> Result<Index, String> {
     contents().fetch_index(game).await
@@ -215,6 +232,12 @@ pub async fn fetch_newest(game: &str, progress: impl FnMut(f32)) -> Result<Newes
 /// hasn't it), downloaded and stored. None: no bundle of the line plays it.
 pub async fn fetch_playing(game: &str, hash: ContentHash) -> Result<Option<Stored>, String> {
     contents().fetch_playing(game, hash).await
+}
+
+/// Game `game`'s content that plays `hash` for a replay recorded on `replay_line`, searching
+/// `replay_line` first and falling back to other lines in the store and index.
+pub async fn fetch_playing_for_replay(game: &str, replay_line: &str, hash: ContentHash) -> Result<Option<Stored>, String> {
+    contents().fetch_playing_for_replay(game, replay_line, hash).await
 }
 
 /// What taking every game's newest content came to ([`fetch_every_newest`]).
@@ -306,6 +329,10 @@ impl Contents {
         saito_threads::lock(&self.read).ok()?.indexes.get(game)?.playing(line(), hash).cloned()
     }
 
+    fn published_for_replay(&self, game: &str, replay_line: &str, hash: ContentHash) -> Option<Published> {
+        saito_threads::lock(&self.read).ok()?.indexes.get(game)?.playing_preferring(replay_line, hash).cloned()
+    }
+
     async fn fetch_index(&self, game: &str) -> Result<Index, String> {
         let url = {
             let read = saito_threads::lock(&self.read).map_err(|_| "the sites' lock was poisoned".to_string())?;
@@ -366,6 +393,20 @@ impl Contents {
         self.fetch(&published, |_| {}).await.map(Some)
     }
 
+    async fn fetch_playing_for_replay(&self, game: &str, replay_line: &str, hash: ContentHash) -> Result<Option<Stored>, String> {
+        if let Some(stored) = self.store.playing_preferring(game, replay_line, hash) {
+            return Ok(Some(stored));
+        }
+        let published = match self.published_for_replay(game, replay_line, hash) {
+            Some(p) => p,
+            None => match self.fetch_index(game).await?.playing_preferring(replay_line, hash) {
+                Some(p) => p.clone(),
+                None => return Ok(None),
+            },
+        };
+        self.fetch(&published, |_| {}).await.map(Some)
+    }
+
     async fn fetch_every_newest(&self) -> Updated {
         let (mut arrived, mut failed) = (Vec::new(), Vec::new());
         match self.fetch_catalog().await {
@@ -401,20 +442,31 @@ pub(crate) mod testing {
 
     /// A bundle of game `game` (one pack, holding `text`), stored as one that plays `hash`.
     pub(crate) fn store(game: &str, text: &str, hash: ContentHash) -> Stored {
-        let src = contents().store.dir.with_file_name(format!("src-{game}-{}", hash.0));
+        store_on_line(game, line(), text, hash)
+    }
+
+    /// A bundle of game `game` for engine line `engine_line` (one pack, holding `text`), stored as one that plays `hash`.
+    pub(crate) fn store_on_line(game: &str, engine_line: &str, text: &str, hash: ContentHash) -> Stored {
+        let src = contents().store.dir.with_file_name(format!("src-{game}-{engine_line}-{}", hash.0));
         saito_files::create_dir_all(&src).unwrap();
         saito_files::write(src.join("manifest.toml"), format!("id = \"{game}\"\nkind = \"game\"\n")).unwrap();
         saito_files::write(src.join("init.luau"), text).unwrap();
-        let manifest = saito_content::bundle::Manifest { game: game.into(), line: line().into(), revision: 1, packs: [(game.to_string(), "c0ffee".to_string())].into() };
+        let manifest = saito_content::bundle::Manifest { game: game.into(), line: engine_line.into(), revision: 1, packs: [(game.to_string(), "c0ffee".to_string())].into() };
         let bundle = saito_content::bundle::build(manifest, &[(game, &src)]).unwrap();
         storing(|| contents().store.add(&saito_content::bundle::gzip(&bundle.tar), bundle.id, Some(hash))).unwrap()
     }
 
     /// Game `game`'s index as last read: one bundle of the line, playing `hash`.
     pub(crate) fn list(game: &str, hash: ContentHash) {
+        list_on_line(game, line(), hash);
+    }
+
+    /// Add a published bundle for `engine_line` playing `hash` to game `game`'s cached index.
+    pub(crate) fn list_on_line(game: &str, engine_line: &str, hash: ContentHash) {
         let published = Published { id: saito_content::bundle::BundleId([hash.0 as u8; 32]), content_hash: hash, revision: 2, packs: Default::default(), date: "2026-10-26".into(), size: 1, url: None };
-        let index = Index { game: game.into(), lines: [(line().to_string(), vec![published])].into() };
-        saito_threads::lock(&contents().read).unwrap().indexes.insert(game.to_string(), index);
+        let mut read = saito_threads::lock(&contents().read).unwrap();
+        let index = read.indexes.entry(game.to_string()).or_insert_with(|| Index { game: game.into(), lines: Default::default() });
+        index.lines.entry(engine_line.to_string()).or_default().push(published);
     }
 }
 
@@ -455,6 +507,19 @@ mod tests {
         assert_eq!(verify_in(&store, &stored.dir, ContentHash(0xEF)), Ok(()));
         assert_eq!(store.get(stored.id).unwrap().content_hash(), Some(ContentHash(0xEF)));
         assert_eq!(verify_in(&store, Path::new("/somewhere/content"), ContentHash(1)), Ok(()), "development's");
+        // Historical bundle from another engine line: never deleted or overwritten when verified by this line.
+        let dir = tempfile::tempdir().unwrap();
+        let pack = dir.path().join("src/legacy");
+        saito_files::create_dir_all(&pack).unwrap();
+        saito_files::write(pack.join("manifest.toml"), "id = \"exe6\"\nkind = \"game\"\n").unwrap();
+        saito_files::write(pack.join("init.luau"), "legacy").unwrap();
+        let manifest = Manifest { game: "exe6".into(), line: "0.1".into(), revision: 1, packs: [("exe6".to_string(), "c0ffee".to_string())].into() };
+        let bundle = build(manifest, &[("exe6", &pack)]).unwrap();
+        let legacy_store = Store::at(dir.path().join("content"));
+        let legacy = legacy_store.add(&gzip(&bundle.tar), bundle.id, Some(ContentHash(0x1234))).unwrap();
+        assert_eq!(verify_in(&legacy_store, &legacy.dir, ContentHash(0x9999)), Ok(()));
+        assert_eq!(legacy_store.get(legacy.id).unwrap().record.published, Some(ContentHash(0x1234)));
+        assert_eq!(legacy_store.get(legacy.id).unwrap().record.hash, None);
     }
 
     /// Folder `root` served over HTTP on this machine, on threads of its own, as long as the tests run: its address.

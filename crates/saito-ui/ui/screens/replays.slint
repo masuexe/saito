@@ -82,6 +82,8 @@ export global ReplaysView {
     in property <int> result-tone;
     in property <string> length;
     in property <string> reason;
+    // Compatibility notice for playable legacy replays (amber, shown when `reason` is empty).
+    in property <string> notice;
     // Its still is in the picture.
     in property <bool> still;
     // A phone: the selected replay's sheet is open.
@@ -135,6 +137,9 @@ export global ReplaysView {
     // lately, paused or at the end, a setting taken, the builds, the export, the ⋯ menu or the popup up next open;
     // always on a phone). The pointer resting on the transport holds them too.
     in property <bool> hud: true;
+    // Compatibility notice over the viewer for legacy replays (and whether playback diverged from the recording).
+    in property <string> viewer-notice;
+    in property <bool> viewer-diverged;
     // Whether the queue's next replay starts by itself at the end of one (Autoplay next, remembered).
     in property <bool> autoplay: true;
 
@@ -247,6 +252,13 @@ export global ReplaysView {
     // A round's chapter in an exported video.
     pure public function chapter(round: int) -> string {
         return @tr("Round {}", round);
+    }
+    // Compatibility notices for replays recorded on another engine version.
+    pure public function legacy-compat(version: string) -> string {
+        return @tr("Recorded on v{} · compatibility mode", version);
+    }
+    pure public function legacy-diverged(version: string) -> string {
+        return @tr("Recorded on v{} · playback may differ from original", version);
     }
 }
 
@@ -523,6 +535,17 @@ component Facts inherits Rectangle {
         color: Theme.bad;
         vertical-alignment: top;
     }
+
+    Note {
+        x: 0;
+        y: root.stacked ? root.first + 3 * root.pitch : 122px;
+        width: root.width;
+        height: root.stacked ? max(0px, root.height - self.y) : 36px;
+        visible: ReplaysView.reason == "" && ReplaysView.notice != "";
+        text: ReplaysView.notice;
+        color: Theme.code;
+        vertical-alignment: top;
+    }
 }
 
 // WATCH's arrow: a triangle pointing down, at the menu it opens.
@@ -571,7 +594,7 @@ component DetailPanel inherits Rectangle {
         x: root.beside ? root.pad + root.still-width + 12px : 16px;
         y: root.beside ? root.pad - 4px : 352px;
         width: root.beside ? root.inner - root.still-width - 12px : parent.width - 32px;
-        height: root.beside ? root.still-height + 4px : 112px;
+        height: root.beside ? root.still-height + 4px : 160px;
         visible: ReplaysView.selected;
         stacked: root.beside;
     }
@@ -680,6 +703,7 @@ component DetailSheet inherits Rectangle {
     property <bool> queue: ReplaysView.tab == 1;
     property <length> inner: self.width - 32px;
     property <length> still-height: self.inner * 2 / 3;
+    property <length> notice-room: ReplaysView.reason == "" && ReplaysView.notice != "" ? 36px : 0px;
     arrive := Tween {
         duration: Theme.quick;
     }
@@ -698,7 +722,7 @@ component DetailSheet inherits Rectangle {
     Rectangle {
         x: 0;
         y: parent.height - self.height + (1 - arrive.t) * 24px;
-        height: root.still-height + 344px;
+        height: root.still-height + 344px + root.notice-room;
         opacity: arrive.t;
         background: Theme.panel;
         border-width: 1px;
@@ -726,14 +750,14 @@ component DetailSheet inherits Rectangle {
             x: 16px;
             y: root.still-height + 28px;
             width: root.inner;
-            height: 112px;
+            height: 112px + root.notice-room;
         }
 
         // (A replay's actions, or in the Queue tab the entry's: the other's are hidden and passed by. WATCH has its
         // arrow at its right, as beside the list.)
         Button {
             x: 16px;
-            y: root.still-height + 148px;
+            y: root.still-height + 148px + root.notice-room;
             width: root.inner - 42px;
             visible: !root.queue;
             nav: "sheet.watch";
@@ -745,7 +769,7 @@ component DetailSheet inherits Rectangle {
 
         IconButton {
             x: 16px + root.inner - self.width;
-            y: root.still-height + 148px;
+            y: root.still-height + 148px + root.notice-room;
             visible: !root.queue;
             nav: "sheet.watch-more";
             icon: Signs.arrow;
@@ -755,7 +779,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 196px;
+            y: root.still-height + 196px + root.notice-room;
             width: root.inner;
             visible: !root.queue;
             nav: "sheet.export";
@@ -765,7 +789,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 244px;
+            y: root.still-height + 244px + root.notice-room;
             width: root.inner;
             visible: !root.queue;
             nav: "sheet.file";
@@ -775,7 +799,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 292px;
+            y: root.still-height + 292px + root.notice-room;
             width: root.inner;
             visible: !root.queue;
             nav: "sheet.delete";
@@ -787,7 +811,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 148px;
+            y: root.still-height + 148px + root.notice-room;
             width: root.inner;
             visible: root.queue;
             nav: "sheet.watch-from";
@@ -798,7 +822,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 196px;
+            y: root.still-height + 196px + root.notice-room;
             width: root.inner;
             visible: root.queue;
             nav: "sheet.move-up";
@@ -808,7 +832,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 244px;
+            y: root.still-height + 244px + root.notice-room;
             width: root.inner;
             visible: root.queue;
             nav: "sheet.move-down";
@@ -818,7 +842,7 @@ component DetailSheet inherits Rectangle {
 
         Button {
             x: 16px;
-            y: root.still-height + 292px;
+            y: root.still-height + 292px + root.notice-room;
             width: root.inner;
             visible: root.queue;
             nav: "sheet.remove";
@@ -1634,6 +1658,35 @@ component ViewerPage inherits Rectangle {
         y: Shell.picture-room-y + Shell.picture-y + Shell.picture-height * 20 / Shell.picture-rows + 8px;
         held-top: ReplaysView.held-shown;
         held-bottom: ReplaysView.held-other;
+    }
+
+    // Legacy replay compatibility notice pill: fades with the HUD, or stays subtly visible once playback diverges.
+    Rectangle {
+        visible: ReplaysView.viewer-notice != "";
+        opacity: root.shown ? 1 : (ReplaysView.viewer-diverged ? 0.78 : 0);
+        animate opacity {
+            duration: Theme.brisk;
+            easing: ease-out;
+        }
+        x: root.phone ? 12px : Theme.margin;
+        y: root.phone ? room.y + 8px : Theme.header + 10px;
+        width: min(parent.width - 2 * self.x, notice-text.preferred-width + 20px);
+        height: 26px;
+        background: Theme.bar;
+        border-width: 1px;
+        border-color: Theme.code;
+        notice-text := Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: ReplaysView.viewer-notice;
+            color: Theme.code;
+            font-family: Theme.body;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
     }
 
     page := Page {

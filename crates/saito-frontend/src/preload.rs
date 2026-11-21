@@ -292,9 +292,14 @@ impl Preload {
     /// `crate::replay::set_of`), shown from `view`'s side, with what was
     /// made ready, as [`Preload::player`] gives a player. Refused as
     /// [`crate::viewer::Viewer::open`] refuses a replay.
-    pub fn viewer(mut self, replay: &crate::replay::Replay, view: Option<u8>) -> Result<crate::viewer::Viewer, crate::replay::Refused> {
+    pub fn viewer(self, replay: &crate::replay::Replay, view: Option<u8>) -> Result<crate::viewer::Viewer, crate::replay::Refused> {
+        self.viewer_compat(replay, view, crate::replay::Compat::Exact)
+    }
+
+    /// The viewer of `replay` under compatibility mode `compat`.
+    pub fn viewer_compat(mut self, replay: &crate::replay::Replay, view: Option<u8>, compat: crate::replay::Compat) -> Result<crate::viewer::Viewer, crate::replay::Refused> {
         let audio = self.audio.take().or_else(|| self.sound.take().map(|parts| self.audio_of(parts)));
-        crate::viewer::Viewer::with(&self.content, replay, view, self.renderer, self.text, audio)
+        crate::viewer::Viewer::with_compat(&self.content, replay, view, self.renderer, self.text, audio, compat)
     }
 
     fn run(&mut self, i: usize) {

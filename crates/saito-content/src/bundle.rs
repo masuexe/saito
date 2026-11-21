@@ -171,6 +171,13 @@ impl Index {
     pub fn playing(&self, line: &str, hash: saito_battle::ContentHash) -> Option<&Published> {
         self.lines.get(line)?.iter().rev().find(|p| p.content_hash == hash)
     }
+
+    /// A bundle that plays `hash`, preferring engine line `preferred_line` and falling
+    /// back to any other published line for cross-version replay playback.
+    pub fn playing_preferring(&self, preferred_line: &str, hash: saito_battle::ContentHash) -> Option<&Published> {
+        self.playing(preferred_line, hash)
+            .or_else(|| self.lines.values().rev().find_map(|entries| entries.iter().rev().find(|p| p.content_hash == hash)))
+    }
 }
 
 mod content_hash_hex {

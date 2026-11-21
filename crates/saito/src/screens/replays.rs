@@ -47,7 +47,7 @@ use export::Export;
 use queue::Queue;
 use saito_battle::{BattleResult, Content};
 use saito_frontend::player::time_of;
-use saito_frontend::replay::{ENGINE, Info, MatchKind, Outcome};
+use saito_frontend::replay::{Compat, ENGINE, Info, MatchKind, Outcome, Refused};
 use saito_render::Frame;
 use saito_render::vfont::TextRenderer;
 use saito_ui::{BattleKind, ButtonKind, DialogButton, ReplayRow, ReplaysView, VersusCard};
@@ -204,10 +204,12 @@ enum Plays {
 }
 
 /// What came of the downloads and the indexes read again for the replays (on the window's loop), since the screen
-/// last looked: that what the store or the indexes hold changed, and the hashes that couldn't be had.
+/// last looked: that what the store or the indexes hold changed, the games whose index reread finished, and the
+/// hashes that couldn't be had.
 #[derive(Default)]
 struct Arrivals {
     changed: bool,
+    reread_done: HashSet<String>,
     failed: HashSet<u64>,
 }
 
@@ -217,7 +219,7 @@ struct Arrivals {
 /// watch once that is ready.
 #[derive(Default)]
 struct Elsewhere {
-    found: HashMap<(String, u64), Plays>,
+    found: HashMap<(String, String, u64), Plays>,
     arrivals: Rc<RefCell<Arrivals>>,
     downloading: HashSet<u64>,
     reread: HashSet<String>,
@@ -329,13 +331,16 @@ impl Replays {
         }
     }
 
-    /// Where a replay of game `game` made on content `made` plays, the game's own content being `here` (its hash).
-    /// One the app has nowhere and its index as last read doesn't list has the index read again, once a visit.
-    fn plays_on(&mut self, games: &Games, game: &str, here: u64, made: u64) -> Plays {
+    /// Where a replay of game `game` recorded on engine line `replay_line` made on content `made` plays, the game's
+    /// own content being `here` (its hash). Searches `replay_line` first and falls back to other lines in the store
+    /// and index. One the app has nowhere and its index as last read doesn't list has the index read again, once a
+    /// visit.
+    fn plays_on_line(&mut self, games: &Games, game: &str, replay_line: &str, here: u64, made: u64) -> Plays {
         if made == here {
             return Plays::Here;
         }
-        if let Some(found) = self.elsewhere.found.get(&(game.to_string(), made)) {
+        let key = (game.to_string(), replay_line.to_string(), made);
+        if let Some(found) = self.elsewhere.found.get(&key) {
             return match found {
                 Plays::Stored(dir) if games.other_failed(dir) => Plays::Nowhere,
                 found => found.clone(),
@@ -344,16 +349,48 @@ impl Replays {
         let hash = ContentHash(made);
         let found = if self.elsewhere.arrivals.borrow().failed.contains(&made) {
             Plays::Nowhere
-        } else if let Some(stored) = crate::contents::find(game, hash) {
+        } else if let Some(stored) = crate::contents::find_for_replay(game, replay_line, hash) {
             Plays::Stored(stored.dir)
-        } else if crate::contents::published(game, hash).is_some() {
+        } else if crate::contents::published_for_replay(game, replay_line, hash).is_some() {
             Plays::Listed
         } else {
             self.reread(game);
             Plays::Nowhere
         };
-        self.elsewhere.found.insert((game.to_string(), made), found.clone());
+        self.elsewhere.found.insert(key, found.clone());
         found
+    }
+
+    #[cfg(test)]
+    fn plays_on(&mut self, games: &Games, game: &str, here: u64, made: u64) -> Plays {
+        self.plays_on_line(games, game, crate::contents::line(), here, made)
+    }
+
+    /// Resolve where and under which compatibility mode a replay with `head` plays on game `game` (whose current
+    /// content hash is `here`).
+    ///
+    /// - Exact content match (current content, stored bundle, or listed bundle across engine lines) plays strictly
+    ///   (`Compat::Exact`) when simulation versions match (`same_sim`), or leniently (`Compat::Lenient`) otherwise.
+    /// - Cross-line replays whose exact content bundle is unavailable anywhere fall back to current content in
+    ///   `Compat::Lenient` mode once no catalog is configured or the index reread has completed.
+    fn resolve_replay(&mut self, games: &Games, game: &str, here: u64, head: &saito_replay::Head) -> Option<(Plays, Compat)> {
+        if head.game != game {
+            return None;
+        }
+        let replay_line = saito_replay::line(&head.engine);
+        let same_line = replay_line == saito_replay::line(ENGINE);
+        let same_sim = saito_replay::same_sim(&head.engine, ENGINE, game);
+        let plays = self.plays_on_line(games, game, replay_line, here, head.content);
+        match plays {
+            Plays::Here | Plays::Stored(_) | Plays::Listed => Some((plays, if same_sim { Compat::Exact } else { Compat::Lenient })),
+            Plays::Nowhere => {
+                if !same_line && (!crate::contents::has_catalog() || self.elsewhere.arrivals.borrow().reread_done.contains(game)) {
+                    Some((Plays::Here, Compat::Lenient))
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     /// Read game `game`'s index again (once a visit), on the window's loop: it may list content its index as last
@@ -362,33 +399,42 @@ impl Replays {
         if !self.elsewhere.reread.insert(game.to_string()) {
             return;
         }
-        let (arrivals, game) = (self.elsewhere.arrivals.clone(), game.to_string());
+        if !crate::contents::has_catalog() {
+            self.elsewhere.arrivals.borrow_mut().reread_done.insert(game.to_string());
+            return;
+        }
+        let (arrivals, target) = (self.elsewhere.arrivals.clone(), game.to_string());
         let started = slint::spawn_local(async move {
             match crate::contents::fetch_catalog().await.and(Ok(())) {
-                Ok(()) => match crate::contents::fetch_index(&game).await {
-                    Ok(_) => arrivals.borrow_mut().changed = true,
-                    Err(why) => crate::errors::log(&format!("reading {game}'s index for a replay's content"), &why),
+                Ok(()) => match crate::contents::fetch_index(&target).await {
+                    Ok(_) => {}
+                    Err(why) => crate::errors::log(&format!("reading {target}'s index for a replay's content"), &why),
                 },
-                Err(why) => crate::errors::log(&format!("reading the catalog for {game}'s replays"), &why),
+                Err(why) => crate::errors::log(&format!("reading the catalog for {target}'s replays"), &why),
             }
+            let mut arrivals = arrivals.borrow_mut();
+            arrivals.reread_done.insert(target);
+            arrivals.changed = true;
         });
         if let Err(why) = started {
             crate::errors::log("reading an index for a replay's content", &why);
+            self.elsewhere.arrivals.borrow_mut().reread_done.insert(game.to_string());
         }
     }
 
-    /// Download game `game`'s content that plays `made` (listed by its index), once, on the window's loop.
-    fn download(&mut self, game: &str, made: u64) {
+    /// Download game `game`'s content that plays `made` (listed by its index for `replay_line` or another line), once,
+    /// on the window's loop.
+    fn download(&mut self, game: &str, replay_line: &str, made: u64) {
         if !self.elsewhere.downloading.insert(made) {
             return;
         }
-        let (arrivals, game) = (self.elsewhere.arrivals.clone(), game.to_string());
+        let (arrivals, game, replay_line) = (self.elsewhere.arrivals.clone(), game.to_string(), replay_line.to_string());
         let started = slint::spawn_local(async move {
             let doing = format!("downloading {game}'s content for a replay");
-            match crate::contents::fetch_playing(&game, ContentHash(made)).await {
+            match crate::contents::fetch_playing_for_replay(&game, &replay_line, ContentHash(made)).await {
                 Ok(Some(_)) => arrivals.borrow_mut().changed = true,
                 Ok(None) => {
-                    crate::errors::log(&doing, &format_args!("no bundle of the line plays {made:016x}"));
+                    crate::errors::log(&doing, &format_args!("no bundle plays {made:016x}"));
                     arrivals.borrow_mut().failed.insert(made);
                 }
                 Err(why) => {
@@ -404,15 +450,15 @@ impl Replays {
         }
     }
 
-    /// The game as replay `entry` plays it, and its content's hash: the game's own (`ready`, whose hash is
-    /// `here`), or the content it was made on, once that is ready. None: it isn't, or doesn't play here.
-    fn ready_for(&mut self, games: &Games, game: &str, ready: &Rc<Ready>, here: u64, entry: &Entry) -> Option<(Rc<Ready>, u64)> {
+    /// The game as replay `entry` plays it, the content hash played on, and its compatibility mode: the game's own
+    /// (`ready`, whose hash is `here`), or the historical content it was made on, once that is ready. None: it isn't
+    /// ready yet, or doesn't play here.
+    fn ready_for(&mut self, games: &Games, game: &str, ready: &Rc<Ready>, here: u64, entry: &Entry) -> Option<(Rc<Ready>, u64, Compat)> {
         let s = entry.read.as_ref().ok()?;
-        s.head.require(ENGINE, game, s.head.content).ok()?;
-        let made = s.head.content;
-        match self.plays_on(games, game, here, made) {
-            Plays::Here => Some((ready.clone(), here)),
-            Plays::Stored(dir) => games.other_ready(&dir).map(|other| (other, made)),
+        let (plays, compat) = self.resolve_replay(games, game, here, &s.head)?;
+        match plays {
+            Plays::Here => Some((ready.clone(), here, compat)),
+            Plays::Stored(dir) => games.other_ready(&dir).map(|other| (other, s.head.content, compat)),
             Plays::Listed | Plays::Nowhere => None,
         }
     }
@@ -420,17 +466,16 @@ impl Replays {
     /// The content replay `entry` was made on is asked for while it is selected, where it isn't the game's own:
     /// downloaded (where its index lists it), then made ready ([`Replays::follow_elsewhere`]).
     fn ask_for_content(&mut self, games: &Games, game: &str, here: u64, entry: &Entry) {
-        let Some(made) = entry.read.as_ref().ok().filter(|s| s.head.require(ENGINE, game, s.head.content).is_ok()).map(|s| s.head.content) else {
-            return;
-        };
-        match self.plays_on(games, game, here, made) {
+        let Ok(s) = &entry.read else { return };
+        let Some((plays, _)) = self.resolve_replay(games, game, here, &s.head) else { return };
+        match plays {
             Plays::Stored(dir) => {
                 if self.elsewhere.wanted.as_ref().is_none_or(|(_, wanted)| *wanted != dir) {
                     self.elsewhere.was_ready = games.other_ready(&dir).is_some();
                 }
                 self.elsewhere.wanted = Some((game.to_string(), dir));
             }
-            Plays::Listed => self.download(game, made),
+            Plays::Listed => self.download(game, saito_replay::line(&s.head.engine), s.head.content),
             Plays::Here | Plays::Nowhere => {}
         }
     }
@@ -470,29 +515,34 @@ impl Replays {
         let doing = format!("listing {}", entry.path.display());
         let why = match &entry.read {
             Err(e) => UserError::of_replay_read(&doing, e),
-            // (The game and the engine's line are the replay's to match; the content is the one it was made on,
-            // wherever that is.)
-            Ok(s) => match s.head.require(ENGINE, game, s.head.content) {
-                Err(differs) => {
-                    crate::errors::log(&doing, &differs);
+            Ok(s) => {
+                if s.head.game != game {
+                    crate::errors::log(&doing, &format_args!("the replay is of {}, not {game}", s.head.game));
                     UserError::ReplayVersion
-                }
-                Ok(()) => {
+                } else {
                     // (Content not to be had now may be later: not kept.)
-                    if self.plays_on(games, game, here, s.head.content) == Plays::Nowhere {
+                    let Some((_, compat)) = self.resolve_replay(games, game, here, &s.head) else {
                         return Some(UserError::ReplayContentMissing);
-                    }
+                    };
                     match self.library.played(entry) {
-                        Some(Err(refused)) => UserError::of_refusal(&doing, refused),
-                        // (One that plays another battle than it recorded was made by another build of this version.)
-                        Some(Ok(Outcome { diverged: Some(differs), .. })) => {
+                        Some(Err(refused)) => {
+                            if compat == Compat::Lenient && matches!(refused, Refused::BadMatch(_)) {
+                                crate::errors::log(&doing, refused);
+                                UserError::ReplayVersion
+                            } else {
+                                UserError::of_refusal(&doing, refused)
+                            }
+                        }
+                        // (In strict mode, one that plays another battle than it recorded was made by another build of this version;
+                        // in lenient mode for older versions, divergence is surfaced as a notice without blocking playback.)
+                        Some(Ok(Outcome { diverged: Some(differs), .. })) if compat == Compat::Exact => {
                             crate::errors::log(&doing, differs);
                             UserError::ReplayVersion
                         }
                         _ => return None,
                     }
                 }
-            },
+            }
         };
         self.reasons.insert(key, why.clone());
         Some(why)
@@ -550,8 +600,8 @@ impl Replays {
                 if !shown {
                     continue;
                 }
-                if let Some((on, made)) = self.ready_for(&shell.games, game, ready, hash, entry) {
-                    self.library.play(entry, on.content(), made);
+                if let Some((on, content_hash, compat)) = self.ready_for(&shell.games, game, ready, hash, entry) {
+                    self.library.play_with(entry, on.content(), content_hash, compat);
                 }
                 rows.push(self.row(shell, game, entry, hash));
                 self.rows.push(i);
@@ -592,8 +642,8 @@ impl Replays {
             for path in &paths {
                 match self.library.entries.iter().find(|e| e.path == *path).cloned() {
                     Some(entry) => {
-                        if let Some((on, made)) = self.ready_for(&shell.games, game, ready, hash, &entry) {
-                            self.library.play(&entry, on.content(), made);
+                        if let Some((on, content_hash, compat)) = self.ready_for(&shell.games, game, ready, hash, &entry) {
+                            self.library.play_with(&entry, on.content(), content_hash, compat);
                         }
                         rows.push(self.row(shell, game, &entry, hash));
                     }
@@ -636,6 +686,7 @@ impl Replays {
             view.set_selected(missing.is_some());
             view.set_playable(false);
             view.set_still(false);
+            view.set_notice(Default::default());
             if let Some(file) = missing {
                 for set in [ReplaysView::set_right_name, ReplaysView::set_played, ReplaysView::set_result, ReplaysView::set_length] {
                     set(&view, Default::default());
@@ -658,6 +709,14 @@ impl Replays {
         view.set_playable(reason.is_none() && entry.read.is_ok() && on.is_some());
         view.set_played(format!("{} · {}", when.full, when.time).into());
         view.set_reason(reason.as_ref().map(|r| r.line(&ui)).unwrap_or_default().into());
+        let notice = match (&reason, &entry.read, &on) {
+            (None, Ok(s), Some((_, _, Compat::Lenient))) => {
+                let diverged = matches!(self.library.played(&entry), Some(Ok(Outcome { diverged: Some(_), .. })));
+                if diverged { view.invoke_legacy_diverged(s.head.engine.as_str().into()) } else { view.invoke_legacy_compat(s.head.engine.as_str().into()) }
+            }
+            _ => Default::default(),
+        };
+        view.set_notice(notice);
         let (mut result, mut tone, mut length) = (String::new(), 0, String::new());
         let (left, right) = match &entry.read {
             Ok(s) => {
@@ -683,13 +742,13 @@ impl Replays {
         // replay selected before is another replay's picture, however short the wait.
         let made = self.still.frame.as_ref().is_some_and(|(path, _)| *path == entry.path);
         match (&entry.read, &on) {
-            (Ok(s), Some((on, _))) if reason.is_none() => {
+            (Ok(s), Some((on, _, compat))) if reason.is_none() => {
                 if !made && self.still.asked.as_ref() != Some(&entry.path) {
                     self.still.asked = Some(entry.path.clone());
                     let enhancements = shell.settings.enhancements();
                     let font = on.loaded.font_in(shell.i18n.code).filter(|_| enhancements.wants_font());
                     let look = Look { graphics: on.graphics(shell.i18n.code), enhancements, font };
-                    self.library.still(&entry, s.info.side, on.content(), look);
+                    self.library.still_with(&entry, s.info.side, on.content(), look, *compat);
                 }
                 view.set_still(made);
             }
@@ -763,10 +822,17 @@ impl Replays {
             Ok(replay) => replay,
             Err(why) => return shell.fail(UserError::of_replay_read(&doing, &why)),
         };
-        // What it plays on: the game's own content, else the content it was made on, once that is ready (it is
-        // asked for, and watched as soon as it is).
+        // What it plays on: the game's own content, else the historical content it was made on, once that is ready
+        // (it is asked for, and watched as soon as it is).
         let here = self.hash(ready.content());
-        let (ready, other) = match self.plays_on(&shell.games, &game, here, replay.head.content) {
+        let Some((plays, compat)) = self.resolve_replay(&shell.games, &game, here, &replay.head) else {
+            return shell.fail(if replay.head.game != game {
+                UserError::ReplayOtherGame { game: crate::shell::Shell::game_name(&replay.head.game) }
+            } else {
+                UserError::ReplayContentMissing
+            });
+        };
+        let (ready, other) = match plays {
             Plays::Here => (ready, None),
             Plays::Stored(dir) => match shell.games.other_ready(&dir) {
                 Some(other) => (other.clone(), Some(other)),
@@ -778,16 +844,22 @@ impl Replays {
                 }
             },
             Plays::Listed => {
-                self.download(&game, replay.head.content);
+                self.download(&game, saito_replay::line(&replay.head.engine), replay.head.content);
                 self.elsewhere.pending = Some((path.to_path_buf(), side, export));
                 return;
             }
             Plays::Nowhere => return shell.fail(UserError::ReplayContentMissing),
         };
         // (Its set is started to be checked: an engine that stops there is a failure, not a crash.)
-        let set = match saito_frontend::session::in_engine(|| saito_frontend::replay::set_of(ready.content(), &replay)) {
+        let set = match saito_frontend::session::in_engine(|| saito_frontend::replay::set_of_compat(ready.content(), &replay, compat)) {
             Ok(Ok(set)) => set,
-            Ok(Err(refused)) => return shell.fail(UserError::of_refusal(&doing, &refused)),
+            Ok(Err(refused)) => {
+                if compat == Compat::Lenient && matches!(refused, Refused::BadMatch(_)) {
+                    crate::errors::log(&doing, &refused);
+                    return shell.fail(UserError::ReplayVersion);
+                }
+                return shell.fail(UserError::of_refusal(&doing, &refused));
+            }
             Err(panic) => {
                 crate::errors::log(&doing, &format_args!("the engine stopped starting its set: {}", saito_frontend::session::panic_message(panic.as_ref())));
                 return shell.fail(UserError::Other);
@@ -811,7 +883,7 @@ impl Replays {
             game,
             ready: other,
             set,
-            play: Play::Watch(Box::new(replay), Some(side)),
+            play: Play::Watch(Box::new(replay), Some(side), compat),
             viewer: side,
             recorder: None,
             cards: Some(cards),
@@ -831,8 +903,12 @@ impl Replays {
         self.close_up_next(shell);
         self.overlays = w.overlays();
         shell.lock_game(false);
-        shell.ui().global::<ReplaysView>().set_watching(false);
-        shell.ui().global::<ReplaysView>().set_builds_shown(false);
+        let ui = shell.ui();
+        let view = ui.global::<ReplaysView>();
+        view.set_watching(false);
+        view.set_builds_shown(false);
+        view.set_viewer_notice(Default::default());
+        view.set_viewer_diverged(false);
         shell.nav.enter(ScreenId::Replays.name(), self.main());
         // (The replay played is the one selected, the cursor on its row, where it is listed: the user, "when exiting
         // a replay, it should highlight the replay that was played instead of moving the cursor to the start". The
@@ -1143,7 +1219,7 @@ impl Replays {
         let Ok(summary) = &entry.read else { return shell.sound.play(Cue::Refused) };
         w.hide_builds(shell);
         let (path, side) = (w.path().to_path_buf(), w.side());
-        self.export = Some(Export::open(shell, &path, summary, side, w.both(), w.ready_of_replay()));
+        self.export = Some(Export::open(shell, &path, summary, side, w.both(), w.ready_of_replay(), w.compat()));
         self.hud = None;
     }
 
@@ -1875,6 +1951,28 @@ mod tests {
         assert_eq!(replays.plays_on(&games, "test", 7, 0xDEAD), Plays::Nowhere);
         // (Another game's: nowhere.)
         assert_eq!(replays.plays_on(&games, "other", 7, 0xBEEF), Plays::Nowhere);
+
+        // Cross-line historical bundles: found in store and index for older engine lines.
+        let legacy_stored = crate::contents::testing::store_on_line("test", "0.1", "return 9", ContentHash(0x1111));
+        assert_eq!(replays.plays_on_line(&games, "test", "0.1", 7, 0x1111), Plays::Stored(legacy_stored.dir.clone()));
+        assert_eq!(replays.plays_on(&games, "test", 7, 0x1111), Plays::Stored(legacy_stored.dir));
+        crate::contents::testing::list_on_line("test", "0.1", ContentHash(0x2222));
+        assert_eq!(replays.plays_on_line(&games, "test", "0.1", 7, 0x2222), Plays::Listed);
+
+        // Resolution across engine lines:
+        // - 0.1.2 EXE6 with matching content plays strictly (same sim_version).
+        // - 0.1.2 EXE5 with matching content plays in Lenient mode.
+        // - 0.1.2 replay whose content is unavailable falls back to Here in Lenient mode (offline).
+        // - Same-line replay with missing content still returns None (ReplayContentMissing).
+        let exe6_old = saito_replay::Head { engine: "0.1.2".into(), game: "exe6".into(), content: 7, start: 0 };
+        assert_eq!(replays.resolve_replay(&games, "exe6", 7, &exe6_old), Some((Plays::Here, Compat::Exact)));
+        let exe5_old = saito_replay::Head { engine: "0.1.2".into(), game: "exe5".into(), content: 7, start: 0 };
+        assert_eq!(replays.resolve_replay(&games, "exe5", 7, &exe5_old), Some((Plays::Here, Compat::Lenient)));
+        let exe5_missing_old = saito_replay::Head { engine: "0.1.2".into(), game: "exe5".into(), content: 0x9999, start: 0 };
+        replays.elsewhere.arrivals.borrow_mut().reread_done.insert("exe5".into());
+        assert_eq!(replays.resolve_replay(&games, "exe5", 7, &exe5_missing_old), Some((Plays::Here, Compat::Lenient)));
+        let exe5_missing_same = saito_replay::Head { engine: ENGINE.into(), game: "exe5".into(), content: 0x9999, start: 0 };
+        assert_eq!(replays.resolve_replay(&games, "exe5", 7, &exe5_missing_same), None);
     }
 
     /// A length is minutes and seconds, the seconds always two digits; the viewer's has two for the minutes

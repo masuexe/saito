@@ -45,3 +45,10 @@ pub use rng::Rng;
 pub use rollback::{Snapshot, TickInput};
 pub use setup::{BattleSettings, HostKeys, NaviStats, RoundSetup, SetScore, Stage};
 pub use sound::{SoundCue, SoundId};
+
+/// Current simulation compatibility version.
+///
+/// Bump only when deterministic battle simulation, `Battle` state/digest layout,
+/// or `saito-match` binary encoding changes — not when netplay protocol, UI, or
+/// app minor version bumps.
+pub const SIM_VERSION: u32 = 2;

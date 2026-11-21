@@ -23,7 +23,7 @@ use crate::stage::{self, Stage, Surface};
 use saito_battle::BattleResult;
 use saito_frontend::driver::{Driver, StopReason};
 use saito_frontend::preload::{Part, Preload};
-use saito_frontend::replay::{Recorder, Replay};
+use saito_frontend::replay::{Compat, Recorder, Replay};
 use saito_frontend::viewer::Viewer;
 use saito_match::Set;
 use saito_render::vfont::TextRenderer;
@@ -51,8 +51,8 @@ pub enum Play {
     /// both sides have loaded (the `gate` holds the start until then). None: there is none after all, and no
     /// battle begins.
     Make(Box<dyn FnOnce() -> Option<Box<dyn Driver>>>),
-    /// A replay to watch, from a side (none: its recorder's). Its set is `replay::set_of`'s.
-    Watch(Box<Replay>, Option<u8>),
+    /// A replay to watch, from a side (none: its recorder's), under compatibility mode `Compat`.
+    Watch(Box<Replay>, Option<u8>, Compat),
 }
 
 /// The music a battle plays (docs/app.md §1, "The battle's music").
@@ -280,10 +280,10 @@ impl Shell {
             },
             // A replay's viewer is its screen's: the cards go, and the screen shows it.
             // (Its set is started again there: an engine that stops is a failure, not a crash.)
-            Play::Watch(replay, side) => {
+            Play::Watch(replay, side, compat) => {
                 shell.set_versus(false);
                 self.jack_in();
-                return match saito_frontend::session::in_engine(|| preload.viewer(&replay, side)) {
+                return match saito_frontend::session::in_engine(|| preload.viewer_compat(&replay, side, compat)) {
                     Ok(Ok(viewer)) => Some((start.owner, BattleEvent::Watching(Box::new(viewer)))),
                     Ok(Err(refused)) => {
                         self.fail(UserError::of_refusal("opening a replay", &refused));

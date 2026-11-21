@@ -748,3 +748,32 @@ fn a_preloaded_viewer_is_the_viewer() {
     let five = saito_match::testing::exe5_content();
     assert!(matches!(crate::replay::set_of(&five, &replay), Err(Refused::OtherGame { .. })));
 }
+
+/// A legacy replay opened in lenient mode plays, seeks, and propagates divergence discovered
+/// by an indexing viewer into the watched viewer via `IndexPart`.
+#[test]
+fn a_lenient_viewer_plays_legacy_replay_and_propagates_divergence() {
+    let content = saito_match::testing::exe5_content();
+    let (mut replay, ticks) = recorded(&content, "exe5", 7);
+    replay.head.engine = "0.1.2".into();
+    // Mutate a digest mid-replay so the background indexer hits a divergence.
+    let mid = replay.ticks.iter().position(|t| t.digest.is_some()).unwrap();
+    replay.ticks[mid].digest = replay.ticks[mid].digest.map(|d| d ^ 1);
+
+    let renderer = || graphics(&content, 0x001F).renderer(Enhancements::NONE, None);
+    let mut main_v = Viewer::with_compat(&content, &replay, Some(0), renderer(), None, None, Compat::Lenient).unwrap();
+    assert_eq!((main_v.compat(), main_v.engine(), main_v.diverged()), (Compat::Lenient, "0.1.2", None));
+
+    let mut indexer = Viewer::with_compat(&content, &replay, Some(0), renderer(), None, None, Compat::Lenient).unwrap();
+    loop {
+        let part = indexer.index_part(KEYFRAME_EVERY);
+        let whole = part.whole();
+        main_v.take_index(part);
+        if whole {
+            break;
+        }
+    }
+    assert!(main_v.diverged().is_some(), "divergence discovered during indexing must propagate to main viewer");
+    main_v.seek(ticks as u32 / 2);
+    assert_eq!(main_v.position(), ticks as u32 / 2);
+}

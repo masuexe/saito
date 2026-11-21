@@ -212,6 +212,19 @@ fn the_head_says_what_it_plays_on() {
     // (A patch release plays it.)
     assert_eq!(h.require("0.1.7", "exe6", h.content), Ok(()));
     assert_eq!((line("0.7.3"), line("1.2.0-rc.1"), line("1.2")), ("0.7", "1.2", "1.2"));
+
+    // Decoupled simulation compatibility: 0.1 and 0.2 share simulation for EXE6/EXE4,
+    // while EXE5 diverged on 0.2 and falls back to Lenient mode.
+    assert!(same_sim("0.1.2", "0.2.0", "exe6"));
+    assert!(same_sim("0.1.0", "0.2.0", "exe4"));
+    assert!(!same_sim("0.1.2", "0.2.0", "exe5"));
+    assert_eq!(h.require_sim("0.2.0", "exe6", h.content), Ok(()));
+    assert_eq!(h.compat("0.2.0", "exe6", h.content), Ok(Compat::Exact));
+    assert_eq!(h.compat("0.2.0", "exe6", 1), Ok(Compat::Lenient));
+    assert_eq!(h.compat("0.2.0", "exe5", h.content), Err(Mismatch::Game { replay: "exe6".into(), here: "exe5".into() }));
+    let exe5 = Head { game: "exe5".into(), ..h.clone() };
+    assert_eq!(exe5.require_sim("0.2.0", "exe5", exe5.content), Err(Mismatch::Engine { replay: "0.1.0".into(), here: "0.2.0".into() }));
+    assert_eq!(exe5.compat("0.2.0", "exe5", exe5.content), Ok(Compat::Lenient));
 }
 
 /// A file's head reads by itself, whatever is wrong after it: a file cut

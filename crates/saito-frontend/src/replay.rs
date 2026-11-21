@@ -23,7 +23,7 @@ use saito_battle::custom::Layer;
 use saito_battle::{Battle, BattleResult, PlayerTick, RoundEnd, TickInput};
 use saito_match::{After, Match, Set};
 // (What a host reads of a replay, without naming saito-replay.)
-pub use saito_replay::{End, Info, MatchKind, Mismatch, ReadError, Replay, Tick};
+pub use saito_replay::{Compat, End, Info, MatchKind, Mismatch, ReadError, Replay, Tick};
 use saito_replay::{Head, Writer};
 
 use crate::driver::{Driver, Place, Step};
@@ -189,26 +189,43 @@ pub struct ReplayPlayer {
 }
 
 /// The set a replay plays on `content`: its match, read and checked, from
-/// its seed. Refused: a replay of another engine, game or content, a match
-/// that doesn't read or that the checks refuse, and a first battle other
-/// than the recording's. (What a host makes ready before it opens the
-/// replay: `crate::preload::Preload::new` takes the set.)
-pub fn set_of(content: &Arc<Content>, replay: &Replay) -> Result<Set, Refused> {
-    replay.head.require(ENGINE, content.game(), content.hash().0)?;
+/// its seed. Under [`Compat::Exact`], refuses another engine simulation
+/// version, game or content, a match that doesn't read or breaks rules, and
+/// a first battle digest other than the recording's. Under
+/// [`Compat::Lenient`], only requires the same game and a readable, valid
+/// match binary so older replays can be played best-effort.
+pub fn set_of_compat(content: &Arc<Content>, replay: &Replay, compat: Compat) -> Result<Set, Refused> {
+    match compat {
+        Compat::Exact => replay.head.require_sim(ENGINE, content.game(), content.hash().0)?,
+        Compat::Lenient => {
+            if replay.head.game != content.game() {
+                return Err(Refused::OtherGame { replay: replay.head.game.clone(), here: content.game().to_string() });
+            }
+        }
+    }
     let m = saito_match::binary::read_match(content, &replay.match_bytes).map_err(|e| Refused::BadMatch(format!("the replay's match doesn't read: {e}")))?;
     let problems = saito_match::check_match(content, &m);
     if !problems.is_empty() {
         return Err(Refused::BadMatch(format!("the replay's match breaks the rules: {}", problems.join("; "))));
     }
     let set = Set::of(content, &m, m.seed.expect("a replay's match states its seed"));
-    let start = set.start().digest();
-    if start != replay.head.start {
-        return Err(Refused::OtherVersion(format!(
-            "the replay's match makes another battle on this engine (its first battle's digest {start:016x}, the recording's {:016x})",
-            replay.head.start
-        )));
+    if compat == Compat::Exact {
+        let start = set.start().digest();
+        if start != replay.head.start {
+            return Err(Refused::OtherVersion(format!(
+                "the replay's match makes another battle on this engine (its first battle's digest {start:016x}, the recording's {:016x})",
+                replay.head.start
+            )));
+        }
     }
     Ok(set)
+}
+
+/// The set a replay plays on `content` under strict ([`Compat::Exact`]) checks:
+/// its match, read and checked, from its seed. (What a host makes ready before
+/// it opens the replay: `crate::preload::Preload::new` takes the set.)
+pub fn set_of(content: &Arc<Content>, replay: &Replay) -> Result<Set, Refused> {
+    set_of_compat(content, replay, Compat::Exact)
 }
 
 impl ReplayPlayer {
@@ -216,7 +233,12 @@ impl ReplayPlayer {
     /// the side that recorded it). Refused as [`set_of`] refuses a replay,
     /// and for a side a match doesn't have.
     pub fn new(content: &Arc<Content>, replay: &Replay, viewer: Option<u8>) -> Result<ReplayPlayer, Refused> {
-        let set = set_of(content, replay)?;
+        ReplayPlayer::new_compat(content, replay, viewer, Compat::Exact)
+    }
+
+    /// A replay's playback on `content` under compatibility mode `compat`.
+    pub fn new_compat(content: &Arc<Content>, replay: &Replay, viewer: Option<u8>, compat: Compat) -> Result<ReplayPlayer, Refused> {
+        let set = set_of_compat(content, replay, compat)?;
         let viewer = viewer.unwrap_or(replay.info.side);
         if viewer > 1 {
             return Err(Refused::NoSide(viewer));
@@ -361,9 +383,23 @@ pub struct Outcome {
 /// what happened in it (who won each round and the set), and whether it
 /// reproduced. Refused as [`ReplayPlayer::new`] refuses one.
 pub fn play_out(content: &Arc<Content>, replay: &Replay) -> Result<Outcome, Refused> {
-    let mut d = ReplayPlayer::new(content, replay, Some(0))?;
+    play_out_compat(content, replay, Compat::Exact)
+}
+
+/// Play a replay to its end on `content` under compatibility mode `compat`.
+pub fn play_out_compat(content: &Arc<Content>, replay: &Replay, compat: Compat) -> Result<Outcome, Refused> {
+    let mut d = ReplayPlayer::new_compat(content, replay, Some(0), compat)?;
     let mut b = d.start();
     let mut out = Outcome { ticks: 0, rounds: Vec::new(), result: None, end: d.end, diverged: None, stopped: None };
+    if compat == Compat::Lenient {
+        let start = simulation_digest(&b, d.local_side);
+        if start != replay.head.start {
+            out.diverged = Some(format!(
+                "the replay's first battle digest is {start:016x}, the recording's {:016x}",
+                replay.head.start
+            ));
+        }
+    }
     while let Some(step) = d.next(&b, PlayerTick::default()) {
         let ticked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b.tick(&step.input, step.events)));
         out.ticks += 1;
@@ -819,5 +855,31 @@ pub(crate) mod tests {
         cut_match.match_bytes.truncate(3);
         assert!(matches!(ReplayPlayer::new(&content, &cut_match, None).err().unwrap(), Refused::BadMatch(_)));
         assert_eq!(ReplayPlayer::new(&content, &replay, Some(2)).err().unwrap(), Refused::NoSide(2));
+
+        // Decoupled sim version: a 0.1.2 EXE6 replay plays strictly on 0.2.0.
+        let mut old_exe6 = replay.clone();
+        old_exe6.head.engine = "0.1.2".into();
+        let out = play_out(&content, &old_exe6).unwrap();
+        assert_eq!(out.diverged, None);
+
+        // Lenient mode plays replays with mismatched engine/content/start digest, reporting divergence
+        // without refusing playback, while still refusing another game or unreadable match bytes.
+        let mut lenient = replay.clone();
+        lenient.head.engine = "0.1.2".into();
+        lenient.head.content ^= 1;
+        lenient.head.start ^= 1;
+        let out = play_out_compat(&content, &lenient, Compat::Lenient).unwrap();
+        assert!(out.diverged.is_some());
+        assert_eq!(out.result, Some(BattleResult::Won));
+        assert!(matches!(play_out_compat(&five, &lenient, Compat::Lenient), Err(Refused::OtherGame { .. })));
+        assert!(matches!(play_out_compat(&content, &cut_match, Compat::Lenient), Err(Refused::BadMatch(_))));
+
+        // EXE5 0.1.2 is refused strictly on 0.2.0, but plays in lenient mode.
+        let (exe5_replay, _) = recorded(&five, "exe5");
+        let mut old_exe5 = exe5_replay.clone();
+        old_exe5.head.engine = "0.1.2".into();
+        assert!(matches!(play_out(&five, &old_exe5), Err(Refused::OtherVersion(_))));
+        let out = play_out_compat(&five, &old_exe5, Compat::Lenient).unwrap();
+        assert_eq!((out.diverged, out.result), (None, Some(BattleResult::Won)));
     }
 }

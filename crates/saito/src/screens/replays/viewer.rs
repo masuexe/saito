@@ -40,6 +40,7 @@ use crate::sound::Cue;
 use crate::stage::Surface;
 use saito_match::Side;
 use saito_frontend::player::{FRAME_RATE, TICK_SECONDS, tick_at, time_of};
+use saito_frontend::replay::Compat;
 use saito_frontend::viewer::{KEYFRAME_EVERY, ROUND_START_GRACE, Speed, Viewer};
 use saito_ui::{PickMark, ReplaysView};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -98,6 +99,7 @@ struct Told {
     second: u64,
     round: u32,
     playing: bool,
+    diverged: bool,
 }
 
 /// What the viewer costs (`SAITO_PLAY_STATS`): said every two seconds.
@@ -234,6 +236,11 @@ impl Watching {
         self.ready.clone()
     }
 
+    /// The compatibility mode this replay is watched under.
+    pub fn compat(&self) -> Compat {
+        self.viewer.compat()
+    }
+
     /// The game as the replay plays it: other content of it, else the game's own, loaded.
     fn ready_in(&self, shell: &Shell) -> Option<std::rc::Rc<crate::games::Ready>> {
         self.ready.clone().or_else(|| shell.ready().map(|(_, ready)| ready))
@@ -335,9 +342,24 @@ impl Watching {
         }
         view.set_builds_shown(self.builds);
         self.show_side(&view);
+        self.show_notice(&view);
         self.told = None;
         self.tell(&view);
         view.set_watching(true);
+    }
+
+    /// Update the legacy compatibility notice badge in the viewer.
+    fn show_notice(&self, view: &ReplaysView) {
+        let diverged = self.viewer.diverged().is_some();
+        if self.viewer.compat() == Compat::Lenient || diverged {
+            let engine = self.viewer.engine();
+            let notice = if diverged { view.invoke_legacy_diverged(engine.into()) } else { view.invoke_legacy_compat(engine.into()) };
+            view.set_viewer_notice(notice);
+            view.set_viewer_diverged(diverged);
+        } else {
+            view.set_viewer_notice(Default::default());
+            view.set_viewer_diverged(false);
+        }
     }
 
     /// Who is playing, the console shown first (its side is at the picture's left).
@@ -351,7 +373,8 @@ impl Watching {
         let tick = self.shown();
         let length = self.viewer.length().max(1) as f32;
         let indexed = self.viewer.indexed() as f32 / length;
-        let now = Told { position: tick as f32 / length, indexed, second: time_of(tick as u64).as_secs(), round: self.viewer.round_at(tick), playing: self.playing() };
+        let diverged = self.viewer.diverged().is_some();
+        let now = Told { position: tick as f32 / length, indexed, second: time_of(tick as u64).as_secs(), round: self.viewer.round_at(tick), playing: self.playing(), diverged };
         let was = self.told.as_ref();
         if was.is_none_or(|t| t.position != now.position) {
             view.set_position(now.position);
@@ -367,6 +390,9 @@ impl Watching {
         }
         if was.is_none_or(|t| t.playing != now.playing) {
             view.set_playing(now.playing);
+        }
+        if was.is_none_or(|t| t.diverged != now.diverged) {
+            self.show_notice(view);
         }
         self.told = Some(now);
     }
@@ -580,7 +606,7 @@ impl Watching {
         view.set_thumb_time(clock(time_of(tick as u64), true).into());
         if self.thumbs.is_none() {
             let Some(ready) = self.ready_in(shell) else { return };
-            self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone()));
+            self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone(), self.viewer.compat()));
         }
         // (At the window's density, as the picture is: a whole multiple of the frame.)
         let density = ui.window().scale_factor().round().max(1.0) as u32;
@@ -719,7 +745,7 @@ impl Watching {
         {
             let game = game_for_thread(shell, &ready, true);
             let music = crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background);
-            self.indexing = Indexing::start(game, music, self.path.clone()).map_or(IndexThread::Done, IndexThread::Going);
+            self.indexing = Indexing::start(game, music, self.path.clone(), self.viewer.compat()).map_or(IndexThread::Done, IndexThread::Going);
         }
         self.index_on();
     }

@@ -20,6 +20,7 @@ use crate::replays::Summary;
 use crate::shell::Shell;
 use saito_frontend::game::{Loaded, Sound};
 use saito_frontend::player::time_of;
+use saito_frontend::replay::Compat;
 use saito_ui::{ExportState, ReplaysView};
 use saito_dialogs::{Filter, Stream};
 use saito_video::{Options, Part, Progress, Sides, Titles};
@@ -83,6 +84,8 @@ impl Drop for Running {
 pub struct Export {
     /// The game as the replay plays it, where it isn't the game's own (other content of it: the viewer's).
     ready: Option<std::rc::Rc<crate::games::Ready>>,
+    /// The compatibility mode the replay is played under.
+    compat: Compat,
     /// The replay's file, and what it says of itself.
     replay: PathBuf,
     summary: Summary,
@@ -192,9 +195,10 @@ pub fn game_for_thread(shell: &Shell, ready: &crate::games::Ready, sound: bool) 
 impl Export {
     /// Begin the export mode for the replay at `replay`, shown from `side` (`both`: both consoles on one screen),
     /// the whole match chosen, the sides as the viewer shows them.
-    pub fn open(shell: &mut Shell, replay: &Path, summary: &Summary, side: u8, both: bool, ready: Option<std::rc::Rc<crate::games::Ready>>) -> Export {
+    pub fn open(shell: &mut Shell, replay: &Path, summary: &Summary, side: u8, both: bool, ready: Option<std::rc::Rc<crate::games::Ready>>, compat: Compat) -> Export {
         let mut export = Export {
             ready,
+            compat,
             replay: replay.to_path_buf(),
             summary: summary.clone(),
             size: FIRST_SIZE,
@@ -521,6 +525,7 @@ impl Export {
         let options = Options { scale: SIZES[self.size], view: Some(self.side), sides, part, titles };
         let (stop, shared) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(Shared::default())));
         let (stopped, told) = (stop.clone(), shared.clone());
+        let compat = self.compat;
         let work = move || {
             let mut progress = |progress| {
                 share(&told).progress = Some(progress);
@@ -528,7 +533,7 @@ impl Export {
             };
             // (Whole: the file kept, its head first. Canceled or failed: let go, nothing of it left.)
             // (`saito_video::export`, its viewer with the backgrounds' music.)
-            let result = saito_frontend::viewer::Viewer::open_with(&game, &replay, options.view, music)
+            let result = saito_frontend::viewer::Viewer::open_with_compat(&game, &replay, options.view, music, compat)
                 .map_err(saito_video::Error::Replay)
                 .and_then(|mut viewer| saito_video::write_mp4(&mut viewer, &options, to, &mut progress))
                 .and_then(|made| made.body.finish(made.head).map_err(saito_video::Error::Disk));

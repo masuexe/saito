@@ -111,6 +111,42 @@ pub fn line(version: &str) -> &str {
     }
 }
 
+/// Simulation compatibility version of `engine` for `game`.
+///
+/// Decouples replay simulation compatibility from app/netplay minor versions and
+/// isolates game-specific simulation changes: two engine versions with the same
+/// simulation version for a game produce identical battles and digests from the
+/// same content and inputs.
+pub fn sim_version(engine: &str, game: &str) -> Option<u32> {
+    match (line(engine), game) {
+        // 0.1 -> 0.2 only modified EXE5 party knockout / custom switch state (S-004, S-005).
+        // EXE4 and EXE6 deterministic simulation and state digest are identical.
+        ("0.1", "exe5") => Some(1),
+        ("0.1", _) => Some(2),
+        ("0.2", _) => Some(2),
+        _ => None,
+    }
+}
+
+/// Whether two engine versions share identical simulation behavior for `game`.
+pub fn same_sim(a: &str, b: &str, game: &str) -> bool {
+    line(a) == line(b) || matches!((sim_version(a, game), sim_version(b, game)), (Some(va), Some(vb)) if va == vb)
+}
+
+/// How a replay is played against the current engine and content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Compat {
+    /// Strict playback: same game, same content hash, same simulation version,
+    /// and matching initial battle digest.
+    #[default]
+    Exact,
+    /// Best-effort compatibility playback for replays from another engine/simulation
+    /// line (or fallback content): skips engine/content/start-digest refusal and
+    /// plays as far as the match binary is readable, reporting any tick divergence
+    /// instead of refusing playback.
+    Lenient,
+}
+
 /// What a replay is played on: the engine, the game and its content, and
 /// the battle they make before any tick.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,6 +192,37 @@ impl Head {
             return Err(Mismatch::Engine { replay: self.engine.clone(), here: engine.to_string() });
         }
         Ok(())
+    }
+
+    /// That a replay of this head plays strictly on `engine`'s build of `game`'s
+    /// `content`, accepting any engine that shares the same simulation version
+    /// for `game` ([`same_sim`]).
+    pub fn require_sim(&self, engine: &str, game: &str, content: u64) -> Result<(), Mismatch> {
+        if self.game != game {
+            return Err(Mismatch::Game { replay: self.game.clone(), here: game.to_string() });
+        }
+        if self.content != content {
+            return Err(Mismatch::Content { replay: self.content, here: content });
+        }
+        if !same_sim(&self.engine, engine, game) {
+            return Err(Mismatch::Engine { replay: self.engine.clone(), here: engine.to_string() });
+        }
+        Ok(())
+    }
+
+    /// Compatibility mode for playing this replay on `engine`'s build of `game`'s
+    /// `content`. Refuses another game; returns [`Compat::Exact`] when content and
+    /// simulation match, or [`Compat::Lenient`] when engine/simulation or content
+    /// differs.
+    pub fn compat(&self, engine: &str, game: &str, content: u64) -> Result<Compat, Mismatch> {
+        if self.game != game {
+            return Err(Mismatch::Game { replay: self.game.clone(), here: game.to_string() });
+        }
+        if same_sim(&self.engine, engine, game) && self.content == content {
+            Ok(Compat::Exact)
+        } else {
+            Ok(Compat::Lenient)
+        }
     }
 }
 

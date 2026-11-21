@@ -114,6 +114,17 @@ impl Store {
             .max_by_key(|s| s.record.revision)
     }
 
+    /// Game `game`'s bundle that plays `hash`, preferring engine line `preferred_line`
+    /// and falling back to any other stored line for cross-version replay playback.
+    pub fn playing_preferring(&self, game: &str, preferred_line: &str, hash: ContentHash) -> Option<Stored> {
+        self.playing(game, preferred_line, hash).or_else(|| {
+            self.list()
+                .into_iter()
+                .filter(|s| s.record.game == game && s.content_hash() == Some(hash))
+                .max_by(|a, b| a.record.line.cmp(&b.record.line).then_with(|| a.record.revision.cmp(&b.record.revision)))
+        })
+    }
+
     /// Store gzipped bundle `gz`, whose id must be `id` (its tar's SHA-256), with the content hash its index gives
     /// it (`published`): unpacked into its folder, whole, then its record written. A bundle the store has already
     /// is left as it is. The bundle stored.
@@ -262,6 +273,8 @@ mod tests {
         assert_eq!(store.newest("exe6", "0.11").unwrap().id, two.id);
         assert!(store.newest("exe6", "0.12").is_none());
         assert_eq!(store.playing("exe6", "0.11", ContentHash(0xA)).unwrap().id, one.id);
+        assert!(store.playing("exe6", "0.12", ContentHash(0xA)).is_none());
+        assert_eq!(store.playing_preferring("exe6", "0.12", ContentHash(0xA)).unwrap().id, one.id);
         // (Stored again, it is the one there: nothing is written.)
         assert_eq!(store.add(&gzip(&one.tar), one.id, None).unwrap(), a);
         // The hash computed here is what it plays.

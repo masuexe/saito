@@ -69,7 +69,7 @@
 use crate::driver::Place;
 use crate::game::{Graphics, Loaded};
 use crate::player::{Clock, MOST_SAMPLES, tick_at, time_of};
-use crate::replay::{End, Info, Refused, Replay, ReplayPlayer};
+use crate::replay::{Compat, End, Info, Refused, Replay, ReplayPlayer};
 use crate::session::Session;
 use saito_audio::{BattleAudio, RoundMusic, SoundCue};
 use saito_battle::content::{BackgroundId, Content};
@@ -153,6 +153,7 @@ pub struct IndexPart {
     states: Vec<State>,
     reached: u32,
     whole: bool,
+    diverged: Option<String>,
 }
 
 impl IndexPart {
@@ -320,11 +321,13 @@ pub struct Viewer {
     view: u8,
     /// Both consoles on one screen ([`Viewer::set_both`]).
     both: bool,
-    /// The replay's ticks, how its input ends, and what it says of
-    /// itself.
+    /// The replay's ticks, how its input ends, what it says of itself, the
+    /// engine version that recorded it, and the compatibility mode used.
     length: u32,
     end: End,
     info: Info,
+    engine: String,
+    compat: Compat,
     /// Each round's first tick, in order (the file's marks).
     rounds: Vec<u32>,
     /// The states kept, by tick, ascending: tick 0's, every
@@ -423,13 +426,23 @@ impl Viewer {
     /// replay: one of another game, of another version of saito, or whose
     /// match doesn't read.
     pub fn open(game: &Loaded, replay: &Replay, view: Option<u8>) -> Result<Viewer, Refused> {
-        Viewer::open_with(game, replay, view, None)
+        Viewer::open_with_compat(game, replay, view, None, Compat::Exact)
+    }
+
+    /// Open a viewer under compatibility mode `compat`.
+    pub fn open_compat(game: &Loaded, replay: &Replay, view: Option<u8>, compat: Compat) -> Result<Viewer, Refused> {
+        Viewer::open_with_compat(game, replay, view, None, compat)
     }
 
     /// The same, its music by its rounds' backgrounds (`music`; none: the
     /// game's own songs: [`BattleAudio::set_round_music`]).
     pub fn open_with(game: &Loaded, replay: &Replay, view: Option<u8>, music: Option<Arc<RoundMusic>>) -> Result<Viewer, Refused> {
-        Viewer::with(&game.game.content, replay, view, game.renderer(), game.font.clone().map(TextRenderer::new), sound_of(game, music))
+        Viewer::open_with_compat(game, replay, view, music, Compat::Exact)
+    }
+
+    /// Open a viewer with round music under compatibility mode `compat`.
+    pub fn open_with_compat(game: &Loaded, replay: &Replay, view: Option<u8>, music: Option<Arc<RoundMusic>>, compat: Compat) -> Result<Viewer, Refused> {
+        Viewer::with_compat(&game.game.content, replay, view, game.renderer(), game.font.clone().map(TextRenderer::new), sound_of(game, music), compat)
     }
 
     /// Open a live-streaming viewer from a replay header (`STRP`..`STCK`),
@@ -455,13 +468,37 @@ impl Viewer {
         content: &Arc<Content>,
         replay: &Replay,
         view: Option<u8>,
-        mut renderer: Renderer,
+        renderer: Renderer,
         text: Option<TextRenderer>,
         audio: Option<BattleAudio>,
     ) -> Result<Viewer, Refused> {
-        let driver = ReplayPlayer::new(content, replay, view)?;
+        Viewer::with_compat(content, replay, view, renderer, text, audio, Compat::Exact)
+    }
+
+    /// A viewer from its parts under compatibility mode `compat`.
+    pub fn with_compat(
+        content: &Arc<Content>,
+        replay: &Replay,
+        view: Option<u8>,
+        mut renderer: Renderer,
+        text: Option<TextRenderer>,
+        audio: Option<BattleAudio>,
+        compat: Compat,
+    ) -> Result<Viewer, Refused> {
+        let driver = ReplayPlayer::new_compat(content, replay, view, compat)?;
         let view = view.unwrap_or(replay.info.side);
-        let session = Session::new(Box::new(driver));
+        let mut session = Session::new(Box::new(driver));
+        if compat == Compat::Lenient {
+            let mut b = session.battle.clone();
+            b.setup.local_side = 0;
+            let start = b.digest();
+            if start != replay.head.start {
+                session.diverged = Some(format!(
+                    "the replay's first battle digest is {start:016x}, the recording's {:016x}",
+                    replay.head.start
+                ));
+            }
+        }
         // (The other games' backgrounds its rounds are drawn on, extracted now: a frame shows them from the first.
         // On a page's main thread they are a preload's, made ready already.)
         renderer.graphics().wait_backgrounds(content, saito_render::graphics::set_backgrounds(&session.battle.setup));
@@ -478,6 +515,8 @@ impl Viewer {
             length: replay.ticks.len() as u32,
             end: replay.end,
             info: replay.info.clone(),
+            engine: replay.head.engine.clone(),
+            compat,
             rounds: replay.round_starts(),
             keyframes: Vec::new(),
             frontier: None,
@@ -529,6 +568,16 @@ impl Viewer {
     /// what either brought.
     pub fn info(&self) -> &Info {
         &self.info
+    }
+
+    /// The engine version recorded in the replay's head (e.g. `"0.1.2"`).
+    pub fn engine(&self) -> &str {
+        &self.engine
+    }
+
+    /// The compatibility mode this viewer opened the replay with.
+    pub fn compat(&self) -> Compat {
+        self.compat
     }
 
     // ---- Where it is -------------------------------------------------------
@@ -920,7 +969,7 @@ impl Viewer {
             each(ticked(&self.session), self.session.driver.layers(), ran, kept);
         }
         // (Where the engine stopped, the tick it stopped on is past what was reached.)
-        IndexPart { states, reached: self.reached.min(self.position()), whole: self.whole }
+        IndexPart { states, reached: self.reached.min(self.position()), whole: self.whole, diverged: self.session.diverged.clone() }
     }
 
     /// Take in a part of the index another viewer of the same replay made
@@ -945,6 +994,9 @@ impl Viewer {
         }
         self.reached = self.reached.max(part.reached);
         self.whole |= part.whole;
+        if self.session.diverged.is_none() {
+            self.session.diverged = part.diverged;
+        }
     }
 
     /// How many states the viewer keeps to seek from.

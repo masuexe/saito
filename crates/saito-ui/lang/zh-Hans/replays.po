@@ -302,3 +302,10 @@ msgstr "MP4 视频"
 msgid "Builds"
 msgstr "构筑"
 
+# Compatibility notices for replays recorded on another engine version.
+msgid "Recorded on v{} · compatibility mode"
+msgstr "录制于 v{} · 兼容模式播放"
+
+msgid "Recorded on v{} · playback may differ from original"
+msgstr "录制于 v{} · 回放可能与原对局存在差异"
+

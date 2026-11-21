@@ -18,7 +18,7 @@ use cache::{Cache, Id};
 use saito_battle::Content;
 use saito_battle::battle::mode;
 use saito_frontend::game::{Graphics, Enhancements};
-use saito_frontend::replay::{Info, Outcome, ReadError, Refused, Replay};
+use saito_frontend::replay::{Compat, Info, Outcome, ReadError, Refused, Replay};
 use saito_frontend::viewer::Viewer;
 use saito_render::Frame;
 use saito_render::vfont::VectorFont;
@@ -116,8 +116,8 @@ pub struct Look {
 
 enum Job {
     List(PathBuf),
-    Play(Key, Id, Arc<Content>),
-    Still(Key, u8, Arc<Content>, Box<Look>),
+    Play(Key, Id, Arc<Content>, Compat),
+    Still(Key, u8, Arc<Content>, Box<Look>, Compat),
 }
 
 enum Told {
@@ -177,13 +177,19 @@ impl Library {
 
     /// Play `entry` out on `content` (whose hash is `hash`), if that wasn't done or asked, or take what it gave
     /// from what is kept: [`Found::Played`] says when.
+    #[cfg(test)]
     pub fn play(&mut self, entry: &Entry, content: &Arc<Content>, hash: u64) {
+        self.play_with(entry, content, hash, Compat::Exact);
+    }
+
+    /// Play `entry` out on `content` under compatibility mode `compat`.
+    pub fn play_with(&mut self, entry: &Entry, content: &Arc<Content>, hash: u64, compat: Compat) {
         let key = entry.key();
         let Some(file) = entry.digest else { return };
         if self.played.contains_key(&key) || !self.asked.insert(key.clone()) {
             return;
         }
-        self.ask(Job::Play(key, Id { file, content: hash }, content.clone()));
+        self.ask(Job::Play(key, Id { file, content: hash }, content.clone(), compat));
     }
 
     /// What playing `entry` out made, once it was.
@@ -191,10 +197,10 @@ impl Library {
         self.played.get(&(entry.path.clone(), entry.stamp))
     }
 
-    /// Make a still of `entry` from `side`'s console: [`Found::Still`] brings it. One asked for after it is
-    /// made first, and one asked for before it and not yet begun isn't made at all.
-    pub fn still(&mut self, entry: &Entry, side: u8, content: &Arc<Content>, look: Look) {
-        self.ask(Job::Still(entry.key(), side, content.clone(), Box::new(look)));
+    /// Make a still of `entry` from `side`'s console under compatibility mode `compat`: [`Found::Still`] brings it.
+    /// One asked for after it is made first, and one asked for before it and not yet begun isn't made at all.
+    pub fn still_with(&mut self, entry: &Entry, side: u8, content: &Arc<Content>, look: Look, compat: Compat) {
+        self.ask(Job::Still(entry.key(), side, content.clone(), Box::new(look), compat));
     }
 
     /// Take what the thread found since the last call.
@@ -238,7 +244,7 @@ fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
     let mut cache = cache_file.map(Cache::load);
     let mut listing: Option<PathBuf> = None;
     let mut still: Option<Job> = None;
-    let mut plays: VecDeque<(Key, Id, Arc<Content>)> = VecDeque::new();
+    let mut plays: VecDeque<(Key, Id, Arc<Content>, Compat)> = VecDeque::new();
     // (What the last listing read: a file as it was then is not read again. None before the first: the cache
     // keeps all it holds until the folder is known.)
     let mut known: Option<HashMap<PathBuf, Entry>> = None;
@@ -258,13 +264,13 @@ fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
         while let Some(job) = next {
             match job {
                 Job::List(dir) => listing = Some(dir),
-                Job::Play(key, id, content) => match cache.as_ref().and_then(|c| c.get(&id)) {
+                Job::Play(key, id, content, compat) => match cache.as_ref().and_then(|c| c.get(&id)) {
                     Some(kept) => {
                         if tell.send(Told::Played(key, Ok(kept.clone()), true)).is_err() {
                             return;
                         }
                     }
-                    None => plays.push_back((key, id, content)),
+                    None => plays.push_back((key, id, content, compat)),
                 },
                 job @ Job::Still(..) => still = Some(job),
             }
@@ -280,11 +286,11 @@ fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
             }
             known = Some(entries.iter().map(|e| (e.path.clone(), e.clone())).collect());
             Told::Listed(entries)
-        } else if let Some(Job::Still(key, side, content, look)) = still.take() {
-            let frame = guarded(|| still_of(&key.0, side, &content, &look)).flatten();
+        } else if let Some(Job::Still(key, side, content, look, compat)) = still.take() {
+            let frame = guarded(|| still_of(&key.0, side, &content, &look, compat)).flatten();
             Told::Still(key, frame.map(Box::new))
-        } else if let Some((key, id, content)) = plays.pop_front() {
-            let played = guarded(|| play(&key.0, &content)).unwrap_or_else(|| Err(Refused::BadMatch("playing it out stopped the engine".into())));
+        } else if let Some((key, id, content, compat)) = plays.pop_front() {
+            let played = guarded(|| play(&key.0, &content, compat)).unwrap_or_else(|| Err(Refused::BadMatch("playing it out stopped the engine".into())));
             if let (Some(cache), Ok(outcome)) = (&mut cache, &played) {
                 cache.put(id, outcome.clone());
             }
@@ -340,18 +346,18 @@ pub fn read(path: &Path) -> Result<Replay, ReadError> {
     Replay::read(&bytes)
 }
 
-fn play(path: &Path, content: &Arc<Content>) -> Played {
+fn play(path: &Path, content: &Arc<Content>, compat: Compat) -> Played {
     let replay = read(path).map_err(|e| Refused::BadMatch(e.to_string()))?;
-    saito_frontend::replay::play_out(content, &replay)
+    saito_frontend::replay::play_out_compat(content, &replay, compat)
 }
 
 /// A picture of the replay at `path` from `side`'s console: a moment into its first fight (or its last tick,
 /// if it has no such moment). None if it isn't played here.
-fn still_of(path: &Path, side: u8, content: &Arc<Content>, look: &Look) -> Option<Frame> {
+fn still_of(path: &Path, side: u8, content: &Arc<Content>, look: &Look, compat: Compat) -> Option<Frame> {
     let replay = read(path).ok()?;
     // (A still is a picture at rest: the background where the game puts it.)
     let renderer = look.graphics.renderer(Enhancements { motion: false, ..look.enhancements }, look.font.clone());
-    let mut viewer = Viewer::with(content, &replay, Some(side), renderer, None, None).ok()?;
+    let mut viewer = Viewer::with_compat(content, &replay, Some(side), renderer, None, None, compat).ok()?;
     let mut fought = 0;
     while fought < STILL_AFTER && viewer.step_forward() {
         fought += (viewer.battle().round.mode == mode::FIGHTING) as u32;

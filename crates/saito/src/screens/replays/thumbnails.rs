@@ -21,6 +21,7 @@
 use crate::stage;
 use saito_frontend::game::Loaded;
 use saito_frontend::player::{tick_at, time_of};
+use saito_frontend::replay::Compat;
 use saito_frontend::viewer::Viewer;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -153,10 +154,10 @@ pub struct Thumbnails {
 
 impl Thumbnails {
     /// Start the thread for the replay at `path`, played on `game` (whose sound is left out: none is made).
-    pub fn start(game: Loaded, path: PathBuf) -> Thumbnails {
+    pub fn start(game: Loaded, path: PathBuf, compat: Compat) -> Thumbnails {
         let (asks, asked) = mpsc::channel();
         let (done, drawn) = mpsc::channel();
-        let started = saito_threads::spawn("previews", move || work(game, path, asked, done));
+        let started = saito_threads::spawn("previews", move || work(game, path, compat, asked, done));
         if let Err(why) = &started {
             crate::errors::log("starting the bar's previews", why);
         }
@@ -220,13 +221,13 @@ impl Thumbnails {
 
 /// The thread: a silent viewer of the replay, indexing ahead while nothing is asked, and drawing the latest preview
 /// asked for. It ends when the screen drops its end of the channel, or when the engine stops it.
-fn work(game: Loaded, path: PathBuf, asks: Receiver<Ask>, drawn: Sender<Drawn>) {
+fn work(game: Loaded, path: PathBuf, compat: Compat, asks: Receiver<Ask>, drawn: Sender<Drawn>) {
     let doing = format!("previewing {}", path.display());
     let replay = match crate::replays::read(&path) {
         Ok(replay) => replay,
         Err(why) => return crate::errors::log(&doing, &why),
     };
-    let mut viewer = match saito_frontend::session::in_engine(|| Viewer::open(&game, &replay, None)) {
+    let mut viewer = match saito_frontend::session::in_engine(|| Viewer::open_compat(&game, &replay, None, compat)) {
         Ok(Ok(viewer)) => viewer,
         Ok(Err(refused)) => return crate::errors::log(&doing, &refused),
         Err(panic) => return crate::errors::log(&doing, &format_args!("the engine stopped: {}", saito_frontend::session::panic_message(panic.as_ref()))),
