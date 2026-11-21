@@ -219,3 +219,9 @@ msgstr "キーボード専用カスタム画面"
 
 msgid "Disable mouse and touch chip selection on the custom screen."
 msgstr "カスタム画面でのマウス・タッチによるチップ選択を無効にします。"
+
+msgid "Hide status bar in landscape"
+msgstr "横画面でステータスバーを隠す"
+
+msgid "Hide Android's top status bar while holding the phone sideways."
+msgstr "横向き表示のときに Android の上部ステータスバーを非表示にします。"

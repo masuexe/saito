@@ -218,3 +218,9 @@ msgstr "纯键盘选卡模式"
 
 msgid "Disable mouse and touch chip selection on the custom screen."
 msgstr "关闭选卡界面的鼠标和触屏点选芯片功能，仅使用按键选择。"
+
+msgid "Hide status bar in landscape"
+msgstr "横屏隐藏通知栏"
+
+msgid "Hide Android's top status bar while holding the phone sideways."
+msgstr "手机横屏时隐藏顶部系统状态栏和通知栏。"

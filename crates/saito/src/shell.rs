@@ -600,6 +600,13 @@ impl Shell {
         }
     }
 
+    pub fn set_hide_landscape_status_bar(&mut self, hide: bool) {
+        self.settings.hide_landscape_status_bar = hide;
+        self.save_settings();
+        #[cfg(target_os = "android")]
+        crate::activity::set_hide_landscape_status_bar(hide);
+    }
+
     /// Tell the UI which of the on-screen pad's buttons are held, if that changed: it draws them pressed.
     pub(crate) fn show_pad(&mut self) {
         let held = self.touch.held();
@@ -1215,6 +1222,8 @@ impl App {
         shell.set_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
         shell.set_player(self.shell.settings.name.as_str().into());
         shell.set_landscape_pad(self.shell.settings.landscape_touch_pad);
+        #[cfg(target_os = "android")]
+        crate::activity::set_hide_landscape_status_bar(self.shell.settings.hide_landscape_status_bar);
         // (The games' content the store hasn't is downloaded whatever the settings say: there is nothing to play
         // without it. A newer revision of what it has is looked for unless Settings turned that off.)
         let newer = self.shell.settings.check_updates && !self.shell.still;

@@ -24,8 +24,9 @@ use i_slint_backend_winit::{CustomApplicationHandler, EventResult, SlintEvent, W
 use saito_ui::AppWindow;
 use slint::ComponentHandle;
 use jni::EnvUnowned;
-use jni::objects::{JObject, JString};
+use jni::objects::{JObject, JString, JValue};
 use jni::sys::jint;
+use jni::{jni_sig, jni_str};
 use slint::platform::{Key, WindowEvent};
 use std::cell::OnceCell;
 use std::sync::{Mutex, OnceLock};
@@ -104,6 +105,17 @@ pub(crate) fn java<T>(call: impl FnOnce(&mut jni::Env, &JObject) -> jni::errors:
         call(env, &activity)
     })
     .map_err(|e: jni::errors::Error| e.to_string())
+}
+
+/// Ask Android's activity to hide or show the top status bar when in landscape orientation.
+pub(crate) fn set_hide_landscape_status_bar(hide: bool) {
+    let result = java(|env, activity| {
+        env.call_method(activity, jni_str!("setHideLandscapeStatusBar"), jni_sig!("(Z)V"), &[JValue::Bool(hide)])?;
+        Ok(())
+    });
+    if let Err(why) = result {
+        crate::errors::log("setting landscape status bar visibility", &why);
+    }
 }
 
 /// Slint's winit backend on the activity's event loop.

@@ -218,3 +218,9 @@ msgstr "키보드 전용 커스텀 화면"
 
 msgid "Disable mouse and touch chip selection on the custom screen."
 msgstr "커스텀 화면에서 마우스 및 터치 칩 선택을 비활성화합니다."
+
+msgid "Hide status bar in landscape"
+msgstr "가로 화면 상태 표시줄 숨기기"
+
+msgid "Hide Android's top status bar while holding the phone sideways."
+msgstr "가로 화면에서 Android 상단 상태 표시줄을 숨깁니다."

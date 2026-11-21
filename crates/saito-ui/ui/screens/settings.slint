@@ -24,6 +24,8 @@ export global SettingsView {
     in property <string> language;
     in property <string> picture-size;
     in property <bool> full-screen;
+    in property <bool> is-android;
+    in property <bool> hide-landscape-status-bar;
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> check-updates;
@@ -323,6 +325,25 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.full-screen ? 1 : 0;
+                    }
+                }
+
+                if SettingsView.is-android: Rectangle {
+                    height: status-bar-row.height;
+                    status-bar-row := SettingLabel {
+                        label: @tr("Hide status bar in landscape");
+                        note: @tr("Hide Android's top status bar while holding the phone sideways.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.status-bar";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.hide-landscape-status-bar ? 1 : 0;
                     }
                 }
 

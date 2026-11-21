@@ -3,6 +3,7 @@ package saito.app
 import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -19,7 +20,9 @@ import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.EditorInfo
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.google.androidgamesdk.GameActivity
 import com.google.androidgamesdk.gametextinput.InputConnection
 import com.google.androidgamesdk.gametextinput.Settings
@@ -51,6 +54,9 @@ class SaitoActivity : GameActivity() {
                 false
             }
     }
+
+    @Volatile
+    private var hideStatusBarInLandscape: Boolean = false
 
     fun isNettaiInstalled(): Boolean = isNettaiInstalled(this)
 
@@ -92,6 +98,34 @@ class SaitoActivity : GameActivity() {
         // The keyboard comes up over the app, which keeps its size: shrunk to what the keyboard leaves, a phone's
         // layout would turn to the desktop's.
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        applyStatusBarVisibility()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyStatusBarVisibility(newConfig.orientation)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyStatusBarVisibility()
+        }
+    }
+
+    fun setHideLandscapeStatusBar(hide: Boolean) {
+        hideStatusBarInLandscape = hide
+        runOnUiThread { applyStatusBarVisibility() }
+    }
+
+    private fun applyStatusBarVisibility(orientation: Int = resources.configuration.orientation) {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hideStatusBarInLandscape && orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.statusBars())
+        }
     }
 
     /**

@@ -34,7 +34,7 @@ const SIZES: u32 = 8;
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" => 0,
-        "set.picture" | "set.fullscreen" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" => 4,
@@ -79,6 +79,8 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_language(crate::lang::name(shell.i18n.code).into());
     view.set_picture_size(if s.picture_size == 0 { Default::default() } else { size_label(s.picture_size).into() });
     view.set_full_screen(s.full_screen);
+    view.set_is_android(cfg!(target_os = "android"));
+    view.set_hide_landscape_status_bar(s.hide_landscape_status_bar);
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_check_updates(s.check_updates);
@@ -339,6 +341,10 @@ impl Screen for Settings {
                 set_full_screen(shell, !shell.settings.full_screen);
                 self.show(shell);
             }
+            "set.status-bar" => {
+                shell.set_hide_landscape_status_bar(!shell.settings.hide_landscape_status_bar);
+                self.show(shell);
+            }
             "set.motion" => self.set_reduce_motion(shell, !shell.reduces_motion()),
             "set.updates" => self.set_check_updates(shell, !shell.settings.check_updates),
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
@@ -368,6 +374,10 @@ impl Screen for Settings {
             }
             "set.fullscreen" => {
                 set_full_screen(shell, by > 0);
+                self.show(shell);
+            }
+            "set.status-bar" => {
+                shell.set_hide_landscape_status_bar(by > 0);
                 self.show(shell);
             }
             "set.motion" => self.set_reduce_motion(shell, by > 0),
@@ -404,6 +414,10 @@ impl Screen for Settings {
             }
             "set.fullscreen" => {
                 set_full_screen(shell, choice == 1);
+                self.show(shell);
+            }
+            "set.status-bar" => {
+                shell.set_hide_landscape_status_bar(choice == 1);
                 self.show(shell);
             }
             "set.motion" => self.set_reduce_motion(shell, choice == 1),

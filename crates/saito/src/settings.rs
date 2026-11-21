@@ -33,6 +33,8 @@ pub struct Settings {
     pub full_screen: bool,
     /// On-screen virtual touch pad shown over the battle in mobile landscape.
     pub landscape_touch_pad: bool,
+    /// Hide Android's top status bar in landscape orientation.
+    pub hide_landscape_status_bar: bool,
     /// Pure keyboard mode on the custom screen: disables mouse/touch chip selection.
     pub keyboard_only_custom: bool,
     /// Motion turned down: everything is a cut. None: as the system asks.
@@ -78,6 +80,7 @@ impl Default for Settings {
             picture_size: 0,
             full_screen: false,
             landscape_touch_pad: true,
+            hide_landscape_status_bar: false,
             keyboard_only_custom: false,
             reduce_motion: None,
             check_updates: true,
@@ -223,6 +226,7 @@ mod tests {
             language: Some("ja".into()),
             music: 30,
             full_screen: true,
+            hide_landscape_status_bar: true,
             keyboard_only_custom: true,
             input_delay: 2,
             signaling_server: "wss://signal.example.com".into(),
@@ -236,6 +240,7 @@ mod tests {
         let other: Settings = toml::from_str("music = 40\nunknown = 1\n").unwrap();
         assert_eq!(other, Settings { music: 40, ..Settings::default() });
         assert!(other.landscape_touch_pad, "default landscape touch pad on");
+        assert!(!other.hide_landscape_status_bar, "default landscape status bar visible");
         assert!(!other.keyboard_only_custom, "default mouse custom selection enabled");
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");
