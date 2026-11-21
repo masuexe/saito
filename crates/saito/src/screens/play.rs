@@ -1609,7 +1609,7 @@ impl Screen for Play {
         // Another game was selected: its builds, and no link of the one before (nor what an import made).
         if self.builds_of.as_deref() != shell.game() {
             self.notice.clear();
-            if !matches!(self.stage, Stage::Idle) {
+            if !matches!(self.stage, Stage::Idle | Stage::Spectating) {
                 if let Some(session) = self.session.take() {
                     session.leave();
                 }

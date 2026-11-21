@@ -777,3 +777,18 @@ fn a_lenient_viewer_plays_legacy_replay_and_propagates_divergence() {
     main_v.seek(ticks as u32 / 2);
     assert_eq!(main_v.position(), ticks as u32 / 2);
 }
+
+#[test]
+fn viewer_updates_language_and_enhancements() {
+    let content = saito_match::testing::exe6_content();
+    let (replay, _) = recorded(&content, "exe6", 7);
+    let g = graphics(&content, 0x001F);
+    let mut v = Viewer::with(&content, &replay, Some(0), g.renderer(Enhancements::NONE, None), None, None).unwrap();
+    assert_eq!(v.renderer().enhancements(), Enhancements::NONE);
+    let font = saito_render::vfont::bundled_font(saito_render::vfont::Cut::of("zh-Hans")).clone();
+    v.set_enhancements(Enhancements::ALL, Some(font));
+    assert_eq!(v.renderer().enhancements(), Enhancements::ALL);
+    v.set_language(&g);
+    let mut buf = vec![0u32; 240 * 160];
+    v.present(&mut buf, 240, 160);
+}

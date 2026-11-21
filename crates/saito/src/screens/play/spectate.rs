@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use saito_battle::Content;
+use saito_frontend::game::{Enhancements, Loaded, Sound};
 use saito_frontend::lobby::Agreement;
 use saito_frontend::replay::Recorder;
 use saito_frontend::viewer::Viewer;
@@ -235,6 +236,10 @@ pub struct WatchSession {
     catching_up: bool,
     last_frame: Option<Instant>,
     problem: Option<String>,
+    game: Option<String>,
+    lang: String,
+    lang_loaded: bool,
+    enhancements: Enhancements,
 }
 
 impl WatchSession {
@@ -259,6 +264,10 @@ impl WatchSession {
             catching_up: false,
             last_frame: None,
             problem: None,
+            game: None,
+            lang: String::new(),
+            lang_loaded: false,
+            enhancements: Enhancements::NONE,
         })
     }
 
@@ -311,6 +320,7 @@ impl WatchSession {
     pub fn close(&mut self) {
         self.watcher.close();
         self.viewer = None;
+        self.game = None;
         self.pending_header = None;
         self.pending_ticks.clear();
     }
@@ -370,6 +380,7 @@ impl WatchSession {
         }
 
         // Advance and present the active viewer.
+        self.sync_presentation(shell);
         if let Some(viewer) = &mut self.viewer {
             let (music, effects) = shell.sound.battle_levels();
             viewer.set_sound_levels(music, effects);
@@ -402,7 +413,8 @@ impl WatchSession {
             // with no new GBA tick) so `App::run` keeps title music suppressed.
             shell.play_samples(&mut self.samples, played);
 
-            shell.show_surface(&mut self.surface, true, |_, buffer, width, height| {
+            shell.show_surface(&mut self.surface, true, |size, buffer, width, height| {
+                viewer.renderer().size = size;
                 viewer.present(buffer, width, height);
             });
 
@@ -411,6 +423,7 @@ impl WatchSession {
                 let since = *self.set_end_since.get_or_insert(now);
                 if now.saturating_duration_since(since) >= Duration::from_secs(2) {
                     self.viewer = None;
+                    self.game = None;
                     self.active_set_id = None;
                     self.set_ended_remote = false;
                     self.set_end_since = None;
@@ -425,6 +438,22 @@ impl WatchSession {
         WatchUpdate::Active
     }
 
+    fn sync_presentation(&mut self, shell: &Shell) {
+        let (Some(viewer), Some(game)) = (&mut self.viewer, self.game.as_deref()) else { return };
+        let Some(ready) = shell.games.ready(game) else { return };
+        let lang = shell.i18n.code;
+        let lang_loaded = ready.has_language(lang);
+        let enhancements = shell.settings.enhancements();
+        if self.lang != lang || self.lang_loaded != lang_loaded || self.enhancements != enhancements {
+            viewer.set_language(&ready.graphics(lang));
+            viewer.set_enhancements(enhancements, ready.loaded.font_in(lang));
+            self.lang = lang.to_string();
+            self.lang_loaded = lang_loaded;
+            self.enhancements = enhancements;
+            self.surface.stale = true;
+        }
+    }
+
     fn begin_set_snapshot(&mut self, shell: &mut Shell, snap: SetSnapshot) {
         let chunks: Vec<&str> = snap.chunks.iter().map(|c| c.data_b64.as_str()).collect();
         self.begin_set(shell, snap.set_id, &snap.header_b64, &chunks);
@@ -432,6 +461,7 @@ impl WatchSession {
 
     fn begin_set(&mut self, shell: &mut Shell, set_id: u32, header_b64: &str, chunks: &[&str]) {
         self.viewer = None;
+        self.game = None;
         self.pending_header = None;
         self.pending_ticks.clear();
         self.decoder = TickDecoder::new();
@@ -487,8 +517,32 @@ impl WatchSession {
             }
             return false;
         };
+        let lang = shell.i18n.code;
+        let lang_loaded = ready.has_language(lang);
+        if !lang_loaded {
+            shell.games.load_language(lang, |id, lang, graphics| {
+                crate::with_app(move |app| {
+                    app.shell.games.language(&id, &lang, graphics);
+                    if app.shell.i18n.code == lang {
+                        app.shell.show_language();
+                    }
+                })
+            });
+        }
+        let enhancements = shell.settings.enhancements();
+        let localized = Loaded {
+            game: ready.loaded.game.clone(),
+            graphics: ready.graphics(lang),
+            enhancements,
+            font: ready.loaded.font_in(lang).filter(|_| enhancements.wants_font()),
+            sound: ready.loaded.sound.as_ref().map(|s| Sound {
+                bank: s.bank.clone(),
+                songs: s.songs.clone(),
+                report: Default::default(),
+            }),
+        };
         let music = crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background);
-        match Viewer::open_live(&ready.loaded, header, Some(self.view), music) {
+        match Viewer::open_live(&localized, header, Some(self.view), music) {
             Ok(mut viewer) => {
                 viewer.set_both(self.both);
                 if !self.pending_ticks.is_empty() {
@@ -499,6 +553,10 @@ impl WatchSession {
                 self.surface = Surface::new();
                 self.surface.stale = true;
                 self.viewer = Some(viewer);
+                self.game = Some(game);
+                self.lang = lang.to_string();
+                self.lang_loaded = lang_loaded;
+                self.enhancements = enhancements;
                 self.problem = None;
                 true
             }

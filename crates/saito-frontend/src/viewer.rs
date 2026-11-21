@@ -1097,6 +1097,27 @@ impl Viewer {
         self.renderer.set_strings(graphics.strings.clone());
     }
 
+    /// Draw the sharp text and HUD in `font` from the next frame (another
+    /// language's: the bundled font's cut of it, `Loaded::font_in`), its text
+    /// renderer made again for it; nothing without either.
+    pub fn set_font(&mut self, font: Option<Arc<saito_render::vfont::VectorFont>>) {
+        let enhancements = self.renderer.enhancements();
+        if !enhancements.wants_font() {
+            return;
+        }
+        self.renderer.set_enhancements(enhancements, font.clone());
+        self.text = font.map(TextRenderer::new);
+    }
+
+    /// Draw the replay with `enhancements` from the next frame (`font`: the
+    /// sharp text's and HUD's; none without either), its text renderer made
+    /// again for it.
+    pub fn set_enhancements(&mut self, enhancements: saito_render::Enhancements, font: Option<Arc<saito_render::vfont::VectorFont>>) {
+        let font = font.filter(|_| enhancements.wants_font());
+        self.renderer.set_enhancements(enhancements, font.clone());
+        self.text = font.map(TextRenderer::new);
+    }
+
     /// The renderer (what it looked up and didn't find, its graphics mode).
     pub fn renderer(&mut self) -> &mut Renderer {
         &mut self.renderer

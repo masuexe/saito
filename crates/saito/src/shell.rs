@@ -568,7 +568,7 @@ impl Shell {
     }
 
     /// The battle and the screen shown, in the language as far as it is loaded.
-    fn show_language(&mut self) {
+    pub(crate) fn show_language(&mut self) {
         if let Some(b) = &mut self.battle
             && let Some(ready) = self.games.ready(&b.game)
         {
