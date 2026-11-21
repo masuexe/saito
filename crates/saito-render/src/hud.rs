@@ -20,7 +20,7 @@ use saito_battle::actor::status;
 use saito_battle::transform::{SequencerState, TransformPhase};
 use saito_battle::battle::{fight, mode, top};
 use saito_battle::content::{BannerId, ChipFlags, ChipIcons};
-use saito_battle::kinds::player::{Emotion, EmotionRole, emotion, emotion_role};
+use saito_battle::kinds::player::{Emotion, EmotionRole, emotion_of_stats, emotion_role};
 use saito_content_api::{FormHandle, NaviHandle};
 use saito_content_api::ChipHandle;
 use saito_battle::hud::{Banner, HpNumber};
@@ -384,16 +384,22 @@ struct Face {
 impl Face {
     fn of(b: &Battle, r: ObjectRef) -> Face {
         let side = b.objects.get(r).alliance;
-        Face::in_form(b, r, b.stats[side as usize].form)
+        let stats = &b.stats[side as usize & 1];
+        Face::for_window(b, side, stats, true, stats.form)
     }
 
-    /// The face `r`'s navi shows in `form`.
-    fn in_form(b: &Battle, r: ObjectRef, form: FormHandle) -> Face {
-        let side = b.objects.get(r).alliance;
-        let emotion = emotion(b, side);
-        let variant = saito_battle::kinds::player::shows_face_variant(b, side);
-        let base_variant = saito_battle::kinds::player::base_face_variant(b, side);
+    /// The face `stats` shows in `form` (evaluating live-only flags and variants only when `live`).
+    fn for_window(
+        b: &Battle,
+        side: u8,
+        stats: &saito_battle::setup::NaviStats,
+        live: bool,
+        form: FormHandle,
+    ) -> Face {
+        let emotion = emotion_of_stats(b, side, stats, live, Some(form));
         let f = b.content.form(form);
+        let base_variant = b.looks[side as usize & 1].face_variant && f.base;
+        let variant = base_variant || (live && saito_battle::kinds::player::face_variant_any_form(b, side));
         Face {
             picture: f.mugshot.as_ref().map(|faces| faces.shown(&b.game_rules().emotion, emotion, variant)),
             own: f.base,
@@ -522,8 +528,11 @@ impl HudState {
             f.timer = f.timer.saturating_sub(1);
             f.flash = f.timer & 2 != 0;
         }
-        if let Some(r) = b.player(local) {
-            let now = Face::of(b, r);
+        if b.player(local).is_some() {
+            let navi = window.unwrap_or(b.stats[i].navi);
+            let stats = window_stats(b, i, navi);
+            let live = std::ptr::eq(stats, &b.stats[i]);
+            let now = Face::for_window(b, local, stats, live, stats.form);
             let m = self.mood.get_or_insert(Mood { now, before: now, blink: 0, flash: false, white: false });
             if now.picture != m.now.picture {
                 *m = Mood { now, before: m.now, blink: 12, flash: false, white: false };
@@ -1850,18 +1859,22 @@ fn mugshot_parts<'a>(
         note_true_face(b, graphics, side, navi.version.as_deref(), seat.x(x, 48), problems);
         return items;
     }
-    let mut face = if live { state.mood.map(|m| m.shown()).unwrap_or_else(|| Face::of(b, r)) } else { Face::in_form(b, r, stats.form) };
+    let mut face = if live {
+        state.mood.map(|m| m.shown()).unwrap_or_else(|| Face::of(b, r))
+    } else {
+        Face::for_window(b, side as u8, stats, false, stats.form)
+    };
     // A form chosen on the custom screen shows in the window until the
     // screens close (`sub_802A040`, `sub_802A088`).
     if let Some(form) = crate::custom::face(b, side) {
-        face = Face::in_form(b, r, form);
+        face = Face::for_window(b, side as u8, stats, live, form);
     }
     let (picture, Some((gfx, palettes))) = crate::lookups::form_face(
         graphics,
         &b.content,
         face.form,
         face.emotion,
-        face.base_variant || saito_battle::kinds::player::face_variant_any_form(b, side as u8),
+        face.base_variant || (live && saito_battle::kinds::player::face_variant_any_form(b, side as u8)),
         problems,
     ) else { return items };
     // (The white of a change to Full Synchro: `byte_801CD80`.)
@@ -3185,5 +3198,104 @@ mod tests {
         push_count_or_box(Some(&h.counts[1]), None, Some((&h, 1)), (false, blank), &pal, (176, true), &shared, &TextSink::original(), &mut out, &mut items);
         assert!(!out[0].hflip);
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn switched_out_evil_megaman_window_shows_dark_mugshot_without_normal_blink() {
+        use saito_battle::content::{FaceSet, Faces, MugshotId};
+
+        let mut c = testing::build();
+        let megaman = c.navi_by_key(testing::MEGAMAN);
+        let base_form = c.base_form_for(megaman);
+        let partner = c.navi_by_key(testing::LINK_NAVI);
+
+        c.defs.forms[base_form.index()].record.mugshot = Some(Faces {
+            own: FaceSet {
+                by_emotion: vec![("normal".into(), MugshotId(0)), ("worn_out".into(), MugshotId(1))],
+                every: None,
+            },
+            variant: None,
+        });
+        c.defs.navis[partner.index()].record.mugshot = Some(MugshotId(2));
+
+        let c = std::sync::Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+        testing::on(&mut setup, &c);
+        let mut b = Battle::new(setup, c);
+        b.tick(&[saito_battle::input::PlayerTick::default(); 2], Default::default());
+
+        let mut partner_stats = b.stats[0];
+        partner_stats.navi = partner;
+        partner_stats.form = b.content.base_form_for(partner);
+        partner_stats.mood = 0x80;
+
+        // Evil MegaMan benched in members[0] (mood 0), partner active on field (mood 0x80).
+        b.stats[0].mood = 0;
+        b.party[0].members[0] = b.stats[0];
+        let _ = b.party[0].join(partner_stats);
+        b.party[0].active = 1;
+        b.stats[0] = partner_stats;
+        b.window_navis[0] = Some(megaman);
+
+        let mut h = hud();
+        let face_tiles = |mark: u8| Tiles { pixels: vec![mark; 8 * Tiles::TILE] };
+        let pal = [0u16; 16];
+        h.mugshots = vec![(face_tiles(1), pal), (face_tiles(2), pal), (face_tiles(3), pal)];
+        let assets = saito_assets::Bundle { hud: h, ..saito_assets::Bundle::default() };
+        let mut numbers = testing::asset_numbers(&b.content);
+        numbers.mugshots = vec![0, 1, 2];
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+
+        let r = b.player(0).unwrap();
+        let face_mark = |b: &Battle, state: &HudState| {
+            let mut out = Vec::new();
+            let mut problems = Problems::default();
+            let shared = SharedGlyphs::default();
+            let text = TextSink::original();
+            let _ = mugshot_parts(b, &assets.hud, &graphics, state, r, (0, Seat::alone(0), None), (&shared, &text), &mut out, &mut problems);
+            out[0].tiles.pixels[0]
+        };
+
+        // 1. Custom screen previewing MegaMan while partner is active must show dark (2), never normal (1).
+        let state = HudState::default();
+        assert_eq!(face_mark(&b, &state), 2, "benched evil MegaMan must render worn_out/evil face");
+
+        // 2. Switching on custom screen from active partner -> MegaMan: the 10-tick
+        // NAVI_BLINK may briefly show the previous partner (3), never normal MegaMan (1),
+        // then settles on evil MegaMan (2); landing party_change (`window_navis[0] = None`)
+        // must not trigger any blink to normal (1) or partner (3).
+        let mut state = HudState::default();
+        b.window_navis[0] = None;
+        state.tick(&b, 0);
+        b.window_navis[0] = Some(megaman);
+        for tick in 0..12 {
+            state.tick(&b, 0);
+            let m = face_mark(&b, &state);
+            assert!(matches!(m, 2 | 3), "preview tick {tick} must never blink to normal face (got {m})");
+        }
+        assert_eq!(face_mark(&b, &state), 2, "custom screen preview settles on evil face");
+
+        b.stats[0] = b.party[0].members[0];
+        b.party[0].active = 0;
+        b.window_navis[0] = None;
+        for tick in 0..16 {
+            state.tick(&b, 0);
+            assert_eq!(face_mark(&b, &state), 2, "tick {tick} after switch-in must not blink to normal face");
+        }
+
+        // 3. Direct in-battle switch from partner back to evil MegaMan never flashes normal (1).
+        b.party[0].active = 1;
+        b.stats[0] = partner_stats;
+        let mut state = HudState::default();
+        state.tick(&b, 0);
+        assert_eq!(face_mark(&b, &state), 3);
+        b.stats[0] = b.party[0].members[0];
+        b.party[0].active = 0;
+        for tick in 0..16 {
+            state.tick(&b, 0);
+            let m = face_mark(&b, &state);
+            assert!(matches!(m, 2 | 3), "in-battle switch tick {tick} must never flash normal face (got {m})");
+        }
+        assert_eq!(face_mark(&b, &state), 2);
     }
 }

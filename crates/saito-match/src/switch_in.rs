@@ -389,3 +389,207 @@ fn knightman_guard_does_not_stick_across_navi_switch() {
     assert_eq!(b.actors.get(a).requests & request::GUARD, 0, "guard request cleared on KnightMan switch");
     assert!(!b.objects.in_order().any(|q| b.objects.get(q).kind == guard_actor), "KnightMan never spawns a self-guard actor");
 }
+
+fn finish_custom_to_fight(b: &mut Battle) {
+    let mut last = [None; 2];
+    for _ in 0..3000 {
+        if b.round.mode == saito_battle::battle::mode::FIGHTING
+            && b.fight.state == saito_battle::battle::fight::FIGHTING
+            && !b.is_dimmed()
+        {
+            return;
+        }
+        let input = [0, 1].map(|side| {
+            last[side] = saito_battle::scenario::custom_choice(b, side, last[side]);
+            PlayerTick::buttons(0).with_choice(last[side])
+        });
+        b.tick(&input, Default::default());
+    }
+    panic!("custom screen never returned to fight");
+}
+
+fn open_custom_screen(b: &mut Battle) {
+    use saito_battle::custom::screen::Phase;
+    use saito_battle::input::keys;
+    for t in 0..600 {
+        if b.round.mode == saito_battle::battle::mode::CUSTOM
+            && b.custom.sides.iter().all(|s| {
+                s.screen.as_ref().is_some_and(|scr| scr.phase == Phase::Choosing)
+            })
+        {
+            return;
+        }
+        let press_l = if b.round.mode == saito_battle::battle::mode::FIGHTING {
+            b.gauge.value = saito_battle::hud::CustomGauge::FULL;
+            if t % 2 == 1 { keys::L } else { 0 }
+        } else {
+            0
+        };
+        b.tick(&[PlayerTick::buttons(press_l), Default::default()], Default::default());
+    }
+    panic!("custom screen never reached Choosing (mode={:?})", b.round.mode);
+}
+
+fn custom_switch_side0(b: &mut Battle, member: u8) {
+    let expected_navi = b.party[0].member(member).expect("party member").navi;
+    for tick in 0..60 {
+        let ask = if tick == 0 {
+            PlayerTick { switch_to: Some(member), ..Default::default() }
+        } else {
+            PlayerTick::default()
+        };
+        b.tick(&[ask, Default::default()], Default::default());
+        let expected_window = (expected_navi != b.stats[0].navi).then_some(expected_navi);
+        if b.window_navis[0] == expected_window
+            && b.custom.sides[0]
+                .screen
+                .as_ref()
+                .is_some_and(|scr| matches!(scr.phase, saito_battle::custom::Phase::Choosing))
+        {
+            return;
+        }
+    }
+    panic!("custom screen switch to member {member} did not complete");
+}
+
+fn wait_in_fight_switch_settled(b: &mut Battle, expected_member: u8) {
+    for _ in 0..120 {
+        b.tick(&Default::default(), Default::default());
+        let idle = b
+            .player(0)
+            .is_some_and(|r| saito_battle::kinds::player::running_content_action(b, r).is_none());
+        if b.party[0].active == expected_member && !b.is_dimmed() && idle {
+            return;
+        }
+    }
+    panic!("switch to member {expected_member} never settled");
+}
+
+/// Evil MegaMan (`karma = 0`) keeps `mood == 0` in `members[0]` at round start and
+/// across custom-screen switches (same-turn and cross-turn), in-battle switches,
+/// teammate KO take-back, and Light MegaMan at `mood == 0`.
+#[test]
+fn evil_megaman_party_switch_paths_preserve_evil_mood_and_palette() {
+    use saito_battle::input::keys;
+    use saito_battle::kinds::player::emotion_name;
+
+    let content = exe5_content();
+    let light_side = crate::double_attacks::side(&["searchman", "protoman"]) + "karma = 500\n";
+    let light_b = fighting_sides(&content, &light_side, &crate::double_attacks::side(&[]));
+    let light_palette = light_b.objects.sprite(light_b.player(0).unwrap()).look.palette;
+
+    // 1. Initial spawn with karma = 0 syncs both b.stats[0].mood and members[0].mood to 0.
+    let stage = crate::ids::local(&content.defs.stage(crate::link_battle_stages(&content, "exe5")[0]).key);
+    let evil_side = crate::double_attacks::side(&["searchman", "protoman"]) + "karma = 0\n";
+    let text = format!(
+        "game = \"exe5\"\n\n[[round]]\nstage = \"{stage}\"\n\n[left]\n{evil_side}\n\n[right]\n{}\n",
+        crate::double_attacks::side(&[])
+    );
+    let m = crate::parse(&content, &text).unwrap_or_else(|p| panic!("{p:?}"));
+    let new_evil_battle = || Battle::new(m.round(&content, 0x5EED), content.clone());
+    let assert_darkplus_works = |b: &mut Battle| {
+        b.hands[0].ids[0] = crate::ids::chip(&content, "exe5", "darkplus");
+        b.hands[0].cursor = 0;
+        b.tick(&[PlayerTick::buttons(keys::A), Default::default()], Default::default());
+        for _ in 0..40 {
+            b.tick(&Default::default(), Default::default());
+        }
+        assert_eq!(b.stats[0].bugs.processing, 1, "dark-only chip still works after switching back");
+    };
+
+    // 1. Turn 1 initial spawn + same-turn custom-screen switch (MegaMan -> SearchMan -> MegaMan).
+    let mut b = new_evil_battle();
+    open_custom_screen(&mut b);
+    assert_eq!(b.stats[0].mood, 0, "evil MegaMan starts with live mood 0");
+    assert_eq!(b.party[0].members[0].mood, 0, "members[0].mood must also start at 0 before first switch");
+    custom_switch_side0(&mut b, 1);
+    custom_switch_side0(&mut b, 0);
+    assert_eq!(b.window_navis[0], None);
+    finish_custom_to_fight(&mut b);
+
+    let r0 = b.player(0).unwrap();
+    let evil_palette = b.objects.sprite(r0).look.palette;
+    assert_ne!(evil_palette, light_palette, "evil MegaMan uses dark palette");
+    assert_eq!((b.stats[0].mood, b.party[0].members[0].mood), (0, 0));
+    assert_eq!(emotion_name(&b, 0), "evil");
+
+    // 2. Cross-turn custom-screen switch: MegaMan -> SearchMan (Turn 1) -> MegaMan (Turn 2).
+    let mut b = new_evil_battle();
+    open_custom_screen(&mut b);
+    custom_switch_side0(&mut b, 1);
+    let searchman = b.party[0].members[1].navi;
+    let megaman = b.party[0].members[0].navi;
+    assert_eq!(b.window_navis[0], Some(searchman));
+    finish_custom_to_fight(&mut b);
+    assert_eq!((b.party[0].active, b.stats[0].navi, b.stats[0].mood), (1, searchman, 0x80));
+    assert_eq!(b.party[0].members[0].mood, 0);
+
+    open_custom_screen(&mut b);
+    custom_switch_side0(&mut b, 0);
+    assert_eq!(b.window_navis[0], Some(megaman), "custom screen previews MegaMan while SearchMan is live");
+    assert_eq!(b.party[0].members[0].mood, 0, "benched MegaMan keeps mood 0");
+    finish_custom_to_fight(&mut b);
+    assert_eq!(b.party[0].active, 0);
+    assert_eq!((b.stats[0].navi, b.stats[0].mood, b.party[0].members[0].mood), (megaman, 0, 0));
+    assert_eq!(emotion_name(&b, 0), "evil");
+    assert_eq!(b.objects.sprite(b.player(0).unwrap()).look.palette, evil_palette);
+    assert_darkplus_works(&mut b);
+
+    // 3. In-battle switch MegaMan -> SearchMan -> MegaMan, and 4. Teammate KO take_back
+    //    (within EXE5's 3-switch limit per battle).
+    let mut b = new_evil_battle();
+    open_custom_screen(&mut b);
+    finish_custom_to_fight(&mut b);
+    b.tick(&[PlayerTick { switch_to: Some(1), ..Default::default() }, Default::default()], Default::default());
+    wait_in_fight_switch_settled(&mut b, 1);
+    assert_eq!((b.stats[0].navi, b.stats[0].mood, b.party[0].members[0].mood), (searchman, 0x80, 0));
+
+    b.tick(&[PlayerTick { switch_to: Some(0), ..Default::default() }, Default::default()], Default::default());
+    wait_in_fight_switch_settled(&mut b, 0);
+    assert_eq!((b.stats[0].navi, b.stats[0].mood), (megaman, 0));
+    assert_eq!(emotion_name(&b, 0), "evil");
+    assert_eq!(b.objects.sprite(b.player(0).unwrap()).look.palette, evil_palette);
+    assert_darkplus_works(&mut b);
+
+    // 4. Teammate KO take_back: switch to SearchMan (switch #3), KO him with opponent Cannon, verify Evil MegaMan returns.
+    b.tick(&[PlayerTick { switch_to: Some(1), ..Default::default() }, Default::default()], Default::default());
+    wait_in_fight_switch_settled(&mut b, 1);
+    let sr = b.player(0).unwrap();
+    b.objects.get_mut(sr).hp = 10;
+    // Align opponent vertically and fire Cannon.
+    let sy = b.objects.get(sr).panel.y;
+    let enemy = b.player(1).unwrap();
+    {
+        let e = b.objects.get_mut(enemy);
+        e.panel.y = sy;
+        e.future_panel.y = sy;
+    }
+    saito_battle::kinds::common::set_coordinates_from_panels(&mut b, enemy);
+    b.hands[1].ids[0] = crate::ids::chip(&content, "exe5", "cannon");
+    b.hands[1].damage[0] = 40;
+    b.hands[1].cursor = 0;
+    b.tick(&[Default::default(), PlayerTick::buttons(keys::A)], Default::default());
+    for _ in 0..200 {
+        b.tick(&Default::default(), Default::default());
+        if b.party[0].active == 0 && !b.is_dimmed() {
+            break;
+        }
+    }
+    assert_eq!(b.party[0].active, 0, "KO take_back returned MegaMan");
+    assert_eq!((b.stats[0].navi, b.stats[0].mood), (megaman, 0));
+    assert_eq!(emotion_name(&b, 0), "evil");
+    assert_eq!(b.objects.sprite(b.player(0).unwrap()).look.palette, evil_palette);
+
+    // 5. Light MegaMan whose mood reached 0 keeps mood 0 across partner switch and return.
+    let mut light_b = fighting_sides(&content, &light_side, &crate::double_attacks::side(&[]));
+    light_b.stats[0].mood = 0;
+    assert_eq!(emotion_name(&light_b, 0), "evil");
+    light_b.tick(&[PlayerTick { switch_to: Some(1), ..Default::default() }, Default::default()], Default::default());
+    wait_in_fight_switch_settled(&mut light_b, 1);
+    assert_eq!(light_b.party[0].members[0].mood, 0);
+    light_b.tick(&[PlayerTick { switch_to: Some(0), ..Default::default() }, Default::default()], Default::default());
+    wait_in_fight_switch_settled(&mut light_b, 0);
+    assert_eq!(light_b.stats[0].mood, 0);
+    assert_eq!(emotion_name(&light_b, 0), "evil");
+}
+

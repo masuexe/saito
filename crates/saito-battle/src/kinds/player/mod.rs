@@ -354,14 +354,31 @@ pub use crate::content::{Emotion, EmotionRole};
 /// out of its base form (but in a form whose emotions are its base's), and
 /// the battle's mode.
 pub fn emotion(b: &Battle, side: u8) -> Emotion {
-    let p = b.player(side).expect("side has a player");
-    let a = ai(b, p);
+    emotion_of_stats(b, side, &b.stats[side as usize & 1], true, None)
+}
+
+/// The emotion shown by `stats`, reading transient live-actor states (`anger`,
+/// `tired`, `exhausted`) and live actor form only when `live` is true (unless
+/// `form_override` specifies the displayed form).
+pub fn emotion_of_stats(
+    b: &Battle,
+    side: u8,
+    stats: &crate::setup::NaviStats,
+    live: bool,
+    form_override: Option<saito_content_api::FormHandle>,
+) -> Emotion {
+    let live_ai = if live { b.player(side).map(|p| ai(b, p)) } else { None };
+    let form = match form_override {
+        Some(h) => b.content.form(h),
+        None if live => b.player(side).map(|p| form_of(b, p)).unwrap_or_else(|| b.content.form(stats.form)),
+        None => b.content.form(stats.form),
+    };
     let facts = crate::content::EmotionFacts {
-        mood: b.stats[side as usize].mood,
-        angry: a.anger != 0,
-        tired: a.tired,
-        exhausted: a.exhausted,
-        in_form: !form_of(b, p).base && !form_of(b, p).traits.has(FormTraits::EMOTIONS_AS_BASE),
+        mood: stats.mood,
+        angry: live_ai.is_some_and(|a| a.anger != 0),
+        tired: live_ai.is_some_and(|a| a.tired),
+        exhausted: live_ai.is_some_and(|a| a.exhausted),
+        in_form: !form.base && !form.traits.has(FormTraits::EMOTIONS_AS_BASE),
         battle_mode: battle_mode(b),
     };
     b.game_rules().emotion.of(&facts)
@@ -1030,6 +1047,11 @@ fn init_round_state(b: &mut Battle, r: ObjectRef) {
         let side = b.objects.get(r).alliance;
         let mood = b.rules_starting_mood(side).unwrap_or(0x80);
         stats_mut(b, r).mood = mood;
+        if b.party[side as usize].active == 0 {
+            if let Some(m) = b.party[side as usize].members.get_mut(0) {
+                m.mood = mood;
+            }
+        }
     }
     if stats(b, r).first_barrier.is_some() {
         // sub_801A7CC(stat 6) and the barrier's visual (sub_80E0D98): the
