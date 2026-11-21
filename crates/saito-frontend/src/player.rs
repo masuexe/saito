@@ -487,7 +487,7 @@ impl Player {
                         if p.form_offer.button_slot == Some(btn) {
                             (matches!(drag.from, DragSource::Pick(_)) || n < 5) && (p.form_offer.eligible_slots & (1 << cs)) != 0
                         } else if p.arm_change_slot == Some(btn) {
-                            p.screen.hold.is_none() && (matches!(drag.from, DragSource::Pick(_)) || n < 5) && (p.arm_change_eligible & (1 << cs)) != 0
+                            (matches!(drag.from, DragSource::Pick(_)) || n < 5) && (p.arm_change_eligible & (1 << cs)) != 0
                         } else if p.screen.slots[btn as usize].face.is_some() {
                             p.screen.slots[btn as usize].state != SlotState::Selected
                                 && matches!(p.screen.slots[cs as usize].kind, SlotKind::Chip { .. } | SlotKind::Offered(_))

@@ -44,7 +44,7 @@ pub enum DropVisual {
     Remove,
 }
 
-/// Translucent dragged chip overlay and drop-target indicator rendered over the custom screen.
+/// Translucent dragged chip overlay and drop-target indicator passed to `Renderer`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DragOverlay {
     pub side: u8,
@@ -54,12 +54,17 @@ pub struct DragOverlay {
     pub target: Option<DropVisual>,
 }
 
-fn blend_bgr555(bg: u16, fg: u16, alpha_16: u16) -> u16 {
-    let inv = 16 - alpha_16;
-    let r = (((fg & 0x1F) * alpha_16 + (bg & 0x1F) * inv) >> 4).min(31);
-    let g = ((((fg >> 5) & 0x1F) * alpha_16 + ((bg >> 5) & 0x1F) * inv) >> 4).min(31);
-    let b = ((((fg >> 10) & 0x1F) * alpha_16 + ((bg >> 10) & 0x1F) * inv) >> 4).min(31);
-    r | (g << 5) | (b << 10)
+/// Resolved drag overlay carried by `Frame` and composited in `present()`
+/// after `sharp_hud` / `TextRenderer::draw_over` so it floats on top of
+/// the custom screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragVisual {
+    pub x: i32,
+    pub y: i32,
+    pub target: Option<DropVisual>,
+    /// Resolved 16x16 chip icon in 0x00RRGGBB (`None` = transparent pixel).
+    /// Outer `None` falls back to a translucent placeholder box when no icon asset exists.
+    pub icon: Option<Box<[Option<u32>; 256]>>,
 }
 
 fn tint_remove_bgr555(c: u16) -> u16 {
@@ -69,67 +74,32 @@ fn tint_remove_bgr555(c: u16) -> u16 {
     r | (g << 5) | (b << 10)
 }
 
-/// Draws the active desktop drag overlay (`DragOverlay`) on top of the composed custom screen frame.
-pub fn draw_drag_overlay(frame: &mut crate::render::Frame, overlay: DragOverlay, b: &Battle, graphics: &crate::graphics::Graphics<'_>) {
-    let w = frame.size.width as i32;
-    let h = frame.size.height as i32;
-    if w <= 0 || h <= 0 || frame.pixels.len() < (w * h) as usize {
-        return;
+fn blend_rgb(bg: u32, fg: u32, alpha: u8) -> u32 {
+    if alpha == 255 {
+        return fg & 0x00FF_FFFF;
     }
-    let mut plot_blend = |px: i32, py: i32, fg: u16, alpha_16: u16| {
-        if px >= 0 && px < w && py >= 0 && py < h {
-            let idx = (py * w + px) as usize;
-            frame.pixels[idx] = blend_bgr555(frame.pixels[idx], fg, alpha_16);
-        }
+    if alpha == 0 {
+        return bg;
+    }
+    let a = alpha as u32;
+    let inv = 255 - a;
+    let mix = |shift: u32| {
+        let c = (fg >> shift) & 0xFF;
+        let b = (bg >> shift) & 0xFF;
+        ((c * a + b * inv + 127) / 255) << shift
     };
-    const GOLD: u16 = 0x03FF;
-    const SHADOW: u16 = 0x0000;
-    match overlay.target {
-        Some(DropVisual::InsertLine { x, y, w: lw }) => {
-            for dx in 0..lw {
-                plot_blend(x + dx, y - 1, SHADOW, 10);
-                plot_blend(x + dx, y, GOLD, 16);
-                plot_blend(x + dx, y + 1, GOLD, 16);
-            }
-            for dy in -2..=3 {
-                plot_blend(x, y + dy, GOLD, 16);
-                plot_blend(x + lw - 1, y + dy, GOLD, 16);
-            }
-        }
-        Some(DropVisual::Highlight(r)) => {
-            for dy in 1..(r.h - 1) {
-                for dx in 1..(r.w - 1) {
-                    plot_blend(r.x + dx, r.y + dy, 0x7FFF, 3);
-                }
-            }
-            for dx in 0..r.w {
-                plot_blend(r.x + dx, r.y, GOLD, 16);
-                plot_blend(r.x + dx, r.y + r.h - 1, GOLD, 16);
-            }
-            for dy in 0..r.h {
-                plot_blend(r.x, r.y + dy, GOLD, 16);
-                plot_blend(r.x + r.w - 1, r.y + dy, GOLD, 16);
-            }
-        }
-        Some(DropVisual::Remove) | None => {}
-    }
+    mix(16) | mix(8) | mix(0)
+}
+
+/// Resolves the active desktop drag overlay (`DragOverlay`) into output-ready
+/// 0RGB data for `present()` to composite above `sharp_hud`.
+pub fn prepare_drag_overlay(overlay: DragOverlay, b: &Battle, graphics: &crate::graphics::Graphics<'_>) -> DragVisual {
     let remove = overlay.target == Some(DropVisual::Remove);
-    let gx0 = overlay.x - 8;
-    let gy0 = overlay.y - 8;
     let icon = overlay
         .chip
-        .and_then(|id| crate::lookups::chip_icon(graphics, &b.content, id, &mut Problems::default()));
-    match icon {
-        Some((tiles, palette)) => {
-            // Subtle 1px dark border around the 16x16 floating ghost.
-            for bx in -1..=16 {
-                plot_blend(gx0 + bx, gy0 - 1, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
-                plot_blend(gx0 + bx, gy0 + 16, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
-            }
-            for by in 0..16 {
-                plot_blend(gx0 - 1, gy0 + by, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
-                plot_blend(gx0 + 16, gy0 + by, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
-            }
+        .and_then(|id| crate::lookups::chip_icon(graphics, &b.content, id, &mut Problems::default()))
+        .map(|(tiles, palette)| {
+            let mut pxs = Box::new([None; 256]);
             for py in 0..16 {
                 for px in 0..16 {
                     let tile = 2 * (py / 8) + (px / 8);
@@ -137,25 +107,90 @@ pub fn draw_drag_overlay(frame: &mut crate::render::Frame, overlay: DragOverlay,
                     if idx != 0 {
                         let fg = palette[idx as usize & 15];
                         let fg = if remove { tint_remove_bgr555(fg) } else { fg };
-                        plot_blend(gx0 + px as i32, gy0 + py as i32, fg, 12);
+                        pxs[py * 16 + px] = Some(crate::compose::to_rgb(fg));
+                    }
+                }
+            }
+            pxs
+        });
+    DragVisual { x: overlay.x, y: overlay.y, target: overlay.target, icon }
+}
+
+/// Composites a prepared `DragVisual` onto `out` (`0RGB`, `out_w` pixels/row)
+/// in frame coordinates mapped via `place`, above `sharp_hud` and text items.
+pub fn draw_drag_visual(drag: &DragVisual, place: &crate::present::Placement, out: &mut [u32], out_w: usize) {
+    if out_w == 0 || place.width <= 0 || place.height <= 0 || place.columns <= 0 || place.rows <= 0 {
+        return;
+    }
+    let out_h = (out.len() / out_w) as i32;
+    let clip_x0 = place.x.max(0);
+    let clip_x1 = (place.x + place.width).min(out_w as i32);
+    let clip_y0 = place.y.max(0);
+    let clip_y1 = (place.y + place.height).min(out_h);
+    if clip_x0 >= clip_x1 || clip_y0 >= clip_y1 {
+        return;
+    }
+
+    let map_x = |fx: i32| place.x + (fx as i64 * place.width as i64).div_euclid(place.columns as i64) as i32;
+    let map_y = |fy: i32| place.y + (fy as i64 * place.height as i64).div_euclid(place.rows as i64) as i32;
+
+    let mut fill_frame_rect = |fx: i32, fy: i32, fw: i32, fh: i32, fg: u32, alpha: u8| {
+        if fw <= 0 || fh <= 0 {
+            return;
+        }
+        let x0 = map_x(fx).clamp(clip_x0, clip_x1);
+        let x1 = map_x(fx + fw).clamp(clip_x0, clip_x1);
+        let y0 = map_y(fy).clamp(clip_y0, clip_y1);
+        let y1 = map_y(fy + fh).clamp(clip_y0, clip_y1);
+        for y in y0..y1 {
+            let row = y as usize * out_w;
+            for x in x0..x1 {
+                let idx = row + x as usize;
+                out[idx] = blend_rgb(out[idx], fg, alpha);
+            }
+        }
+    };
+
+    const GOLD: u32 = 0x00FF_D000;
+    const SHADOW: u32 = 0x0000_0000;
+    match drag.target {
+        Some(DropVisual::InsertLine { x, y, w: lw }) => {
+            fill_frame_rect(x, y - 1, lw, 1, SHADOW, 160);
+            fill_frame_rect(x, y, lw, 2, GOLD, 255);
+            fill_frame_rect(x, y - 2, 1, 6, GOLD, 255);
+            fill_frame_rect(x + lw - 1, y - 2, 1, 6, GOLD, 255);
+        }
+        Some(DropVisual::Highlight(r)) => {
+            fill_frame_rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 0x00FF_FFFF, 48);
+            fill_frame_rect(r.x, r.y, r.w, 1, GOLD, 255);
+            fill_frame_rect(r.x, r.y + r.h - 1, r.w, 1, GOLD, 255);
+            fill_frame_rect(r.x, r.y, 1, r.h, GOLD, 255);
+            fill_frame_rect(r.x + r.w - 1, r.y, 1, r.h, GOLD, 255);
+        }
+        Some(DropVisual::Remove) | None => {}
+    }
+
+    let remove = drag.target == Some(DropVisual::Remove);
+    let gx0 = drag.x - 8;
+    let gy0 = drag.y - 8;
+    match &drag.icon {
+        Some(icon) => {
+            for py in 0..16 {
+                for px in 0..16 {
+                    if let Some(rgb) = icon[py * 16 + px] {
+                        fill_frame_rect(gx0 + px as i32, gy0 + py as i32, 1, 1, rgb, 192);
                     }
                 }
             }
         }
         None => {
-            let fill = if remove { 0x001F } else { 0x7FFF };
-            let border = if remove { 0x0010 } else { GOLD };
-            for dy in 1..13 {
-                for dx in 1..13 {
-                    plot_blend(gx0 + 1 + dx, gy0 + 1 + dy, fill, 6);
-                }
-            }
-            for d in 0..14 {
-                plot_blend(gx0 + 1 + d, gy0 + 1, border, 14);
-                plot_blend(gx0 + 1 + d, gy0 + 14, border, 14);
-                plot_blend(gx0 + 1, gy0 + 1 + d, border, 14);
-                plot_blend(gx0 + 14, gy0 + 1 + d, border, 14);
-            }
+            let fill = if remove { 0x00FF_2020 } else { 0x00FF_FFFF };
+            let border = if remove { 0x00C0_0000 } else { GOLD };
+            fill_frame_rect(gx0 + 2, gy0 + 2, 12, 12, fill, 96);
+            fill_frame_rect(gx0 + 1, gy0 + 1, 14, 1, border, 224);
+            fill_frame_rect(gx0 + 1, gy0 + 14, 14, 1, border, 224);
+            fill_frame_rect(gx0 + 1, gy0 + 2, 1, 12, border, 224);
+            fill_frame_rect(gx0 + 14, gy0 + 2, 1, 12, border, 224);
         }
     }
 }

@@ -1305,10 +1305,25 @@ impl Layer {
                     return self.quick_unite(Some(target), p);
                 }
                 if p.arm_change_slot == Some(btn) {
-                    if screen.hold.is_some() {
-                        self.play(ScreenSound::Refused);
-                        return Pointed::Took;
-                    }
+                    let (puts_back, release_steps) = if let Some(h) = screen.hold {
+                        if h.button != btn {
+                            self.play(ScreenSound::Refused);
+                            return Pointed::Took;
+                        }
+                        let puts_back =
+                            (h.at as usize) == n || (n < MAX_SELECTIONS && screen.fits(h.chip, None, &p.view, p.folder));
+                        (puts_back, 1 + usize::from(puts_back))
+                    } else {
+                        (false, 0)
+                    };
+                    let push_release = |this: &mut Self| {
+                        if let Some(h) = screen.hold {
+                            this.push_macro(MacroStep::Choice(ScreenChoice::Release(btn)));
+                            if puts_back {
+                                this.push_macro(MacroStep::Choice(ScreenChoice::Unpick(h.at)));
+                            }
+                        }
+                    };
                     return match from_item {
                         DragSource::Slot(s) => {
                             if !is_chip_slot(s) || screen.slots[s as usize].state != SlotState::Selectable || n >= MAX_SELECTIONS {
@@ -1319,6 +1334,14 @@ impl Layer {
                                 self.play(ScreenSound::Refused);
                                 return Pointed::Took;
                             }
+                            if release_steps > 0 {
+                                let needed = release_steps + 2 + NETPLAY_MARGIN;
+                                if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                                    self.play(ScreenSound::Refused);
+                                    return Pointed::Took;
+                                }
+                            }
+                            push_release(self);
                             self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
                             self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
                             self.emit_first_macro(screen)
@@ -1332,7 +1355,7 @@ impl Layer {
                                 self.play(ScreenSound::Refused);
                                 return Pointed::Took;
                             }
-                            if k + 1 == n {
+                            if k + 1 == n && release_steps == 0 {
                                 let c = ScreenChoice::Press(btn);
                                 self.cursor_to_choice(c, screen);
                                 return Pointed::Choice(c);
@@ -1349,21 +1372,34 @@ impl Layer {
                                 }
                                 tail[j] = (sj, att);
                             }
-                            let needed = tail_len + 1 + ARM_CHANGE_ANIM_TICKS + tail_len + capsule_reattaches * (2 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN;
+                            let needed = if tail_len == 0 {
+                                release_steps + 1 + NETPLAY_MARGIN
+                            } else {
+                                release_steps
+                                    + tail_len
+                                    + 1
+                                    + ARM_CHANGE_ANIM_TICKS
+                                    + tail_len
+                                    + capsule_reattaches * (2 + UNISON_ANIM_TICKS)
+                                    + NETPLAY_MARGIN
+                            };
                             if p.time_left.is_some_and(|left| (left as usize) < needed) {
                                 self.play(ScreenSound::Refused);
                                 return Pointed::Took;
                             }
+                            push_release(self);
                             for j in (start..n).rev() {
                                 self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
                             }
                             self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
-                            self.push_macro(MacroStep::WaitButtonSelected { button_slot: btn, timeout: BUTTON_WAIT_TIMEOUT });
-                            for &(sj, att) in &tail[..tail_len] {
-                                self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
-                                if let Some(cap) = att {
-                                    self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
-                                    self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+                            if tail_len > 0 {
+                                self.push_macro(MacroStep::WaitButtonSelected { button_slot: btn, timeout: BUTTON_WAIT_TIMEOUT });
+                                for &(sj, att) in &tail[..tail_len] {
+                                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
+                                    if let Some(cap) = att {
+                                        self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+                                        self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+                                    }
                                 }
                             }
                             self.emit_first_macro(screen)

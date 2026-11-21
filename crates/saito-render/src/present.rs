@@ -77,6 +77,9 @@ pub fn present(frame: &Frame, text: Option<&mut TextRenderer>, out: &mut [u32], 
         }
         t.draw_over(&frame.text, &frame.depth, (!cover.is_empty()).then_some(&cover[..]), &place, out, w);
     }
+    if let Some(drag) = &frame.drag {
+        crate::custom::draw_drag_visual(drag, &place, out, w);
+    }
     place
 }
 

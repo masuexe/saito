@@ -551,14 +551,14 @@ impl Battle {
         let Some(btn_slot) = arm_slot else {
             return (None, 0);
         };
-        if screen.hold.is_some() {
-            return (Some(btn_slot), 0);
-        }
         let folder = &self.custom.sides[i].folder;
         let view = self.screen_view(side);
         let non_elemental = self.content.rules().chip_families.non_elemental;
         let mut eligible: u16 = 0;
         for s in 0..10u8 {
+            if screen.hold.is_some_and(|h| h.chip == s) {
+                continue;
+            }
             if !matches!(screen.slots[s as usize].kind, SlotKind::Chip { .. }) {
                 continue;
             }

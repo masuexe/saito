@@ -126,6 +126,8 @@ pub struct Frame {
     /// The drawings (`Bundle::drawings`), for the text layer to have
     /// them rasterized before it draws the first of them (`present`).
     pub drawings: Option<Arc<Vec<saito_assets::shapes::Drawing>>>,
+    /// Active desktop drag overlay composited in `present()` above `sharp_hud`.
+    pub drag: Option<crate::custom::DragVisual>,
 }
 
 impl Frame {
@@ -866,7 +868,7 @@ impl Renderer {
             Glide { pixels, width, sub: scene.background_sub(), depth: compose::layer_depth(&self.background) }
         });
         let drawings = (!Vec::is_empty(&text)).then(|| self.drawings.clone());
-        let mut frame = Frame { size, pixels, depth, text, glide, nudge: None, lift: None, overlays, drawings };
+        let mut frame = Frame { size, pixels, depth, text, glide, nudge: None, lift: None, overlays, drawings, drag: None };
         if let Some(p) = self.stand_in.as_ref().filter(|_| stand_in) {
             p.borrow_mut().draw(&mut frame);
         }
@@ -875,7 +877,7 @@ impl Renderer {
             && !smooth.lifted
             && !smooth.nudged
         {
-            crate::custom::draw_drag_overlay(&mut frame, overlay, b, &graphics);
+            frame.drag = Some(crate::custom::prepare_drag_overlay(overlay, b, &graphics));
         }
         frame
     }
@@ -1016,7 +1018,6 @@ mod tests {
     #[test]
     fn drag_overlay_renders_at_edges_without_panic_and_preserves_none_frame() {
         use crate::custom::{DragOverlay, DropVisual};
-        use crate::textlayer::Rect;
 
         let mut c: saito_battle::content::Content = testing::build();
         c.define().unwrap_or_else(|e| panic!("{e}"));
@@ -1027,8 +1028,15 @@ mod tests {
 
         let mut r = Renderer::new(Arc::new(Bundle::default()));
         let base = r.render(&b, [None; 2]);
+        assert!(base.drag.is_none());
         r.set_drag_overlay(None);
-        assert_eq!(r.render(&b, [None; 2]).pixels, base.pixels);
+        let none_frame = r.render(&b, [None; 2]);
+        assert!(none_frame.drag.is_none());
+        assert_eq!(none_frame.pixels, base.pixels);
+
+        let (w, h) = (480, 320);
+        let mut base_out = vec![0u32; w * h];
+        crate::present::present(&base, None, &mut base_out, w, h);
 
         for (x, y, chip, target) in [
             (0, 0, None, Some(DropVisual::InsertLine { x: 100, y: 20, w: 24 })),
@@ -1037,7 +1045,83 @@ mod tests {
         ] {
             r.set_drag_overlay(Some(DragOverlay { side: 0, chip, x, y, target }));
             let frame = r.render(&b, [None; 2]);
-            assert_ne!(frame.pixels, base.pixels, "overlay ({x}, {y}, {target:?}) should draw visibly");
+            assert!(frame.drag.is_some());
+            assert_eq!(frame.pixels, base.pixels);
+            let mut out = vec![0u32; w * h];
+            crate::present::present(&frame, None, &mut out, w, h);
+            assert_ne!(out, base_out, "overlay ({x}, {y}, {target:?}) should composite visibly in present()");
         }
+    }
+
+    #[test]
+    fn drag_overlay_composites_above_text_and_without_black_border() {
+        use crate::compose::{HEIGHT, WIDTH, to_rgb};
+        use crate::custom::DragVisual;
+        use crate::vfont::{Role, TextRenderer};
+
+        // 1. Z-order: dragged icon must composite AFTER TextRenderer::draw_over (over sharp HUD/text).
+        let text_item = TextItem {
+            depth: 0,
+            ..TextItem::new("MMMM", Role::Cell, Rect::new(40, 40, 48, 16), 0x7FFF, None)
+        };
+        let mut frame = Frame {
+            size: compose::Size::new(WIDTH, HEIGHT),
+            pixels: vec![0; WIDTH * HEIGHT],
+            depth: vec![u32::MAX; WIDTH * HEIGHT],
+            text: vec![text_item],
+            ..Frame::default()
+        };
+        let (w, h) = (WIDTH * 2, HEIGHT * 2);
+        let mut tr = TextRenderer::new(Arc::new(VectorFont::bundled()));
+        let mut text_only = vec![0u32; w * h];
+        crate::present::present(&frame, Some(&mut tr), &mut text_only, w, h);
+        assert!(
+            (80..112).any(|y| (80..176).any(|x| text_only[y * w + x] == 0x00FF_FFFF)),
+            "sharp text should render lit white pixels"
+        );
+
+        let solid_red = Box::new([Some(0x00FF_0000); 256]);
+        frame.drag = Some(DragVisual { x: 48, y: 48, target: None, icon: Some(solid_red) });
+        let mut with_drag = vec![0u32; w * h];
+        crate::present::present(&frame, Some(&mut tr), &mut with_drag, w, h);
+        assert!(
+            (80..112).any(|y| (80..112).any(|x| {
+                let p = with_drag[y * w + x];
+                let (r, g, b) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+                text_only[y * w + x] == 0x00FF_FFFF && r > g && r > b
+            })),
+            "drag icon must blend over rendered sharp text pixels rather than being covered"
+        );
+
+        // 2. Borderless: transparent outer ring of 16x16 icon and +/-1px surround must stay untouched (no black border).
+        let mut inner_blue = Box::new([None; 256]);
+        for py in 1..15 {
+            for px in 1..15 {
+                inner_blue[py * 16 + px] = Some(0x0000_00FF);
+            }
+        }
+        let white_frame = Frame {
+            size: compose::Size::new(WIDTH, HEIGHT),
+            pixels: vec![0x7FFF; WIDTH * HEIGHT],
+            depth: vec![0; WIDTH * HEIGHT],
+            drag: Some(DragVisual { x: 100, y: 80, target: None, icon: Some(inner_blue) }),
+            ..Frame::default()
+        };
+        let mut out_1x = vec![0u32; WIDTH * HEIGHT];
+        crate::present::present(&white_frame, None, &mut out_1x, WIDTH, HEIGHT);
+        let white = to_rgb(0x7FFF);
+        let (gx0, gy0) = (100 - 8, 80 - 8);
+        for d in -1..=16 {
+            for ring in [-1, 0, 15, 16] {
+                let px = (gx0 + d) as usize;
+                let py = (gy0 + ring) as usize;
+                assert_eq!(out_1x[py * WIDTH + px], white, "unexpected border pixel at ({px}, {py})");
+                let px2 = (gx0 + ring) as usize;
+                let py2 = (gy0 + d) as usize;
+                assert_eq!(out_1x[py2 * WIDTH + px2], white, "unexpected border pixel at ({px2}, {py2})");
+            }
+        }
+        let center = out_1x[80 * WIDTH + 100];
+        assert!((center & 0xFF) > ((center >> 16) & 0xFF) && center != white, "inner pixel should blend blue");
     }
 }

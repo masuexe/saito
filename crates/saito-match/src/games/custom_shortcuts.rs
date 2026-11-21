@@ -275,7 +275,8 @@ fn exe5_drag_drops_unison_arm_change_and_meddysoul_capsules() {
     let mut ls_arm = step_until_choosing(&mut b_col);
     deal(&mut b_col, &content, "exe5", 0, "sword", S);
     deal(&mut b_col, &content, "exe5", 1, "cannon", A);
-    deal(&mut b_col, &content, "exe5", 2, "airshot", STAR);
+    deal(&mut b_col, &content, "exe5", 2, "vulcan1", STAR);
+    deal(&mut b_col, &content, "exe5", 3, "cannon", A);
 
     // Sword S is sword family (not null) -> dropping onto Arm Change plays Refused.
     ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(0), to: DropTarget::Button(8) });
@@ -284,18 +285,53 @@ fn exe5_drag_drops_unison_arm_change_and_meddysoul_capsules() {
     assert!(ls_arm.layers[0].heard(&b_col).contains(&saito_battle::sound::SoundCue::Effect(refused_id)));
     assert_eq!(screen(&b_col).hold, None);
 
-    // Non-last pick Cannon A (`Pick(0)` before `AirShot *` at `Pick(1)`) dragged onto Arm Change cell 9 -> holds Cannon A & restores AirShot *!
+    // Non-last pick Cannon A (`Pick(0)` before `Vulcan1 *` at `Pick(1)`) dragged onto Arm Change cell 9 -> holds Cannon A & restores Vulcan1 *!
     step_choice(&mut b_col, &mut ls_arm, ScreenChoice::Pick(1));
     step_choice(&mut b_col, &mut ls_arm, ScreenChoice::Pick(2));
     point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Button(9) });
     assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(1));
     assert_eq!(screen(&b_col).selection(), [2]);
 
-    // Dragging held Arm Change button outside releases Cannon A back into picks `[1, 2]`.
+    // While Arm Change already holds Cannon A (`slot 1`), dragging ineligible Sword S (`slot 0`) plays Refused and preserves Cannon A.
+    ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(0), to: DropTarget::Button(8) });
+    step_idle(&mut b_col, &mut ls_arm);
+    assert!(ls_arm.layers[0].heard(&b_col).contains(&saito_battle::sound::SoundCue::Effect(refused_id)));
+    assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(1));
+    assert_eq!(screen(&b_col).selection(), [2]);
+
+    // Dragging eligible left-tray chip (`slot 3`, Cannon A) onto occupied Arm Change overwrites held chip and returns `slot 1` cleanly to tray (`puts_back == true`).
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Slot(3), to: DropTarget::Button(8) });
+    assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(3));
+    assert_eq!(screen(&b_col).selection(), [2]);
+    assert_eq!(screen(&b_col).slots[1].state, SlotState::Selectable);
+
+    // Dragging eligible right-column pick (`Pick(0)` -> `slot 2`, Vulcan1 *) onto occupied Arm Change overwrites held chip cleanly.
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Button(9) });
+    assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(2));
+    assert!(screen(&b_col).selection().is_empty());
+    assert_eq!(screen(&b_col).slots[3].state, SlotState::Selectable);
+
+    // Dragging held Arm Change button outside releases `slot 2` back into picks `[2]`.
     ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::Outside });
     step_idle(&mut b_col, &mut ls_arm);
     assert_eq!(screen(&b_col).hold, None);
-    assert_eq!(screen(&b_col).selection(), [1, 2]);
+    assert_eq!(screen(&b_col).selection(), [2]);
+
+    // Overwrite when old held chip is incompatible with current selection (`puts_back == false`).
+    let mut b_arm_incompat = Battle::new(m_col.round(&content, 0x5EED), content.clone());
+    b_arm_incompat.stats[0].starting_form = colonelsoul;
+    let mut ls_ai = step_until_choosing(&mut b_arm_incompat);
+    deal(&mut b_arm_incompat, &content, "exe5", 0, "sword", S);
+    deal(&mut b_arm_incompat, &content, "exe5", 1, "cannon", A);
+    deal(&mut b_arm_incompat, &content, "exe5", 2, "vulcan1", STAR);
+    step_choice(&mut b_arm_incompat, &mut ls_ai, ScreenChoice::Pick(1));
+    step_choice(&mut b_arm_incompat, &mut ls_ai, ScreenChoice::Press(8)); // holds Cannon A (`slot 1`)
+    step_choice(&mut b_arm_incompat, &mut ls_ai, ScreenChoice::Pick(0)); // picks Sword S (`slot 0`, incompatible with Cannon A)
+    assert_eq!(screen(&b_arm_incompat).slots[2].state, SlotState::Selectable);
+    point_and_settle(&mut b_arm_incompat, &mut ls_ai, Gesture::Drop { from: DragSource::Slot(2), to: DropTarget::Button(8) });
+    assert_eq!(screen(&b_arm_incompat).hold.map(|h| h.chip), Some(2));
+    assert_eq!(screen(&b_arm_incompat).selection(), [0]);
+    assert_eq!(screen(&b_arm_incompat).slots[1].state, SlotState::Unavailable); // freed Cannon A stays in tray (code A vs Sword S)
 
     // 3. MeddySoul: bidirectional capsule <-> chip drops, including capsule onto non-last pick.
     let mut b_med = Battle::new(m_col.round(&content, 0x5EED), content.clone());
