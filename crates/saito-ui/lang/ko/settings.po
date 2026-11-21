@@ -85,6 +85,12 @@ msgstr "스크롤, 게이지, 배너가 픽셀 사이를 부드럽게 이동합�
 msgid "Fill the window"
 msgstr "창 가득 채우기"
 
+msgid "Reduce flashes"
+msgstr "깜빡임 감소"
+
+msgid "Soften sudden white-screen flashes in battle."
+msgstr "전투 중 갑작스러운 흰 화면 번쩍임을 줄입니다."
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
 

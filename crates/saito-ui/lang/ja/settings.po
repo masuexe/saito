@@ -84,6 +84,12 @@ msgstr "スクロールやゲージ、バナーをドットの間までなめら
 msgid "Fill the window"
 msgstr "ウィンドウいっぱいに表示"
 
+msgid "Reduce flashes"
+msgstr "フラッシュ軽減"
+
+msgid "Soften sudden white-screen flashes in battle."
+msgstr "バトル中の激しい白画面フラッシュを抑えます。"
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せます。"
 

@@ -85,6 +85,12 @@ msgstr "卷动、计量表和横幅在游戏像素之间平滑移动。"
 msgid "Fill the window"
 msgstr "填满窗口"
 
+msgid "Reduce flashes"
+msgstr "防爆闪模式"
+
+msgid "Soften sudden white-screen flashes in battle."
+msgstr "减弱战斗中的瞬间白屏闪烁，降低光敏不适。"
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"
 

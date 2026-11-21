@@ -45,13 +45,15 @@ pub struct Enhancements {
     /// Fill the window: the frame as large as `Renderer::size` asks, the
     /// HUD's pieces kept to its edges; off, the original's 240 by 160.
     pub fill: bool,
+    /// Soften sudden full-screen white flashes in battle.
+    pub reduce_flashes: bool,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
@@ -88,6 +90,7 @@ impl std::str::FromStr for Enhancements {
                 "hud" => e.hud = true,
                 "motion" => e.motion = true,
                 "fill" => e.fill = true,
+                "reduce-flashes" | "reduce_flashes" => e.reduce_flashes = true,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
         }
@@ -508,7 +511,10 @@ impl Renderer {
         // renderer's own fields, written while these are read.)
         let mut graphics = self.graphics.view();
         graphics.set_version(self.console_version);
-        let view = Self::view_for(b, self.consoles, screen_layers);
+        let mut view = Self::view_for(b, self.consoles, screen_layers);
+        if self.enhancements.reduce_flashes {
+            view.fade = soften_flash(view.fade);
+        }
         // (The background is its own game's, another game's too (the
         // background pool's), or where that game's isn't here, the stage's own;
         // the field, the game's: `FieldArt`.)
@@ -533,7 +539,7 @@ impl Renderer {
         // down and a transformation's fade takes to black (EXE4's
         // JunkSoul's change's flash, 0x080EBB50: black until the fade
         // lifts); where it comes after, EXE6's, the white stands.)
-        let flash = objects::palette_flash(b);
+        let flash = if self.enhancements.reduce_flashes { None } else { objects::palette_flash(b) };
         let flash_order = b.content.rules().effects.palette_flash_order;
         let flashed = flash.is_some() && flash_order == PaletteFlashOrder::BeforeFades;
         let clock = self.stage_clock(b);
@@ -629,6 +635,7 @@ impl Renderer {
             // both its own, the frame's being the field's console's.)
             let screen_layer = screen_layers[seat.side as usize & 1];
             let sprite_fade = if flash == Some(1) { Fade::White(16) } else { crate::custom::sprite_fade(b, screen_layer, seat.side).unwrap_or_default() };
+            let sprite_fade = if self.enhancements.reduce_flashes { soften_flash(sprite_fade) } else { sprite_fade };
             // (Kept to its part of a screen of both, where not all of it:
             // `Seat::clip`.)
             let clip = seat.clip(b, screen_layers, &seats, size);
@@ -742,7 +749,19 @@ impl Renderer {
         // flash's 0-14. The fades of every palette reach it: the
         // transformation's, and the custom screen's white.)
         let dialogue = if transform != Fade::None { transform } else { crate::custom::sprite_fade(b, field_layer, field).unwrap_or_default() };
-        let fades = Fades { stage, hud, hud_past_ranged, other_hud, other_hud_past_ranged, dialogue, sprites, screen: screen_fade(b) };
+        let mut fades = Fades { stage, hud, hud_past_ranged, other_hud, other_hud_past_ranged, dialogue, sprites, screen: screen_fade(b) };
+        if self.enhancements.reduce_flashes {
+            fades = Fades {
+                stage: soften_flash(fades.stage),
+                hud: soften_flash(fades.hud),
+                hud_past_ranged: soften_flash(fades.hud_past_ranged),
+                other_hud: soften_flash(fades.other_hud),
+                other_hud_past_ranged: soften_flash(fades.other_hud_past_ranged),
+                dialogue: soften_flash(fades.dialogue),
+                sprites: soften_flash(fades.sprites),
+                screen: soften_flash(fades.screen),
+            };
+        }
         let layers: Vec<&Layer> = match both {
             true => vec![&self.dialogue, &self.names, &self.names_right, &self.hud, &self.hud_right, &self.field, &self.background],
             false => vec![&self.dialogue, &self.names, &self.hud, &self.field, &self.background],
@@ -907,4 +926,49 @@ pub fn screen_fade(b: &Battle) -> Fade {
         return Fade::Black(16);
     }
     Fade::None
+}
+
+fn soften_flash(fade: Fade) -> Fade {
+    match fade {
+        Fade::White(n) => Fade::Black((n / 2).min(8)),
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saito_battle::content::testing;
+
+    #[test]
+    fn soften_flash_replaces_white_fades_with_mild_darken() {
+        assert_eq!(soften_flash(Fade::White(16)), Fade::Black(8));
+        assert_eq!(soften_flash(Fade::White(5)), Fade::Black(2));
+        assert_eq!(soften_flash(Fade::Black(12)), Fade::Black(12));
+        assert_eq!(soften_flash(Fade::None), Fade::None);
+        assert_eq!("reduce-flashes".parse::<Enhancements>(), Ok(Enhancements { reduce_flashes: true, ..Enhancements::NONE }));
+    }
+
+    #[test]
+    fn reduce_flashes_suppresses_palette_flash_whiteout() {
+        let mut c: saito_battle::content::Content = testing::build();
+        c.define().unwrap_or_else(|e| panic!("{e}"));
+        let content = Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&content));
+        testing::on(&mut setup, &content);
+        let mut b = Battle::new(setup, content);
+        b.round.intro_bits = 0x11;
+        let r = saito_battle::kinds::palette_flash::spawn_variant(&mut b, 1, 4, true, true).unwrap();
+        b.objects.get_mut(r).state = saito_battle::object::state::UPDATE;
+        assert_eq!(objects::palette_flash(&b), Some(1));
+
+        let assets = Arc::new(Bundle::default());
+        let mut normal = Renderer::new(Arc::clone(&assets));
+        let mut reduced = Renderer::new(assets);
+        reduced.set_enhancements(Enhancements { reduce_flashes: true, ..Enhancements::NONE }, None);
+        let f_normal = normal.render(&b, [None; 2]);
+        let f_reduced = reduced.render(&b, [None; 2]);
+        assert!(f_normal.pixels.iter().all(|&c| c == 0x7FFF), "normal flash whitens the frame");
+        assert!(f_reduced.pixels.iter().all(|&c| c == 0), "reduced flashes suppress full-screen whiteout");
+    }
 }

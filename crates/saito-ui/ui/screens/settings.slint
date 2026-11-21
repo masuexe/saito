@@ -25,6 +25,7 @@ export global SettingsView {
     in property <string> picture-size;
     in property <bool> full-screen;
     in property <bool> reduce-motion;
+    in property <bool> reduce-flashes;
     in property <bool> check-updates;
     // The graphics enhancements, each on or off.
     in property <bool> sharp-text;
@@ -338,6 +339,25 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.reduce-motion ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: flashes-row.height;
+                    flashes-row := SettingLabel {
+                        label: @tr("Reduce flashes");
+                        note: @tr("Soften sudden white-screen flashes in battle.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.reduce-flashes";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.reduce-flashes ? 1 : 0;
                     }
                 }
 
