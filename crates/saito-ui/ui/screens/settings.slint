@@ -27,6 +27,7 @@ export global SettingsView {
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> check-updates;
+    in property <bool> landscape-touch-pad: true;
     // The graphics enhancements, each on or off.
     in property <bool> sharp-text;
     in property <bool> sharp-hud;
@@ -591,6 +592,25 @@ component SettingsPage inherits Page {
                         y: 4px;
                         nav: "set.reset";
                         text: I18n.upper(@tr("Reset controls"));
+                    }
+                }
+
+                if Theme.phone-app: Rectangle {
+                    height: landscape-pad-row.height;
+                    landscape-pad-row := SettingLabel {
+                        label: @tr("Landscape touch pad");
+                        note: @tr("Show on-screen controls in landscape.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.landscape-pad";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.landscape-touch-pad ? 1 : 0;
                     }
                 }
 

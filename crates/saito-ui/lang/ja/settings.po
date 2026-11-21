@@ -207,3 +207,9 @@ msgstr "スマートフォンに送信"
 
 msgid "Enter the address shown on the phone to send the Legacy Collection over Wi-Fi."
 msgstr "スマートフォンに表示されたアドレスを入力すると、Wi-Fi 経由でアドバンスドコレクションを送信できます。"
+
+msgid "Landscape touch pad"
+msgstr "横画面タッチパッド"
+
+msgid "Show on-screen controls in landscape."
+msgstr "横画面のバトル中に画面上の仮想ボタンを表示します。"

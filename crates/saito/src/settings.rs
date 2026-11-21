@@ -31,6 +31,8 @@ pub struct Settings {
     /// The most the battle's picture is, in multiples of 240 by 160; 0: the largest that fits.
     pub picture_size: u32,
     pub full_screen: bool,
+    /// On-screen virtual touch pad shown over the battle in mobile landscape.
+    pub landscape_touch_pad: bool,
     /// Motion turned down: everything is a cut. None: as the system asks.
     pub reduce_motion: Option<bool>,
     /// An installed app asks saito's GitHub releases at start whether a newer one is out (saito-updater).
@@ -73,6 +75,7 @@ impl Default for Settings {
             game: None,
             picture_size: 0,
             full_screen: false,
+            landscape_touch_pad: true,
             reduce_motion: None,
             check_updates: true,
             sharp_text: true,
@@ -228,6 +231,7 @@ mod tests {
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
         let other: Settings = toml::from_str("music = 40\nunknown = 1\n").unwrap();
         assert_eq!(other, Settings { music: 40, ..Settings::default() });
+        assert!(other.landscape_touch_pad, "default landscape touch pad on");
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");
         assert_eq!(clean_signaling_server("  ws://127.0.0.1:8787\n "), "ws://127.0.0.1:8787");

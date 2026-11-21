@@ -590,6 +590,16 @@ impl Shell {
         }
     }
 
+    pub fn set_landscape_touch_pad(&mut self, on: bool) {
+        self.settings.landscape_touch_pad = on;
+        self.save_settings();
+        self.ui().global::<saito_ui::Shell>().set_landscape_pad(on);
+        if !on {
+            self.touch.forget();
+            self.show_pad();
+        }
+    }
+
     /// Tell the UI which of the on-screen pad's buttons are held, if that changed: it draws them pressed.
     pub(crate) fn show_pad(&mut self) {
         let held = self.touch.held();
@@ -1204,6 +1214,7 @@ impl App {
         let shell = ui.global::<saito_ui::Shell>();
         shell.set_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
         shell.set_player(self.shell.settings.name.as_str().into());
+        shell.set_landscape_pad(self.shell.settings.landscape_touch_pad);
         // (The games' content the store hasn't is downloaded whatever the settings say: there is nothing to play
         // without it. A newer revision of what it has is looked for unless Settings turned that off.)
         let newer = self.shell.settings.check_updates && !self.shell.still;
@@ -1353,6 +1364,7 @@ impl App {
                     "pick.close" => self.picked(None),
                     "back" => self.back(),
                     "pad.menu" => self.shell.open_menu(),
+                    "pad.toggle" => self.shell.set_landscape_touch_pad(!self.shell.settings.landscape_touch_pad),
                     CHOOSE_SOURCE => self.choose_source(),
                     "game" | "" => {}
                     id => {
@@ -1753,8 +1765,9 @@ impl App {
     /// on-screen pad's, if it came down on one of its buttons while the battle has them. True if it was the
     /// pad's (Slint doesn't get it); false and it goes on to Slint, as a pointer.
     pub fn touched(&mut self, finger: u64, phase: TouchPhase, x: f64, y: f64) -> bool {
-        // (The pad is on screen upright, and over the picture on a phone held sideways.)
-        let pad = self.shell.scale.phone || cfg!(any(target_os = "ios", target_os = "android"));
+        // (The pad is on screen upright, and over the picture on a phone held sideways while enabled.)
+        let pad = self.shell.scale.phone
+            || (cfg!(any(target_os = "ios", target_os = "android")) && self.shell.settings.landscape_touch_pad);
         if !(pad && self.shell.battle_has_keys()) {
             self.shell.touch.clear();
             self.shell.show_pad();

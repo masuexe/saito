@@ -206,3 +206,9 @@ msgstr "发送到手机"
 
 msgid "Enter the address shown on the phone to send the Legacy Collection over Wi-Fi."
 msgstr "输入手机上显示的地址，通过局域网发送《洛克人EXE 合集》。"
+
+msgid "Landscape touch pad"
+msgstr "横屏虚拟按键"
+
+msgid "Show on-screen controls in landscape."
+msgstr "在手机横屏战斗中显示屏幕虚拟按键。"

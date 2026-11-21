@@ -435,3 +435,6 @@ msgstr "正在更新到 saito {}"
 
 msgid "The update couldn't be downloaded. It's tried again next start."
 msgstr "无法下载更新。下次启动时将重试。"
+
+msgid "Pad"
+msgstr "手柄"

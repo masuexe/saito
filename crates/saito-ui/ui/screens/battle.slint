@@ -917,7 +917,7 @@ component TouchOverlay inherits Rectangle {
     }
 
     PadKey {
-        x: root.margin;
+        x: root.margin + 16 * root.u;
         y: root.foot-y;
         width: 21 * root.u;
         height: 8.5 * root.u;
@@ -1011,7 +1011,7 @@ export component BattleScreen inherits Rectangle {
     PartyStrip {
         x: (corner.visible ? min(root.strip-right, corner.x - 12px) : root.strip-right) - self.width;
         y: root.height - root.picture-bottom >= self.height + 16px || Shell.picture-height <= 0 ? root.height - self.height - 16px : root.picture-bottom - root.foot + max(0px, (root.foot - self.height) / 2);
-        visible: Shell.party.shown && !Theme.phone && !root.overlay;
+        visible: Shell.party.shown && !Theme.phone && !(root.overlay && Shell.landscape-pad);
         party: Shell.party;
     }
 
@@ -1032,8 +1032,74 @@ export component BattleScreen inherits Rectangle {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
 
-    if root.overlay: TouchOverlay {
+    if root.overlay && Shell.landscape-pad: TouchOverlay {
         width: parent.width;
         height: parent.height;
+    }
+
+    // Center-bottom menu trigger remains accessible when the landscape virtual pad is hidden.
+    if root.overlay && !Shell.landscape-pad: Rectangle {
+        property <length> u: parent.height / 100;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 3 * self.u - self.height;
+        width: 21 * self.u;
+        height: 8.5 * self.u;
+        Rectangle {
+            background: off-menu-touch.pressed ? Theme.line : Theme.raised;
+            border-width: 1px;
+            border-color: Theme.line;
+            opacity: off-menu-touch.pressed ? 0.75 : 0.35;
+        }
+
+        Text {
+            text: I18n.upper(@tr("Menu"));
+            color: Theme.text;
+            font-family: Theme.display;
+            font-size: 3.6 * parent.u;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            opacity: 0.8;
+        }
+
+        off-menu-touch := TouchArea {
+            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+            clicked => {
+                Nav.activate("pad.menu", 0);
+            }
+        }
+    }
+
+    // Quick toggle button to show or hide the virtual pad during landscape battles.
+    if root.overlay: Rectangle {
+        property <length> u: parent.height / 100;
+        x: 3 * self.u;
+        y: parent.height - 3 * self.u - self.height;
+        width: 12 * self.u;
+        height: 8.5 * self.u;
+        Rectangle {
+            background: pad-toggle-touch.pressed ? Theme.line : Theme.raised;
+            border-width: 1px;
+            border-color: Shell.landscape-pad ? Theme.cursor : Theme.line;
+            opacity: Shell.landscape-pad ? (pad-toggle-touch.pressed ? 0.75 : 0.4) : (pad-toggle-touch.pressed ? 0.65 : 0.25);
+        }
+
+        Text {
+            text: I18n.upper(@tr("Pad"));
+            color: Shell.landscape-pad ? Theme.text : Theme.muted;
+            font-family: Theme.display;
+            font-size: 3.4 * parent.u;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            opacity: Shell.landscape-pad ? 0.85 : 0.65;
+        }
+
+        pad-toggle-touch := TouchArea {
+            mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+            clicked => {
+                Nav.activate("pad.toggle", 0);
+            }
+        }
     }
 }

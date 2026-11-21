@@ -206,3 +206,9 @@ msgstr "휴대폰으로 보내기"
 
 msgid "Enter the address shown on the phone to send the Legacy Collection over Wi-Fi."
 msgstr "휴대폰에 표시된 주소를 입력하면 Wi-Fi로 어드밴스드 컬렉션을 보낼 수 있습니다."
+
+msgid "Landscape touch pad"
+msgstr "가로 화면 가상 패드"
+
+msgid "Show on-screen controls in landscape."
+msgstr "가로 화면 전투 중에 화면 가상 버튼을 표시합니다."

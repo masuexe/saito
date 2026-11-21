@@ -460,3 +460,6 @@ msgstr "saito {}(으)로 업데이트 중"
 
 msgid "The update couldn't be downloaded. It's tried again next start."
 msgstr "업데이트를 다운로드하지 못했습니다. 다음 실행 시 다시 시도합니다."
+
+msgid "Pad"
+msgstr "패드"

@@ -435,3 +435,6 @@ msgstr "saito {} に更新中"
 
 msgid "The update couldn't be downloaded. It's tried again next start."
 msgstr "更新をダウンロードできませんでした。次回の起動時にもう一度試します。"
+
+msgid "Pad"
+msgstr "パッド"

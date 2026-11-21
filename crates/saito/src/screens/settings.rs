@@ -37,7 +37,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.picture" | "set.fullscreen" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
-        "set.key" | "set.button" | "set.reset" => 4,
+        "set.key" | "set.button" | "set.reset" | "set.landscape-pad" => 4,
         "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
     })
@@ -82,6 +82,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_check_updates(s.check_updates);
+    view.set_landscape_touch_pad(s.landscape_touch_pad);
     view.set_sharp_text(s.sharp_text);
     view.set_sharp_hud(s.sharp_hud);
     view.set_smooth_motion(s.smooth_motion);
@@ -331,6 +332,10 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
+            "set.landscape-pad" => {
+                shell.set_landscape_touch_pad(!shell.settings.landscape_touch_pad);
+                self.show(shell);
+            }
             "set.folder" => show_folder(&crate::paths::data()),
             "set.nearby.send" => self.try_send_nearby(shell),
             "set.about" => self.about.open(shell),
@@ -362,6 +367,10 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.landscape-pad" => {
+                shell.set_landscape_touch_pad(by > 0);
+                self.show(shell);
+            }
             _ => {}
         }
     }
@@ -382,6 +391,10 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
+            "set.landscape-pad" => {
+                shell.set_landscape_touch_pad(choice == 1);
+                self.show(shell);
+            }
             _ => {}
         }
     }
