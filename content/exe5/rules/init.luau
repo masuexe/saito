@@ -521,9 +521,14 @@ local rules: Rules = {
             emotion.navi_tick(side, navi)
             auto_battle.navi_tick(side, navi)
         end,
-        -- A party's switch settled: the DS's Double Attack, at once in battle, by the follow-up while paused
-        -- (./double_attacks).
-        navi_switched = double_attacks.navi_switched,
+        -- A party's switch settled: clear any pending guard state/request and run Double Attack (./double_attacks).
+        navi_switched = function(side: number, navi: Object, member: number, mood: number)
+            local s = navi.state :: NaviState
+            s.guarded, s.diving = false, false
+            navi:set_request("guard", false)
+            party.supports(side).knightman_pending = 0
+            double_attacks.navi_switched(side, navi, member, mood)
+        end,
         -- Chaos Unison's charge released, and taken from idle (./souls/chaos_charge).
         charge_released = chaos_charge.charge_released,
         release_taken = chaos_charge.release_taken,

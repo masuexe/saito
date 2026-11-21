@@ -120,7 +120,7 @@ end
 local function update(me: Object, s: ActionState)
     local ahead = field.panel(me.panel_x + me.facing, me.panel_y)
     local side = if ahead then ahead.alliance else OFF_FIELD_SIDE
-    if side == me.alliance or own(me).diving then
+    if side == me.alliance or own(me).diving or battle.navi(me.alliance).navi == knightman then
         me:set_request("guard", false)
         return finish(me)
     end

@@ -136,7 +136,7 @@ pub(in crate::kinds::player) fn change(b: &mut Battle, r: ObjectRef) {
                 let a = ai_mut(b, r);
                 a.status |= status::SWITCHED;
                 a.status &= !(status::TRAP_ARMED | status::SWITCHING_NAVI | status::HOVERING);
-                a.requests &= !(request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED);
+                a.requests &= !(request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED | request::GUARD);
                 clear_flag2(b, r, 0x4);
                 settled(b, r);
                 exit_attack_state(b, r);
@@ -177,7 +177,7 @@ pub(crate) fn in_battle(b: &mut Battle, r: ObjectRef) {
             if settle(b, r) {
                 let a = ai_mut(b, r);
                 a.status &= !(status::TRAP_ARMED | status::SWITCHING_NAVI | status::HOVERING);
-                a.requests &= !(request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED);
+                a.requests &= !(request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED | request::GUARD);
                 clear_flag2(b, r, 0x104);
                 b.clear_flags(battle_flags::DIMMED);
                 settled(b, r);
@@ -208,7 +208,7 @@ pub(in crate::kinds::player) fn knock_out(b: &mut Battle, r: ObjectRef) {
             if settle(b, r) {
                 let a = ai_mut(b, r);
                 a.status &= !(status::TRAP_ARMED | status::SWITCH_KNOCKOUT | status::SWITCHED | status::HOVERING);
-                a.requests &= !(request::NAVI_SWITCH | request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED);
+                a.requests &= !(request::NAVI_SWITCH | request::ANTI_SWORD_TRIGGERED | request::ANTI_DAMAGE_TRIGGERED | request::GUARD);
                 clear_flag2(b, r, 0x4);
                 exit_attack_state(b, r);
             }

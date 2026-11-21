@@ -19,6 +19,7 @@
 
 local effects = require("../../lib/effects")
 local overlays = require("@exelib/overlays")
+local party = require("../party")
 local regions = require("@exelib/regions")
 local stop_moving = require("../../lib/stop_moving")
 
@@ -111,9 +112,12 @@ local function settle(me: Object, s: State)
     for _, state in { "trap_armed", "switch_knockout", "switched", "hovering" } :: { NaviStateFlag } do
         me:set_navi_state(state, false)
     end
-    for _, r in { "navi_switch", "switch_knockout", "anti_sword_triggered", "anti_damage_triggered", "flinch" } :: { Request } do
+    for _, r in { "navi_switch", "switch_knockout", "anti_sword_triggered", "anti_damage_triggered", "guard", "flinch" } :: { Request } do
         me:set_request(r, false)
     end
+    local ns = me.state :: NaviState
+    ns.guarded, ns.diving = false, false
+    party.supports(me.alliance).knightman_pending = 0
     battle.set_dimmed(false)
     me:exit_attack()
 end

@@ -53,9 +53,11 @@ function revert.update(me: Object, s: State)
     if int.i16(s.timer) > 0 then
         return
     end
-    for _, request in { "buster", "chip", "charged_chip", "back_special", "forced_charged_shot" } do
+    for _, request in { "buster", "chip", "charged_chip", "back_special", "forced_charged_shot", "guard" } do
         me:set_request(request :: Request, false)
     end
+    local ns = me.state :: NaviState
+    ns.guarded, ns.diving = false, false
     me:set_navi_state("reverting_form", false)
     me:exit_attack()
 end

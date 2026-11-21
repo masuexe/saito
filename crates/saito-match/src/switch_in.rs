@@ -327,3 +327,65 @@ fn a_switch_to_a_supporting_member_is_refused() {
     }
     assert_eq!((b.party[0].active, b.party[0].switches), (0, 0), "no switch");
 }
+
+/// KnightMan's guard request and `guarded` state are cleared whenever the active
+/// navi switches (whether into another partner or into KnightMan himself), so
+/// neither the guard action nor the support actor sticks after switching.
+#[test]
+fn knightman_guard_does_not_stick_across_navi_switch() {
+    use saito_battle::actor::request;
+    use saito_battle::input::keys;
+    let content = exe5_content();
+    let guard_actor = content.defs.kind_by_key("knightman/guard").expect("KnightMan's guard");
+
+    // 1. Move MegaMan to his area's front edge, trigger `guard.action`, then switch to ProtoMan while guarded.
+    let mut b = fighting(&content, &["knightman", "protoman"]);
+    for _ in 0..16 {
+        b.tick(&[PlayerTick::buttons(keys::RIGHT), Default::default()], Default::default());
+    }
+    {
+        let r = b.player(0).unwrap();
+        let a = b.objects.get(r).actor.unwrap();
+        b.actors.get_mut(a).requests |= request::GUARD;
+    }
+    for _ in 0..10 {
+        b.tick(&Default::default(), Default::default());
+    }
+    assert!(b.objects.in_order().any(|q| b.objects.get(q).kind == guard_actor), "guard actor spawned");
+    switch_to(&mut b, 2);
+    // Allow warp-out animation of the dismissed support actor to complete.
+    for _ in 0..30 {
+        b.tick(&Default::default(), Default::default());
+    }
+    let r = b.player(0).unwrap();
+    let a = b.objects.get(r).actor.unwrap();
+    assert_eq!(b.actors.get(a).requests & request::GUARD, 0, "guard request cleared after switch");
+    assert!(!b.objects.in_order().any(|q| b.objects.get(q).kind == guard_actor), "guard actor warped out after switch");
+    // ProtoMan can move freely (not trapped in guard).
+    let y_before = b.collision.get(b.objects.get(r).collision.unwrap()).panel.y;
+    let target_key = if y_before == 0 { keys::DOWN } else { keys::UP };
+    for _ in 0..16 {
+        b.tick(&[PlayerTick::buttons(target_key), Default::default()], Default::default());
+    }
+    let y_after = b.collision.get(b.objects.get(b.player(0).unwrap()).collision.unwrap()).panel.y;
+    assert_ne!(y_after, y_before, "switched navi can move after guard interrupted");
+
+    // 2. Pending `request::GUARD` at switch time into KnightMan himself must not stick.
+    let mut b = fighting(&content, &["knightman"]);
+    {
+        let r = b.player(0).unwrap();
+        let a = b.objects.get(r).actor.unwrap();
+        b.actors.get_mut(a).requests |= request::GUARD;
+    }
+    b.stats[0].mood = 0x80;
+    let ask = PlayerTick { switch_to: Some(1), ..Default::default() };
+    b.tick(&[ask, Default::default()], Default::default());
+    for _ in 0..80 {
+        b.tick(&Default::default(), Default::default());
+    }
+    assert_eq!(b.party[0].active, 1, "switched to KnightMan");
+    let r = b.player(0).unwrap();
+    let a = b.objects.get(r).actor.unwrap();
+    assert_eq!(b.actors.get(a).requests & request::GUARD, 0, "guard request cleared on KnightMan switch");
+    assert!(!b.objects.in_order().any(|q| b.objects.get(q).kind == guard_actor), "KnightMan never spawns a self-guard actor");
+}
