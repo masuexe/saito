@@ -330,6 +330,8 @@ pub struct Play {
     spectate_error: String,
     /// Active spectator watch session (when `stage == Stage::Spectating`).
     watching: Option<WatchSession>,
+    /// Selected game before spectating started, restored on leave if still loaded.
+    watch_return_game: Option<String>,
 }
 
 impl Default for Play {
@@ -368,6 +370,7 @@ impl Default for Play {
             spectate_code: String::new(),
             spectate_error: String::new(),
             watching: None,
+            watch_return_game: None,
         }
     }
 }
@@ -425,7 +428,7 @@ impl Play {
     fn view(&self) -> (&'static str, &'static str) {
         match (self.part(), &self.stage) {
             (PlayPart::Builds, _) => ("play", "builds"),
-            (PlayPart::Spectate, _) => ("play", "spectate"),
+            (PlayPart::Spectate, _) => ("play.spectate", "watch.leave"),
             (_, Stage::Waiting) => ("play.waiting", "wait.copy"),
             _ => ("play.lobby", "lobby.ready"),
         }
@@ -590,6 +593,7 @@ impl Play {
         if let Some(mut watch) = self.watching.take() {
             watch.close();
         }
+        self.watch_return_game = None;
         self.spectate_dir.close();
         shell.ui().global::<PlayView>().set_spectators(0);
         shell.ui().global::<PlayView>().set_spectate_browser(false);
@@ -1695,6 +1699,9 @@ impl Screen for Play {
         view.set_changing(self.changing);
         self.show_live(shell);
         self.show_match(shell);
+        if matches!(self.stage, Stage::Spectating) {
+            self.sync_watch_view(shell);
+        }
     }
 
     fn hide(&mut self, shell: &mut Shell) {
@@ -1771,7 +1778,7 @@ impl Screen for Play {
             "spectate" => self.open_spectate_browser(shell),
             "spectate.join" => {
                 let code = self.spectate_code.clone();
-                self.start_watching(shell, &code);
+                self.start_watching(shell, &code, None);
             }
             "spectate.refresh" => {
                 self.spectate_dir.refresh();
@@ -1780,7 +1787,8 @@ impl Screen for Play {
             "spectate.room" => {
                 if let Some(room) = self.spectate_dir.rooms().get(index.max(0) as usize) {
                     let code = room.code.clone();
-                    self.start_watching(shell, &code);
+                    let game = room.meta.game.clone();
+                    self.start_watching(shell, &code, Some(game.as_str()));
                 }
             }
             "spectate.close" => self.close_spectate_browser(shell),
@@ -2664,7 +2672,7 @@ impl Play {
         view.set_spectate_rooms(ModelRc::new(VecModel::from(entries)));
     }
 
-    fn start_watching(&mut self, shell: &mut Shell, raw_code: &str) {
+    fn start_watching(&mut self, shell: &mut Shell, raw_code: &str, known_game: Option<&str>) {
         let Some(server) = Play::net(shell).server else {
             self.spectate_error = "Signaling server is not configured.".into();
             self.show_spectate_browser(shell);
@@ -2674,9 +2682,16 @@ impl Play {
         match WatchSession::connect(&server, raw_code, &peer) {
             Ok(watch) => {
                 self.close_spectate_browser(shell);
+                self.watch_return_game = shell.game().map(str::to_string);
                 self.watching = Some(watch);
                 self.stage = Stage::Spectating;
                 shell.stay_awake = true;
+                if let Some(game) = known_game.filter(|g| !g.is_empty())
+                    && shell.games.ready(game).is_none()
+                    && shell.games.playable().iter().any(|g| g == game)
+                {
+                    shell.select_game(game);
+                }
                 self.sync_watch_view(shell);
                 self.show(shell);
             }
@@ -2753,6 +2768,12 @@ impl Play {
         if let Some(msg) = notice {
             self.notice = msg;
         }
+        if let Some(prev) = self.watch_return_game.take()
+            && shell.game() != Some(prev.as_str())
+            && shell.games.ready(&prev).is_some()
+        {
+            shell.select_game(&prev);
+        }
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
         view.set_watch_in_battle(false);
@@ -2810,6 +2831,14 @@ mod tests {
         // (What the field keeps: no spaces, 80 characters at most.)
         assert_eq!(address_typed("192.168.1.20 :47474\n"), "192.168.1.20:47474");
         assert_eq!(address_typed(&"a".repeat(100)).len(), 80);
+    }
+
+    #[test]
+    fn spectating_view_focuses_leave_control() {
+        let mut play = Play::default();
+        play.stage = Stage::Spectating;
+        assert_eq!(play.part(), PlayPart::Spectate);
+        assert_eq!(play.view(), ("play.spectate", "watch.leave"));
     }
 }
 

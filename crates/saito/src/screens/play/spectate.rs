@@ -330,12 +330,18 @@ impl WatchSession {
             match self.watcher.poll(now) {
                 Ok(None) => break,
                 Ok(Some(WatcherEvent::Snapshot { room, set })) => {
+                    if self.viewer.is_none() && !room.meta.game.is_empty() {
+                        self.ensure_game(shell, &room.meta.game);
+                    }
                     self.room = Some(room);
                     if let Some(snap) = set {
                         self.begin_set_snapshot(shell, snap);
                     }
                 }
                 Ok(Some(WatcherEvent::RoomUpdate(room))) => {
+                    if self.viewer.is_none() && !room.meta.game.is_empty() {
+                        self.ensure_game(shell, &room.meta.game);
+                    }
                     self.room = Some(room);
                 }
                 Ok(Some(WatcherEvent::Spectators(count))) => {
@@ -505,18 +511,27 @@ impl WatchSession {
         }
     }
 
+    fn ensure_game(&mut self, shell: &mut Shell, game: &str) -> bool {
+        if shell.games.ready(game).is_some() {
+            return true;
+        }
+        if shell.games.playable().iter().any(|g| g == game) {
+            shell.select_game(game);
+        } else {
+            self.problem = Some(format!("game '{game}' is not installed"));
+        }
+        false
+    }
+
     fn try_open_viewer(&mut self, shell: &mut Shell, set_id: u32, header: Header) -> bool {
         let game = header.head.game.clone();
-        let Some(ready) = shell.games.ready(&game) else {
-            if shell.games.playable().iter().any(|g| g == &game) {
-                // Ask shell to load the game pack and wait for it.
-                shell.select_game(&game);
+        if !self.ensure_game(shell, &game) {
+            if self.problem.is_none() {
                 self.pending_header = Some((set_id, header));
-            } else {
-                self.problem = Some(format!("game '{game}' is not installed"));
             }
             return false;
-        };
+        }
+        let Some(ready) = shell.games.ready(&game) else { return false };
         let lang = shell.i18n.code;
         let lang_loaded = ready.has_language(lang);
         if !lang_loaded {
