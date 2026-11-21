@@ -1009,20 +1009,22 @@ export component BattleScreen inherits Rectangle {
             }
         }
         moved => {
-            self.send(2, 0);
+            if !Theme.phone-app || self.pressed {
+                self.send(2, 0);
+            }
         }
         changed mouse-x => {
-            if self.has-hover && !self.pressed {
+            if !Theme.phone-app && self.has-hover && !self.pressed {
                 self.send(2, 0);
             }
         }
         changed mouse-y => {
-            if self.has-hover && !self.pressed {
+            if !Theme.phone-app && self.has-hover && !self.pressed {
                 self.send(2, 0);
             }
         }
         changed has-hover => {
-            if !self.has-hover {
+            if !Theme.phone-app && !self.has-hover {
                 self.send(4, 0);
             }
         }

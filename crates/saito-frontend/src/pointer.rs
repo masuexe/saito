@@ -89,11 +89,13 @@ impl ScreenPointer {
         };
         match (e.kind, e.button) {
             // (Over its target again, where the mouse already was: a finger
-            // lifted since, a key moved the cursor.)
+            // lifted since, a key moved the cursor. Only targets that hold a
+            // cursor; a tap on the form tab or exit label never puts the
+            // cursor away on a touch screen that doesn't hover.)
             (PointerKind::Down, PointerButton::Primary) => {
                 self.press = Some(Press { target: under, held: 0, off: false, described: false });
                 self.over = under;
-                under.map(Gesture::Over)
+                under.filter(|t| matches!(t, Target::Slot(_) | Target::Pick(_) | Target::Form(_))).map(Gesture::Over)
             }
             (PointerKind::Down, PointerButton::Secondary) => under.map(Gesture::Describe),
             (PointerKind::Down, PointerButton::Other) => None,
@@ -252,5 +254,19 @@ mod tests {
         s.event(p(PointerKind::Down, 10.0, 10.0), at);
         s.event(p(PointerKind::Cancel, 10.0, 10.0), at);
         assert_eq!(s.event(p(PointerKind::Up, 10.0, 10.0), at), None);
+    }
+
+    /// Tapping the form list's tab or exit label (without hovering first, as
+    /// on a touch screen) does not emit `Over` on press (which would put the
+    /// cursor away and blank the chip window), while hovering with a mouse
+    /// still does.
+    #[test]
+    fn tapping_form_tab_does_not_put_cursor_away() {
+        let tab = |_: f32, _: f32| Some(Target::FormTab);
+        let mut s = ScreenPointer::default();
+        assert_eq!(s.event(p(PointerKind::Down, 10.0, 10.0), tab), None);
+        assert_eq!(s.event(p(PointerKind::Up, 10.0, 10.0), tab), Some(Gesture::Click(Some(Target::FormTab))));
+        let mut hovered = ScreenPointer::default();
+        assert_eq!(hovered.event(p(PointerKind::Moved, 10.0, 10.0), tab), Some(Gesture::Over(Target::FormTab)));
     }
 }
