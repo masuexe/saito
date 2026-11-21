@@ -332,7 +332,7 @@ export global Shell {
     // The custom screen by pointer (the battle's picture takes it while `screen-pointer`): each event of the mouse's
     // or a finger's over the picture, at its place in the picture (logical pixels from its top left): its kind (0
     // down, 1 up, 2 moved, 3 cancelled, 4 left the picture) and its button (0 the primary, a finger's, 1 the
-    // secondary, 2 another).
+    // secondary, 2 middle, 3 another).
     in property <bool> screen-pointer;
     callback picture-pointer(int, int, length, length);
     // The mouse's cursor is a hand over the battle's picture where a click takes what is under it (a target of

@@ -1005,7 +1005,7 @@ export component BattleScreen inherits Rectangle {
             if e.kind == PointerEventKind.down || e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
                 self.send(
                     e.kind == PointerEventKind.down ? 0 : e.kind == PointerEventKind.up ? 1 : 3,
-                    e.button == PointerEventButton.left ? 0 : e.button == PointerEventButton.right ? 1 : 2);
+                    e.button == PointerEventButton.left ? 0 : e.button == PointerEventButton.right ? 1 : e.button == PointerEventButton.middle ? 2 : 3);
             }
         }
         moved => {

@@ -540,6 +540,7 @@ impl Shell {
         let button = match button {
             0 => PointerButton::Primary,
             1 => PointerButton::Secondary,
+            2 => PointerButton::Middle,
             _ => PointerButton::Other,
         };
         let (x, y) = (x / width * size.width as f32, y / height * size.height as f32);

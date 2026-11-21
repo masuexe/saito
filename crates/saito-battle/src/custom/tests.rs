@@ -54,6 +54,7 @@ fn folder(chips: &[(ChipId, u8)]) -> BattleFolder {
 struct TestButtons {
     scrap: bool,
     redeal: bool,
+    form_offer: bool,
 }
 
 impl Extras for TestButtons {
@@ -63,20 +64,32 @@ impl Extras for TestButtons {
 
     fn buttons(&mut self, _: &Screen) -> Vec<ButtonPlace> {
         let place = |b| ButtonPlace { button: ButtonHandle(b), slot: 8, cells: 2, uses: 1, right: Some(11), left: Some(7), chip: None };
-        if self.scrap {
+        let mut out = if self.scrap {
             vec![place(0)]
         } else if self.redeal {
             vec![place(1)]
         } else {
             Vec::new()
+        };
+        if self.form_offer {
+            out.push(ButtonPlace { button: ButtonHandle(2), slot: SPECIAL_SLOT, cells: 1, uses: 1, right: None, left: None, chip: None });
         }
+        out
     }
 
     fn button_state(&mut self, screen: &Screen, b: ButtonHandle) -> Option<SlotState> {
-        (b.0 == 0).then(|| if screen.last_pick_is_chip() { SlotState::Selectable } else { SlotState::Unavailable })
+        match b.0 {
+            0 => Some(if screen.last_pick_is_chip() { SlotState::Selectable } else { SlotState::Unavailable }),
+            2 => Some(if screen.last_pick_is_chip() { SlotState::Selectable } else { SlotState::Unavailable }),
+            _ => None,
+        }
     }
 
-    fn button_taken_back(&mut self, _: &mut Screen, _: ButtonHandle, _: u8) {}
+    fn button_taken_back(&mut self, screen: &mut Screen, b: ButtonHandle, _place: u8) {
+        if b.0 == 2 {
+            screen.slots[SPECIAL_SLOT as usize].state = SlotState::Selectable;
+        }
+    }
 
     fn dealing(&mut self, _: &mut Screen, _: &mut BattleFolder, _: &mut crate::console::Console) {}
     fn opened(&mut self, _: &mut Screen) {}
@@ -91,7 +104,24 @@ impl Extras for TestButtons {
 
     fn chip_taken_back(&mut self, _: &mut Screen, _: ChipHandle, _: u8) {}
 
-    fn window_update(&mut self, _: &mut Screen, _: &mut BattleFolder, _: &mut Console, _: crate::content::WindowHandle) -> bool {
+    fn window_update(&mut self, screen: &mut Screen, _folder: &mut BattleFolder, _: &mut Console, w: crate::content::WindowHandle) -> bool {
+        if w.0 == 2 {
+            if matches!(screen.phase, Phase::Window { tick, .. } if tick < 3) {
+                return true;
+            }
+            if let Some(&chip) = screen.selection().last() {
+                let n = screen.selected as usize;
+                screen.selection[..n].rotate_right(1);
+                screen.selection[0] = SPECIAL_SLOT;
+                screen.trade = Some(super::screen::Trade { button: SPECIAL_SLOT, chip });
+                screen.slots[SPECIAL_SLOT as usize].state = SlotState::Selected;
+                for s in 0..10usize {
+                    if matches!(screen.slots[s].kind, SlotKind::Chip { .. } | SlotKind::Offered(_)) && screen.slots[s].state != SlotState::Selected {
+                        screen.slots[s].state = SlotState::Selectable;
+                    }
+                }
+            }
+        }
         false
     }
 
@@ -111,6 +141,9 @@ impl Extras for TestButtons {
             screen.refuse();
         } else if b.0 == 0 {
             screen.start_sacrifice(slot);
+        } else if b.0 == 2 {
+            screen.play_named("pick");
+            screen.open_window(crate::content::WindowHandle(2), 0);
         } else {
             screen.play_named("redeal");
             screen.start_redeal(slot);
@@ -145,6 +178,8 @@ struct Player {
     run_key: bool,
     /// The round's custom screen time limit, in ticks (none: a console's).
     time_limit: Option<u16>,
+    form_list: Option<crate::rules::FormList>,
+    form_offer: super::layer::FormOfferInfo,
     tick: u32,
 }
 
@@ -161,6 +196,8 @@ impl Player {
             chip_shuffle: false,
             run_key: true,
             time_limit: None,
+            form_list: None,
+            form_offer: super::layer::FormOfferInfo::default(),
             tick: 0,
         }
     }
@@ -177,6 +214,7 @@ impl Player {
             // `scrap_button`.)
             scrap: megaman && matches!(self.stats.form.0, 0x0A | 0x16),
             redeal: megaman && self.chip_shuffle,
+            form_offer: megaman && self.form_offer.button_slot == Some(SPECIAL_SLOT),
         }
     }
 
@@ -186,7 +224,7 @@ impl Player {
         let ctx = context_of(&self.lib, self.stats, self.turn, self.run_key, self.time_limit, self.tick);
         self.side.open_with(&ctx, &mut self.console, &mut buttons);
         // (The layer sees the screen as the opening tick left it.)
-        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit).as_ref());
+        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit, self.form_list, self.form_offer).as_ref());
     }
 
     /// One tick with these buttons held, through the layer.
@@ -200,10 +238,10 @@ impl Player {
         self.tick += 1;
         let mut buttons = self.buttons();
         let ctx = context_of(&self.lib, self.stats, self.turn, self.run_key, self.time_limit, self.tick);
-        let input = self.layer.input_on(input, presented(&self.side, &ctx, self.turn, self.time_limit).as_ref());
+        let input = self.layer.input_on(input, presented(&self.side, &ctx, self.turn, self.time_limit, self.form_list, self.form_offer).as_ref());
         let lib = &self.lib;
         let r = self.side.tick_with(&ctx, input.choice, &mut self.console, |id| lib.chip(id).damage, &mut buttons);
-        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit).as_ref());
+        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit, self.form_list, self.form_offer).as_ref());
         (r, input)
     }
 
@@ -214,10 +252,10 @@ impl Player {
         self.tick += 1;
         let mut buttons = self.buttons();
         let ctx = context_of(&self.lib, self.stats, self.turn, self.run_key, self.time_limit, self.tick);
-        self.layer.input_on(recorded, presented(&self.side, &ctx, self.turn, self.time_limit).as_ref());
+        self.layer.input_on(recorded, presented(&self.side, &ctx, self.turn, self.time_limit, self.form_list, self.form_offer).as_ref());
         let lib = &self.lib;
         self.side.tick_with(&ctx, recorded.choice, &mut self.console, |id| lib.chip(id).damage, &mut buttons);
-        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit).as_ref());
+        self.layer.follow_on(presented(&self.side, &ctx, self.turn, self.time_limit, self.form_list, self.form_offer).as_ref());
     }
 
     /// What the player sees.
@@ -289,14 +327,22 @@ fn context_of(lib: &TestLibrary, stats: NaviStats, turn: u8, run_key: bool, time
 }
 
 /// The side's screen as its layer reads it.
-fn presented<'a>(side: &'a Side, ctx: &'a Context, turn: u8, time_limit: Option<u16>) -> Option<Presented<'a>> {
+fn presented<'a>(
+    side: &'a Side,
+    ctx: &'a Context,
+    turn: u8,
+    time_limit: Option<u16>,
+    form_list: Option<crate::rules::FormList>,
+    form_offer: super::layer::FormOfferInfo,
+) -> Option<Presented<'a>> {
     Some(Presented {
         screen: side.screen.as_ref()?,
         folder: &side.folder,
         view: side.view(ctx, side.folder.regular_pending),
         turn,
         time_left: side.time_left(time_limit),
-        form_list: None,
+        form_list,
+        form_offer,
     })
 }
 
@@ -1843,4 +1889,78 @@ fn switching_party_member_clears_picked_column_and_selection() {
     assert_eq!(s.look.column_kept, None);
     assert_eq!(s.slots[0].state, SlotState::Selectable);
     assert_eq!(s.slots[1].state, SlotState::Selectable);
+}
+
+#[test]
+fn blank_right_click_takes_back_and_closes_description() {
+    use super::layer::{Gesture, Target};
+    let mut p = Player::new(&[(SHOT, 0), (SHOT, 1), (WAVE, 0)]);
+    p.open();
+    p.wait(10);
+    p.step(0);
+    p.layer.point(Gesture::Click(Some(Target::Slot(0))));
+    p.step(0);
+    p.layer.point(Gesture::Click(Some(Target::Slot(1))));
+    p.step(0);
+    assert_eq!(p.screen().selection(), [0, 1]);
+
+    // Blank right-click emits TakeBack.
+    p.layer.point(Gesture::TakeBack);
+    let (_, given) = p.step_input(PlayerTick::buttons(0));
+    assert_eq!(given.choice, Some(ScreenChoice::TakeBack));
+    assert_eq!(p.screen().selection(), [0]);
+
+    // While Description is open, blank right-click closes it instead of taking back picks.
+    p.layer.point(Gesture::Describe(Target::Slot(2)));
+    p.step(0);
+    assert_eq!(p.up(), Up::Description);
+    let closed = (1..200).find(|_| {
+        p.layer.point(Gesture::TakeBack);
+        p.step(0);
+        p.up() != Up::Description
+    });
+    assert!(closed.is_some());
+    p.step(0);
+    assert_eq!(p.screen().selection(), [0]);
+}
+
+#[test]
+fn quick_unite_macro_runs_greyed_and_non_last_pick_with_time_left_guard() {
+    use super::layer::{FormOfferInfo, Gesture, Target};
+    let mut p = Player::new(&[(SHOT, 0), (WAVE, 1), (SHOT, 1), (SHOT, 2), (WAVE, 2)]);
+    p.form_offer = FormOfferInfo {
+        supported: true,
+        button_slot: Some(SPECIAL_SLOT),
+        ready_now: false,
+        eligible_slots: 0b0001_1111,
+    };
+    p.open();
+    p.wait(10);
+    p.step(0);
+
+    // Pick SHOT A (slot 0); slot 1 (WAVE B) is greyed out (unavailable), slot 2 (SHOT B) is selectable.
+    choose(&mut p, ScreenChoice::Pick(0));
+    assert_eq!(p.screen().slots[1].state, SlotState::Unavailable);
+
+    // Middle-click greyed slot 1: unpicks slot 0, picks slot 1, presses SPECIAL_SLOT, waits for window, restores slot 0.
+    p.layer.point(Gesture::QuickUnite(Some(Target::Slot(1))));
+    for _ in 0..20 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [SPECIAL_SLOT, 0]);
+    assert_eq!(p.screen().trade, Some(super::screen::Trade { button: SPECIAL_SLOT, chip: 1 }));
+    assert_eq!(p.screen().slots[SPECIAL_SLOT as usize].state, SlotState::Selected);
+
+    // Undo button and re-test non-last pick while time_left is below macro budget -> Refused, keeps picks.
+    choose(&mut p, ScreenChoice::Unpick(0));
+    choose(&mut p, ScreenChoice::Unpick(0));
+    choose(&mut p, ScreenChoice::Pick(0));
+    choose(&mut p, ScreenChoice::Pick(2));
+    assert_eq!(p.screen().selection(), [0, 2]);
+    p.time_limit = Some((p.side.clock + 20) as u16);
+    p.layer.point(Gesture::QuickUnite(Some(Target::Pick(0))));
+    let (_, given) = p.step_input(PlayerTick::buttons(0));
+    assert_eq!(given.choice, None);
+    assert_eq!(p.sounds(), [look::ScreenSound::Refused]);
+    assert_eq!(p.screen().selection(), [0, 2]);
 }

@@ -364,10 +364,22 @@ impl Player {
         if self.session.fresh {
             self.switch = None;
             self.choice = None;
-            // (A finger held long on the custom screen describes what it is on.)
+            // (A finger held long on the custom screen describes what it is on, and a stationary hovering
+            // mouse picks up newly opened targets like EXE6's Cross list.)
             let side = self.session.battle.setup.local_side;
-            if let (Some(g), Some(layer)) = (self.pointer.tick(), self.session.driver.layer_mut(side)) {
-                layer.point(g);
+            let layer_present = self.session.driver.layers()[side as usize & 1].is_some();
+            if layer_present {
+                let renderer = &self.renderer;
+                if let Some(g) = self.pointer.tick() {
+                    if let Some(layer) = self.session.driver.layer_mut(side) {
+                        layer.point(g);
+                    }
+                }
+                if let Some(g) = self.pointer.sync_hover(|x, y| renderer.target_at(side, x.floor() as i32, y.floor() as i32)) {
+                    if let Some(layer) = self.session.driver.layer_mut(side) {
+                        layer.point(g);
+                    }
+                }
             }
         }
         if self.session.new_round {

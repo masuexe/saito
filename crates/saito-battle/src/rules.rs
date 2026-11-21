@@ -390,6 +390,147 @@ impl Battle {
         Some(Offer { form, alternate: f.alternate.is_some_and(|a| flag(state.get_at(schema.place_of(a)))) })
     }
 
+    /// Read-only Soul/Double/Chaos Unison eligibility for side `side`'s
+    /// custom screen (`layer::FormOfferInfo`), evaluated directly against the
+    /// game's rules setup/state without mutating Luau or simulation state.
+    pub fn form_offer_info(&self, side: u8) -> crate::custom::layer::FormOfferInfo {
+        use crate::content::{ButtonView, ChipFlags, InvalidPicks};
+        use crate::custom::layer::FormOfferInfo;
+        use crate::custom::screen::{ButtonCell, SLOTS, SlotKind, SlotState, checked, is_invalid};
+        use saito_content_api::Registry;
+
+        let Some(rules) = self.content.defs.rules() else {
+            return FormOfferInfo::default();
+        };
+        let supported = rules.buttons.iter().any(|&b| self.content.defs.button(b).view == Some(ButtonView::FormOffer));
+        if !supported {
+            return FormOfferInfo::default();
+        }
+        let i = side as usize & 1;
+        let Some(screen) = self.custom.sides[i].screen.as_ref() else {
+            return FormOfferInfo { supported: true, ..FormOfferInfo::default() };
+        };
+        let button_slot = (0..SLOTS as u8).find(|&s| {
+            matches!(
+                screen.slots[s as usize].kind,
+                SlotKind::Button { button, cell: ButtonCell::Only | ButtonCell::Left }
+                    if self.content.defs.button(button).view == Some(ButtonView::FormOffer)
+            )
+        });
+        let Some(btn_slot) = button_slot else {
+            return FormOfferInfo { supported: true, button_slot: None, ready_now: false, eligible_slots: 0 };
+        };
+        if screen.slots[btn_slot as usize].state == SlotState::Selected {
+            return FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now: false, eligible_slots: 0 };
+        }
+        let ready_now = screen.slots[btn_slot as usize].state == SlotState::Selectable;
+        let (Some((setup_schema, setup_block)), Some((state_schema, state_block))) = (self.rules_setup(side), self.rules_state(side)) else {
+            return FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now, eligible_slots: 0 };
+        };
+        if let Some(idx) = state_schema.index_of("soul_turns")
+            && matches!(state_block.get(state_schema, idx), FieldValue::U8(0xFF))
+        {
+            return FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now: false, eligible_slots: 0 };
+        }
+        let is_exe5 = state_schema.index_of("offer_chaos").is_some();
+        let owned = |form: FormHandle| -> bool {
+            let Some(idx) = setup_schema.index_of("souls") else { return false };
+            let place = setup_schema.place(idx);
+            let len = setup_block.len_at(place).unwrap_or(12);
+            (0..len).any(|k| {
+                place.elem(k).is_some_and(|p| {
+                    matches!(setup_block.get_at(p), FieldValue::Ref(Some((Registry::Form, h))) if h == form.0)
+                })
+            })
+        };
+        let chaos_unison = setup_schema
+            .index_of("chaos_unison")
+            .is_some_and(|idx| matches!(setup_block.get(setup_schema, idx), FieldValue::Bool(true)));
+        let screen_navi = screen
+            .member
+            .and_then(|m| self.party[i].member(m))
+            .map_or(self.stats[i].navi, |st| st.navi);
+        let Some(navi_forms) = self.content.navi(screen_navi).forms.as_ref() else {
+            return FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now, eligible_slots: 0 };
+        };
+        let souls_used_idx = state_schema.index_of("souls_used");
+        let is_used = |form: FormHandle, place_idx: usize, chaos: bool| -> bool {
+            let Some(idx) = souls_used_idx else { return false };
+            match state_block.get(state_schema, idx) {
+                FieldValue::U32(mask) => {
+                    let shift = if chaos { 16 + place_idx + 1 } else { place_idx + 1 };
+                    shift < 32 && (mask & (1u32 << shift)) != 0
+                }
+                _ => {
+                    let place = state_schema.place(idx);
+                    let len = state_block.len_at(place).unwrap_or(0);
+                    (0..len).any(|k| {
+                        place.elem(k).is_some_and(|p| {
+                            matches!(state_block.get_at(p), FieldValue::Ref(Some((Registry::Form, h))) if h == form.0)
+                        })
+                    })
+                }
+            }
+        };
+        let soul_family = |form: FormHandle| -> Option<&str> {
+            let key = &self.content.defs.forms.get(form.0 as usize)?.key;
+            self.content.defs.extension(Registry::Form, key, "soul")?.field("family").str()
+        };
+        let folder = &self.custom.sides[i].folder;
+        let view = self.screen_view(side);
+        let families = &self.content.rules().chip_families;
+        let mut eligible_slots: u16 = 0;
+        for s in 0..10u8 {
+            if screen.hold.is_some_and(|h| h.chip == s) {
+                continue;
+            }
+            match screen.slots[s as usize].kind {
+                SlotKind::Chip { regular, .. } => {
+                    if regular {
+                        continue;
+                    }
+                }
+                SlotKind::Offered(_) if !is_exe5 => {}
+                _ => continue,
+            }
+            if is_exe5 && screen.slots[s as usize].attached.is_some() {
+                continue;
+            }
+            let Some(raw) = screen.chip_in(s, folder) else { continue };
+            if view.library.layout().invalid_picks == InvalidPicks::Refused && is_invalid(raw, &view) {
+                continue;
+            }
+            let chip = checked(raw, &view);
+            let chip_data = self.content.chip(chip.id);
+            let chaos = is_exe5 && chip_data.flags.has(ChipFlags::DARK);
+            if chaos && !chaos_unison {
+                continue;
+            }
+            let Some(fam_name) = families.name(chip_data.family) else { continue };
+            let matched = if is_exe5 {
+                navi_forms
+                    .listed("souls")
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find(|&(_, f)| soul_family(f) == Some(fam_name))
+            } else {
+                navi_forms
+                    .lists
+                    .iter()
+                    .flat_map(|(_, l)| l.iter().copied())
+                    .enumerate()
+                    .find(|&(_, f)| soul_family(f) == Some(fam_name))
+            };
+            let Some((place_idx, form)) = matched else { continue };
+            if !owned(form) || is_used(form, place_idx, chaos) {
+                continue;
+            }
+            eligible_slots |= 1 << s;
+        }
+        FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now, eligible_slots }
+    }
+
     /// The turns left in the form side `side`'s button that offers a form
     /// gave (the rules' `turns`), which the emotion window counts. Turns
     /// counted up toward a limit (`turn_limit`: EXE4's, 0x08016A20) are its

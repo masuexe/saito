@@ -32,7 +32,7 @@
 use super::chatbox::{Chatbox, Script};
 use super::folder::BattleFolder;
 use super::look::{ChipWindow, Draw, Hover, ScreenCall, ScreenSound, Shown, WindowLook};
-use super::screen::{OK_SLOT, Phase, PlayerView, Screen, SlotKind, checked};
+use super::screen::{MAX_SELECTIONS, OK_SLOT, Phase, PlayerView, Screen, SlotKind, SlotState, checked};
 use crate::battle::{Battle, TickEvents, mode};
 use crate::rules::FormList;
 use crate::content::{CustomScreenLayout, FormListRules, HoverRuns, ScreenKey, SlotMoves};
@@ -40,10 +40,25 @@ use crate::input::{Joypad, PlayerTick, ScreenChoice, keys};
 use crate::sound::SoundCue;
 use saito_content_api::{ChipHandle, FormHandle};
 
+/// Read-only availability of EXE4 Double Soul / EXE5 Soul & Chaos Unison
+/// on the presented custom screen, evaluated without mutating rules state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FormOfferInfo {
+    /// True in games whose rules declare a `ButtonView::FormOffer` button (EXE4/EXE5).
+    pub supported: bool,
+    /// Canonical slot of the visible `FormOffer` button (`None` if hidden by Evil/Worried, no souls, etc.).
+    pub button_slot: Option<u8>,
+    /// True when `button_slot` is present and currently `SlotState::Selectable`.
+    pub ready_now: bool,
+    /// Bitmask of chip slots `0..10` eligible to unite if set as the last pick (including greyed-out chips).
+    pub eligible_slots: u16,
+}
+
 /// What a player's layer reads of their custom screen as it is presented
 /// (`Battle::presented`): the screen and the folder it deals from, what it
 /// reads of its player, its number in the round, the ticks left of the
-/// round's time limit while it counts, and the rules' form list.
+/// round's time limit while it counts, the rules' form list, and any
+/// read-only Soul/Chaos Unison eligibility.
 #[derive(Clone, Copy)]
 pub struct Presented<'a> {
     pub screen: &'a Screen,
@@ -53,6 +68,7 @@ pub struct Presented<'a> {
     pub turn: u8,
     pub time_left: Option<u16>,
     pub form_list: Option<FormList>,
+    pub form_offer: FormOfferInfo,
 }
 
 impl Battle {
@@ -70,6 +86,7 @@ impl Battle {
             turn: self.round.turn,
             time_left: self.custom_time_left(side),
             form_list: self.form_list(side),
+            form_offer: self.form_offer_info(side),
         })
     }
 }
@@ -147,10 +164,29 @@ pub enum Gesture {
     Click(Option<Target>),
     /// Right-click, a long press: R on the target.
     Describe(Target),
+    /// Right-click on blank space: B (`TakeBack`) / dismiss overlay.
+    TakeBack,
+    /// Middle-click: EXE4/EXE5 quick Soul/Chaos Unison on target (or current `last_pick`).
+    QuickUnite(Option<Target>),
 }
 
 /// The most gestures a layer keeps for its next ticks.
 const GESTURES: usize = 4;
+
+/// Maximum queued steps for client-side multi-tick macros (Copy-compatible).
+const MAX_MACROS: usize = 24;
+/// Conservative tick budget covering Soul/Chaos Unison and MeddySoul animations.
+const UNISON_ANIM_TICKS: usize = 64;
+/// Extra safety margin for netplay input delay when checking `time_left`.
+const NETPLAY_MARGIN: usize = 16;
+/// Maximum Choosing ticks to wait for a button window (`offer_flight` / `chip_flight`) to mark `Selected`.
+const BUTTON_WAIT_TIMEOUT: u8 = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacroStep {
+    Choice(ScreenChoice),
+    WaitButtonSelected { button_slot: u8, timeout: u8 },
+}
 
 /// The state the original's screen was in, of the battle's and the layer's
 /// together.
@@ -266,6 +302,13 @@ pub struct Layer {
     gestures: [Option<Gesture>; GESTURES],
     /// The gesture this tick takes, until what it is for takes it.
     gesture: Option<Gesture>,
+    /// Whether the form list was opened by mouse hover on `FormTab`.
+    list_opened_by_hover: bool,
+    /// Whether the mouse pointer is currently on the form list (`FormTab`, `Form(_)`, `FormExit`).
+    pointer_on_list: bool,
+    /// Fixed-size client macro queue (must remain `Copy`).
+    macros: [Option<MacroStep>; MAX_MACROS],
+    macro_len: u8,
 }
 
 impl Layer {
@@ -295,7 +338,63 @@ impl Layer {
             plan: Plan::default(),
             gestures: [None; GESTURES],
             gesture: None,
+            list_opened_by_hover: false,
+            pointer_on_list: false,
+            macros: [None; MAX_MACROS],
+            macro_len: 0,
         }
+    }
+
+    fn clear_macros(&mut self) {
+        self.macros = [None; MAX_MACROS];
+        self.macro_len = 0;
+    }
+
+    fn push_macro(&mut self, step: MacroStep) {
+        if (self.macro_len as usize) < MAX_MACROS {
+            self.macros[self.macro_len as usize] = Some(step);
+            self.macro_len += 1;
+        }
+    }
+
+    fn pop_macro(&mut self) -> Option<MacroStep> {
+        if self.macro_len == 0 {
+            return None;
+        }
+        let front = self.macros[0];
+        self.macros.rotate_left(1);
+        self.macros[MAX_MACROS - 1] = None;
+        self.macro_len -= 1;
+        front
+    }
+
+    fn emit_first_macro(&mut self, screen: &Screen) -> Pointed {
+        self.step_macro(screen)
+    }
+
+    fn step_macro(&mut self, screen: &Screen) -> Pointed {
+        while let Some(step) = self.macros[0] {
+            match step {
+                MacroStep::Choice(c) => {
+                    self.pop_macro();
+                    self.cursor_to_choice(c, screen);
+                    return Pointed::Choice(c);
+                }
+                MacroStep::WaitButtonSelected { button_slot, timeout } => {
+                    if screen.slots.get(button_slot as usize).is_some_and(|s| s.state == SlotState::Selected) {
+                        self.pop_macro();
+                        continue;
+                    }
+                    if timeout == 0 {
+                        self.clear_macros();
+                        return Pointed::Nothing;
+                    }
+                    self.macros[0] = Some(MacroStep::WaitButtonSelected { button_slot, timeout: timeout - 1 });
+                    return Pointed::Took;
+                }
+            }
+        }
+        Pointed::Nothing
     }
 
     /// A gesture of the pointer, for the next tick ([`Layer::input`]): a
@@ -433,12 +532,20 @@ impl Layer {
         self.gesture = self.gestures[0];
         self.gestures.rotate_left(1);
         self.gestures[GESTURES - 1] = None;
+        match self.gesture {
+            Some(Gesture::Over(Target::FormTab | Target::Form(_) | Target::FormExit)) => self.pointer_on_list = true,
+            Some(Gesture::Over(_) | Gesture::Away) => self.pointer_on_list = false,
+            _ => {}
+        }
         // (Off the targets, whatever is up or open: the cursor on nothing.)
         if self.gesture == Some(Gesture::Away) {
             self.go_away();
         }
         let mut out = PlayerTick { choice: None, ..input };
-        let Some(p) = p else { return input };
+        let Some(p) = p else {
+            self.clear_macros();
+            return input;
+        };
         let screen = p.screen;
         if self.turn != Some(p.turn) {
             // (A screen it hasn't followed from its opening: a layer made
@@ -457,12 +564,16 @@ impl Layer {
         // its last, it takes no choice and closes as if OK were pressed;
         // what is up over the chips goes first, silently.
         let time_up = p.time_left.is_some_and(|left| left <= 1);
+        if time_up || !phase.chooses() {
+            self.clear_macros();
+        }
         // What the layer has up goes as the screen stops choosing (its time
         // is up; a choice of an earlier tick, given while it showed the
         // choosing, took it busy).
         if self.sub != Sub::None && (phase != Phase::Choosing || time_up) {
             self.plan.list_cancelled = time_up && matches!(self.sub, Sub::List(_));
             self.sub = Sub::None;
+            self.list_opened_by_hover = false;
         }
         if self.sub != Sub::None {
             out.switch_to = None;
@@ -479,10 +590,19 @@ impl Layer {
                 // (The pointer's gesture first: what it chooses or opens
                 // takes the tick from the keys.)
                 if self.sub == Sub::None {
-                    out.choice = match self.point_on_chips(p, layout) {
+                    let macro_step = if input.choice.is_none() && self.macro_len > 0 {
+                        self.step_macro(screen)
+                    } else {
+                        Pointed::Nothing
+                    };
+                    out.choice = match macro_step {
                         Pointed::Choice(c) => Some(c),
                         Pointed::Took => None,
-                        Pointed::Nothing => self.choose(p, layout),
+                        Pointed::Nothing => match self.point_on_chips(p, layout) {
+                            Pointed::Choice(c) => Some(c),
+                            Pointed::Took => None,
+                            Pointed::Nothing => self.choose(p, layout),
+                        },
                     };
                     TickKind::Choosing
                 } else {
@@ -525,6 +645,8 @@ impl Layer {
         self.pick_cursor = None;
         self.sub = Sub::None;
         self.list_cursor = 0;
+        self.list_opened_by_hover = false;
+        self.clear_macros();
         self.look = WindowLook::new();
         self.hover = Hover::default();
         self.hover_fade_last = false;
@@ -575,6 +697,7 @@ impl Layer {
         // which the original asks before the cursor's UP: `custom.keys`).
         if (joy.repeat | joy.pressed) != 0 && joy.repeat & keys::UP != 0 && self.list_opens(p, layout) {
             self.sub = Sub::List(ListStage::Opening(0));
+            self.list_opened_by_hover = false;
             return None;
         }
         let order: &[ScreenKey] = match &layout.slots[self.cursor as usize].moves {
@@ -802,8 +925,18 @@ impl Layer {
                 self.point_pick(k, screen);
                 Pointed::Nothing
             }
-            // (Over another target, the form list's tab: on nothing, as
-            // off the targets.)
+            // Hovering on EXE6's CROSSSELECT tab auto-opens the form list.
+            Gesture::Over(Target::FormTab) => {
+                self.go_away();
+                if self.list_offered(p, layout) {
+                    self.sub = Sub::List(ListStage::Opening(0));
+                    self.list_opened_by_hover = true;
+                    Pointed::Took
+                } else {
+                    Pointed::Nothing
+                }
+            }
+            // (Over another target: on nothing, as off the targets.)
             Gesture::Over(_) => {
                 self.go_away();
                 Pointed::Nothing
@@ -835,6 +968,7 @@ impl Layer {
             Gesture::Click(Some(Target::FormTab)) => {
                 if self.list_offered(p, layout) {
                     self.sub = Sub::List(ListStage::Opening(0));
+                    self.list_opened_by_hover = false;
                     Pointed::Took
                 } else {
                     self.play(ScreenSound::Refused);
@@ -853,7 +987,129 @@ impl Layer {
                 }
                 Pointed::Took
             }
+            Gesture::TakeBack => Pointed::Choice(ScreenChoice::TakeBack),
+            Gesture::QuickUnite(target) => self.quick_unite(target, p),
             Gesture::Click(_) | Gesture::Describe(_) => Pointed::Nothing,
+        }
+    }
+
+    /// EXE4/EXE5 middle-click (and drag-onto-UNISON) quick Soul / Double / Chaos Unison.
+    /// Pre-checks eligibility read-only via `p.form_offer` before issuing any temporary unpicks.
+    fn quick_unite(&mut self, target: Option<Target>, p: &Presented) -> Pointed {
+        if !p.form_offer.supported {
+            return Pointed::Nothing;
+        }
+        let screen = p.screen;
+        let sel = screen.selection();
+        let n = sel.len();
+        let is_chip_slot = |s: u8| matches!(screen.slots.get(s as usize).map(|x| x.kind), Some(SlotKind::Chip { .. } | SlotKind::Offered(_)));
+        match target {
+            Some(Target::Slot(s)) if is_chip_slot(s) => {
+                let slot = screen.slots[s as usize];
+                if slot.state == SlotState::Selected {
+                    return Pointed::Nothing;
+                }
+                if n >= MAX_SELECTIONS {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                let Some(btn) = p.form_offer.button_slot.filter(|_| (p.form_offer.eligible_slots & (1 << s)) != 0) else {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                };
+                if slot.state == SlotState::Selectable {
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                    return self.emit_first_macro(screen);
+                }
+                let mut saved = [(0u8, None::<u8>); MAX_SELECTIONS];
+                let mut capsule_reattaches = 0usize;
+                for j in 0..n {
+                    let sj = sel[j];
+                    let att = screen.slots[sj as usize].attached;
+                    if att.is_some() {
+                        capsule_reattaches += 1;
+                    }
+                    saved[j] = (sj, att);
+                }
+                let needed = n + 2 + UNISON_ANIM_TICKS + n + capsule_reattaches * (1 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN;
+                if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                for j in (0..n).rev() {
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+                }
+                self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
+                self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                self.push_macro(MacroStep::WaitButtonSelected { button_slot: btn, timeout: BUTTON_WAIT_TIMEOUT });
+                for &(sj, att) in &saved[..n] {
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
+                    if let Some(cap) = att {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+                        self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+                    }
+                }
+                self.emit_first_macro(screen)
+            }
+            Some(Target::Pick(k)) => {
+                let Some(&s) = sel.get(k as usize) else {
+                    return Pointed::Nothing;
+                };
+                if !is_chip_slot(s) {
+                    return Pointed::Nothing;
+                }
+                let Some(btn) = p.form_offer.button_slot.filter(|_| (p.form_offer.eligible_slots & (1 << s)) != 0) else {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                };
+                if k as usize + 1 == n {
+                    let c = ScreenChoice::Press(btn);
+                    self.cursor_to_choice(c, screen);
+                    return Pointed::Choice(c);
+                }
+                let start = k as usize + 1;
+                let tail_len = n - start;
+                let mut tail = [(0u8, None::<u8>); MAX_SELECTIONS];
+                let mut capsule_reattaches = 0usize;
+                for j in 0..tail_len {
+                    let sj = sel[start + j];
+                    let att = screen.slots[sj as usize].attached;
+                    if att.is_some() {
+                        capsule_reattaches += 1;
+                    }
+                    tail[j] = (sj, att);
+                }
+                let needed = tail_len + 1 + UNISON_ANIM_TICKS + tail_len + capsule_reattaches * (1 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN;
+                if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                for j in (start..n).rev() {
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+                }
+                self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                self.push_macro(MacroStep::WaitButtonSelected { button_slot: btn, timeout: BUTTON_WAIT_TIMEOUT });
+                for &(sj, att) in &tail[..tail_len] {
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
+                    if let Some(cap) = att {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+                        self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+                    }
+                }
+                self.emit_first_macro(screen)
+            }
+            None | Some(_) => {
+                if p.form_offer.ready_now
+                    && let Some(btn) = p.form_offer.button_slot
+                {
+                    let c = ScreenChoice::Press(btn);
+                    self.cursor_to_choice(c, screen);
+                    Pointed::Choice(c)
+                } else {
+                    Pointed::Nothing
+                }
+            }
         }
     }
 
@@ -889,10 +1145,12 @@ impl Layer {
                     Some(None)
                 }
             }
-            // (The tab again, the exit label, or a click off the window,
+            // (The tab again, the exit label, or a click/right-click off the window,
             // the entries spanning it: as B.)
-            Gesture::Click(Some(Target::FormTab | Target::FormExit | Target::Slot(_) | Target::Pick(_)) | None) => {
+            Gesture::Click(Some(Target::FormTab | Target::FormExit | Target::Slot(_) | Target::Pick(_)) | None)
+            | Gesture::TakeBack => {
                 self.sub = Sub::List(ListStage::Closing(0));
+                self.list_opened_by_hover = false;
                 Some(None)
             }
             Gesture::Describe(Target::Form(k)) if k < list.count => {
@@ -909,10 +1167,14 @@ impl Layer {
         }
     }
 
-    /// A click of this tick's, where what is up takes any key (a
-    /// description's or the run message's box, the hidden window): A's bit.
+    /// A click or blank right-click of this tick's, where what is up takes
+    /// any key (a description's or the run message's box, the hidden window).
     fn click_as_key(&self) -> u16 {
-        if matches!(self.gesture, Some(Gesture::Click(_))) { keys::A } else { 0 }
+        match self.gesture {
+            Some(Gesture::Click(_)) => keys::A,
+            Some(Gesture::TakeBack) => keys::B,
+            _ => 0,
+        }
     }
 
     /// R: a description's chatbox (`chatbox_runScript` in the key's
@@ -1105,6 +1367,12 @@ impl Layer {
                 let mut choice = None;
                 if tick == 1 {
                     self.look.frame = 0;
+                } else if self.list_opened_by_hover
+                    && !self.pointer_on_list
+                    && (tick >= 4 || matches!(self.gesture, Some(Gesture::Away | Gesture::Over(Target::Slot(_) | Target::Pick(_)))))
+                {
+                    self.sub = Sub::List(ListStage::Closing(0));
+                    self.list_opened_by_hover = false;
                 } else {
                     choice = match self.point_in_list(p, layout) {
                         Some(pointed) => pointed,
@@ -1164,10 +1432,12 @@ impl Layer {
         }
         if joy.pressed & keys::B != 0 {
             self.sub = Sub::List(ListStage::Closing(0));
+            self.list_opened_by_hover = false;
         } else if joy.pressed & keys::START != 0 {
             self.cursor = OK_SLOT;
             self.away = false;
             self.sub = Sub::List(ListStage::Closing(0));
+            self.list_opened_by_hover = false;
             self.play(ScreenSound::Cursor);
         } else if joy.pressed & keys::R != 0 {
             let form = list.forms.get(self.list_cursor as usize).copied().flatten();

@@ -320,6 +320,7 @@ impl Side {
             turn: ctx.turn,
             time_left: self.time_left(ctx.time_limit),
             form_list,
+            form_offer: layer::FormOfferInfo::default(),
         })
     }
 

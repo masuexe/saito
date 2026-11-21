@@ -14,6 +14,7 @@ use saito_battle::rules::Fact;
 use saito_content_api::{FormHandle, Registry, Value};
 use std::sync::Arc;
 
+mod custom_shortcuts;
 mod take_backs;
 
 /// A number, a flag and forms of `game` by name, as a side's fact takes

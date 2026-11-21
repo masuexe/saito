@@ -44,6 +44,7 @@ pub enum PointerKind {
 pub enum PointerButton {
     Primary,
     Secondary,
+    Middle,
     Other,
 }
 
@@ -76,6 +77,7 @@ pub struct ScreenPointer {
     over: Option<Target>,
     press: Option<Press>,
     at: Option<(i32, i32)>,
+    hovering: bool,
 }
 
 impl ScreenPointer {
@@ -97,7 +99,8 @@ impl ScreenPointer {
                 self.over = under;
                 under.filter(|t| matches!(t, Target::Slot(_) | Target::Pick(_) | Target::Form(_))).map(Gesture::Over)
             }
-            (PointerKind::Down, PointerButton::Secondary) => under.map(Gesture::Describe),
+            (PointerKind::Down, PointerButton::Secondary) => Some(under.map_or(Gesture::TakeBack, Gesture::Describe)),
+            (PointerKind::Down, PointerButton::Middle) => Some(Gesture::QuickUnite(under)),
             (PointerKind::Down, PointerButton::Other) => None,
             (PointerKind::Up, PointerButton::Primary) => {
                 let press = self.press.take()?;
@@ -110,19 +113,40 @@ impl ScreenPointer {
                     press.off |= under != press.target;
                     None
                 }
-                None => self.hover(under),
+                None => {
+                    self.hovering = true;
+                    self.hover(under)
+                }
             },
             (PointerKind::Cancel, _) => {
                 self.press = None;
+                self.hovering = false;
                 None
             }
             (PointerKind::Left, _) => {
                 if let Some(press) = &mut self.press {
                     press.off = true;
                 }
+                self.hovering = false;
                 self.over.take().map(|_| Gesture::Away)
             }
         }
+    }
+
+    /// Re-evaluate a hovering mouse pointer against the latest drawn targets
+    /// (for example when a panel like EXE6's Cross list opens under a stationary
+    /// mouse cursor). Never emits events for touchscreens that never hover.
+    pub fn sync_hover(&mut self, at: impl Fn(f32, f32) -> Option<Target>) -> Option<Gesture> {
+        if !self.hovering || self.press.is_some() {
+            return None;
+        }
+        let (x, y) = self.at?;
+        let under = at(x as f32, y as f32);
+        if under == self.over {
+            return None;
+        }
+        self.over = under;
+        Some(under.map_or(Gesture::Away, Gesture::Over))
     }
 
     /// The mouse moved over `under`: over it, if it is another target than
@@ -268,5 +292,40 @@ mod tests {
         assert_eq!(s.event(p(PointerKind::Up, 10.0, 10.0), tab), Some(Gesture::Click(Some(Target::FormTab))));
         let mut hovered = ScreenPointer::default();
         assert_eq!(hovered.event(p(PointerKind::Moved, 10.0, 10.0), tab), Some(Gesture::Over(Target::FormTab)));
+    }
+
+    #[test]
+    fn blank_right_click_takes_back_and_middle_click_quick_unites() {
+        let mut s = ScreenPointer::default();
+        assert_eq!(s.event(e(PointerKind::Down, PointerButton::Secondary, 10.0, 90.0), at), Some(Gesture::TakeBack));
+        assert_eq!(s.event(e(PointerKind::Down, PointerButton::Secondary, 10.0, 10.0), at), Some(Gesture::Describe(CHIP)));
+        assert_eq!(s.event(e(PointerKind::Down, PointerButton::Middle, 10.0, 10.0), at), Some(Gesture::QuickUnite(Some(CHIP))));
+        assert_eq!(s.event(e(PointerKind::Down, PointerButton::Middle, 10.0, 90.0), at), Some(Gesture::QuickUnite(None)));
+        assert_eq!(s.event(e(PointerKind::Up, PointerButton::Middle, 10.0, 10.0), at), None);
+    }
+
+    #[test]
+    fn sync_hover_picks_up_newly_opened_targets_for_mouse_only() {
+        let mut list_open = false;
+        let dyn_at = |open: bool| move |x: f32, y: f32| {
+            if open && (20.0..80.0).contains(&x) && (20.0..40.0).contains(&y) {
+                Some(Target::Form(0))
+            } else {
+                None
+            }
+        };
+        let mut touch = ScreenPointer::default();
+        assert_eq!(touch.event(p(PointerKind::Down, 40.0, 30.0), dyn_at(list_open)), None);
+        assert_eq!(touch.event(p(PointerKind::Up, 40.0, 30.0), dyn_at(list_open)), Some(Gesture::Click(None)));
+        list_open = true;
+        assert_eq!(touch.sync_hover(dyn_at(list_open)), None, "touch must not hover after release");
+
+        let mut mouse = ScreenPointer::default();
+        list_open = false;
+        assert_eq!(mouse.event(p(PointerKind::Moved, 40.0, 30.0), dyn_at(list_open)), Some(Gesture::Away));
+        assert_eq!(mouse.sync_hover(dyn_at(list_open)), None);
+        list_open = true;
+        assert_eq!(mouse.sync_hover(dyn_at(list_open)), Some(Gesture::Over(Target::Form(0))));
+        assert_eq!(mouse.sync_hover(dyn_at(list_open)), None);
     }
 }
