@@ -524,6 +524,8 @@ fn take_back_reserve(b: &mut Battle, r: ObjectRef) {
     let o = b.objects.get_mut(r);
     o.hp = s.hp;
     o.max_hp = s.max_hp;
+    // The HUD freed the HP number slot when the knocked-out navi hit 0 HP; register it again for the returning navi.
+    super::super::entry::show_hp_number(b, r);
     let content = b.content.clone();
     b.hands[side].drop_link_navi_chips(&content);
     finish_change(b, r);
@@ -567,6 +569,8 @@ pub(crate) fn take_back(b: &mut Battle, r: ObjectRef) {
     let o = b.objects.get_mut(r);
     o.hp = s.hp;
     o.max_hp = s.max_hp;
+    // The HUD freed the HP number slot when the knocked-out partner hit 0 HP; register it again for member 0.
+    super::super::entry::show_hp_number(b, r);
     // 0x0202C372, 0x0202C5FE: the emotion window shows the navi that comes
     // back (`sub_801E724`), the side's navi from here.
     b.window_navis[side] = None;

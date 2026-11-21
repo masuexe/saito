@@ -1790,3 +1790,57 @@ fn the_pointer_releases_a_held_chip_and_unpicks() {
     let (_, given) = p.step_input(PlayerTick::buttons(0));
     assert_eq!(given.choice, Some(ScreenChoice::Press(8)));
 }
+
+/// Switching to another party member on the custom screen drops any picked
+/// chips and clears the picked column icons so old picks do not stay drawn.
+#[test]
+fn switching_party_member_clears_picked_column_and_selection() {
+    let mut p = Player::new(&[(SHOT, 0), (WAVE, 0), (SHOT, 1), (MEGA, 0), (MEGA, 1)]);
+    p.open();
+    p.wait(10);
+    p.step(0);
+    choose(&mut p, ScreenChoice::Pick(0));
+    choose(&mut p, ScreenChoice::Pick(1));
+    assert_eq!(p.screen().selection(), &[0, 1]);
+    assert!(p.screen().look.column[0].is_some() && p.screen().look.column[1].is_some());
+
+    let mut partner = p.stats;
+    partner.navi = saito_content_api::NaviHandle(p.stats.navi.0 + 1);
+    let mut party = crate::party::Party::of(p.stats);
+    party.join(partner);
+
+    let mut switched = false;
+    for _ in 0..32 {
+        let mut ctx = context_of(&p.lib, p.stats, 1, false, None, p.tick);
+        ctx.party = party;
+        ctx.switch_request = Some(1);
+        let view = PlayerView {
+            library: ctx.library,
+            stats: &ctx.stats,
+            emotion: ctx.emotion,
+            class_uses: &p.side.class_uses,
+            round: &p.side.round,
+            regular_pending: p.side.folder.regular_pending,
+            own_gauges: false,
+            random_battle: false,
+            battle_mode: 0,
+            party: &ctx.party,
+            switch_request: ctx.switch_request,
+            late_turns: false,
+            run_key: false,
+        };
+        let screen = p.side.screen.as_mut().unwrap();
+        if matches!(screen.tick(None, &view, &mut p.side.folder, &mut p.console, &mut NoExtras), Some(super::screen::Request::Switched(1))) {
+            switched = true;
+            break;
+        }
+    }
+    assert!(switched, "party switch should complete");
+    let s = p.screen();
+    assert_eq!(s.selected, 0);
+    assert!(s.selection().is_empty());
+    assert_eq!(s.look.column, [None; 5]);
+    assert_eq!(s.look.column_kept, None);
+    assert_eq!(s.slots[0].state, SlotState::Selectable);
+    assert_eq!(s.slots[1].state, SlotState::Selectable);
+}

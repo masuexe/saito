@@ -715,7 +715,18 @@ impl Screen {
                 let stats = view.party.member(member).unwrap_or(view.stats);
                 let navi_view = PlayerView { stats, ..*view };
                 self.megaman = navi_view.megaman();
+                self.selection = [0; MAX_SELECTIONS];
                 self.selected = 0;
+                self.trade = None;
+                self.hold = None;
+                self.form = None;
+                self.form_owner = None;
+                self.form_turns = 0;
+                self.form_alternate = false;
+                self.look.column = [None; MAX_SELECTIONS];
+                self.look.column_kept = None;
+                self.look.face = None;
+                self.look.draw(Draw::Held(false));
                 self.lay_out(&navi_view, extras);
                 self.look.draw(Draw::LaidOut);
                 self.show_chip_window();

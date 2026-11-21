@@ -2182,6 +2182,34 @@ fn a_cross_change_lands_changes_and_settles_while_paused() {
     assert_eq!((st & status::SWITCHED != 0, st & status::SWITCHING_NAVI), (true, 0));
 }
 
+#[test]
+fn party_knockout_restores_hp_number_on_opponents_hud() {
+    let (mut b, p0, _) = fight();
+    let mut member0 = b.stats[0];
+    member0.hp = 700;
+    member0.max_hp = 1000;
+    let mut partner = member0;
+    partner.hp = 0;
+    b.party[0] = crate::party::Party::of(member0);
+    b.party[0].join(partner);
+    b.party[0].active = 1;
+    b.stats[0] = partner;
+    b.objects.get_mut(p0).hp = 0;
+    // Simulate run_hud_tasks freeing side 1's HP number slot when the knocked-out partner hit 0 HP.
+    b.hide_hp(p0);
+    assert!(b.hp_numbers[1].iter().flatten().all(|n| n.object != p0));
+
+    super::navi_switch::take_back(&mut b, p0);
+
+    assert_eq!(b.party[0].active, 0);
+    assert_eq!(b.objects.get(p0).hp, 700);
+    assert!(
+        b.hp_numbers[1].iter().flatten().any(|n| n.object == p0 && n.hp == 700),
+        "opponent HUD should re-register the returning navi's HP number: {:?}",
+        b.hp_numbers[1]
+    );
+}
+
 // ---- Content model v2: definitions in a battle ---------------------------------------------
 
 /// A fight on the test content with the test pack's definitions
