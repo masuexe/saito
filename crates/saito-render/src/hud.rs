@@ -1895,8 +1895,10 @@ fn mugshot_parts<'a>(
     // (the counts' own box, their digits taken off: `count_blank`; the HUD's
     // box without a count is another picture).
     let number = count.and_then(|(h, n)| count_number(&h.letters.counts, n, &pal, (at.1, EMOTION_WINDOW_Y), flip, text));
+    let blank_count = is_blank_count_box(count, tiles);
     let (tiles, drawing) = match (&number, tiles) {
         (Some(_), Some(_)) => (Some(&shared.count_blank), count.and_then(|(h, _)| h.shapes.count_blank.as_ref())),
+        (None, Some(t)) if blank_count => (Some(t), count.and_then(|(h, _)| h.shapes.count_blank.as_ref())),
         (_, Some(t)) if std::ptr::eq(t, &hud.count_box) => (Some(t), hud.shapes.count_box.as_ref()),
         (_, Some(t)) if own_drawing.is_some() && picture.and_then(|m| face_hud.mugshot_box(m)).is_some_and(|own| std::ptr::eq(own, t)) => (Some(t), own_drawing),
         // (A face's own box with no drawing of its own: its frame drawn apart where the game's graphics have it.)
@@ -1905,26 +1907,45 @@ fn mugshot_parts<'a>(
         }
         (_, tiles) => (tiles, None),
     };
-    if let Some(tiles) = tiles {
-        // (A count's picture with its digits in it, where the box is
-        // flipped: the digits put back upright, `upright_count`.)
-        let digits = count.filter(|_| number.is_none() && flip).map(|(h, n)| h.letters.counts.counts.get(n).and_then(Option::as_ref));
-        match digits {
-            Some(digits) => {
-                let (tiles, flip) = match digits.and_then(|d| shared.made.make(upright_count(tiles, d))) {
-                    Some(made) => (made, false),
-                    // (A count whose digits' places the graphics don't
-                    // have: the box as drawn, so they read.)
-                    None => (tiles, false),
-                };
-                out.push(box_part(None, tiles, &pal, (at.1, flip), text, &mut items));
-            }
-            None => out.push(box_part(drawing, tiles, &pal, (at.1, flip), text, &mut items)),
-        }
-    }
+    push_count_or_box(tiles, drawing, count, (number.is_some(), blank_count), &pal, (at.1, flip), shared, text, out, &mut items);
     note_true_face(b, graphics, side, b.content.form(face.form).version.as_deref(), seat.x(x, 48), problems);
     items.extend(number);
     items
+}
+
+fn is_blank_count_box(count: Option<(&Hud, usize)>, tiles: Option<&Tiles>) -> bool {
+    count.is_some_and(|(h, _)| !h.letters.counts.blank.is_empty() && tiles.is_some_and(|t| t.pixels == h.letters.counts.blank.pixels))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_count_or_box<'a>(
+    tiles: Option<&'a Tiles>,
+    drawing: Option<&saito_assets::shapes::Drawing>,
+    count: Option<(&'a Hud, usize)>,
+    (has_number, blank_count): (bool, bool),
+    pal: &Palette,
+    (x, flip): (i32, bool),
+    shared: &'a SharedGlyphs,
+    text: &TextSink,
+    out: &mut Vec<SpritePart<'a>>,
+    items: &mut Vec<TextItem>,
+) {
+    let Some(tiles) = tiles else { return };
+    // (A count's picture with its digits in it, where the box is
+    // flipped: the digits put back upright, `upright_count`.)
+    let digits = count.filter(|_| !has_number && !blank_count && flip).map(|(h, n)| h.letters.counts.counts.get(n).and_then(Option::as_ref));
+    match digits {
+        Some(digits) => {
+            let (tiles, flip) = match digits.and_then(|d| shared.made.make(upright_count(tiles, d))) {
+                Some(made) => (made, false),
+                // (A count whose digits' places the graphics don't
+                // have: the box as drawn, so they read.)
+                None => (tiles, false),
+            };
+            out.push(box_part(None, tiles, pal, (x, flip), text, items));
+        }
+        None => out.push(box_part(drawing, tiles, pal, (x, flip), text, items)),
+    }
 }
 
 /// A count's 16x16 box (2x2 tiles) flipped, with its digits (their boxes in
@@ -3123,5 +3144,46 @@ mod tests {
             assert_eq!(items[0].clip.x, 8 + expected_dx);
             assert_eq!(items[0].anchor, Anchor::TOP_RIGHT);
         }
+    }
+
+    #[test]
+    fn mirrored_blank_count_box_flips_and_uses_shape() {
+        let mut h = hud();
+        let blank_tiles = Tiles { pixels: vec![7; 4 * Tiles::TILE] };
+        let non_blank_tiles = Tiles { pixels: vec![8; 4 * Tiles::TILE] };
+        h.letters.counts.blank = blank_tiles.clone();
+        h.letters.counts.counts = vec![None, None];
+        h.counts = vec![blank_tiles.clone(), non_blank_tiles.clone()];
+        h.shapes.count_blank = saito_assets::shapes::from_svg("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect x=\"0\" y=\"0\" width=\"12\" height=\"16\" data-color=\"1\"/></svg>").ok();
+        let pal = std::array::from_fn(|i| 0x0400 * i as u16);
+        let shared = SharedGlyphs { count_blank: blank_tiles.clone(), ..SharedGlyphs::default() };
+
+        // 1. Blank count box in Pixel mode: flipped (`hflip = true`), no shape items.
+        let mut out = Vec::new();
+        let mut items = Vec::new();
+        let blank = is_blank_count_box(Some((&h, 0)), Some(&h.counts[0]));
+        assert!(blank);
+        push_count_or_box(Some(&h.counts[0]), h.shapes.count_blank.as_ref(), Some((&h, 0)), (false, blank), &pal, (176, true), &shared, &TextSink::original(), &mut out, &mut items);
+        assert!(out[0].hflip);
+        assert!(items.is_empty());
+
+        // 2. Blank count box in Enhanced mode: draws `count_blank` shape with `flip = (true, false)`.
+        let mut out = Vec::new();
+        let mut items = Vec::new();
+        let font = crate::vfont::VectorFont::bundled();
+        let enhanced = TextSink::new(crate::textlayer::Enhancements::ALL, Some(&font));
+        push_count_or_box(Some(&h.counts[0]), h.shapes.count_blank.as_ref(), Some((&h, 0)), (false, blank), &pal, (176, true), &shared, &enhanced, &mut out, &mut items);
+        assert!(!out[0].hflip);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].drawn.as_ref().unwrap().pieces[0].flip, (true, false));
+
+        // 3. Non-blank count box without extracted digits keeps `hflip = false`.
+        let mut out = Vec::new();
+        let mut items = Vec::new();
+        let blank = is_blank_count_box(Some((&h, 1)), Some(&h.counts[1]));
+        assert!(!blank);
+        push_count_or_box(Some(&h.counts[1]), None, Some((&h, 1)), (false, blank), &pal, (176, true), &shared, &TextSink::original(), &mut out, &mut items);
+        assert!(!out[0].hflip);
+        assert!(items.is_empty());
     }
 }
