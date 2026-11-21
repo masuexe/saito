@@ -531,6 +531,55 @@ impl Battle {
         FormOfferInfo { supported: true, button_slot: Some(btn_slot), ready_now, eligible_slots }
     }
 
+    /// Read-only ColonelSoul `arm_change` eligibility on side `side`'s custom screen:
+    /// returns `(arm_change_slot, eligible_slots_bitmask)`.
+    pub fn arm_change_info(&self, side: u8) -> (Option<u8>, u16) {
+        use crate::content::{ChipClass, ChipFlags, InvalidPicks};
+        use crate::custom::screen::{ButtonCell, SLOTS, SlotKind, checked, is_invalid};
+
+        let i = side as usize & 1;
+        let Some(screen) = self.custom.sides[i].screen.as_ref() else {
+            return (None, 0);
+        };
+        let arm_slot = (0..SLOTS as u8).find(|&s| {
+            matches!(
+                screen.slots[s as usize].kind,
+                SlotKind::Button { button, cell: ButtonCell::Only | ButtonCell::Left }
+                    if self.content.defs.button(button).name == "arm_change"
+            )
+        });
+        let Some(btn_slot) = arm_slot else {
+            return (None, 0);
+        };
+        if screen.hold.is_some() {
+            return (Some(btn_slot), 0);
+        }
+        let folder = &self.custom.sides[i].folder;
+        let view = self.screen_view(side);
+        let non_elemental = self.content.rules().chip_families.non_elemental;
+        let mut eligible: u16 = 0;
+        for s in 0..10u8 {
+            if !matches!(screen.slots[s as usize].kind, SlotKind::Chip { .. }) {
+                continue;
+            }
+            let Some(raw) = screen.chip_in(s, folder) else { continue };
+            if view.library.layout().invalid_picks == InvalidPicks::Refused && is_invalid(raw, &view) {
+                continue;
+            }
+            let c = checked(raw, &view);
+            let data = self.content.chip(c.id);
+            if data.class == ChipClass::Standard
+                && data.family == non_elemental
+                && data.flags.has(ChipFlags::HAS_DAMAGE)
+                && !data.flags.has(ChipFlags::DIMMING)
+                && !data.flags.has(ChipFlags::DARK)
+            {
+                eligible |= 1 << s;
+            }
+        }
+        (Some(btn_slot), eligible)
+    }
+
     /// The turns left in the form side `side`'s button that offers a form
     /// gave (the rules' `turns`), which the emotion window counts. Turns
     /// counted up toward a limit (`turn_limit`: EXE4's, 0x08016A20) are its

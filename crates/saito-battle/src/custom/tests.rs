@@ -343,6 +343,8 @@ fn presented<'a>(
         time_left: side.time_left(time_limit),
         form_list,
         form_offer,
+        arm_change_slot: None,
+        arm_change_eligible: 0,
     })
 }
 
@@ -1963,4 +1965,115 @@ fn quick_unite_macro_runs_greyed_and_non_last_pick_with_time_left_guard() {
     assert_eq!(given.choice, None);
     assert_eq!(p.sounds(), [look::ScreenSound::Refused]);
     assert_eq!(p.screen().selection(), [0, 2]);
+}
+
+#[test]
+fn drag_and_drop_reorders_inserts_replaces_swaps_and_cancels_without_take_back() {
+    use super::layer::{DragSource, DropTarget, Gesture, Target};
+    let mut p = Player::new(&[(SHOT, 0), (SHOT, 1), (SHOT, 2), (WAVE, 2), (SHOT, 26)]);
+    p.open();
+    p.wait(10);
+    p.step(0);
+
+    // DragBegin closes an open non-list description seamlessly.
+    p.layer.point(Gesture::Describe(Target::Slot(0)));
+    p.step(0);
+    assert_eq!(p.up(), Up::Description);
+    p.layer.point(Gesture::DragBegin(DragSource::Slot(0)));
+    p.step(0);
+    assert_eq!(p.up(), Up::Screen(Phase::Choosing));
+    assert_eq!(p.layer.cursor, 0);
+
+    // Drop left chip onto column empty row -> Pick(0).
+    p.layer.point(Gesture::Drop { from: DragSource::Slot(0), to: DropTarget::InsertAt(0) });
+    p.step(0);
+    assert_eq!(p.screen().selection(), [0]);
+
+    // Drag Slot(1) before Pick(0) -> [1, 0].
+    p.layer.point(Gesture::Drop { from: DragSource::Slot(1), to: DropTarget::InsertAt(0) });
+    for _ in 0..8 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [1, 0]);
+
+    // Drag Slot(4) (SHOT *) onto Pick(1) gap InsertAt(1) -> [1, 4, 0].
+    p.layer.point(Gesture::Drop { from: DragSource::Slot(4), to: DropTarget::InsertAt(1) });
+    for _ in 0..8 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [1, 4, 0]);
+
+    // Replace Pick(1) with Slot(2) -> [1, 2, 0].
+    p.layer.point(Gesture::Drop { from: DragSource::Slot(2), to: DropTarget::ReplaceOrSwap(1) });
+    for _ in 0..8 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [1, 2, 0]);
+
+    // Swap Pick(0) and Pick(2) -> [0, 2, 1].
+    p.layer.point(Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::ReplaceOrSwap(2) });
+    for _ in 0..10 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [0, 2, 1]);
+
+    // Move Pick(2) before Pick(1) -> [0, 1, 2].
+    p.layer.point(Gesture::Drop { from: DragSource::Pick(2), to: DropTarget::InsertAt(1) });
+    for _ in 0..8 {
+        p.step(0);
+    }
+    assert_eq!(p.screen().selection(), [0, 1, 2]);
+
+    // Drag Slot(4) outside -> MUST be a silent no-op and NOT trigger TakeBack!
+    p.layer.point(Gesture::Drop { from: DragSource::Slot(4), to: DropTarget::Outside });
+    let (_, given) = p.step_input(PlayerTick::buttons(0));
+    assert_eq!(given.choice, None);
+    assert_eq!(p.screen().selection(), [0, 1, 2]);
+
+    // Drag Pick(1) outside -> Unpick(1) leaving [0, 2].
+    p.layer.point(Gesture::Drop { from: DragSource::Pick(1), to: DropTarget::Outside });
+    p.step(0);
+    assert_eq!(p.screen().selection(), [0, 2]);
+}
+
+#[test]
+fn locked_first_pick_refuses_swap_replace_or_insert_before_but_allows_drag_out() {
+    use super::layer::{DragSource, DropTarget, FormOfferInfo, Gesture};
+    let mut p = Player::new(&[(SHOT, 0), (SHOT, 1), (SHOT, 2)]);
+    p.form_offer = FormOfferInfo {
+        supported: true,
+        button_slot: Some(SPECIAL_SLOT),
+        ready_now: false,
+        eligible_slots: 0b0000_0111,
+    };
+    p.open();
+    p.wait(10);
+    p.step(0);
+
+    choose(&mut p, ScreenChoice::Pick(0));
+    choose(&mut p, ScreenChoice::Press(SPECIAL_SLOT));
+    for _ in 0..8 {
+        p.step(0);
+    }
+    choose(&mut p, ScreenChoice::Pick(1));
+    assert_eq!(p.screen().selection(), [SPECIAL_SLOT, 1]);
+
+    for (from, to) in [
+        (DragSource::Slot(2), DropTarget::InsertAt(0)),
+        (DragSource::Slot(2), DropTarget::ReplaceOrSwap(0)),
+        (DragSource::Pick(1), DropTarget::InsertAt(0)),
+        (DragSource::Pick(1), DropTarget::ReplaceOrSwap(0)),
+        (DragSource::Pick(0), DropTarget::ReplaceOrSwap(1)),
+        (DragSource::Pick(0), DropTarget::InsertAt(2)),
+    ] {
+        p.layer.point(Gesture::Drop { from, to });
+        p.step(0);
+        assert_eq!(p.screen().selection(), [SPECIAL_SLOT, 1], "locked slot 0 must reject ({from:?}, {to:?})");
+        assert!(p.sounds().contains(&look::ScreenSound::Refused));
+    }
+
+    // Dragging locked Pick(0) outside cancels/unpicks it cleanly, restoring the traded chip.
+    p.layer.point(Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Outside });
+    p.step(0);
+    assert_eq!((p.screen().selection(), p.screen().trade), (&[0, 1][..], None));
 }

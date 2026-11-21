@@ -32,10 +32,10 @@
 use super::chatbox::{Chatbox, Script};
 use super::folder::BattleFolder;
 use super::look::{ChipWindow, Draw, Hover, ScreenCall, ScreenSound, Shown, WindowLook};
-use super::screen::{MAX_SELECTIONS, OK_SLOT, Phase, PlayerView, Screen, SlotKind, SlotState, checked};
+use super::screen::{MAX_SELECTIONS, OK_SLOT, Phase, PlayerView, Screen, SlotKind, SlotState, checked, is_invalid};
 use crate::battle::{Battle, TickEvents, mode};
 use crate::rules::FormList;
-use crate::content::{CustomScreenLayout, FormListRules, HoverRuns, ScreenKey, SlotMoves};
+use crate::content::{ChipFlags, ChipTraits, CustomScreenLayout, FormListRules, HoverRuns, InvalidPicks, ScreenKey, SlotMoves};
 use crate::input::{Joypad, PlayerTick, ScreenChoice, keys};
 use crate::sound::SoundCue;
 use saito_content_api::{ChipHandle, FormHandle};
@@ -69,6 +69,8 @@ pub struct Presented<'a> {
     pub time_left: Option<u16>,
     pub form_list: Option<FormList>,
     pub form_offer: FormOfferInfo,
+    pub arm_change_slot: Option<u8>,
+    pub arm_change_eligible: u16,
 }
 
 impl Battle {
@@ -79,6 +81,7 @@ impl Battle {
             return None;
         }
         let i = side as usize & 1;
+        let (arm_change_slot, arm_change_eligible) = self.arm_change_info(side);
         Some(Presented {
             screen: self.custom.sides[i].screen.as_ref()?,
             folder: &self.custom.sides[i].folder,
@@ -87,8 +90,25 @@ impl Battle {
             time_left: self.custom_time_left(side),
             form_list: self.form_list(side),
             form_offer: self.form_offer_info(side),
+            arm_change_slot,
+            arm_change_eligible,
         })
     }
+}
+
+/// Whether the first slot in `screen.selection()` (`selection[0]`) is a locked
+/// Soul Unison / Chaos Unison / Double Soul / Beast Out icon or BeastOut chip
+/// that must stay in slot 0 against swaps, replacements, or insertions before it.
+pub fn is_locked_first_pick(screen: &Screen, folder: &BattleFolder, view: &PlayerView) -> bool {
+    let Some(&first) = screen.selection().first() else {
+        return false;
+    };
+    if matches!(screen.slots.get(first as usize).map(|s| s.kind), Some(SlotKind::Button { .. })) {
+        return true;
+    }
+    screen
+        .chip_in(first, folder)
+        .is_some_and(|raw| view.library.chip(checked(raw, view).id).traits.has(ChipTraits::GOES_WITH_ANY))
 }
 
 /// SELECT's hiding's steps (`sub_8026D06`).
@@ -144,6 +164,28 @@ pub enum Target {
     FormExit,
 }
 
+/// Source item of a desktop mouse drag operation on the custom screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DragSource {
+    /// A left-tray chip slot or special screen button (`0..12`).
+    Slot(u8),
+    /// An already picked row `k` (`0..selection.len()`) in the right column.
+    Pick(u8),
+}
+
+/// Destination zone where a desktop mouse drag operation is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DropTarget {
+    /// Insert before row `pos` (`0..=selection.len()`) in the right column.
+    InsertAt(u8),
+    /// Drop onto occupied row `k`: swap when dragging from `Pick`, replace when dragging from `Slot` (or mix capsule).
+    ReplaceOrSwap(u8),
+    /// Drop onto a compatible special button cell (UNISON/UNITE, Arm Change, MeddySoul Capsule).
+    Button(u8),
+    /// Drop anywhere outside valid drop targets (cancels/unpicks `Pick(k)` or releases held Arm Change; no-op for `Slot`).
+    Outside,
+}
+
 /// A pointer's gesture on the custom screen, for the layer's next tick
 /// (docs/design/custom-screen-actions.md §5): the mouse's and a finger's
 /// alike (saito-frontend's `pointer`). Only what it chooses goes in the
@@ -168,6 +210,10 @@ pub enum Gesture {
     TakeBack,
     /// Middle-click: EXE4/EXE5 quick Soul/Chaos Unison on target (or current `last_pick`).
     QuickUnite(Option<Target>),
+    /// Desktop mouse drag began past threshold (closes open non-list description cleanly).
+    DragBegin(DragSource),
+    /// Desktop mouse drag released on destination (`to`).
+    Drop { from: DragSource, to: DropTarget },
 }
 
 /// The most gestures a layer keeps for its next ticks.
@@ -177,6 +223,8 @@ const GESTURES: usize = 4;
 const MAX_MACROS: usize = 24;
 /// Conservative tick budget covering Soul/Chaos Unison and MeddySoul animations.
 const UNISON_ANIM_TICKS: usize = 64;
+/// Conservative tick budget covering ColonelSoul Arm Change blink animation.
+const ARM_CHANGE_ANIM_TICKS: usize = 36;
 /// Extra safety margin for netplay input delay when checking `time_left`.
 const NETPLAY_MARGIN: usize = 16;
 /// Maximum Choosing ticks to wait for a button window (`offer_flight` / `chip_flight`) to mark `Selected`.
@@ -566,6 +614,24 @@ impl Layer {
         let time_up = p.time_left.is_some_and(|left| left <= 1);
         if time_up || !phase.chooses() {
             self.clear_macros();
+        }
+        if let Some(Gesture::DragBegin(src)) = self.gesture
+            && phase == Phase::Choosing
+            && !time_up
+        {
+            if matches!(self.sub, Sub::Description { from_list: false, .. }) {
+                self.sub = Sub::None;
+                self.play(ScreenSound::DescriptionClose);
+                self.plan.chip_window = true;
+            }
+            if self.sub == Sub::None {
+                match src {
+                    DragSource::Slot(s) => {
+                        self.point_cursor(s, screen);
+                    }
+                    DragSource::Pick(k) => self.point_pick(k, screen),
+                }
+            }
         }
         // What the layer has up goes as the screen stops choosing (its time
         // is up; a choice of an earlier tick, given while it showed the
@@ -989,7 +1055,349 @@ impl Layer {
             }
             Gesture::TakeBack => Pointed::Choice(ScreenChoice::TakeBack),
             Gesture::QuickUnite(target) => self.quick_unite(target, p),
+            Gesture::DragBegin(_) => Pointed::Took,
+            Gesture::Drop { from, to } => self.handle_drop(from, to, p),
             Gesture::Click(_) | Gesture::Describe(_) => Pointed::Nothing,
+        }
+    }
+
+    fn exec_reorder(&mut self, current: &[u8], desired: &[u8], first_diff: usize, p: &Presented) -> Pointed {
+        let screen = p.screen;
+        let n = current.len();
+        let m = desired.len();
+        let mut prev_attached = [(0u8, None::<u8>); MAX_SELECTIONS];
+        for j in first_diff..n {
+            let s = current[j];
+            prev_attached[j] = (s, screen.slots[s as usize].attached);
+        }
+        let attached_of = |slot: u8| -> Option<u8> {
+            (first_diff..n).find_map(|j| (prev_attached[j].0 == slot).then_some(prev_attached[j].1).flatten())
+        };
+        let capsule_reattaches = (first_diff..m).filter(|&i| attached_of(desired[i]).is_some()).count();
+        let unpicks = n - first_diff;
+        let picks = m - first_diff;
+        let needed = if capsule_reattaches > 0 {
+            unpicks + picks + capsule_reattaches * (2 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN
+        } else {
+            unpicks + picks + if unpicks > 0 { 4 } else { 0 }
+        };
+        if p.time_left.is_some_and(|left| (left as usize) < needed) {
+            self.play(ScreenSound::Refused);
+            return Pointed::Took;
+        }
+        for j in (first_diff..n).rev() {
+            self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+        }
+        for &s in &desired[first_diff..m] {
+            self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
+            if let Some(cap) = attached_of(s) {
+                self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+                self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+            }
+        }
+        self.emit_first_macro(screen)
+    }
+
+    fn mix_capsule_onto_pick(&mut self, cap: u8, k: usize, p: &Presented) -> Pointed {
+        let screen = p.screen;
+        let sel = screen.selection();
+        let n = sel.len();
+        let Some(&target_slot) = sel.get(k) else {
+            return Pointed::Nothing;
+        };
+        let is_chip = matches!(
+            screen.slots.get(target_slot as usize).map(|x| x.kind),
+            Some(SlotKind::Chip { .. } | SlotKind::Offered(_))
+        );
+        let eligible = is_chip
+            && screen.slots[target_slot as usize].attached.is_none()
+            && screen
+                .chip_in(target_slot, p.folder)
+                .is_some_and(|raw| p.view.library.chip(checked(raw, &p.view).id).flags.has(ChipFlags::HAS_DAMAGE));
+        if !eligible {
+            self.play(ScreenSound::Refused);
+            return Pointed::Took;
+        }
+        if k + 1 == n {
+            let c = ScreenChoice::Press(cap);
+            self.cursor_to_choice(c, screen);
+            return Pointed::Choice(c);
+        }
+        let start = k + 1;
+        let tail_len = n - start;
+        let mut tail = [(0u8, None::<u8>); MAX_SELECTIONS];
+        let mut capsule_reattaches = 0usize;
+        for j in 0..tail_len {
+            let sj = sel[start + j];
+            let att = screen.slots[sj as usize].attached;
+            if att.is_some() {
+                capsule_reattaches += 1;
+            }
+            tail[j] = (sj, att);
+        }
+        let needed = tail_len + 1 + UNISON_ANIM_TICKS + tail_len + capsule_reattaches * (2 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN;
+        if p.time_left.is_some_and(|left| (left as usize) < needed) {
+            self.play(ScreenSound::Refused);
+            return Pointed::Took;
+        }
+        for j in (start..n).rev() {
+            self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+        }
+        self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+        self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+        for &(sj, att) in &tail[..tail_len] {
+            self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
+            if let Some(c) = att {
+                self.push_macro(MacroStep::Choice(ScreenChoice::Press(c)));
+                self.push_macro(MacroStep::WaitButtonSelected { button_slot: c, timeout: BUTTON_WAIT_TIMEOUT });
+            }
+        }
+        self.emit_first_macro(screen)
+    }
+
+    fn handle_drop(&mut self, from: DragSource, to: DropTarget, p: &Presented) -> Pointed {
+        let screen = p.screen;
+        let sel = screen.selection();
+        let n = sel.len();
+        let locked = is_locked_first_pick(screen, p.folder, &p.view);
+        let is_chip_slot = |s: u8| matches!(screen.slots.get(s as usize).map(|x| x.kind), Some(SlotKind::Chip { .. } | SlotKind::Offered(_)));
+        let valid_chip = |s: u8| {
+            p.view.library.layout().invalid_picks != InvalidPicks::Refused
+                || screen.chip_in(s, p.folder).is_some_and(|c| !is_invalid(c, &p.view))
+        };
+
+        // Case 1: Dragging held Arm Change button releases the held chip.
+        if let DragSource::Slot(s) = from
+            && let Some(btn) = screen.button_slot(s)
+            && p.arm_change_slot == Some(btn)
+            && screen.hold.is_some()
+        {
+            return match to {
+                DropTarget::Button(b) if screen.button_slot(b) == Some(btn) => Pointed::Nothing,
+                DropTarget::Outside | DropTarget::InsertAt(_) | DropTarget::ReplaceOrSwap(_) => {
+                    let c = ScreenChoice::Release(btn);
+                    self.cursor_to_choice(c, screen);
+                    Pointed::Choice(c)
+                }
+                DropTarget::Button(_) => Pointed::Nothing,
+            };
+        }
+
+        // Case 2: Dragging unused MeddySoul capsule directly onto a picked row.
+        if let DragSource::Slot(raw_cap) = from
+            && let Some(cap) = screen.button_slot(raw_cap)
+            && screen.slots[cap as usize].face.is_some()
+            && screen.slots[cap as usize].state != SlotState::Selected
+        {
+            return match to {
+                DropTarget::ReplaceOrSwap(k) => self.mix_capsule_onto_pick(cap, k as usize, p),
+                _ => Pointed::Nothing,
+            };
+        }
+
+        match (from, to) {
+            // Case 3: Selectable left chip -> InsertAt(pos).
+            (DragSource::Slot(s), DropTarget::InsertAt(pos)) => {
+                if !is_chip_slot(s) || screen.slots[s as usize].state != SlotState::Selectable || !valid_chip(s) {
+                    return Pointed::Nothing;
+                }
+                if n >= MAX_SELECTIONS {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                let pos = (pos as usize).min(n);
+                if locked && pos == 0 {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                if pos == n {
+                    let c = ScreenChoice::Pick(s);
+                    self.cursor_to_choice(c, screen);
+                    return Pointed::Choice(c);
+                }
+                let mut desired = [0u8; MAX_SELECTIONS];
+                desired[..pos].copy_from_slice(&sel[..pos]);
+                desired[pos] = s;
+                desired[pos + 1..=n].copy_from_slice(&sel[pos..n]);
+                self.exec_reorder(sel, &desired[..n + 1], pos, p)
+            }
+            // Case 4: Selectable left chip -> ReplaceOrSwap(k).
+            (DragSource::Slot(s), DropTarget::ReplaceOrSwap(k)) => {
+                if !is_chip_slot(s) || screen.slots[s as usize].state != SlotState::Selectable || !valid_chip(s) {
+                    return Pointed::Nothing;
+                }
+                let k = k as usize;
+                if k >= n {
+                    return Pointed::Nothing;
+                }
+                if locked && k == 0 {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                let mut desired = [0u8; MAX_SELECTIONS];
+                desired[..n].copy_from_slice(sel);
+                desired[k] = s;
+                self.exec_reorder(sel, &desired[..n], k, p)
+            }
+            // Case 5: Pick(k) -> InsertAt(pos).
+            (DragSource::Pick(k), DropTarget::InsertAt(pos)) => {
+                let k = k as usize;
+                if k >= n {
+                    return Pointed::Nothing;
+                }
+                let pos = (pos as usize).min(n);
+                if locked && (k == 0 || pos == 0) {
+                    if k == 0 && pos <= 1 {
+                        return Pointed::Nothing;
+                    }
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                if pos == k || pos == k + 1 {
+                    return Pointed::Nothing;
+                }
+                let dest = if pos > k { pos - 1 } else { pos };
+                let mut desired = [0u8; MAX_SELECTIONS];
+                let mut w = 0;
+                for i in 0..n {
+                    if i != k {
+                        desired[w] = sel[i];
+                        w += 1;
+                    }
+                }
+                desired[dest..n].rotate_right(1);
+                desired[dest] = sel[k];
+                self.exec_reorder(sel, &desired[..n], k.min(dest), p)
+            }
+            // Case 6: Pick(k) swap with Pick(tk).
+            (DragSource::Pick(k), DropTarget::ReplaceOrSwap(tk)) => {
+                let (k, tk) = (k as usize, tk as usize);
+                if k >= n || tk >= n || k == tk {
+                    return Pointed::Nothing;
+                }
+                if locked && (k == 0 || tk == 0) {
+                    self.play(ScreenSound::Refused);
+                    return Pointed::Took;
+                }
+                let mut desired = [0u8; MAX_SELECTIONS];
+                desired[..n].copy_from_slice(sel);
+                desired.swap(k, tk);
+                self.exec_reorder(sel, &desired[..n], k.min(tk), p)
+            }
+            // Case 7: Pick(k) -> Outside unpicks k.
+            (DragSource::Pick(k), DropTarget::Outside) => {
+                let Some(&slot) = sel.get(k as usize) else {
+                    return Pointed::Nothing;
+                };
+                self.put_cursor(slot);
+                Pointed::Choice(ScreenChoice::Unpick(k))
+            }
+            // Case 8: Left chip or Pick -> special button.
+            (from_item, DropTarget::Button(raw_btn)) => {
+                let Some(btn) = screen.button_slot(raw_btn) else {
+                    return Pointed::Nothing;
+                };
+                if p.form_offer.button_slot == Some(btn) {
+                    let target = match from_item {
+                        DragSource::Slot(s) => Target::Slot(s),
+                        DragSource::Pick(k) => Target::Pick(k),
+                    };
+                    return self.quick_unite(Some(target), p);
+                }
+                if p.arm_change_slot == Some(btn) {
+                    if screen.hold.is_some() {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    return match from_item {
+                        DragSource::Slot(s) => {
+                            if !is_chip_slot(s) || screen.slots[s as usize].state != SlotState::Selectable || n >= MAX_SELECTIONS {
+                                self.play(ScreenSound::Refused);
+                                return Pointed::Took;
+                            }
+                            if (p.arm_change_eligible & (1 << s)) == 0 {
+                                self.play(ScreenSound::Refused);
+                                return Pointed::Took;
+                            }
+                            self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
+                            self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                            self.emit_first_macro(screen)
+                        }
+                        DragSource::Pick(k) => {
+                            let k = k as usize;
+                            let Some(&s) = sel.get(k) else {
+                                return Pointed::Nothing;
+                            };
+                            if !is_chip_slot(s) || (p.arm_change_eligible & (1 << s)) == 0 {
+                                self.play(ScreenSound::Refused);
+                                return Pointed::Took;
+                            }
+                            if k + 1 == n {
+                                let c = ScreenChoice::Press(btn);
+                                self.cursor_to_choice(c, screen);
+                                return Pointed::Choice(c);
+                            }
+                            let start = k + 1;
+                            let tail_len = n - start;
+                            let mut tail = [(0u8, None::<u8>); MAX_SELECTIONS];
+                            let mut capsule_reattaches = 0usize;
+                            for j in 0..tail_len {
+                                let sj = sel[start + j];
+                                let att = screen.slots[sj as usize].attached;
+                                if att.is_some() {
+                                    capsule_reattaches += 1;
+                                }
+                                tail[j] = (sj, att);
+                            }
+                            let needed = tail_len + 1 + ARM_CHANGE_ANIM_TICKS + tail_len + capsule_reattaches * (2 + UNISON_ANIM_TICKS) + NETPLAY_MARGIN;
+                            if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                                self.play(ScreenSound::Refused);
+                                return Pointed::Took;
+                            }
+                            for j in (start..n).rev() {
+                                self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+                            }
+                            self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                            self.push_macro(MacroStep::WaitButtonSelected { button_slot: btn, timeout: BUTTON_WAIT_TIMEOUT });
+                            for &(sj, att) in &tail[..tail_len] {
+                                self.push_macro(MacroStep::Choice(ScreenChoice::Pick(sj)));
+                                if let Some(cap) = att {
+                                    self.push_macro(MacroStep::Choice(ScreenChoice::Press(cap)));
+                                    self.push_macro(MacroStep::WaitButtonSelected { button_slot: cap, timeout: BUTTON_WAIT_TIMEOUT });
+                                }
+                            }
+                            self.emit_first_macro(screen)
+                        }
+                    };
+                }
+                if screen.slots[btn as usize].face.is_some() {
+                    if screen.slots[btn as usize].state == SlotState::Selected {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    return match from_item {
+                        DragSource::Slot(s) => {
+                            let ok = is_chip_slot(s)
+                                && screen.slots[s as usize].state == SlotState::Selectable
+                                && n < MAX_SELECTIONS
+                                && screen
+                                    .chip_in(s, p.folder)
+                                    .is_some_and(|raw| p.view.library.chip(checked(raw, &p.view).id).flags.has(ChipFlags::HAS_DAMAGE));
+                            if !ok {
+                                self.play(ScreenSound::Refused);
+                                return Pointed::Took;
+                            }
+                            self.push_macro(MacroStep::Choice(ScreenChoice::Pick(s)));
+                            self.push_macro(MacroStep::Choice(ScreenChoice::Press(btn)));
+                            self.emit_first_macro(screen)
+                        }
+                        DragSource::Pick(k) => self.mix_capsule_onto_pick(btn, k as usize, p),
+                    };
+                }
+                Pointed::Nothing
+            }
+            // Case 9: Left chip dragged outside (never triggers TakeBack!).
+            (DragSource::Slot(_), DropTarget::Outside) => Pointed::Nothing,
         }
     }
 

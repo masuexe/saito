@@ -205,6 +205,12 @@ pub struct Renderer {
     /// seat's that shows its own console's as it is, by side, in the frame's
     /// pixels (`Renderer::target_at`).
     targets: Vec<(u8, saito_battle::custom::layer::Target, Rect)>,
+    /// Bounding rectangle of the local side's 5-slot pick column in the last
+    /// frame rendered, in frame pixels (`Renderer::column_rect`).
+    column_rect: Option<(u8, Rect)>,
+    /// Optional floating chip ghost and drop target indicator overlaid on the
+    /// rendered frame during desktop drag-and-drop (`Renderer::set_drag_overlay`).
+    drag_overlay: Option<crate::custom::DragOverlay>,
     /// The version of the console whose screen is drawn, as its game's
     /// pack names its versions (EXE5's "protoman", "colonel"), for a game
     /// whose versions the engine doesn't tell apart: which chips are the
@@ -280,6 +286,8 @@ impl Renderer {
             problems: Problems::default(),
             sprite_drawn: objects::SpriteDrawn::default(),
             targets: Vec::new(),
+            column_rect: None,
+            drag_overlay: None,
             console_version: None,
             enhancements: Enhancements::NONE,
             font: None,
@@ -385,6 +393,7 @@ impl Renderer {
         self.hud_state = HudState::default();
         self.other_hud = HudState::default();
         self.scenery = StageClock::default();
+        self.drag_overlay = None;
     }
 
     /// A frame of a battle held where it stands (a host's menu over it: no
@@ -443,6 +452,25 @@ impl Renderer {
         self.targets(side).find(|(_, r)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(t, _)| t)
     }
 
+    /// Bounding rectangle of `side`'s 5-slot pick column from the last frame
+    /// drawn, in frame pixels (none when the screen is absent, sliding, or
+    /// showing a form list).
+    pub fn column_rect(&self, side: u8) -> Option<Rect> {
+        self.column_rect.filter(|&(s, _)| s == side & 1).map(|(_, r)| r)
+    }
+
+    /// Bounding rectangle of `target` on `side`'s custom screen in the last
+    /// frame drawn, in frame pixels.
+    pub fn target_rect(&self, side: u8, target: saito_battle::custom::layer::Target) -> Option<Rect> {
+        self.targets(side).find(|&(t, _)| t == target).map(|(_, r)| r)
+    }
+
+    /// Set or clear the translucent drag ghost & drop-target indicator drawn
+    /// on top of subsequent frames.
+    pub fn set_drag_overlay(&mut self, overlay: Option<crate::custom::DragOverlay>) {
+        self.drag_overlay = overlay;
+    }
+
     pub fn camera_sub(&self, b: &Battle, layers: Layers) -> i32 {
         Self::view_for(b, self.consoles, layers).camera.1 & 0xFFFF
     }
@@ -487,6 +515,7 @@ impl Renderer {
         self.problems.known.clear();
         self.problems.marks.clear();
         self.targets.clear();
+        self.column_rect = None;
         // (Every layer as large as the frame; what is drawn on the
         // original's screen in the middle of it, the background on to all
         // four edges, the HUD's pieces each where it keeps to: `hud::draw`,
@@ -623,6 +652,7 @@ impl Renderer {
         let viewers: Vec<u8> = seats.iter().map(|s| s.side).collect();
         self.sprite_drawn = objects::queue_objects(b, &graphics, &view, &viewers, &mut list, &mut self.problems, !draw);
         let mut targets = Vec::new();
+        let mut raw_column: Option<(u8, Rect)> = None;
         for (k, &seat) in seats.iter().enumerate() {
             if seat.shows == Shows::Nothing {
                 continue;
@@ -640,8 +670,11 @@ impl Renderer {
             // `Seat::clip`.)
             let clip = seat.clip(b, screen_layers, &seats, size);
             list.clip = clip;
-            let found = crate::custom::draw(b, screen_layer, own_game, &graphics, emblem, *emblem_palette, (seat, sprite_fade), smooth, (&mut *hud, &mut *names), scratch, &mut list, &mut text, &mut self.problems);
+            let (found, col) = crate::custom::draw(b, screen_layer, own_game, &graphics, emblem, *emblem_palette, (seat, sprite_fade), smooth, (&mut *hud, &mut *names), scratch, &mut list, &mut text, &mut self.problems);
             targets.extend(found.into_iter().map(|(t, r)| (seat.side, t, r)));
+            if let Some(col_rect) = col {
+                raw_column = Some((seat.side, col_rect));
+            }
             crate::hud::draw(b, own_game, &graphics, hud_of(seat), &shared[k], (seat, &view, screen_layer), self.custom_gauge, smooth, (&mut *hud, &mut self.scratch), &mut list, &mut text, &mut self.problems);
             list.clip = None;
             if let Some([x0, x1]) = clip {
@@ -688,6 +721,7 @@ impl Renderer {
         // HUD layer is.)
         let (ox, oy) = size.origin(compose::Anchor::TOP_LEFT);
         self.targets = targets.into_iter().map(|(side, t, r)| (side, t, r.offset(ox - jx, oy - jy))).collect();
+        self.column_rect = raw_column.map(|(side, r)| (side, r.offset(ox - jx, oy - jy)));
         let (rx, ry) = if both { crate::custom::hud_jitter(b, screen_layers[local ^ 1], local as u8 ^ 1) } else { (0, 0) };
         self.hud_right.shift(rx, -ry);
         // (The HUD's BG3 is the game's priority: EXE4's 0 covers the HP
@@ -836,6 +870,13 @@ impl Renderer {
         if let Some(p) = self.stand_in.as_ref().filter(|_| stand_in) {
             p.borrow_mut().draw(&mut frame);
         }
+        if draw
+            && let Some(overlay) = self.drag_overlay
+            && !smooth.lifted
+            && !smooth.nudged
+        {
+            crate::custom::draw_drag_overlay(&mut frame, overlay, b, &graphics);
+        }
         frame
     }
 }
@@ -970,5 +1011,33 @@ mod tests {
         let f_reduced = reduced.render(&b, [None; 2]);
         assert!(f_normal.pixels.iter().all(|&c| c == 0x7FFF), "normal flash whitens the frame");
         assert!(f_reduced.pixels.iter().all(|&c| c == 0), "reduced flashes suppress full-screen whiteout");
+    }
+
+    #[test]
+    fn drag_overlay_renders_at_edges_without_panic_and_preserves_none_frame() {
+        use crate::custom::{DragOverlay, DropVisual};
+        use crate::textlayer::Rect;
+
+        let mut c: saito_battle::content::Content = testing::build();
+        c.define().unwrap_or_else(|e| panic!("{e}"));
+        let content = Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&content));
+        testing::on(&mut setup, &content);
+        let b = Battle::new(setup, content);
+
+        let mut r = Renderer::new(Arc::new(Bundle::default()));
+        let base = r.render(&b, [None; 2]);
+        r.set_drag_overlay(None);
+        assert_eq!(r.render(&b, [None; 2]).pixels, base.pixels);
+
+        for (x, y, chip, target) in [
+            (0, 0, None, Some(DropVisual::InsertLine { x: 100, y: 20, w: 24 })),
+            (239, 159, Some(saito_content_api::ChipHandle(0)), Some(DropVisual::Highlight(Rect::new(100, 16, 24, 16)))),
+            (120, 80, None, Some(DropVisual::Remove)),
+        ] {
+            r.set_drag_overlay(Some(DragOverlay { side: 0, chip, x, y, target }));
+            let frame = r.render(&b, [None; 2]);
+            assert_ne!(frame.pixels, base.pixels, "overlay ({x}, {y}, {target:?}) should draw visibly");
+        }
     }
 }

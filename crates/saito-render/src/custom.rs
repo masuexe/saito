@@ -33,6 +33,133 @@ use saito_battle::custom::screen::{OK_SLOT, SPECIAL_SLOT};
 use saito_battle::custom::{ButtonCell, FolderChip, Layer as ScreenLayer, Phase, Screen, Side, SlotKind, SlotState};
 use saito_content_api::{ChipHandle, FormHandle, NaviHandle};
 
+/// Visual drop target indicator rendered over the custom screen during desktop drag-and-drop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropVisual {
+    /// Horizontal insert bar between (or above/below) picked chips in the column.
+    InsertLine { x: i32, y: i32, w: i32 },
+    /// Highlight rectangle around a swap/replace row or special button target.
+    Highlight(Rect),
+    /// Red tint on the dragged icon when dropping outside the column will cancel/unpick it.
+    Remove,
+}
+
+/// Translucent dragged chip overlay and drop-target indicator rendered over the custom screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DragOverlay {
+    pub side: u8,
+    pub chip: Option<ChipHandle>,
+    pub x: i32,
+    pub y: i32,
+    pub target: Option<DropVisual>,
+}
+
+fn blend_bgr555(bg: u16, fg: u16, alpha_16: u16) -> u16 {
+    let inv = 16 - alpha_16;
+    let r = (((fg & 0x1F) * alpha_16 + (bg & 0x1F) * inv) >> 4).min(31);
+    let g = ((((fg >> 5) & 0x1F) * alpha_16 + ((bg >> 5) & 0x1F) * inv) >> 4).min(31);
+    let b = ((((fg >> 10) & 0x1F) * alpha_16 + ((bg >> 10) & 0x1F) * inv) >> 4).min(31);
+    r | (g << 5) | (b << 10)
+}
+
+fn tint_remove_bgr555(c: u16) -> u16 {
+    let r = ((c & 0x1F) + 14).min(31);
+    let g = ((c >> 5) & 0x1F) >> 1;
+    let b = ((c >> 10) & 0x1F) >> 1;
+    r | (g << 5) | (b << 10)
+}
+
+/// Draws the active desktop drag overlay (`DragOverlay`) on top of the composed custom screen frame.
+pub fn draw_drag_overlay(frame: &mut crate::render::Frame, overlay: DragOverlay, b: &Battle, graphics: &crate::graphics::Graphics<'_>) {
+    let w = frame.size.width as i32;
+    let h = frame.size.height as i32;
+    if w <= 0 || h <= 0 || frame.pixels.len() < (w * h) as usize {
+        return;
+    }
+    let mut plot_blend = |px: i32, py: i32, fg: u16, alpha_16: u16| {
+        if px >= 0 && px < w && py >= 0 && py < h {
+            let idx = (py * w + px) as usize;
+            frame.pixels[idx] = blend_bgr555(frame.pixels[idx], fg, alpha_16);
+        }
+    };
+    const GOLD: u16 = 0x03FF;
+    const SHADOW: u16 = 0x0000;
+    match overlay.target {
+        Some(DropVisual::InsertLine { x, y, w: lw }) => {
+            for dx in 0..lw {
+                plot_blend(x + dx, y - 1, SHADOW, 10);
+                plot_blend(x + dx, y, GOLD, 16);
+                plot_blend(x + dx, y + 1, GOLD, 16);
+            }
+            for dy in -2..=3 {
+                plot_blend(x, y + dy, GOLD, 16);
+                plot_blend(x + lw - 1, y + dy, GOLD, 16);
+            }
+        }
+        Some(DropVisual::Highlight(r)) => {
+            for dy in 1..(r.h - 1) {
+                for dx in 1..(r.w - 1) {
+                    plot_blend(r.x + dx, r.y + dy, 0x7FFF, 3);
+                }
+            }
+            for dx in 0..r.w {
+                plot_blend(r.x + dx, r.y, GOLD, 16);
+                plot_blend(r.x + dx, r.y + r.h - 1, GOLD, 16);
+            }
+            for dy in 0..r.h {
+                plot_blend(r.x, r.y + dy, GOLD, 16);
+                plot_blend(r.x + r.w - 1, r.y + dy, GOLD, 16);
+            }
+        }
+        Some(DropVisual::Remove) | None => {}
+    }
+    let remove = overlay.target == Some(DropVisual::Remove);
+    let gx0 = overlay.x - 8;
+    let gy0 = overlay.y - 8;
+    let icon = overlay
+        .chip
+        .and_then(|id| crate::lookups::chip_icon(graphics, &b.content, id, &mut Problems::default()));
+    match icon {
+        Some((tiles, palette)) => {
+            // Subtle 1px dark border around the 16x16 floating ghost.
+            for bx in -1..=16 {
+                plot_blend(gx0 + bx, gy0 - 1, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
+                plot_blend(gx0 + bx, gy0 + 16, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
+            }
+            for by in 0..16 {
+                plot_blend(gx0 - 1, gy0 + by, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
+                plot_blend(gx0 + 16, gy0 + by, if remove { tint_remove_bgr555(0x0008) } else { SHADOW }, 9);
+            }
+            for py in 0..16 {
+                for px in 0..16 {
+                    let tile = 2 * (py / 8) + (px / 8);
+                    let idx = tiles.pixels.get(tile * 64 + (py % 8) * 8 + (px % 8)).copied().unwrap_or(0);
+                    if idx != 0 {
+                        let fg = palette[idx as usize & 15];
+                        let fg = if remove { tint_remove_bgr555(fg) } else { fg };
+                        plot_blend(gx0 + px as i32, gy0 + py as i32, fg, 12);
+                    }
+                }
+            }
+        }
+        None => {
+            let fill = if remove { 0x001F } else { 0x7FFF };
+            let border = if remove { 0x0010 } else { GOLD };
+            for dy in 1..13 {
+                for dx in 1..13 {
+                    plot_blend(gx0 + 1 + dx, gy0 + 1 + dy, fill, 6);
+                }
+            }
+            for d in 0..14 {
+                plot_blend(gx0 + 1 + d, gy0 + 1, border, 14);
+                plot_blend(gx0 + 1 + d, gy0 + 14, border, 14);
+                plot_blend(gx0 + 1, gy0 + 1 + d, border, 14);
+                plot_blend(gx0 + 14, gy0 + 1 + d, border, 14);
+            }
+        }
+    }
+}
+
 /// The window: 15 columns of 20 rows at the HUD layer's top left.
 const COLUMNS: usize = 15;
 const ROWS: usize = 20;
@@ -2526,6 +2653,20 @@ fn targets(v: &View, w: &Window, place: Placement) -> Vec<(Target, Rect)> {
     out
 }
 
+/// Bounding rectangle of the 5-slot picked chip column in frame coordinates when
+/// the window is at rest and no form list is open.
+fn column_rect(v: &View, w: &Window, place: Placement) -> Option<Rect> {
+    if place.scroll != 0 || place.from != 0 || place.to != COLUMNS {
+        return None;
+    }
+    if v.layer.and_then(|l| l.list_stage()).is_some() {
+        return None;
+    }
+    let [left, right] = w.layout.column_columns.map(i32::from);
+    let row = w.layout.column_row as i32;
+    Some(Rect::new(8 * left, 8 * row, 8 * (right + 1 - left), 5 * 16))
+}
+
 /// The cursor at a place the graphics give (OK's, a button's).
 fn cursor_at(p: &saito_assets::CursorPlace) -> (i32, i32, CursorShape) {
     let corners = p.corners.map(|frame| frame.map(|(y, x, h, v)| (y as i32, x as i32, h, v)));
@@ -2893,11 +3034,11 @@ pub fn draw<'a>(
     list: &mut SpriteList<'a>,
     text: &mut TextSink,
     problems: &mut Problems,
-) -> Vec<(Target, Rect)> {
-    let Some((_, screen)) = screen_of(b, seat.side) else { return Vec::new() };
+) -> (Vec<(Target, Rect)>, Option<Rect>) {
+    let Some((_, screen)) = screen_of(b, seat.side) else { return (Vec::new(), None) };
     let a = &assets.custom;
     if !crate::lookups::custom_graphics(a, problems) {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     let side = seat.side & 1;
     let mirrored = seat.mirrored();
@@ -2951,7 +3092,7 @@ pub fn draw<'a>(
     }
     // (What a pointer finds where, on a seat that shows its own console's
     // screen as it is.)
-    let found = if mirrored { Vec::new() } else { targets(&v, &w, place) };
+    let (found, column) = if mirrored { (Vec::new(), None) } else { (targets(&v, &w, place), column_rect(&v, &w, place)) };
     if let Some(why) = w.picture_known {
         w.known_picture(place, why, problems);
     }
@@ -3172,7 +3313,7 @@ pub fn draw<'a>(
     let _ = OK_SLOT;
     crate::hud::keep_to(seat, Anchor::CENTER, (&mut *out_hud, &mut *out_names), list, text);
     crate::hud::keep_to(seat, Anchor::CENTER, (&mut *scratch_hud, &mut *scratch_names), list, text);
-    found
+    (found, column)
 }
 
 #[cfg(test)]

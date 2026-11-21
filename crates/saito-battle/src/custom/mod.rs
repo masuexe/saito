@@ -321,6 +321,8 @@ impl Side {
             time_left: self.time_left(ctx.time_limit),
             form_list,
             form_offer: layer::FormOfferInfo::default(),
+            arm_change_slot: None,
+            arm_change_eligible: 0,
         })
     }
 

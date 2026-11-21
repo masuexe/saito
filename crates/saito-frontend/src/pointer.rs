@@ -17,11 +17,35 @@
 //! player's tick (docs/design/custom-screen-actions.md §3): the cursor's
 //! moves are the player's view alone.
 
-use saito_battle::custom::layer::{Gesture, Target};
+use saito_battle::custom::layer::{DragSource, DropTarget, Gesture, Target};
+use saito_render::textlayer::Rect;
 
 /// The ticks a press stays down on a target before it describes it (half
 /// a second).
 pub const LONG_PRESS: u32 = 30;
+/// Pointer movement distance (in frame pixels) required to begin dragging on desktop.
+pub const DRAG_THRESHOLD: f32 = 5.0;
+
+/// Desktop drag capabilities & layout metadata computed from the current custom screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DragContext {
+    pub enabled: bool,
+    pub picks: u8,
+    pub locked_first: bool,
+    pub draggable_slots: u16,
+    pub capsule_slots: u16,
+    pub drop_buttons: u16,
+    pub column_rect: Option<Rect>,
+}
+
+/// Live drag state exposed to `Player` for rendering the translucent ghost & drop visual.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveDrag {
+    pub from: DragSource,
+    pub x: i32,
+    pub y: i32,
+    pub to: DropTarget,
+}
 
 /// What a pointer did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,20 +83,25 @@ pub struct PointerEvent {
 }
 
 /// A press of the primary button or a finger, until it is let go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Press {
     target: Option<Target>,
     /// The ticks it has been down, and whether it has left its target.
     held: u32,
     off: bool,
-    /// A long press described its target: its letting go chooses nothing.
+    /// A long press described its target: its letting go chooses nothing
+    /// unless a desktop drag began afterwards.
     described: bool,
+    start: (f32, f32),
+    drag_source: Option<DragSource>,
+    dragging: bool,
+    drop: DropTarget,
 }
 
 /// The pointer's state on the custom screen: the target it was last over,
 /// the press under way, and where the pointer is (frame pixels; none once
 /// it leaves the picture), for the host's hand cursor.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ScreenPointer {
     over: Option<Target>,
     press: Option<Press>,
@@ -80,10 +109,55 @@ pub struct ScreenPointer {
     hovering: bool,
 }
 
+fn resolve_drop(x: f32, y: f32, from: DragSource, ctx: &DragContext, at: &impl Fn(f32, f32) -> Option<Target>) -> DropTarget {
+    if let Some(col) = ctx.column_rect {
+        let (cx0, cy0) = (col.x as f32, col.y as f32);
+        let (cx1, cy1) = (cx0 + col.w as f32, cy0 + col.h as f32);
+        if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
+            let rel_y = y - cy0;
+            let row = (rel_y / 16.0).floor().clamp(0.0, 4.0) as u8;
+            let frac = rel_y - (row as f32 * 16.0);
+            let is_capsule = matches!(from, DragSource::Slot(s) if s < 16 && (ctx.capsule_slots & (1 << s)) != 0);
+            return if row < ctx.picks {
+                if is_capsule {
+                    DropTarget::ReplaceOrSwap(row)
+                } else if frac < 4.0 {
+                    DropTarget::InsertAt(row)
+                } else if frac >= 12.0 {
+                    DropTarget::InsertAt(row + 1)
+                } else {
+                    DropTarget::ReplaceOrSwap(row)
+                }
+            } else if is_capsule {
+                DropTarget::Outside
+            } else {
+                DropTarget::InsertAt(ctx.picks)
+            };
+        }
+    }
+    if let Some(Target::Slot(s)) = at(x, y)
+        && s < 16
+        && (ctx.drop_buttons & (1 << s)) != 0
+    {
+        return DropTarget::Button(s);
+    }
+    DropTarget::Outside
+}
+
 impl ScreenPointer {
     /// An event, `at` saying what is under a place of the frame: the
     /// gesture it makes, if it makes one.
     pub fn event(&mut self, e: PointerEvent, at: impl Fn(f32, f32) -> Option<Target>) -> Option<Gesture> {
+        self.event_with_drag(e, at, &DragContext::default())
+    }
+
+    /// An event processed with desktop drag context (`ctx`).
+    pub fn event_with_drag(
+        &mut self,
+        e: PointerEvent,
+        at: impl Fn(f32, f32) -> Option<Target>,
+        ctx: &DragContext,
+    ) -> Option<Gesture> {
         let under = at(e.x, e.y);
         self.at = match e.kind {
             PointerKind::Left | PointerKind::Cancel => None,
@@ -95,7 +169,25 @@ impl ScreenPointer {
             // cursor; a tap on the form tab or exit label never puts the
             // cursor away on a touch screen that doesn't hover.)
             (PointerKind::Down, PointerButton::Primary) => {
-                self.press = Some(Press { target: under, held: 0, off: false, described: false });
+                let drag_source = if ctx.enabled {
+                    match under {
+                        Some(Target::Slot(s)) if s < 16 && (ctx.draggable_slots & (1 << s)) != 0 => Some(DragSource::Slot(s)),
+                        Some(Target::Pick(k)) if k < ctx.picks => Some(DragSource::Pick(k)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                self.press = Some(Press {
+                    target: under,
+                    held: 0,
+                    off: false,
+                    described: false,
+                    start: (e.x, e.y),
+                    drag_source,
+                    dragging: false,
+                    drop: DropTarget::Outside,
+                });
                 self.over = under;
                 under.filter(|t| matches!(t, Target::Slot(_) | Target::Pick(_) | Target::Form(_))).map(Gesture::Over)
             }
@@ -104,13 +196,31 @@ impl ScreenPointer {
             (PointerKind::Down, PointerButton::Other) => None,
             (PointerKind::Up, PointerButton::Primary) => {
                 let press = self.press.take()?;
+                if press.dragging {
+                    let from = press.drag_source?;
+                    let to = resolve_drop(e.x, e.y, from, ctx, &at);
+                    return Some(Gesture::Drop { from, to });
+                }
                 (!press.described && !press.off && under == press.target).then_some(Gesture::Click(under))
             }
             (PointerKind::Up, _) => None,
-            // (A press follows nothing: off its target, it is cancelled.)
+            // (A press follows nothing until past DRAG_THRESHOLD on desktop: once dragging,
+            // it tracks drop hotzones rather than cancelling on target exit.)
             (PointerKind::Moved, _) => match &mut self.press {
                 Some(press) => {
-                    press.off |= under != press.target;
+                    if !press.dragging {
+                        if let Some(src) = press.drag_source
+                            && (e.x - press.start.0).hypot(e.y - press.start.1) >= DRAG_THRESHOLD
+                        {
+                            press.dragging = true;
+                            press.off = true;
+                            press.drop = resolve_drop(e.x, e.y, src, ctx, &at);
+                            return Some(Gesture::DragBegin(src));
+                        }
+                        press.off |= under != press.target;
+                    } else if let Some(src) = press.drag_source {
+                        press.drop = resolve_drop(e.x, e.y, src, ctx, &at);
+                    }
                     None
                 }
                 None => {
@@ -126,6 +236,11 @@ impl ScreenPointer {
             (PointerKind::Left, _) => {
                 if let Some(press) = &mut self.press {
                     press.off = true;
+                    if press.dragging {
+                        press.drop = DropTarget::Outside;
+                        self.hovering = false;
+                        return None;
+                    }
                 }
                 self.hovering = false;
                 self.over.take().map(|_| Gesture::Away)
@@ -149,6 +264,21 @@ impl ScreenPointer {
         Some(under.map_or(Gesture::Away, Gesture::Over))
     }
 
+    /// Currently active desktop drag operation for visual overlay rendering.
+    pub fn active_drag(&self) -> Option<ActiveDrag> {
+        let press = self.press.filter(|p| p.dragging)?;
+        let from = press.drag_source?;
+        let (x, y) = self.at?;
+        Some(ActiveDrag { from, x, y, to: press.drop })
+    }
+
+    /// Cancel an in-progress drag (for example when leaving `Phase::Choosing`).
+    pub fn cancel_drag(&mut self) {
+        if self.press.is_some_and(|p| p.dragging) {
+            self.press = None;
+        }
+    }
+
     /// The mouse moved over `under`: over it, if it is another target than
     /// the one it was over; off the targets, away, at each move (a key may
     /// have brought the cursor back since the last).
@@ -165,7 +295,7 @@ impl ScreenPointer {
     pub fn tick(&mut self) -> Option<Gesture> {
         let press = self.press.as_mut()?;
         press.held = press.held.saturating_add(1);
-        if !press.off && !press.described && press.held >= LONG_PRESS {
+        if !press.dragging && !press.off && !press.described && press.held >= LONG_PRESS {
             press.described = true;
             return press.target.map(Gesture::Describe);
         }
@@ -327,5 +457,104 @@ mod tests {
         list_open = true;
         assert_eq!(mouse.sync_hover(dyn_at(list_open)), Some(Gesture::Over(Target::Form(0))));
         assert_eq!(mouse.sync_hover(dyn_at(list_open)), None);
+    }
+
+    #[test]
+    fn desktop_drag_threshold_and_column_hotzones() {
+        let col = Rect::new(100, 16, 24, 80); // rows 0..5, 16px each: row 0 = y 16..32, row 1 = y 32..48
+        let ctx = DragContext {
+            enabled: true,
+            picks: 2,
+            locked_first: false,
+            draggable_slots: 1 << 1,
+            capsule_slots: 0,
+            drop_buttons: 1 << 8,
+            column_rect: Some(col),
+        };
+        let drag_at = |x: f32, y: f32| {
+            if (8.0..24.0).contains(&x) && (104.0..128.0).contains(&y) {
+                Some(Target::Slot(1))
+            } else if (80.0..96.0).contains(&x) && (104.0..128.0).contains(&y) {
+                Some(Target::Slot(8))
+            } else if (100.0..124.0).contains(&x) && (16.0..32.0).contains(&y) {
+                Some(Target::Pick(0))
+            } else if (100.0..124.0).contains(&x) && (32.0..48.0).contains(&y) {
+                Some(Target::Pick(1))
+            } else {
+                None
+            }
+        };
+
+        // Small jitter (< 5px) within slot remains a normal click.
+        let mut s = ScreenPointer::default();
+        assert_eq!(s.event_with_drag(p(PointerKind::Down, 12.0, 110.0), drag_at, &ctx), Some(Gesture::Over(Target::Slot(1))));
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 14.0, 112.0), drag_at, &ctx), None);
+        assert_eq!(s.active_drag(), None);
+        assert_eq!(s.event_with_drag(p(PointerKind::Up, 14.0, 112.0), drag_at, &ctx), Some(Gesture::Click(Some(Target::Slot(1)))));
+
+        // Moving >= 5px begins dragging and suppresses click. Test all column hotzones:
+        for (y, want) in [
+            (17.0, DropTarget::InsertAt(0)),       // row 0 top 25% (16..20)
+            (24.0, DropTarget::ReplaceOrSwap(0)),  // row 0 middle 50% (20..28)
+            (29.0, DropTarget::InsertAt(1)),       // row 0 bottom 25% (28..32)
+            (40.0, DropTarget::ReplaceOrSwap(1)),  // row 1 middle 50%
+            (60.0, DropTarget::InsertAt(2)),       // empty row below picks -> append
+        ] {
+            assert_eq!(s.event_with_drag(p(PointerKind::Down, 12.0, 110.0), drag_at, &ctx), Some(Gesture::Over(Target::Slot(1))));
+            assert_eq!(s.event_with_drag(p(PointerKind::Moved, 112.0, y), drag_at, &ctx), Some(Gesture::DragBegin(DragSource::Slot(1))));
+            assert!(s.active_drag().is_some());
+            assert_eq!(
+                s.event_with_drag(p(PointerKind::Up, 112.0, y), drag_at, &ctx),
+                Some(Gesture::Drop { from: DragSource::Slot(1), to: want })
+            );
+        }
+
+        // Drop onto special button & outside.
+        s.event_with_drag(p(PointerKind::Down, 12.0, 110.0), drag_at, &ctx);
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 85.0, 112.0), drag_at, &ctx), Some(Gesture::DragBegin(DragSource::Slot(1))));
+        assert_eq!(
+            s.event_with_drag(p(PointerKind::Up, 85.0, 112.0), drag_at, &ctx),
+            Some(Gesture::Drop { from: DragSource::Slot(1), to: DropTarget::Button(8) })
+        );
+
+        s.event_with_drag(p(PointerKind::Down, 112.0, 24.0), drag_at, &ctx);
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 200.0, 10.0), drag_at, &ctx), Some(Gesture::DragBegin(DragSource::Pick(0))));
+        assert_eq!(
+            s.event_with_drag(p(PointerKind::Up, 200.0, 10.0), drag_at, &ctx),
+            Some(Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Outside })
+        );
+    }
+
+    #[test]
+    fn long_press_describe_transitions_cleanly_into_drag() {
+        let ctx = DragContext {
+            enabled: true,
+            picks: 1,
+            locked_first: false,
+            draggable_slots: 1 << 1,
+            capsule_slots: 0,
+            drop_buttons: 0,
+            column_rect: Some(Rect::new(100, 16, 24, 80)),
+        };
+        let mut s = ScreenPointer::default();
+        s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &ctx);
+        let described: Vec<_> = (0..LONG_PRESS).filter_map(|_| s.tick()).collect();
+        assert_eq!(described, [Gesture::Describe(CHIP)]);
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 112.0, 60.0), at, &ctx), Some(Gesture::DragBegin(DragSource::Slot(1))));
+        assert_eq!(s.tick(), None, "must not re-describe once dragging");
+        assert_eq!(
+            s.event_with_drag(p(PointerKind::Up, 112.0, 60.0), at, &ctx),
+            Some(Gesture::Drop { from: DragSource::Slot(1), to: DropTarget::InsertAt(1) })
+        );
+    }
+
+    #[test]
+    fn mobile_touch_does_not_trigger_drag() {
+        let ctx = DragContext { enabled: false, ..DragContext::default() };
+        let mut s = ScreenPointer::default();
+        s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &ctx);
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 120.0, 10.0), at, &ctx), None);
+        assert_eq!(s.active_drag(), None);
+        assert_eq!(s.event_with_drag(p(PointerKind::Up, 120.0, 10.0), at, &ctx), None);
     }
 }

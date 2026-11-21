@@ -148,6 +148,8 @@ pub struct Player {
     choice: Option<saito_battle::ScreenChoice>,
     /// The pointer on the local player's custom screen ([`Player::point`]).
     pointer: crate::pointer::ScreenPointer,
+    /// Desktop drag-and-drop toggle (disabled on mobile touch UIs).
+    drag_enabled: bool,
     speed: usize,
     clock: Clock,
     /// What had been made before the player was: this thread's runtimes
@@ -201,6 +203,7 @@ impl Player {
             switch: None,
             choice: None,
             pointer: crate::pointer::ScreenPointer::default(),
+            drag_enabled: !cfg!(any(target_os = "ios", target_os = "android")),
             speed: NORMAL,
             clock: Clock::new(),
             before,
@@ -307,6 +310,224 @@ impl Player {
         self.choice = Some(choice);
     }
 
+    /// Enable or disable desktop mouse drag-and-drop on the custom screen
+    /// (disabled when the mobile phone UI is active).
+    pub fn set_drag_enabled(&mut self, enabled: bool) {
+        self.drag_enabled = enabled;
+        if !enabled {
+            self.pointer.cancel_drag();
+        }
+    }
+
+    fn drag_context(&self, side: u8) -> crate::pointer::DragContext {
+        use saito_battle::custom::{Phase, SlotKind, SlotState, layer::{Sub, is_locked_first_pick}};
+
+        if !self.drag_enabled {
+            return crate::pointer::DragContext::default();
+        }
+        let Some(p) = self.session.battle.presented(side) else {
+            return crate::pointer::DragContext::default();
+        };
+        let Some(layer) = self.session.driver.layers()[side as usize & 1] else {
+            return crate::pointer::DragContext::default();
+        };
+        if p.screen.phase != Phase::Choosing || !matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. }) {
+            return crate::pointer::DragContext::default();
+        }
+        let mut draggable_slots: u16 = 0;
+        let mut capsule_slots: u16 = 0;
+        for s in 0..10u8 {
+            let slot = p.screen.slots[s as usize];
+            match slot.kind {
+                SlotKind::Chip { .. } | SlotKind::Offered(_) if slot.state == SlotState::Selectable => {
+                    draggable_slots |= 1 << s;
+                }
+                SlotKind::Button { .. } if slot.face.is_some() && slot.state != SlotState::Selected => {
+                    draggable_slots |= 1 << s;
+                    capsule_slots |= 1 << s;
+                }
+                SlotKind::Button { .. }
+                    if p.arm_change_slot.is_some()
+                        && p.arm_change_slot == p.screen.button_slot(s)
+                        && p.screen.hold.is_some() =>
+                {
+                    draggable_slots |= 1 << s;
+                }
+                _ => {}
+            }
+        }
+        let mut drop_buttons: u16 = 0;
+        for s in 0..12u8 {
+            if !matches!(p.screen.slots[s as usize].kind, SlotKind::Button { .. }) {
+                continue;
+            }
+            let Some(btn) = p.screen.button_slot(s) else { continue };
+            let btn_state = p.screen.slots[btn as usize].state;
+            let is_offer = p.form_offer.button_slot == Some(btn) && btn_state != SlotState::Selected;
+            let is_arm = p.arm_change_slot == Some(btn);
+            let is_cap = p.screen.slots[btn as usize].face.is_some() && btn_state != SlotState::Selected;
+            if is_offer || is_arm || is_cap {
+                drop_buttons |= 1 << s;
+            }
+        }
+        crate::pointer::DragContext {
+            enabled: true,
+            picks: p.screen.selection().len() as u8,
+            locked_first: is_locked_first_pick(p.screen, p.folder, &p.view),
+            draggable_slots,
+            capsule_slots,
+            drop_buttons,
+            column_rect: self.renderer.column_rect(side),
+        }
+    }
+
+    fn current_drag_overlay(&self) -> Option<saito_render::custom::DragOverlay> {
+        use saito_battle::content::ChipFlags;
+        use saito_battle::custom::{Phase, SlotKind, SlotState, layer::{DragSource, DropTarget, Target, is_locked_first_pick}, screen::checked};
+        use saito_render::custom::{DragOverlay, DropVisual};
+        use saito_render::textlayer::Rect;
+
+        let side = self.session.battle.setup.local_side;
+        let drag = self.pointer.active_drag()?;
+        let p = self.session.battle.presented(side)?;
+        if p.screen.phase != Phase::Choosing {
+            return None;
+        }
+        let sel = p.screen.selection();
+        let n = sel.len();
+        let locked = is_locked_first_pick(p.screen, p.folder, &p.view);
+
+        let held_arm = matches!(
+            drag.from,
+            DragSource::Slot(s) if p.arm_change_slot.is_some() && p.arm_change_slot == p.screen.button_slot(s) && p.screen.hold.is_some()
+        );
+        let is_capsule = matches!(
+            drag.from,
+            DragSource::Slot(s) if s < 12 && p.screen.slots[s as usize].face.is_some() && p.screen.slots[s as usize].state != SlotState::Selected
+        );
+
+        let chip = match drag.from {
+            DragSource::Slot(s) => {
+                if let Some(btn) = p.screen.button_slot(s)
+                    && p.arm_change_slot == Some(btn)
+                    && let Some(h) = p.screen.hold
+                {
+                    p.screen.chip_in(h.chip, p.folder).map(|c| checked(c, &p.view).id)
+                } else if let Some(face) = p.screen.slots.get(s as usize).and_then(|sl| sl.face) {
+                    Some(face)
+                } else {
+                    p.screen.chip_in(s, p.folder).map(|c| checked(c, &p.view).id)
+                }
+            }
+            DragSource::Pick(k) => sel.get(k as usize).and_then(|&s| {
+                p.screen
+                    .chip_in(s, p.folder)
+                    .map(|c| checked(c, &p.view).id)
+                    .or_else(|| p.screen.slots[s as usize].face)
+            }),
+        };
+
+        let target = match drag.to {
+            DropTarget::InsertAt(pos) => {
+                if is_capsule || held_arm {
+                    None
+                } else if locked && (pos == 0 || matches!(drag.from, DragSource::Pick(0))) {
+                    None
+                } else if matches!(drag.from, DragSource::Slot(_)) && n >= 5 {
+                    None
+                } else if matches!(drag.from, DragSource::Pick(k) if pos == k || pos == k + 1) {
+                    None
+                } else {
+                    self.renderer.column_rect(side).map(|col| DropVisual::InsertLine {
+                        x: col.x,
+                        y: col.y + (pos.min(5) as i32) * 16,
+                        w: col.w,
+                    })
+                }
+            }
+            DropTarget::ReplaceOrSwap(k) => {
+                if held_arm || (k as usize) >= n {
+                    None
+                } else if matches!(drag.from, DragSource::Pick(src_k) if src_k == k) {
+                    None
+                } else if locked && (k == 0 || matches!(drag.from, DragSource::Pick(0))) {
+                    None
+                } else if is_capsule {
+                    let target_slot = sel[k as usize];
+                    let ok = matches!(p.screen.slots[target_slot as usize].kind, SlotKind::Chip { .. } | SlotKind::Offered(_))
+                        && p.screen.slots[target_slot as usize].attached.is_none()
+                        && p.screen
+                            .chip_in(target_slot, p.folder)
+                            .is_some_and(|raw| p.view.library.chip(checked(raw, &p.view).id).flags.has(ChipFlags::HAS_DAMAGE));
+                    if ok {
+                        self.renderer
+                            .target_rect(side, Target::Pick(k))
+                            .or_else(|| self.renderer.column_rect(side).map(|col| Rect::new(col.x, col.y + k as i32 * 16, col.w, 16)))
+                            .map(DropVisual::Highlight)
+                    } else {
+                        None
+                    }
+                } else {
+                    self.renderer
+                        .target_rect(side, Target::Pick(k))
+                        .or_else(|| self.renderer.column_rect(side).map(|col| Rect::new(col.x, col.y + k as i32 * 16, col.w, 16)))
+                        .map(DropVisual::Highlight)
+                }
+            }
+            DropTarget::Button(raw_btn) => {
+                let btn = p.screen.button_slot(raw_btn).unwrap_or(raw_btn);
+                let ok = if held_arm || is_capsule {
+                    false
+                } else {
+                    let chip_slot = match drag.from {
+                        DragSource::Slot(s) => Some(s),
+                        DragSource::Pick(k) => sel.get(k as usize).copied(),
+                    };
+                    if let Some(cs) = chip_slot {
+                        if p.form_offer.button_slot == Some(btn) {
+                            (matches!(drag.from, DragSource::Pick(_)) || n < 5) && (p.form_offer.eligible_slots & (1 << cs)) != 0
+                        } else if p.arm_change_slot == Some(btn) {
+                            p.screen.hold.is_none() && (matches!(drag.from, DragSource::Pick(_)) || n < 5) && (p.arm_change_eligible & (1 << cs)) != 0
+                        } else if p.screen.slots[btn as usize].face.is_some() {
+                            p.screen.slots[btn as usize].state != SlotState::Selected
+                                && matches!(p.screen.slots[cs as usize].kind, SlotKind::Chip { .. } | SlotKind::Offered(_))
+                                && (matches!(drag.from, DragSource::Pick(_)) || n < 5)
+                                && p.screen.slots[cs as usize].attached.is_none()
+                                && p.screen
+                                    .chip_in(cs, p.folder)
+                                    .is_some_and(|raw| p.view.library.chip(checked(raw, &p.view).id).flags.has(ChipFlags::HAS_DAMAGE))
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if ok {
+                    let rect = self.renderer.target_rect(side, Target::Slot(btn)).map(|r| {
+                        if let Some(r2) = self.renderer.target_rect(side, Target::Slot(btn + 1))
+                            && matches!(p.screen.slots.get(btn as usize + 1).map(|x| x.kind), Some(SlotKind::Button { .. }))
+                            && p.screen.button_slot(btn + 1) == Some(btn)
+                        {
+                            let x0 = r.x.min(r2.x);
+                            let y0 = r.y.min(r2.y);
+                            let x1 = (r.x + r.w).max(r2.x + r2.w);
+                            let y1 = (r.y + r.h).max(r2.y + r2.h);
+                            Rect::new(x0, y0, x1 - x0, y1 - y0)
+                        } else {
+                            r
+                        }
+                    });
+                    rect.map(DropVisual::Highlight)
+                } else {
+                    None
+                }
+            }
+            DropTarget::Outside => (matches!(drag.from, DragSource::Pick(_)) || held_arm).then_some(DropVisual::Remove),
+        };
+        Some(DragOverlay { side, chip, x: drag.x, y: drag.y, target })
+    }
+
     /// A pointer's event on the battle's picture (the mouse's, a finger's;
     /// `x` and `y` in the pixels of the last frame drawn): the gesture it
     /// makes on the local player's custom screen, by what that frame drew
@@ -315,8 +536,9 @@ impl Player {
     /// player doesn't play (a replay's).
     pub fn point(&mut self, e: crate::pointer::PointerEvent) {
         let side = self.session.battle.setup.local_side;
+        let ctx = self.drag_context(side);
         let renderer = &self.renderer;
-        let gesture = self.pointer.event(e, |x, y| renderer.target_at(side, x.floor() as i32, y.floor() as i32));
+        let gesture = self.pointer.event_with_drag(e, |x, y| renderer.target_at(side, x.floor() as i32, y.floor() as i32), &ctx);
         if let (Some(g), Some(layer)) = (gesture, self.session.driver.layer_mut(side)) {
             layer.point(g);
         }
@@ -385,6 +607,17 @@ impl Player {
         if self.session.new_round {
             self.renderer.reset();
             self.pointer.clear();
+        }
+        {
+            let side = self.session.battle.setup.local_side;
+            let in_choosing = self
+                .session
+                .battle
+                .presented(side)
+                .is_some_and(|p| p.screen.phase == saito_battle::custom::Phase::Choosing);
+            if !in_choosing {
+                self.pointer.cancel_drag();
+            }
         }
         if self.session.fresh {
             self.renderer.observe(&self.session.battle);
@@ -601,6 +834,8 @@ impl Player {
 
     /// The battle's picture now, with nothing over it: the renderer's frame size (`Renderer::frame_size`).
     pub fn frame(&mut self) -> Frame {
+        let overlay = self.current_drag_overlay();
+        self.renderer.set_drag_overlay(overlay);
         self.renderer.render(&self.session.battle, self.session.driver.layers())
     }
 

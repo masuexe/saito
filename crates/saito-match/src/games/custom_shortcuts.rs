@@ -243,3 +243,114 @@ fn exe6_hover_cross_select_and_silent_middle_click() {
     }
     assert!(matches!(ls.layers[0].sub, Sub::List(ListStage::Up(_))));
 }
+
+#[test]
+fn exe5_drag_drops_unison_arm_change_and_meddysoul_capsules() {
+    use saito_battle::custom::layer::{DragSource, DropTarget};
+    let content = exe5_content();
+    let protosoul = crate::ids::form(&content, "exe5", "protosoul").unwrap();
+    let colonelsoul = crate::ids::form(&content, "exe5", "colonelsoul").unwrap();
+    let meddysoul = crate::ids::form(&content, "exe5", "meddysoul").unwrap();
+    let cannon = crate::ids::chip(&content, "exe5", "cannon").unwrap();
+
+    // 1. Drag non-last Sword S pick onto UNISON button -> ProtoSoul + restores Cannon A.
+    let m = parse(&content, &exe5(&TANGO_EXE5, ""), &exe5(&TANGO_EXE5, "")).unwrap();
+    let mut b_unison = Battle::new(m.round(&content, 0x5EED), content.clone());
+    let mut ls_u = step_until_choosing(&mut b_unison);
+    deal(&mut b_unison, &content, "exe5", 0, "sword", S);
+    deal(&mut b_unison, &content, "exe5", 1, "airshot", STAR);
+    step_choice(&mut b_unison, &mut ls_u, ScreenChoice::Pick(0));
+    step_choice(&mut b_unison, &mut ls_u, ScreenChoice::Pick(1));
+    point_and_settle(&mut b_unison, &mut ls_u, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Button(SPECIAL_SLOT) });
+    assert_eq!(screen(&b_unison).selection(), [SPECIAL_SLOT, 1]);
+    assert_eq!(b_unison.offer(0).and_then(|o| o.form), Some(protosoul));
+
+    // 2. ColonelSoul: drag eligible Cannon A onto Arm Change holds it; ineligible Sword S refused; drag held button outside releases it.
+    let mut f = m.sides[0].folder(&content);
+    f.chips = [Some(FolderChip::new(cannon, ChipCode(A))); 30];
+    let mut m_col = m.clone();
+    m_col.sides[0].set_folder(&content, &f).unwrap();
+    let mut b_col = Battle::new(m_col.round(&content, 0x5EED), content.clone());
+    b_col.stats[0].starting_form = colonelsoul;
+    let mut ls_arm = step_until_choosing(&mut b_col);
+    deal(&mut b_col, &content, "exe5", 0, "sword", S);
+    deal(&mut b_col, &content, "exe5", 1, "cannon", A);
+    deal(&mut b_col, &content, "exe5", 2, "airshot", STAR);
+
+    // Sword S is sword family (not null) -> dropping onto Arm Change plays Refused.
+    ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(0), to: DropTarget::Button(8) });
+    step_idle(&mut b_col, &mut ls_arm);
+    let refused_id = b_col.screen_sound(ScreenSound::Refused).unwrap();
+    assert!(ls_arm.layers[0].heard(&b_col).contains(&saito_battle::sound::SoundCue::Effect(refused_id)));
+    assert_eq!(screen(&b_col).hold, None);
+
+    // Non-last pick Cannon A (`Pick(0)` before `AirShot *` at `Pick(1)`) dragged onto Arm Change cell 9 -> holds Cannon A & restores AirShot *!
+    step_choice(&mut b_col, &mut ls_arm, ScreenChoice::Pick(1));
+    step_choice(&mut b_col, &mut ls_arm, ScreenChoice::Pick(2));
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Button(9) });
+    assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(1));
+    assert_eq!(screen(&b_col).selection(), [2]);
+
+    // Dragging held Arm Change button outside releases Cannon A back into picks `[1, 2]`.
+    ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::Outside });
+    step_idle(&mut b_col, &mut ls_arm);
+    assert_eq!(screen(&b_col).hold, None);
+    assert_eq!(screen(&b_col).selection(), [1, 2]);
+
+    // 3. MeddySoul: bidirectional capsule <-> chip drops, including capsule onto non-last pick.
+    let mut b_med = Battle::new(m_col.round(&content, 0x5EED), content.clone());
+    b_med.stats[0].starting_form = meddysoul;
+    let mut ls_m = step_until_choosing(&mut b_med);
+    // Drag selectable chip Slot(0) directly onto Capsule 1 (`Button(8)`).
+    point_and_settle(&mut b_med, &mut ls_m, Gesture::Drop { from: DragSource::Slot(0), to: DropTarget::Button(8) });
+    assert_eq!(screen(&b_med).selection(), [0]);
+    assert_eq!(screen(&b_med).slots[0].attached, Some(8));
+
+    // Pick Slot(1) and Slot(2), then drag Capsule 2 (`Slot(9)`) directly onto non-last `Pick(1)` -> pops Pick(2), attaches Capsule 2 to Slot(1), restores Slot(2)!
+    step_choice(&mut b_med, &mut ls_m, ScreenChoice::Pick(1));
+    step_choice(&mut b_med, &mut ls_m, ScreenChoice::Pick(2));
+    point_and_settle(&mut b_med, &mut ls_m, Gesture::Drop { from: DragSource::Slot(9), to: DropTarget::ReplaceOrSwap(1) });
+    assert_eq!(screen(&b_med).selection(), [0, 1, 2]);
+    assert_eq!(screen(&b_med).slots[0].attached, Some(8));
+    assert_eq!(screen(&b_med).slots[1].attached, Some(9));
+}
+
+#[test]
+fn exe6_drag_beast_out_locked_slot_zero_and_outside_unpick() {
+    use saito_battle::custom::layer::{DragSource, DropTarget};
+    let content = exe6_content();
+    let falzar = "cybeast = \"falzar-beast\"";
+    let mut m = parse_in(&content, "exe6", &side("megaman", &EXE6, falzar), &side("megaman", &EXE6, falzar)).unwrap();
+    m.sides[0].set_fact(&content, "beast_out", &flag(true)).unwrap();
+    let mut b = Battle::new(m.round(&content, 0x5EED), content.clone());
+    let mut ls = step_until_choosing(&mut b);
+
+    // Pick chips first, then Beast Out -> Beast Out locks into selection[0].
+    deal(&mut b, &content, "exe6", 0, "cannon", A);
+    deal(&mut b, &content, "exe6", 1, "cannon", A);
+    deal(&mut b, &content, "exe6", 2, "cannon", A);
+    step_choice(&mut b, &mut ls, ScreenChoice::Pick(0));
+    step_choice(&mut b, &mut ls, ScreenChoice::Pick(1));
+    step_choice(&mut b, &mut ls, ScreenChoice::Press(SPECIAL_SLOT));
+    assert_eq!(screen(&b).selection(), [SPECIAL_SLOT, 0, 1]);
+
+    // Locked slot 0 refuses insert before 0 and swap with 0.
+    ls.layers[0].point(Gesture::Drop { from: DragSource::Slot(2), to: DropTarget::InsertAt(0) });
+    step_idle(&mut b, &mut ls);
+    let refused_id = b.screen_sound(ScreenSound::Refused).unwrap();
+    assert!(ls.layers[0].heard(&b).contains(&saito_battle::sound::SoundCue::Effect(refused_id)));
+    assert_eq!(screen(&b).selection(), [SPECIAL_SLOT, 0, 1]);
+
+    ls.layers[0].point(Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::ReplaceOrSwap(1) });
+    step_idle(&mut b, &mut ls);
+    assert_eq!(screen(&b).selection(), [SPECIAL_SLOT, 0, 1]);
+
+    // Swapping unlocked Pick(1) and Pick(2) succeeds.
+    point_and_settle(&mut b, &mut ls, Gesture::Drop { from: DragSource::Pick(1), to: DropTarget::ReplaceOrSwap(2) });
+    assert_eq!(screen(&b).selection(), [SPECIAL_SLOT, 1, 0]);
+
+    // Dragging Beast Out (`Pick(0)`) outside unpicks Beast Out cleanly.
+    point_and_settle(&mut b, &mut ls, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Outside });
+    assert_eq!(screen(&b).selection(), [1, 0]);
+    assert_eq!(screen(&b).form, None);
+}
