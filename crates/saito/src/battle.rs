@@ -510,6 +510,10 @@ impl Shell {
     /// Custom screen pointer selection in live battles is disabled (custom screen uses buttons/pad alone).
     pub fn picture_pointer(&mut self, _kind: i32, _button: i32, _x: f32, _y: f32) {}
 
+    fn fill_mobile_aspect(&self) -> bool {
+        cfg!(any(target_os = "ios", target_os = "android")) && self.settings.picture_size == 0 && !self.settings.fill_window
+    }
+
     /// How the picture fits a room of `width` by `height` display pixels: `stage::fit`, held to the settings'
     /// picture size (with the window filled, the frame as wide and as tall as the room at the multiple held to).
     pub fn fit(&self, width: f32, height: f32) -> stage::Fit {
@@ -520,6 +524,8 @@ impl Shell {
             fit.density = fit.density.min(fit.scale);
             fit.columns = stage::columns(width, fit.scale, enhancements.fill);
             fit.rows = stage::rows(height, fit.scale, enhancements.fill);
+        } else if self.fill_mobile_aspect() && enhancements.fine() {
+            fit.density = stage::mobile_density(width, height, self.scale.os, self.sharp, enhancements, fit);
         }
         fit
     }
@@ -596,7 +602,7 @@ impl Shell {
         if let Some(image) = shown {
             shell.set_picture(image);
         }
-        let size = (fit.columns as f32 * fit.scale as f32, fit.rows as f32 * fit.scale as f32);
+        let size = stage::display_size(fit, width, height, self.fill_mobile_aspect());
         shell.set_picture_width(size.0 / factor);
         shell.set_picture_height(size.1 / factor);
         shell.set_picture_rows(fit.rows as i32);

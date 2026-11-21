@@ -104,6 +104,30 @@ pub fn fit(width: f32, height: f32, factor: f32, sharp: bool, enhancements: Enha
     Fit { scale, density, columns, rows }
 }
 
+/// The size (in display pixels) the picture is drawn at inside a `width` by `height` room: at `fit.scale` per frame
+/// pixel, or maximized with the frame's exact aspect ratio (`fill_aspect`: mobile 3:2 display enlargement without
+/// stretching).
+pub fn display_size(fit: Fit, width: f32, height: f32, fill_aspect: bool) -> (f32, f32) {
+    if !fill_aspect {
+        return (fit.columns as f32 * fit.scale as f32, fit.rows as f32 * fit.scale as f32);
+    }
+    let scale = (width / fit.columns as f32).min(height / fit.rows as f32).max(1.0);
+    ((fit.columns as f32 * scale).round(), (fit.rows as f32 * scale).round())
+}
+
+/// The texture density used for aspect-filled mobile frames with smooth/sharp enhancements enabled: bumps density to
+/// cover the fractional display scale so sharp HUD and text stay crisp.
+pub fn mobile_density(width: f32, height: f32, factor: f32, sharp: bool, enhancements: Enhancements, fit: Fit) -> u32 {
+    if !enhancements.fine() {
+        return 1;
+    }
+    let ceil_scale = ((width / fit.columns as f32).min(height / fit.rows as f32).ceil() as u32).max(fit.scale);
+    if sharp {
+        return ceil_scale;
+    }
+    ((ceil_scale as f32 / factor.max(1.0)).ceil() as u32).clamp(1, ceil_scale).min(MOST_DENSITY)
+}
+
 /// The densest a picture with something finer than its pixels is presented (but `sharp`): six
 /// times the frame, 1440x960, about a 1080p display's picture (the user,
 /// on a 4K display's stutter: "do that", of holding it there and letting the
@@ -571,5 +595,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn mobile_aspect_scaling_maximizes_exact_3_to_2_fit() {
+        let base = fit(1080.0, 720.0, 3.0, false, Enhancements { fill: false, ..Enhancements::ALL });
+        assert_eq!(base.scale, 4);
+        assert_eq!(display_size(base, 1080.0, 720.0, false), (960.0, 640.0), "integer mode uses 4x");
+        assert_eq!(display_size(base, 1080.0, 720.0, true), (1080.0, 720.0), "mobile portrait fills full 3:2 box");
+        let landscape = fit(2400.0, 1080.0, 3.0, false, Enhancements { fill: false, ..Enhancements::ALL });
+        assert_eq!(landscape.scale, 6);
+        assert_eq!(display_size(landscape, 2400.0, 1080.0, false), (1440.0, 960.0));
+        assert_eq!(display_size(landscape, 2400.0, 1080.0, true), (1620.0, 1080.0), "mobile landscape fills full height at 3:2");
+        assert_eq!(mobile_density(2400.0, 1080.0, 3.0, false, Enhancements { fill: false, ..Enhancements::ALL }, landscape), 3);
+        assert_eq!(mobile_density(2400.0, 1080.0, 3.0, true, Enhancements { fill: false, ..Enhancements::ALL }, landscape), 7);
+        assert_eq!(mobile_density(2400.0, 1080.0, 3.0, false, Enhancements::NONE, landscape), 1);
     }
 }
