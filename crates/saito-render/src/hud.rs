@@ -1272,11 +1272,11 @@ pub fn draw<'a>(
     // The banner block's banner, where no telop lays on it. (The banner's
     // own game's HUD draws it, by its number there.) On a screen of both the
     // round's result's is each player's own, over its own half.
-    keep_to(seat, Anchor::CENTER, (&mut *layer, &mut *scratch), list, text);
     let banner = banner_of(b, seat);
     let block = b.banner_block_for(seat.side);
     let telops = telops_of(b, seat);
     if let (Some(id), None) = (banner, telops[0]) {
+        keep_to(seat, if is_program_advance_banner(b, id) { Anchor::TOP_LEFT } else { Anchor::CENTER }, (&mut *layer, &mut *scratch), list, text);
         let mut group = Vec::new();
         let mut words = Vec::new();
         if let Some((h, layout, number)) = crate::lookups::banner(graphics, &b.content, id, problems) {
@@ -1320,10 +1320,16 @@ pub fn draw<'a>(
                 let (from, to) = banner_ink(layout);
                 let (x, w) = (layout.x as i32 + from, to - from);
                 crate::seat::move_parts(&mut group, &mut words, seat.x(HALF_MIDDLE - w / 2, w) - x);
+            } else if seat.mirrored() && is_program_advance_banner(b, id) {
+                // A Program Advance banner mirrors alongside the mirrored PA chip names.
+                let (from, to) = banner_ink(layout);
+                let (x, w) = (layout.x as i32 + from, to - from);
+                crate::seat::move_parts(&mut group, &mut words, seat.x(x, w) - x);
             }
         }
         insert_named(list, text, 0, group, words);
     }
+    keep_to(seat, Anchor::CENTER, (&mut *layer, &mut *scratch), list, text);
     // The telops: the banner block's, and the other player's on its own
     // block where telops run apart from the banners (beside a banner, then).
     // (A telop shows whether or not its banner has an id: a game whose telop
@@ -1439,12 +1445,19 @@ fn telops_of(b: &Battle, seat: Seat) -> [Option<(ShownTelop, Banner)>; 2] {
     }
 }
 
+fn is_program_advance_banner(b: &Battle, id: BannerId) -> bool {
+    let roles = b.roles();
+    roles.try_banner(saito_battle::content::BannerRole::ProgramAdvance) == Some(id)
+        || roles.try_banner(saito_battle::content::BannerRole::ProgramAdvanceEmpty) == Some(id)
+}
+
 /// The banner `seat` draws: its console's ([`Battle::banner_for`]); on the
-/// right of a screen of both, its own result's alone (the others are the
-/// left's).
+/// right of a screen of both, its own result's or Program Advance's alone
+/// (the others are the left's).
 fn banner_of(b: &Battle, seat: Seat) -> Option<BannerId> {
     match (seat.shows, seat.at) {
-        (Shows::Own | Shows::Half, At::Right) => b.result_banner_for(seat.side),
+        (Shows::Own, At::Right) => b.result_banner_for(seat.side),
+        (Shows::Half, At::Right) => b.banner_for(seat.side).filter(|&id| b.result_banner_for(seat.side) == Some(id) || is_program_advance_banner(b, id)),
         _ => b.banner_for(seat.side),
     }
 }
@@ -3045,5 +3058,70 @@ mod tests {
             ticks += 1;
         }
         assert!(ticks >= 9 + 30 + 9, "{ticks} ticks");
+    }
+
+    #[test]
+    fn mirrored_program_advance_banner_moves_to_right_side() {
+        use saito_battle::battle::mode;
+        use saito_battle::content::BannerRole;
+        let mut b = battle();
+        let no_buttons = [saito_battle::input::PlayerTick::default(); 2];
+        for _ in 0..600 {
+            if b.round.mode == mode::CUSTOM && b.round.init != 0 {
+                break;
+            }
+            b.tick(&no_buttons, Default::default());
+        }
+        assert!(b.round.mode == mode::CUSTOM && b.custom.sides.iter().all(|s| s.screen.is_some()));
+        let pa = b.roles().banner(BannerRole::ProgramAdvance);
+        let steps = b.content.rules().effects.banner;
+        assert!(b.custom.sides[1].screen.as_mut().unwrap().hud.start(pa, true, steps));
+        b.tick(&no_buttons, Default::default());
+
+        let right_screen = Seat { side: 1, at: At::Right, shows: Shows::Screen };
+        let right_half = Seat { side: 1, at: At::Right, shows: Shows::Half };
+        assert_eq!(banner_of(&b, right_screen), Some(pa));
+        assert_eq!(banner_of(&b, right_half), Some(pa));
+
+        // 20 glyphs (160px), ink in columns 4..84 (width 80) placed at x = 8.
+        let mut pixels = vec![0u8; 40 * Tiles::TILE];
+        for g in 0..10 {
+            for col in (if g == 0 { 4 } else { 0 })..8 {
+                pixels[(2 * g) * Tiles::TILE + col] = 1;
+            }
+        }
+        for col in 0..4 {
+            pixels[(2 * 10) * Tiles::TILE + col] = 1;
+        }
+        let logo = saito_assets::shapes::from_svg("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 160 16\"><rect x=\"4\" y=\"2\" width=\"80\" height=\"12\" data-color=\"1\"/></svg>").unwrap();
+        let mut hud = hud();
+        let numbers = testing::asset_numbers(&b.content);
+        let pa_number = numbers.number(saito_content_api::AssetKind::Banner, pa.0).unwrap() as usize;
+        let pa_index = pa_number / 4;
+        if hud.banners.len() <= pa_index {
+            hud.banners.resize_with(pa_index + 1, BannerLayout::default);
+        }
+        hud.banners[pa_index] = BannerLayout { x: 8, y: 32, kind: 0, glyphs: Tiles { pixels }, number_at: None, bar: None, logo: Some(logo) };
+        let assets = saito_assets::Bundle { hud, ..saito_assets::Bundle::default() };
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+        let expected_dx = right_screen.x(8 + 4, 80) - (8 + 4);
+        assert_eq!(expected_dx, 240 - 12 - 80 - 12);
+
+        for seat in [right_screen, right_half] {
+            let (mut layer, mut scratch) = (Layer::new(1, 3), Layer::new(1, 3));
+            let mut list = SpriteList::default();
+            let font = crate::vfont::VectorFont::bundled();
+            let mut text = TextSink::new(crate::textlayer::Enhancements::ALL, Some(&font));
+            let mut problems = Problems::default();
+            let state = HudState::default();
+            let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
+            let view = crate::render::Renderer::view(&b);
+            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
+            let items: Vec<_> = text.into_items().into_iter().filter_map(|(_, it)| it.drawn.is_some().then_some(it)).collect();
+            assert_eq!(items.len(), 1, "{seat:?}");
+            assert_eq!(items[0].rect.x, 8 + expected_dx);
+            assert_eq!(items[0].clip.x, 8 + expected_dx);
+            assert_eq!(items[0].anchor, Anchor::TOP_RIGHT);
+        }
     }
 }
