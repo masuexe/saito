@@ -24,8 +24,10 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 | `状态` | `fzVaGp` | singleSelect | `待评估` / `待开发` / `开发中` / `已完成` / `暂不考虑` |
 | `优先级` | `fsC14X` | singleSelect | `P0 紧急` / `P1 高` / `P2 中` / `P3 低` |
 | `详细描述 / 复现步骤` | `fLw0GD` | text | Context, expected behavior, or reproduction steps |
-| `截图 / 附件` | `fvfeZn` | attachment | Screenshots or attachments |
+| `截图` | `fbqdLX` | image | Screenshots (readable by agents via `image_value.items[].image_url`) |
+| `附件` | `fvfeZn` | attachment | Legacy attachments (unreadable via MCP; kept for historical records) |
 | `提交人` | `fAZmBI` | text | Submitter's QQ nickname |
+| `创建人` | `fxO0vR` | createdUser | Auto-recorded submitter account (used for row-level self-edit permissions) |
 | `维护者备注` | `fikdq2` | text | Technical evaluation, fix summary, or rejection reason |
 | `提交时间` | `fFlBj3` | createdTime | Automatically recorded timestamp |
 
@@ -36,6 +38,8 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 1. **Triage**
    - Call `smartsheet_list_records` on `DY2Nzd210TEhibHdr` / `t00i2h`.
    - If a newly submitted record has an empty `状态`, set it to `待评估`.
+   - **Reading screenshots**: For records with `截图` (`image_value.items[].image_url`), download the image to a scratch path with `curl -sSL -H "Referer: https://docs.qq.com/" -o <path> "<image_url>"` (the `Referer` header is required; direct requests return HTTP 403) and view it with `read_file`.
+   - Note that SmartSheet record comments and legacy `附件` (`fvfeZn`) files are not readable via `tencent-smartsheet` MCP.
    - Evaluate feasibility and impact against the codebase; after user confirmation, update `状态` (`待开发` or `暂不考虑`), `优先级`, and `维护者备注`.
 2. **Develop**
    - Before implementing a specific item (e.g., `S-002`), call `smartsheet_update_records` to set its `状态` to `开发中`.
