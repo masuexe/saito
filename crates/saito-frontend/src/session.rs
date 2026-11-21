@@ -46,6 +46,8 @@ pub struct Session {
     pub pause_requests: [bool; 2],
     /// The replay being written of what is played, if one is.
     pub recorder: Option<Recorder>,
+    /// An optional secondary replay stream (e.g., live spectator broadcast).
+    pub spectate_recorder: Option<Recorder>,
 }
 
 impl Session {
@@ -67,16 +69,33 @@ impl Session {
             ended: None,
             pause_requests: [false; 2],
             recorder: None,
+            spectate_recorder: None,
         }
     }
 
     /// Record what is played from here as a replay: refused once a tick
     /// has run, or for a driver whose ticks can't be (`Driver::record`).
     pub fn record(&mut self, recorder: Recorder) -> Result<(), String> {
-        if self.ticks > 0 || !self.driver.record() {
+        if self.ticks > 0 {
+            return Err("only a set played on buttons alone is recorded, from its start".into());
+        }
+        if self.spectate_recorder.is_none() && !self.driver.record() {
             return Err("only a set played on buttons alone is recorded, from its start".into());
         }
         self.recorder = Some(recorder);
+        Ok(())
+    }
+
+    /// Attach a secondary recorder for live spectator streaming without interfering
+    /// with local replay recording.
+    pub fn record_spectate(&mut self, recorder: Recorder) -> Result<(), String> {
+        if self.ticks > 0 {
+            return Err("spectator recording must start at tick 0".into());
+        }
+        if self.recorder.is_none() && !self.driver.record() {
+            return Err("driver does not support recording".into());
+        }
+        self.spectate_recorder = Some(recorder);
         Ok(())
     }
 
@@ -84,6 +103,7 @@ impl Session {
     /// before).
     pub fn restart(&mut self) {
         self.recorder = None;
+        self.spectate_recorder = None;
         self.battle = self.driver.start();
         self.stopped = None;
         self.stop_reason = None;
@@ -127,11 +147,16 @@ impl Session {
         IN_ENGINE.with(|f| f.set(true));
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.run_frame(input, &mut self.battle)));
         IN_ENGINE.with(|f| f.set(false));
-        if let Some(r) = &mut self.recorder {
+        if self.recorder.is_some() || self.spectate_recorder.is_some() {
             let mut settled = Vec::new();
             self.driver.take_recorded(&mut settled);
             for t in &settled {
-                r.tick(t);
+                if let Some(r) = &mut self.recorder {
+                    r.tick(t);
+                }
+                if let Some(r) = &mut self.spectate_recorder {
+                    r.tick(t);
+                }
             }
         }
         match ran {
@@ -187,14 +212,22 @@ impl Session {
         // A set's round ended on this tick: on with the next one, or the
         // set is over.
         let after = self.driver.round_ended(&self.battle);
-        if let Some(r) = &mut self.recorder {
+        if self.recorder.is_some() || self.spectate_recorder.is_some() {
             let (round_ended, set_ended) = match &after {
                 Some(After::Round(_)) => (true, false),
                 Some(After::Over(_)) => (true, true),
                 _ => (false, false),
             };
-            let digest = (round_ended || r.digest_due()).then(|| self.battle.digest());
-            r.tick(&saito_replay::Tick { inputs: step.input.map(|p| p.word()), delays: self.driver.delays(), digest, round_ended, set_ended });
+            let due = self.recorder.as_ref().is_some_and(|r| r.digest_due())
+                || self.spectate_recorder.as_ref().is_some_and(|r| r.digest_due());
+            let digest = (round_ended || due).then(|| self.battle.digest());
+            let tick = saito_replay::Tick { inputs: step.input.map(|p| p.word()), delays: self.driver.delays(), digest, round_ended, set_ended };
+            if let Some(r) = &mut self.recorder {
+                r.tick(&tick);
+            }
+            if let Some(r) = &mut self.spectate_recorder {
+                r.tick(&tick);
+            }
         }
         match after {
             None => {}

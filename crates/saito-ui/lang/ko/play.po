@@ -229,3 +229,61 @@ msgstr "계속"
 msgid "{n} build"
 msgid_plural "{n} builds"
 msgstr[0] "빌드 {n}개"
+
+msgid "Spectate"
+msgstr "관전"
+
+msgid "Spectate match"
+msgstr "대전 관전"
+
+msgid "Watch by room code"
+msgstr "방 코드로 관전"
+
+msgid "Live public matches"
+msgstr "공개 대전 목록"
+
+msgid "Refresh"
+msgstr "새로고침"
+
+msgid "Loading live matches…"
+msgstr "대전 목록 불러오는 중…"
+
+msgid "No public matches right now."
+msgstr "현재 공개된 대전이 없습니다."
+
+msgid "{} watching"
+msgstr "{}명 관전 중"
+
+msgid "Spectate: Off"
+msgstr "관전: 꺼짐"
+
+msgid "Spectate: Code"
+msgstr "관전: 코드 전용"
+
+msgid "Spectate: Public"
+msgstr "관전: 공개"
+
+msgid "Delay: Off"
+msgstr "지연: 꺼짐"
+
+msgid "Delay: {}s"
+msgstr "지연: {}초"
+
+msgid "Anti-ghosting delay: {}s"
+msgstr "엿보기 방지 지연: {}초"
+
+msgid "Live (no delay)"
+msgstr "실시간 관전 (지연 없음)"
+
+msgid "Catching up…"
+msgstr "동기화 중…"
+
+msgid "DELAY {}s"
+msgstr "지연 {}초"
+
+msgid "LIVE"
+msgstr "LIVE"
+
+msgid "{} · {}s"
+msgstr "{}명 · 지연{}초"
+

@@ -28,6 +28,19 @@ export enum PlayPart {
     builds,
     // The lobby: an invite is out, or this machine hosts (`PlayView.waiting`), or the two players are together.
     lobby,
+    // Watching another room live (lobby waiting or active battle).
+    spectate,
+}
+
+// One public spectatable room in the live directory.
+export struct SpectateRoomEntry {
+    code: string,
+    game: string,
+    players: string,
+    rules: string,
+    status: string,
+    spectators: int,
+    delay: int,
 }
 
 // A dialog of the builds' part: a new build's name and version.
@@ -171,6 +184,30 @@ export global PlayView {
     in property <string> note-error;
     // Another build is being chosen.
     in property <bool> changing;
+
+    // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
+    // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
+    in property <int> spectate-visibility: 1;
+    in property <int> spectate-delay: 0;
+    in property <int> spectators: 0;
+    // Public spectator browser dialog.
+    in property <bool> spectate-browser;
+    in property <[SpectateRoomEntry]> spectate-rooms;
+    in property <bool> spectate-loading;
+    in property <string> spectate-code;
+    in property <string> spectate-error;
+    // Active spectator session (`PlayPart.spectate`).
+    in property <string> watch-code;
+    in property <string> watch-game;
+    in property <string> watch-players;
+    in property <string> watch-stage;
+    in property <int> watch-spectators;
+    in property <int> watch-delay;
+    in property <bool> watch-in-battle;
+    in property <bool> watch-catching-up;
+    // 0 = P1, 1 = P2, 2 = Both consoles.
+    in property <int> watch-view;
+    in property <string> watch-problem;
 
     // ---- In a match --------------------------------------------------------------------------------------
     in property <MatchPage> page;
@@ -973,11 +1010,11 @@ export component PlayScreen inherits Page {
     property <length> their-y: Theme.phone ? self.place-height + 8px : self.lobby-top;
     property <length> facts-top: Theme.phone ? 2 * self.place-height + 20px : Theme.sideways ? self.place-height + 8px : self.lobby-top + self.place-height + 24px;
     property <length> buttons-top: Theme.phone ? self.facts-top + 308px : Theme.sideways ? self.body-height - 52px : self.facts-top + 124px;
-    title: PlayView.part == PlayPart.lobby ? I18n.upper(@tr("Lobby")) : I18n.upper(@tr("Play"));
+    title: PlayView.part == PlayPart.spectate ? I18n.upper(@tr("Spectate")) : PlayView.part == PlayPart.lobby ? I18n.upper(@tr("Lobby")) : I18n.upper(@tr("Play"));
     back: PlayView.part == PlayPart.builds ? I18n.upper(@tr("Menu")) : I18n.upper(@tr("Play"));
-    hints: PlayView.part == PlayPart.lobby ? (PlayView.waiting ? root.hints-waiting : root.hints-lobby) : root.hints-builds;
-    // (The builds of the game while they show; the lobby and a match list nothing.)
-    status: PlayView.part == PlayPart.builds ? @tr("{n} build" | "{n} builds" % PlayView.builds.length) : "";
+    hints: PlayView.part == PlayPart.spectate ? [] : PlayView.part == PlayPart.lobby ? (PlayView.waiting ? root.hints-waiting : root.hints-lobby) : root.hints-builds;
+    // (The builds of the game while they show; active spectator count in lobby/spectate.)
+    status: PlayView.part == PlayPart.builds ? @tr("{n} build" | "{n} builds" % PlayView.builds.length) : PlayView.part == PlayPart.spectate ? (PlayView.watch-spectators > 0 ? @tr("{} watching", PlayView.watch-spectators) : "") : (PlayView.spectators > 0 ? @tr("{} watching", PlayView.spectators) : "");
 
     // ---- The builds, what is done with them, and the row that makes a link ----
     // (One conditional a part, and what differs on a phone by its place and by `visible`: each conditional is a
@@ -1183,11 +1220,19 @@ export component PlayScreen inherits Page {
                 text: I18n.upper(@tr("Join"));
             }
 
+            spectate-btn := Button {
+                x: Theme.phone ? 0px : Theme.sideways ? root.side-x : join.x + join.width + 8px;
+                y: Theme.phone ? code.y + code.height + 12px : Theme.sideways ? root.foot-y : root.row-y;
+                width: Theme.phone ? (Theme.web ? root.body-width : (root.body-width - 8px) / 2) : self.natural-width;
+                nav: "spectate";
+                text: I18n.upper(@tr("Spectate"));
+            }
+
             // (A browser has no sockets of its own: links are WebRTC's alone, through the signaling server.)
             if !Theme.web: Button {
-                x: root.body-width - self.width;
+                x: Theme.phone ? spectate-btn.width + 8px : root.body-width - self.width;
                 y: Theme.phone ? code.y + code.height + 12px : Theme.sideways ? root.foot-y : root.row-y;
-                width: Theme.phone ? root.body-width : self.natural-width;
+                width: Theme.phone ? (root.body-width - 8px) / 2 : self.natural-width;
                 nav: "direct";
                 // (Less than HOST and JOIN: the user, "direct connect should be deemphasized".)
                 kind: ButtonKind.text;
@@ -1427,16 +1472,195 @@ export component PlayScreen inherits Page {
                 big: Theme.sideways;
             }
 
+            // Host spectator controls (visibility + anti-ghosting delay) for signaling rooms.
+            if PlayView.host && !PlayView.invite-direct: Rectangle {
+                x: 0;
+                y: Theme.sideways ? root.buttons-top - 52px : root.buttons-top + (Theme.phone ? 114px : 92px);
+                width: root.body-width;
+                height: 36px;
+                property <length> total: spec-vis.width + 10px + spec-delay.width;
+
+                spec-vis := Button {
+                    x: (parent.width - parent.total) / 2;
+                    y: 0;
+                    height: 34px;
+                    compact: true;
+                    nav: "lobby.spectate";
+                    kind: ButtonKind.ghost;
+                    text: PlayView.spectate-visibility == 0 ? @tr("Spectate: Off") : PlayView.spectate-visibility == 2 ? @tr("Spectate: Public") : @tr("Spectate: Code");
+                }
+
+                spec-delay := Button {
+                    x: spec-vis.x + spec-vis.width + 10px;
+                    y: 0;
+                    height: 34px;
+                    compact: true;
+                    nav: "lobby.spectate-delay";
+                    kind: ButtonKind.ghost;
+                    enabled: PlayView.spectate-visibility != 0;
+                    text: PlayView.spectate-delay == 0 ? @tr("Delay: Off") : @tr("Delay: {}s", PlayView.spectate-delay);
+                }
+            }
+
             // The reserved line: who is waited for, that the link is being made again, why the match before
             // ended, or what keeps this player's build from being played.
             Message {
                 x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: Theme.sideways ? root.buttons-top - 26px : root.buttons-top + (Theme.phone ? 112px : 64px);
+                y: Theme.sideways ? root.buttons-top - 22px : root.buttons-top + (Theme.phone ? 156px : 56px);
                 width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
                 text: PlayView.note == LobbyNote.reconnecting ? @tr("Reconnecting {} s", PlayView.note-seconds) : PlayView.note == LobbyNote.unusable ? PlayView.note-problem : PlayView.note-error != "" ? PlayView.note-error : PlayView.note == LobbyNote.you ? @tr("Waiting for you to ready up.") : PlayView.note == LobbyNote.them ? @tr("Waiting for your opponent to ready up.") : "";
                 tone: PlayView.note-error != "" || PlayView.note == LobbyNote.reconnecting || PlayView.note == LobbyNote.unusable ? Theme.bad : Theme.muted;
                 mark: PlayView.note == LobbyNote.unusable;
                 horizontal-alignment: center;
+            }
+        }
+    }
+
+    // ---- Spectating another room live --------------------------------------------------------------------
+    if PlayView.part == PlayPart.spectate: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.body-width;
+        height: root.body-height;
+
+        // Waiting in lobby / between sets
+        if !PlayView.watch-in-battle: Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(parent.width, 520px);
+            height: 260px;
+
+            PanelBack { }
+
+            Label {
+                x: 24px;
+                y: 22px;
+                width: parent.width - 48px;
+                height: 16px;
+                text: PlayView.watch-game != "" ? "\{PlayView.watch-game} · \{PlayView.watch-code}" : PlayView.watch-code;
+            }
+
+            Value {
+                x: 24px;
+                y: 54px;
+                width: parent.width - 48px;
+                height: 28px;
+                text: PlayView.watch-players != "" ? PlayView.watch-players : @tr("Connecting…");
+                font-size: 20px;
+            }
+
+            Note {
+                x: 24px;
+                y: 94px;
+                width: parent.width - 48px;
+                height: 24px;
+                text: PlayView.watch-problem != "" ? PlayView.watch-problem : PlayView.watch-stage;
+                color: PlayView.watch-problem != "" ? Theme.bad : Theme.muted;
+                wrap: word-wrap;
+            }
+
+            Note {
+                x: 24px;
+                y: 132px;
+                width: parent.width - 48px;
+                height: 20px;
+                text: PlayView.watch-delay > 0 ? @tr("Anti-ghosting delay: {}s", PlayView.watch-delay) : @tr("Live (no delay)");
+                color: Theme.dim;
+            }
+
+            Button {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - self.height - 24px;
+                nav: "watch.leave";
+                text: I18n.upper(@tr("Leave"));
+                kind: ButtonKind.ghost;
+            }
+        }
+
+        // Active battle live view
+        if PlayView.watch-in-battle: Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+
+            Picture {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height - 48px;
+            }
+
+            // Bottom spectator HUD bar
+            Rectangle {
+                x: 0;
+                y: parent.height - 44px;
+                width: parent.width;
+                height: 44px;
+
+                PanelBack {
+                    accent: false;
+                }
+
+                Mono {
+                    x: 12px;
+                    y: 0;
+                    width: 110px;
+                    height: parent.height;
+                    text: PlayView.watch-catching-up ? @tr("Catching up…") : PlayView.watch-delay > 0 ? @tr("DELAY {}s", PlayView.watch-delay) : @tr("LIVE");
+                    color: PlayView.watch-catching-up ? Theme.cursor : Theme.good;
+                }
+
+                Note {
+                    x: 126px;
+                    y: 0;
+                    width: max(0px, view-p1.x - 136px);
+                    height: parent.height;
+                    text: PlayView.watch-players;
+                    color: Theme.text;
+                    wrap: no-wrap;
+                    overflow: elide;
+                }
+
+                view-p1 := Button {
+                    x: view-p2.x - self.width - 6px;
+                    y: 5px;
+                    height: 34px;
+                    compact: true;
+                    nav: "watch.view-p1";
+                    kind: PlayView.watch-view == 0 ? ButtonKind.main : ButtonKind.ghost;
+                    text: "P1";
+                }
+
+                view-p2 := Button {
+                    x: view-both.x - self.width - 6px;
+                    y: 5px;
+                    height: 34px;
+                    compact: true;
+                    nav: "watch.view-p2";
+                    kind: PlayView.watch-view == 1 ? ButtonKind.main : ButtonKind.ghost;
+                    text: "P2";
+                }
+
+                view-both := Button {
+                    x: watch-leave-btn.x - self.width - 10px;
+                    y: 5px;
+                    height: 34px;
+                    compact: true;
+                    nav: "watch.view-both";
+                    kind: PlayView.watch-view == 2 ? ButtonKind.main : ButtonKind.ghost;
+                    text: @tr("Both");
+                }
+
+                watch-leave-btn := Button {
+                    x: parent.width - self.width - 10px;
+                    y: 5px;
+                    height: 34px;
+                    compact: true;
+                    nav: "watch.leave";
+                    kind: ButtonKind.ghost;
+                    text: I18n.upper(@tr("Leave"));
+                }
             }
         }
     }
@@ -2112,6 +2336,155 @@ component NameDialog inherits DialogFrame {
 export component PlayOverlay inherits Rectangle {
     if PlayView.dialog != BuildDialog.none: NameDialog {
         Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // Public live matches browser + watch by room code.
+    if PlayView.spectate-browser: spec := DialogFrame {
+        title: @tr("Spectate match");
+        wide: true;
+        content-height: 360px;
+
+        Label {
+            x: 0;
+            y: 0;
+            width: spec.inner-width;
+            height: 14px;
+            text: I18n.upper(@tr("Watch by room code"));
+        }
+
+        Field {
+            x: 0;
+            y: 22px;
+            width: spec.inner-width - spec-join.width - 8px;
+            nav: "spectate.code";
+            text: PlayView.spectate-code;
+            placeholder: @tr("Invite code");
+            code: true;
+            error: PlayView.spectate-error != "";
+        }
+
+        spec-join := Button {
+            x: spec.inner-width - self.width;
+            y: 22px;
+            nav: "spectate.join";
+            text: I18n.upper(@tr("Watch"));
+            kind: ButtonKind.main;
+        }
+
+        Message {
+            x: 0;
+            y: 66px;
+            width: spec.inner-width;
+            text: PlayView.spectate-error;
+            tone: Theme.bad;
+        }
+
+        Rule {
+            x: 0;
+            y: 94px;
+            width: spec.inner-width;
+
+            Rectangle { }
+        }
+
+        Label {
+            x: 0;
+            y: 108px;
+            width: spec.inner-width - spec-refresh.width - 8px;
+            height: 20px;
+            text: I18n.upper(@tr("Live public matches"));
+        }
+
+        spec-refresh := Button {
+            x: spec.inner-width - self.width;
+            y: 102px;
+            height: 30px;
+            compact: true;
+            nav: "spectate.refresh";
+            kind: ButtonKind.ghost;
+            text: I18n.upper(@tr("Refresh"));
+        }
+
+        Rectangle {
+            x: 0;
+            y: 138px;
+            width: spec.inner-width;
+            height: 176px;
+
+            if PlayView.spectate-rooms.length == 0: Note {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                text: PlayView.spectate-loading ? @tr("Loading live matches…") : @tr("No public matches right now.");
+                color: Theme.muted;
+            }
+
+            if PlayView.spectate-rooms.length > 0: ListView {
+                width: parent.width;
+                height: parent.height;
+                count: PlayView.spectate-rooms.length;
+                row-height: 48px;
+                nav: "spectate.room";
+                for entry[i] in PlayView.spectate-rooms: Rectangle {
+                    y: i * 48px;
+                    width: parent.width;
+                    height: 46px;
+                    property <bool> hot: Nav.id == "spectate.room" && Nav.index == i;
+
+                    RowBack {
+                        chosen: parent.hot;
+                        hover: row-touch.has-hover;
+                    }
+
+                    Value {
+                        x: 12px;
+                        y: 6px;
+                        width: parent.width - 140px;
+                        height: 18px;
+                        text: entry.players;
+                        font-size: 14px;
+                    }
+
+                    Note {
+                        x: 12px;
+                        y: 25px;
+                        width: parent.width - 140px;
+                        height: 16px;
+                        text: "\{entry.game} · \{entry.code} · \{entry.status}";
+                        color: Theme.muted;
+                        font-size: 11px;
+                    }
+
+                    Note {
+                        x: parent.width - 122px;
+                        y: 6px;
+                        width: 110px;
+                        height: 34px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        text: entry.delay > 0 ? @tr("{} · {}s", entry.spectators, entry.delay) : @tr("{} watching", entry.spectators);
+                        color: Theme.dim;
+                        font-size: 12px;
+                    }
+
+                    row-touch := RowTouch {
+                        nav: "spectate.room";
+                        nav-index: i;
+                    }
+                }
+            }
+        }
+
+        Button {
+            x: spec.inner-width - self.width;
+            y: 324px;
+            nav: "spectate.close";
+            text: I18n.upper(@tr("Cancel"));
+            kind: ButtonKind.ghost;
+        }
     }
 
 

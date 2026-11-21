@@ -14,8 +14,52 @@ interface IceServer {
 }
 
 type Role = "host" | "join";
-type Reason = "not-found" | "full" | "version" | "bad-request" | "busy";
+type Reason = "not-found" | "full" | "version" | "bad-request" | "busy" | "disabled";
 type Kind = "invite" | "reconnect";
+type Visibility = "off" | "code-only" | "public";
+type RoomStage = "lobby" | "loading" | "playing";
+
+interface RoomMeta {
+	visibility: Visibility;
+	delay_secs: number;
+	game: string;
+	engine: string;
+	content_hash: string;
+	rules: string;
+	names: [string, string];
+	stage: RoomStage;
+	score: [number, number];
+}
+
+interface SpectateChunk {
+	from_tick: number;
+	count: number;
+	data_b64: string;
+	releaseAt: number;
+	released: boolean;
+}
+
+interface SpectateSet {
+	setId: number;
+	headerB64: string;
+	releaseAt: number;
+	released: boolean;
+	chunks: SpectateChunk[];
+	ended: boolean;
+	endReason: string;
+	endReleaseAt?: number;
+	endReleased: boolean;
+}
+
+interface SpectateRoom {
+	code: string;
+	hostPeer: string;
+	hostWs?: WebSocket;
+	hostGraceTimer?: NodeJS.Timeout;
+	meta: RoomMeta;
+	watchers: Map<string, WebSocket>;
+	currentSet?: SpectateSet;
+}
 
 interface PeerMeta {
 	roomKey: string;
@@ -53,7 +97,15 @@ const CLOSE: Record<Reason, number> = {
 	"bad-request": 4003,
 	"not-found": 4004,
 	busy: 4005,
+	disabled: 4006,
 };
+
+const MAX_SPECTATORS = Number(process.env.MAX_SPECTATORS ?? "30");
+const SPECTATE_HOST_GRACE_MS = 30 * 1000;
+const MAX_DELAY_SECS = 60;
+const MAX_HEADER_B64_BYTES = 128 * 1024;
+const MAX_CHUNK_B64_BYTES = 32 * 1024;
+const MAX_CHUNKS_PER_SET = 10_000;
 
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -68,6 +120,8 @@ const TURN_SECRET = process.env.TURN_SECRET ?? "";
 const rooms = new Map<string, RoomState>();
 const metaBySocket = new WeakMap<WebSocket, PeerMeta>();
 const rateBuckets = new Map<string, number[]>();
+const spectateRooms = new Map<string, SpectateRoom>();
+const listSubscribers = new Set<WebSocket>();
 
 function other(role: Role): Role {
 	return role === "host" ? "join" : "host";
@@ -203,6 +257,176 @@ function rejectHttp(socket: import("node:stream").Duplex, status: number, body: 
 	socket.destroy();
 }
 
+function defaultMeta(): RoomMeta {
+	return {
+		visibility: "code-only",
+		delay_secs: 0,
+		game: "",
+		engine: "",
+		content_hash: "",
+		rules: "",
+		names: ["", ""],
+		stage: "lobby",
+		score: [0, 0],
+	};
+}
+
+function sanitizeMeta(raw: unknown): RoomMeta {
+	const base = defaultMeta();
+	if (!raw || typeof raw !== "object") return base;
+	const m = raw as Record<string, unknown>;
+	if (m.visibility === "off" || m.visibility === "code-only" || m.visibility === "public") {
+		base.visibility = m.visibility;
+	}
+	if (typeof m.delay_secs === "number" && Number.isFinite(m.delay_secs)) {
+		base.delay_secs = Math.max(0, Math.min(MAX_DELAY_SECS, Math.floor(m.delay_secs)));
+	}
+	if (typeof m.game === "string") base.game = m.game.slice(0, 32);
+	if (typeof m.engine === "string") base.engine = m.engine.slice(0, 32);
+	if (typeof m.content_hash === "string") base.content_hash = m.content_hash.slice(0, 32);
+	if (typeof m.rules === "string") base.rules = m.rules.slice(0, 64);
+	if (Array.isArray(m.names) && m.names.length === 2) {
+		base.names = [
+			typeof m.names[0] === "string" ? m.names[0].slice(0, 48) : "",
+			typeof m.names[1] === "string" ? m.names[1].slice(0, 48) : "",
+		];
+	}
+	if (m.stage === "lobby" || m.stage === "loading" || m.stage === "playing") {
+		base.stage = m.stage;
+	}
+	if (Array.isArray(m.score) && m.score.length === 2) {
+		base.score = [
+			typeof m.score[0] === "number" ? Math.max(0, Math.min(99, Math.floor(m.score[0]))) : 0,
+			typeof m.score[1] === "number" ? Math.max(0, Math.min(99, Math.floor(m.score[1]))) : 0,
+		];
+	}
+	return base;
+}
+
+function roomSummary(room: SpectateRoom) {
+	return {
+		code: room.code,
+		...room.meta,
+		spectators: room.watchers.size,
+	};
+}
+
+function publicRoomsList() {
+	const stageRank: Record<RoomStage, number> = { playing: 0, loading: 1, lobby: 2 };
+	return Array.from(spectateRooms.values())
+		.filter((r) => r.meta.visibility === "public")
+		.sort((a, b) => {
+			const sd = stageRank[a.meta.stage] - stageRank[b.meta.stage];
+			if (sd !== 0) return sd;
+			const wd = b.watchers.size - a.watchers.size;
+			if (wd !== 0) return wd;
+			return a.code.localeCompare(b.code);
+		})
+		.map(roomSummary);
+}
+
+function broadcastPublicList(): void {
+	if (listSubscribers.size === 0) return;
+	const payload = JSON.stringify({ type: "rooms", rooms: publicRoomsList() });
+	for (const ws of listSubscribers) {
+		tell(ws, payload);
+	}
+}
+
+function broadcastWatchers(room: SpectateRoom, payload: string): void {
+	for (const ws of room.watchers.values()) {
+		tell(ws, payload);
+	}
+}
+
+function notifySpectatorCount(room: SpectateRoom): void {
+	const count = room.watchers.size;
+	const msg = JSON.stringify({ type: "spectators", count });
+	tell(room.hostWs, msg);
+	broadcastWatchers(room, msg);
+	if (room.meta.visibility === "public") {
+		broadcastPublicList();
+	}
+}
+
+function kickAllWatchers(room: SpectateRoom, reason: string): void {
+	const msg = JSON.stringify({ type: "closed", reason });
+	for (const ws of room.watchers.values()) {
+		tell(ws, msg);
+		try {
+			ws.close(1000, reason);
+		} catch {
+			// Ignore
+		}
+	}
+	room.watchers.clear();
+}
+
+function closeSpectateRoom(room: SpectateRoom, reason: string): void {
+	if (room.hostGraceTimer) {
+		clearTimeout(room.hostGraceTimer);
+		room.hostGraceTimer = undefined;
+	}
+	const wasPublic = room.meta.visibility === "public";
+	spectateRooms.delete(room.code);
+	kickAllWatchers(room, reason);
+	if (wasPublic) {
+		broadcastPublicList();
+	}
+}
+
+function flushDelayedSet(room: SpectateRoom, now: number): void {
+	const set = room.currentSet;
+	if (!set) return;
+	if (!set.released) {
+		if (now < set.releaseAt) return;
+		set.released = true;
+		broadcastWatchers(room, JSON.stringify({ type: "set_start", set_id: set.setId, header_b64: set.headerB64 }));
+	}
+	for (const chunk of set.chunks) {
+		if (!chunk.released) {
+			if (now < chunk.releaseAt) return;
+			chunk.released = true;
+			broadcastWatchers(
+				room,
+				JSON.stringify({
+					type: "ticks",
+					set_id: set.setId,
+					from_tick: chunk.from_tick,
+					count: chunk.count,
+					data_b64: chunk.data_b64,
+				}),
+			);
+		}
+	}
+	if (set.ended && !set.endReleased && (set.endReleaseAt === undefined || now >= set.endReleaseAt)) {
+		set.endReleased = true;
+		broadcastWatchers(room, JSON.stringify({ type: "set_end", set_id: set.setId, reason: set.endReason }));
+	}
+}
+
+function buildSetSnapshot(room: SpectateRoom) {
+	const set = room.currentSet;
+	if (!set || !set.released || set.endReleased) return undefined;
+	return {
+		set_id: set.setId,
+		header_b64: set.headerB64,
+		chunks: set.chunks
+			.filter((c) => c.released)
+			.map((c) => ({ from_tick: c.from_tick, count: c.count, data_b64: c.data_b64 })),
+	};
+}
+
+// Periodically release delayed spectator frames
+setInterval(() => {
+	const now = Date.now();
+	for (const room of spectateRooms.values()) {
+		if (room.currentSet) {
+			flushDelayedSet(room, now);
+		}
+	}
+}, 100).unref();
+
 const server = http.createServer((req, res) => {
 	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 	if (url.pathname === "/health") {
@@ -210,9 +434,20 @@ const server = http.createServer((req, res) => {
 		res.end("ok\n");
 		return;
 	}
+	if (url.pathname === "/spectate/rooms" && (req.method === "GET" || req.method === "HEAD")) {
+		const body = JSON.stringify({ rooms: publicRoomsList() });
+		res.writeHead(200, {
+			"Content-Type": "application/json; charset=utf-8",
+			"Access-Control-Allow-Origin": "*",
+			"Cache-Control": "no-store",
+		});
+		res.end(req.method === "HEAD" ? undefined : body);
+		return;
+	}
 	const invite = url.pathname.match(/^\/rooms(?:\/([^/]*))?\/?$/);
 	const reconnect = url.pathname.match(/^\/reconnect\/([^/]*)\/?$/);
-	if (!invite && !reconnect) {
+	const spectate = url.pathname.match(/^\/spectate\/(host|watch|list)(?:\/([^/]*))?\/?$/);
+	if (!invite && !reconnect && !spectate) {
 		res.writeHead(404, { "Content-Type": "text/plain" });
 		res.end("a new room is /rooms?peer=ID&v=1, a room /rooms/CODE?peer=ID&v=1, a reconnect room /reconnect/CODE?peer=ID&v=1\n");
 		return;
@@ -221,8 +456,274 @@ const server = http.createServer((req, res) => {
 	res.end("a room is a WebSocket\n");
 });
 
+function handleSpectateListUpgrade(req: http.IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
+	wss.handleUpgrade(req, socket, head, (ws) => {
+		listSubscribers.add(ws);
+		tell(ws, JSON.stringify({ type: "rooms", rooms: publicRoomsList() }));
+		ws.on("message", (data: RawData, isBinary: boolean) => {
+			if (isBinary) return;
+			const text = typeof data === "string" ? data : data.toString("utf8");
+			if (text === "ping") {
+				tell(ws, "pong");
+			} else if (text === "refresh") {
+				tell(ws, JSON.stringify({ type: "rooms", rooms: publicRoomsList() }));
+			}
+		});
+		const cleanup = () => {
+			listSubscribers.delete(ws);
+		};
+		ws.on("close", cleanup);
+		ws.on("error", cleanup);
+	});
+}
+
+function handleSpectateHostUpgrade(
+	req: http.IncomingMessage,
+	socket: import("node:stream").Duplex,
+	head: Buffer,
+	rawCode: string,
+	peer: string,
+): void {
+	const code = rawCode.toUpperCase();
+	if (!CODE.test(code)) {
+		refuseUpgrade(req, socket, head, "bad-request", "invalid room code");
+		return;
+	}
+	let room = spectateRooms.get(code);
+	if (room && room.hostPeer !== peer) {
+		refuseUpgrade(req, socket, head, "full", "room already has a spectator host");
+		return;
+	}
+	if (!room) {
+		room = {
+			code,
+			hostPeer: peer,
+			meta: defaultMeta(),
+			watchers: new Map(),
+		};
+		spectateRooms.set(code, room);
+	}
+	if (room.hostGraceTimer) {
+		clearTimeout(room.hostGraceTimer);
+		room.hostGraceTimer = undefined;
+	}
+	const targetRoom = room;
+	wss.handleUpgrade(req, socket, head, (ws) => {
+		if (targetRoom.hostWs && targetRoom.hostWs !== ws) {
+			try {
+				targetRoom.hostWs.close(4001, "replaced by a new connection");
+			} catch {
+				// Ignore
+			}
+		}
+		targetRoom.hostWs = ws;
+		tell(ws, JSON.stringify({ type: "welcome", code: targetRoom.code, spectators: targetRoom.watchers.size }));
+
+		ws.on("message", (data: RawData, isBinary: boolean) => {
+			if (isBinary) return;
+			const text = typeof data === "string" ? data : data.toString("utf8");
+			if (text === "ping") {
+				tell(ws, "pong");
+				return;
+			}
+			let msg: Record<string, unknown>;
+			try {
+				msg = JSON.parse(text);
+			} catch {
+				return;
+			}
+			if (spectateRooms.get(code) !== targetRoom) return;
+			const now = Date.now();
+			const delayMs = targetRoom.meta.delay_secs * 1000;
+
+			if (msg.type === "config") {
+				const prevVisibility = targetRoom.meta.visibility;
+				targetRoom.meta = sanitizeMeta(msg.meta);
+				if (targetRoom.meta.visibility === "off") {
+					if (targetRoom.watchers.size > 0) {
+						kickAllWatchers(targetRoom, "disabled");
+						tell(ws, JSON.stringify({ type: "spectators", count: 0 }));
+					}
+				} else {
+					broadcastWatchers(targetRoom, JSON.stringify({ type: "room_update", room: roomSummary(targetRoom) }));
+				}
+				if (prevVisibility === "public" || targetRoom.meta.visibility === "public") {
+					broadcastPublicList();
+				}
+			} else if (msg.type === "set_start") {
+				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : 0;
+				const headerB64 = typeof msg.header_b64 === "string" ? msg.header_b64 : "";
+				if (!headerB64 || headerB64.length > MAX_HEADER_B64_BYTES) return;
+				if (targetRoom.currentSet && targetRoom.currentSet.released && !targetRoom.currentSet.endReleased) {
+					targetRoom.currentSet.endReleased = true;
+					broadcastWatchers(
+						targetRoom,
+						JSON.stringify({ type: "set_end", set_id: targetRoom.currentSet.setId, reason: "next-set" }),
+					);
+				}
+				const released = delayMs === 0;
+				targetRoom.currentSet = {
+					setId,
+					headerB64,
+					releaseAt: now + delayMs,
+					released,
+					chunks: [],
+					ended: false,
+					endReason: "",
+					endReleased: false,
+				};
+				if (released) {
+					broadcastWatchers(targetRoom, JSON.stringify({ type: "set_start", set_id: setId, header_b64: headerB64 }));
+				}
+			} else if (msg.type === "ticks") {
+				const set = targetRoom.currentSet;
+				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : -1;
+				const fromTick = typeof msg.from_tick === "number" ? Math.floor(msg.from_tick) : 0;
+				const count = typeof msg.count === "number" ? Math.floor(msg.count) : 0;
+				const dataB64 = typeof msg.data_b64 === "string" ? msg.data_b64 : "";
+				if (!set || set.setId !== setId || set.ended) return;
+				if (count <= 0 || dataB64.length > MAX_CHUNK_B64_BYTES || set.chunks.length >= MAX_CHUNKS_PER_SET) return;
+				const released = delayMs === 0 && set.released;
+				set.chunks.push({
+					from_tick: fromTick,
+					count,
+					data_b64: dataB64,
+					releaseAt: now + delayMs,
+					released,
+				});
+				if (released) {
+					broadcastWatchers(
+						targetRoom,
+						JSON.stringify({ type: "ticks", set_id: setId, from_tick: fromTick, count, data_b64: dataB64 }),
+					);
+				}
+			} else if (msg.type === "set_end") {
+				const set = targetRoom.currentSet;
+				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : -1;
+				const reason = typeof msg.reason === "string" ? msg.reason.slice(0, 64) : "";
+				if (!set || set.setId !== setId || set.ended) return;
+				set.ended = true;
+				set.endReason = reason;
+				set.endReleaseAt = now + delayMs;
+				flushDelayedSet(targetRoom, now);
+			} else if (msg.type === "close") {
+				closeSpectateRoom(targetRoom, "host-left");
+				try {
+					ws.close(1000, "closed");
+				} catch {
+					// Ignore
+				}
+			}
+		});
+
+		const handleGone = () => {
+			if (targetRoom.hostWs !== ws) return;
+			targetRoom.hostWs = undefined;
+			if (spectateRooms.get(code) !== targetRoom) return;
+			targetRoom.hostGraceTimer = setTimeout(() => {
+				if (targetRoom.hostWs === undefined && spectateRooms.get(code) === targetRoom) {
+					closeSpectateRoom(targetRoom, "host-disconnected");
+				}
+			}, SPECTATE_HOST_GRACE_MS);
+		};
+		ws.on("close", handleGone);
+		ws.on("error", handleGone);
+	});
+}
+
+function handleSpectateWatchUpgrade(
+	req: http.IncomingMessage,
+	socket: import("node:stream").Duplex,
+	head: Buffer,
+	rawCode: string,
+	peer: string,
+): void {
+	const code = rawCode.toUpperCase();
+	if (!CODE.test(code)) {
+		refuseUpgrade(req, socket, head, "not-found", "no room has that code");
+		return;
+	}
+	const room = spectateRooms.get(code);
+	if (!room) {
+		refuseUpgrade(req, socket, head, "not-found", "no spectatable room has that code");
+		return;
+	}
+	if (room.meta.visibility === "off") {
+		refuseUpgrade(req, socket, head, "disabled", "spectating is disabled for this room");
+		return;
+	}
+	const existing = room.watchers.get(peer);
+	if (!existing && room.watchers.size >= MAX_SPECTATORS) {
+		refuseUpgrade(req, socket, head, "full", "the spectator limit has been reached");
+		return;
+	}
+	wss.handleUpgrade(req, socket, head, (ws) => {
+		if (existing && existing !== ws) {
+			try {
+				existing.close(4001, "replaced by a new connection");
+			} catch {
+				// Ignore
+			}
+		}
+		room.watchers.set(peer, ws);
+		flushDelayedSet(room, Date.now());
+		const setSnap = buildSetSnapshot(room);
+		tell(
+			ws,
+			JSON.stringify({
+				type: "snapshot",
+				room: roomSummary(room),
+				...(setSnap ? { set: setSnap } : {}),
+			}),
+		);
+		notifySpectatorCount(room);
+
+		ws.on("message", (data: RawData, isBinary: boolean) => {
+			if (isBinary) return;
+			const text = typeof data === "string" ? data : data.toString("utf8");
+			if (text === "ping") {
+				tell(ws, "pong");
+			}
+		});
+		const handleGone = () => {
+			if (room.watchers.get(peer) === ws) {
+				room.watchers.delete(peer);
+				if (spectateRooms.get(code) === room) {
+					notifySpectatorCount(room);
+				}
+			}
+		};
+		ws.on("close", handleGone);
+		ws.on("error", handleGone);
+	});
+}
+
 server.on("upgrade", (req, socket, head) => {
 	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+	const spectate = url.pathname.match(/^\/spectate\/(host|watch|list)(?:\/([^/]*))?\/?$/);
+	if (spectate) {
+		if (url.searchParams.get("v") !== VERSION) {
+			refuseUpgrade(req, socket, head, "version", `this server speaks version ${VERSION} of the signaling protocol`);
+			return;
+		}
+		const action = spectate[1];
+		if (action === "list") {
+			handleSpectateListUpgrade(req, socket, head);
+			return;
+		}
+		const peer = url.searchParams.get("peer") ?? "";
+		if (!PEER.test(peer)) {
+			refuseUpgrade(req, socket, head, "bad-request", "a peer's ID is 1 to 64 letters, digits, _ and -");
+			return;
+		}
+		const rawCode = spectate[2] ?? "";
+		if (action === "host") {
+			handleSpectateHostUpgrade(req, socket, head, rawCode, peer);
+		} else {
+			handleSpectateWatchUpgrade(req, socket, head, rawCode, peer);
+		}
+		return;
+	}
 	const invite = url.pathname.match(/^\/rooms(?:\/([^/]*))?\/?$/);
 	const reconnect = url.pathname.match(/^\/reconnect\/([^/]*)\/?$/);
 	if (!invite && !reconnect) {

@@ -23,6 +23,7 @@
 
 mod list;
 mod session;
+mod spectate;
 // (The screenshot pass's second player is the `tour` feature's; without it Play hears nothing of it.)
 #[cfg(any(test, feature = "tour"))]
 #[cfg_attr(not(feature = "tour"), allow(dead_code, unused_imports))]
@@ -83,9 +84,11 @@ use saito_frontend::replay::Recorder;
 use saito_match::Side;
 use saito_match::check::Problem;
 use saito_match::ruleset::Rulesets;
+use saito_signaling::spectate::{RoomMeta, RoomStage, Visibility};
 use saito_signaling::{ALPHABET, CODE_LENGTH};
-use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, VersusCard};
+use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, SpectateRoomEntry, VersusCard};
 use session::{Net, Session, Stands, Way};
+use spectate::{DELAY_PRESETS, DirectoryClient, HostPublisher, WatchSession, WatchUpdate};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -123,6 +126,8 @@ const REMEMBERED_FIRST_TO: &str = "play.first-to";
 const REMEMBERED_OPEN_SETUPS: &str = "play.open-setups";
 /// The Custom timer's seconds, or "unlimited".
 const REMEMBERED_CUSTOM_TIME: &str = "play.custom-time";
+const REMEMBERED_SPECTATE_VISIBILITY: &str = "play.spectate-visibility";
+const REMEMBERED_SPECTATE_DELAY: &str = "play.spectate-delay";
 const UNLIMITED: &str = "unlimited";
 
 fn remembered_build(game: &str) -> String {
@@ -207,6 +212,8 @@ enum Stage {
     Loading { seed: u32, gate: Rc<Gate> },
     /// The match is on: how its set ended, once it has.
     Match { result: Option<Ended> },
+    /// Spectating another room live.
+    Spectating,
 }
 
 /// What is done about the other player's content, where it isn't this side's (docs/design/content-deployment.md
@@ -315,6 +322,14 @@ pub struct Play {
     fresh: bool,
     /// The result's sounds.
     heard: ResultHeard,
+    /// Host-side spectator publisher (active while hosting an invite room).
+    host_spectate: Option<HostPublisher>,
+    /// Public spectator directory browser state.
+    spectate_dir: DirectoryClient,
+    spectate_code: String,
+    spectate_error: String,
+    /// Active spectator watch session (when `stage == Stage::Spectating`).
+    watching: Option<WatchSession>,
 }
 
 impl Default for Play {
@@ -348,6 +363,11 @@ impl Default for Play {
             sheet_of: None,
             fresh: true,
             heard: ResultHeard::default(),
+            host_spectate: None,
+            spectate_dir: DirectoryClient::default(),
+            spectate_code: String::new(),
+            spectate_error: String::new(),
+            watching: None,
         }
     }
 }
@@ -397,6 +417,7 @@ impl Play {
         match self.stage {
             Stage::Idle | Stage::Meeting => PlayPart::Builds,
             Stage::Waiting | Stage::Lobby | Stage::Loading { .. } | Stage::Match { .. } => PlayPart::Lobby,
+            Stage::Spectating => PlayPart::Spectate,
         }
     }
 
@@ -404,6 +425,7 @@ impl Play {
     fn view(&self) -> (&'static str, &'static str) {
         match (self.part(), &self.stage) {
             (PlayPart::Builds, _) => ("play", "builds"),
+            (PlayPart::Spectate, _) => ("play", "spectate"),
             (_, Stage::Waiting) => ("play.waiting", "wait.copy"),
             _ => ("play.lobby", "lobby.ready"),
         }
@@ -562,6 +584,15 @@ impl Play {
         // (A link that ends over a match's result takes the result with it, before its battle: else it stays the
         // UI's, and the next match opens under it.)
         self.hide_result(shell);
+        if let Some(mut host) = self.host_spectate.take() {
+            host.close();
+        }
+        if let Some(mut watch) = self.watching.take() {
+            watch.close();
+        }
+        self.spectate_dir.close();
+        shell.ui().global::<PlayView>().set_spectators(0);
+        shell.ui().global::<PlayView>().set_spectate_browser(false);
         if self.session.take().is_some() || !matches!(self.stage, Stage::Idle) {
             if matches!(self.stage, Stage::Waiting) {
                 practice::end(shell);
@@ -640,6 +671,7 @@ impl Play {
         if !invite.is_empty() && !shell.still {
             self.copy(shell, &invite);
         }
+        self.start_host_spectate(shell);
         self.show_card(shell);
         self.show(shell);
         if !shell.scale.handheld() {
@@ -800,6 +832,9 @@ impl Play {
         }
         if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
             lobby.reopen();
+        }
+        if let Some(host) = &mut self.host_spectate {
+            host.end_set("reopen");
         }
         self.stage = Stage::Lobby;
         self.ended = why;
@@ -1687,10 +1722,12 @@ impl Screen for Play {
         // (A control of a part that isn't shown any more does nothing: a press may come as the part changes.)
         let part = self.part();
         let of_its_part = match id {
-            "builds" | "build" | "new" | "edit" | "more" | "invite" | "join" | "direct" => part == PlayPart::Builds,
+            "builds" | "build" | "new" | "edit" | "more" | "invite" | "join" | "spectate" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            _ if id.starts_with("spectate.") => self.spectate_dir.is_open(),
+            _ if id.starts_with("watch.") => matches!(self.stage, Stage::Spectating),
             _ if id.starts_with("name.") => self.naming.is_some(),
             _ if id.starts_with("direct.") => self.direct.is_some(),
             _ if id.starts_with("boxes.") => self.boxes.is_some(),
@@ -1731,6 +1768,41 @@ impl Screen for Play {
                 self.problem = self.connect(shell, Way::Code(self.code.clone())).err();
                 self.refuse_or_show(shell);
             }
+            "spectate" => self.open_spectate_browser(shell),
+            "spectate.join" => {
+                let code = self.spectate_code.clone();
+                self.start_watching(shell, &code);
+            }
+            "spectate.refresh" => {
+                self.spectate_dir.refresh();
+                self.show_spectate_browser(shell);
+            }
+            "spectate.room" => {
+                if let Some(room) = self.spectate_dir.rooms().get(index.max(0) as usize) {
+                    let code = room.code.clone();
+                    self.start_watching(shell, &code);
+                }
+            }
+            "spectate.close" => self.close_spectate_browser(shell),
+            "watch.view-p1" => {
+                if let Some(w) = &mut self.watching {
+                    w.set_view(0);
+                    self.sync_watch_view(shell);
+                }
+            }
+            "watch.view-p2" => {
+                if let Some(w) = &mut self.watching {
+                    w.set_view(1);
+                    self.sync_watch_view(shell);
+                }
+            }
+            "watch.view-both" => {
+                if let Some(w) = &mut self.watching {
+                    w.set_both(true);
+                    self.sync_watch_view(shell);
+                }
+            }
+            "watch.leave" => self.stop_watching(shell, None),
             // (The browser has no direct links: its button isn't there.)
             "direct" if !cfg!(target_arch = "wasm32") => self.open_direct(shell),
             // ---- The code's boxes: Enter on one goes to the next, and from the last to JOIN.
@@ -1796,6 +1868,8 @@ impl Screen for Play {
                 let open = !self.live.open;
                 self.set_open(shell, open);
             }
+            "lobby.spectate" => self.cycle_host_spectate_visibility(shell),
+            "lobby.spectate-delay" => self.cycle_host_spectate_delay(shell),
             // The host's Ruleset opens its rulesets as a list; the joiner's VIEW is beside it.
             "lobby.ruleset" => {
                 if let Some((picks, at)) = self.ruleset_choices(shell).filter(|_| self.is_host())
@@ -1935,6 +2009,12 @@ impl Screen for Play {
                     view.set_message_quiet(true);
                 }
             }
+            "spectate.code" => {
+                self.spectate_code = code_typed(text);
+                self.spectate_error.clear();
+                view.set_spectate_code(code_shown(&self.spectate_code).into());
+                view.set_spectate_error(Default::default());
+            }
             "name.name" => self.edit_name(shell, text, done),
             "direct.address" => {
                 if let Some(direct) = &mut self.direct {
@@ -1954,6 +2034,7 @@ impl Screen for Play {
     fn submitted(&mut self, shell: &mut Shell, id: &str, index: i32) {
         match id {
             "code" => self.activate(shell, "join", index),
+            "spectate.code" => self.activate(shell, "spectate.join", index),
             "direct.address" => self.activate(shell, "direct.connect", index),
             _ => {}
         }
@@ -2064,6 +2145,10 @@ impl Screen for Play {
             self.close_boxes(shell);
         } else if self.direct.is_some() {
             self.close_direct(shell);
+        } else if self.spectate_dir.is_open() {
+            self.close_spectate_browser(shell);
+        } else if matches!(self.stage, Stage::Spectating) {
+            self.stop_watching(shell, None);
         } else if self.changing {
             self.close_change(shell);
         } else if matches!(self.stage, Stage::Lobby) {
@@ -2195,6 +2280,16 @@ impl Screen for Play {
                 {
                     crate::errors::log("recording the match", &why);
                 }
+                if let (Some(host), Some(agreed), Some((_, ready)), Some(b)) =
+                    (&mut self.host_spectate, &self.agreed, shell.ready(), shell.battle.as_mut())
+                {
+                    let when = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                    if let Some(rec) = host.make_recorder(ready.content(), agreed, when)
+                        && let Err(why) = b.stage.player.record_spectate(rec)
+                    {
+                        crate::errors::log("starting spectator stream", &why);
+                    }
+                }
             }
             // The match stopped with the link still up (the other player left it, or went silent): both are
             // back in the lobby, which says why.
@@ -2207,6 +2302,13 @@ impl Screen for Play {
     /// The loop's first half: what the link brought, to the lobby.
     fn frame(&mut self, shell: &mut Shell, now: Instant, _shown: bool) {
         tour::frame(shell, now);
+        if self.spectate_dir.is_open() && self.spectate_dir.poll(now) {
+            self.show_spectate_browser(shell);
+        }
+        if matches!(self.stage, Stage::Spectating) {
+            self.poll_watching(shell, now);
+            return;
+        }
         let fed = match &mut self.session {
             Some(session) => session.feed(now).map(|heard| (heard, session.reconnecting().is_some())),
             None => return,
@@ -2307,6 +2409,7 @@ impl Screen for Play {
         if matches!(self.stage, Stage::Lobby | Stage::Waiting) {
             self.show_live(shell);
         }
+        self.poll_host_spectate(shell, now);
         // In a match: both builds while Tab (Select on a pad) is held, over the match and over its menu; the menu
         // opens on its first page.
         if matches!(self.stage, Stage::Match { .. }) {
@@ -2353,6 +2456,7 @@ impl Play {
             Stage::Waiting => "waiting for the other player",
             Stage::Lobby | Stage::Loading { .. } => "in the lobby",
             Stage::Match { .. } => "in a match",
+            Stage::Spectating => "spectating a match",
         };
         let detail = format!("{doing} ({})", self.session.as_ref().map(Session::describe).unwrap_or_default());
         let said = UserError::of_link(&detail, error);
@@ -2392,6 +2496,269 @@ fn match_keys(shell: &Shell, view: &PlayView) -> Vec<Hint> {
     out.push(Hint { key: "Tab".into(), pad: pad_face(pad[at(keys::SELECT)]), text: view.get_show_builds_word(), ..Default::default() });
     out.push(Hint { key: "Esc".into(), key2: key_cap(keys[at(keys::START)]).into(), pad: pad_face(pad[at(keys::START)]), text: view.get_menu_word() });
     out
+}
+
+impl Play {
+    // ---- Spectator mode (host publisher, public directory, live watcher) ---------------------------------
+
+    fn remembered_spectate_visibility(shell: &Shell) -> Visibility {
+        match shell.settings.remembered.get(REMEMBERED_SPECTATE_VISIBILITY).map(String::as_str) {
+            Some("off") => Visibility::Off,
+            Some("public") => Visibility::Public,
+            _ => Visibility::CodeOnly,
+        }
+    }
+
+    fn remembered_spectate_delay(shell: &Shell) -> u16 {
+        shell
+            .settings
+            .remembered
+            .get(REMEMBERED_SPECTATE_DELAY)
+            .and_then(|s| s.parse::<u16>().ok())
+            .filter(|d| DELAY_PRESETS.contains(d))
+            .unwrap_or(0)
+    }
+
+    fn visibility_int(v: Visibility) -> i32 {
+        match v {
+            Visibility::Off => 0,
+            Visibility::CodeOnly => 1,
+            Visibility::Public => 2,
+        }
+    }
+
+    fn start_host_spectate(&mut self, shell: &Shell) {
+        if shell.still {
+            return;
+        }
+        let Some(session) = &self.session else { return };
+        if session.way != Way::Invite {
+            return;
+        }
+        let Some(code) = session.code() else { return };
+        let Some(server) = Play::net(shell).server else { return };
+        let vis = Self::remembered_spectate_visibility(shell);
+        let delay = Self::remembered_spectate_delay(shell);
+        let peer = format!("host-{:016x}", saito_rtc::random_u64());
+        self.host_spectate = Some(HostPublisher::start(&server, code, &peer, vis, delay));
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_spectate_visibility(Self::visibility_int(vis));
+        view.set_spectate_delay(delay as i32);
+        view.set_spectators(0);
+    }
+
+    fn cycle_host_spectate_visibility(&mut self, shell: &mut Shell) {
+        let Some(host) = &mut self.host_spectate else { return };
+        let next = match host.visibility() {
+            Visibility::CodeOnly => Visibility::Public,
+            Visibility::Public => Visibility::Off,
+            Visibility::Off => Visibility::CodeOnly,
+        };
+        host.set_visibility(next);
+        let key = match next {
+            Visibility::Off => "off",
+            Visibility::CodeOnly => "code-only",
+            Visibility::Public => "public",
+        };
+        shell.settings.remembered.insert(REMEMBERED_SPECTATE_VISIBILITY.into(), key.into());
+        shell.save_settings();
+        shell.ui().global::<PlayView>().set_spectate_visibility(Self::visibility_int(next));
+    }
+
+    fn cycle_host_spectate_delay(&mut self, shell: &mut Shell) {
+        let Some(host) = &mut self.host_spectate else { return };
+        let cur = host.delay_secs();
+        let pos = DELAY_PRESETS.iter().position(|&d| d == cur).unwrap_or(0);
+        let next = DELAY_PRESETS[(pos + 1) % DELAY_PRESETS.len()];
+        host.set_delay_secs(next);
+        shell.settings.remembered.insert(REMEMBERED_SPECTATE_DELAY.into(), next.to_string());
+        shell.save_settings();
+        shell.ui().global::<PlayView>().set_spectate_delay(next as i32);
+    }
+
+    fn poll_host_spectate(&mut self, shell: &Shell, now: Instant) {
+        let Some(host) = &mut self.host_spectate else { return };
+        let (game, content_hash) = match shell.ready() {
+            Some((g, ready)) => (g, format!("{:016x}", ready.content().hash().0)),
+            None => (shell.game().unwrap_or_default().to_string(), String::new()),
+        };
+        let stage = match self.stage {
+            Stage::Match { .. } => RoomStage::Playing,
+            Stage::Loading { .. } => RoomStage::Loading,
+            _ => RoomStage::Lobby,
+        };
+        let p1 = shell.settings.name.clone();
+        let p2 = if self.live.their_present { self.live.their_name.clone() } else { String::new() };
+        let rules = shell.ui().global::<PlayView>().get_ruleset().to_string();
+        let meta = RoomMeta {
+            visibility: host.visibility(),
+            delay_secs: host.delay_secs(),
+            game,
+            engine: saito_frontend::replay::ENGINE.to_string(),
+            content_hash,
+            rules,
+            names: [p1, p2],
+            stage,
+            score: [0, 0],
+        };
+        host.poll(now, meta);
+        let count = host.spectators() as i32;
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        if view.get_spectators() != count {
+            view.set_spectators(count);
+        }
+    }
+
+    fn open_spectate_browser(&mut self, shell: &mut Shell) {
+        let Some(server) = Play::net(shell).server else {
+            self.problem = Some(UserError::ServerUnreachable);
+            self.refuse_or_show(shell);
+            return;
+        };
+        self.spectate_code = self.code.clone();
+        self.spectate_error.clear();
+        self.spectate_dir.open(&server);
+        shell.nav.open_editing("spectate.", Key::new("spectate.code", 0));
+        self.show_spectate_browser(shell);
+    }
+
+    fn close_spectate_browser(&mut self, shell: &mut Shell) {
+        self.spectate_dir.close();
+        self.spectate_error.clear();
+        shell.nav.close("spectate.");
+        shell.ui().global::<PlayView>().set_spectate_browser(false);
+    }
+
+    fn show_spectate_browser(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_spectate_browser(self.spectate_dir.is_open());
+        view.set_spectate_loading(self.spectate_dir.loading());
+        view.set_spectate_code(code_shown(&self.spectate_code).into());
+        view.set_spectate_error(self.spectate_error.as_str().into());
+        let entries: Vec<SpectateRoomEntry> = self
+            .spectate_dir
+            .rooms()
+            .iter()
+            .map(|r| {
+                let p1 = if r.meta.names[0].is_empty() { "P1" } else { &r.meta.names[0] };
+                let p2 = if r.meta.names[1].is_empty() { "?" } else { &r.meta.names[1] };
+                let status = match r.meta.stage {
+                    RoomStage::Playing => "Playing",
+                    RoomStage::Loading => "Loading",
+                    RoomStage::Lobby => "Lobby",
+                };
+                SpectateRoomEntry {
+                    code: code_shown(&r.code).into(),
+                    game: r.meta.game.to_uppercase().into(),
+                    players: format!("{p1} vs {p2}").into(),
+                    rules: r.meta.rules.as_str().into(),
+                    status: status.into(),
+                    spectators: r.spectators as i32,
+                    delay: r.meta.delay_secs as i32,
+                }
+            })
+            .collect();
+        view.set_spectate_rooms(ModelRc::new(VecModel::from(entries)));
+    }
+
+    fn start_watching(&mut self, shell: &mut Shell, raw_code: &str) {
+        let Some(server) = Play::net(shell).server else {
+            self.spectate_error = "Signaling server is not configured.".into();
+            self.show_spectate_browser(shell);
+            return;
+        };
+        let peer = format!("watch-{:016x}", saito_rtc::random_u64());
+        match WatchSession::connect(&server, raw_code, &peer) {
+            Ok(watch) => {
+                self.close_spectate_browser(shell);
+                self.watching = Some(watch);
+                self.stage = Stage::Spectating;
+                shell.stay_awake = true;
+                self.sync_watch_view(shell);
+                self.show(shell);
+            }
+            Err(err) => {
+                self.spectate_error = err.detail;
+                shell.sound.play(Cue::Refused);
+                self.show_spectate_browser(shell);
+            }
+        }
+    }
+
+    fn poll_watching(&mut self, shell: &mut Shell, now: Instant) {
+        let Some(mut watch) = self.watching.take() else {
+            self.stage = Stage::Idle;
+            self.show(shell);
+            return;
+        };
+        match watch.poll(shell, now) {
+            WatchUpdate::Active => {
+                self.watching = Some(watch);
+                self.sync_watch_view(shell);
+            }
+            WatchUpdate::Closed(reason) => {
+                let notice = if reason == "disabled" {
+                    "Host disabled spectating.".to_string()
+                } else {
+                    "Host closed the room.".to_string()
+                };
+                self.stop_watching(shell, Some(notice));
+            }
+            WatchUpdate::Failed(err) => {
+                self.stop_watching(shell, Some(err.detail));
+            }
+        }
+    }
+
+    fn sync_watch_view(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        let Some(w) = &self.watching else { return };
+        view.set_watch_code(code_shown(w.code()).into());
+        if let Some(room) = w.room() {
+            let p1 = if room.meta.names[0].is_empty() { "P1" } else { &room.meta.names[0] };
+            let p2 = if room.meta.names[1].is_empty() { "…" } else { &room.meta.names[1] };
+            view.set_watch_game(room.meta.game.to_uppercase().into());
+            view.set_watch_players(format!("{p1} vs {p2}").into());
+            let stage_text = match room.meta.stage {
+                RoomStage::Lobby => "Waiting in lobby…",
+                RoomStage::Loading => "Loading match…",
+                RoomStage::Playing => "Match in progress…",
+            };
+            view.set_watch_stage(stage_text.into());
+            view.set_watch_spectators(room.spectators as i32);
+            view.set_watch_delay(room.meta.delay_secs as i32);
+        } else {
+            view.set_watch_game(Default::default());
+            view.set_watch_players(Default::default());
+            view.set_watch_stage("Connecting…".into());
+            view.set_watch_spectators(0);
+            view.set_watch_delay(0);
+        }
+        view.set_watch_in_battle(w.in_battle());
+        view.set_watch_catching_up(w.catching_up());
+        view.set_watch_view(if w.both() { 2 } else { w.view() as i32 });
+        view.set_watch_problem(w.problem().unwrap_or_default().into());
+    }
+
+    fn stop_watching(&mut self, shell: &mut Shell, notice: Option<String>) {
+        if let Some(mut watch) = self.watching.take() {
+            watch.close();
+        }
+        self.stage = Stage::Idle;
+        shell.stay_awake = false;
+        if let Some(msg) = notice {
+            self.notice = msg;
+        }
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_watch_in_battle(false);
+        view.set_watch_spectators(0);
+        self.show(shell);
+    }
 }
 
 #[cfg(test)]

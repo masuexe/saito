@@ -171,7 +171,7 @@ fn room_error(place: &Place, e: signal::Error) -> Error {
         Room::Refused(_) if matches!(place, Place::Reconnect(_)) => ErrorKind::ConnectionLost,
         Room::Refused(Refusal::NotFound) => ErrorKind::NoSuchRoom,
         Room::Refused(Refusal::Full) => ErrorKind::RoomFull,
-        Room::Refused(Refusal::BadRequest | Refusal::Busy | Refusal::Unknown) | Room::Broken => ErrorKind::Internal,
+        Room::Refused(Refusal::BadRequest | Refusal::Busy | Refusal::Disabled | Refusal::Unknown) | Room::Broken => ErrorKind::Internal,
     };
     Error::new(kind, e.detail)
 }

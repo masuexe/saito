@@ -229,3 +229,61 @@ msgstr "继续"
 msgid "{n} build"
 msgid_plural "{n} builds"
 msgstr[0] "{n} 个构筑"
+
+msgid "Spectate"
+msgstr "观战"
+
+msgid "Spectate match"
+msgstr "观战对战"
+
+msgid "Watch by room code"
+msgstr "输入房间码观战"
+
+msgid "Live public matches"
+msgstr "公开对战列表"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Loading live matches…"
+msgstr "正在获取对战列表…"
+
+msgid "No public matches right now."
+msgstr "当前没有公开观战的对局。"
+
+msgid "{} watching"
+msgstr "{} 人观战"
+
+msgid "Spectate: Off"
+msgstr "观战：关闭"
+
+msgid "Spectate: Code"
+msgstr "观战：仅房间码"
+
+msgid "Spectate: Public"
+msgstr "观战：公开"
+
+msgid "Delay: Off"
+msgstr "防窥屏延迟：关"
+
+msgid "Delay: {}s"
+msgstr "防窥屏延迟：{}秒"
+
+msgid "Anti-ghosting delay: {}s"
+msgstr "防窥屏延迟：{} 秒"
+
+msgid "Live (no delay)"
+msgstr "实时观战（无延迟）"
+
+msgid "Catching up…"
+msgstr "正在追帧…"
+
+msgid "DELAY {}s"
+msgstr "延迟 {}秒"
+
+msgid "LIVE"
+msgstr "实时"
+
+msgid "{} · {}s"
+msgstr "{} 人 · 延迟{}秒"
+

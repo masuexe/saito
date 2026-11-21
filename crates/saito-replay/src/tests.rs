@@ -271,3 +271,33 @@ fn screen_delays_and_inputs_read_back() {
     past.extend_from_slice(&[0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F]);
     assert_eq!(refused(&past), "an input in its input is past 32 bits");
 }
+
+#[test]
+fn streaming_header_and_tick_chunks_match_full_replay() {
+    let ticks = [
+        Tick { inputs: [1, 0], delays: [3, 2], ..Tick::default() },
+        Tick { inputs: [1, 4], delays: [3, 2], ..Tick::default() },
+        Tick { inputs: [0, 4], delays: [5, 2], digest: Some(0xDEAD_BEEF), ..Tick::default() },
+        Tick { inputs: [0, 0], delays: [5, 2], digest: Some(0xCAFE), round_ended: true, set_ended: true },
+    ];
+    let header_bytes = written(&[]);
+    let hdr = Header::read(&header_bytes).unwrap();
+    assert_eq!(hdr.head, head());
+    assert_eq!(hdr.info, info());
+    assert_eq!(hdr.match_bytes, b"the match");
+
+    let full = written(&ticks);
+    let mut dec = TickDecoder::new();
+    let mut decoded = Vec::new();
+    // Split tick bytes at exact record boundaries by writing prefixes one tick at a time.
+    let mut prev_len = header_bytes.len();
+    for i in 1..=ticks.len() {
+        let prefix = written(&ticks[..i]);
+        let chunk = &prefix[prev_len..];
+        prev_len = prefix.len();
+        decoded.extend(dec.decode_chunk(chunk).unwrap());
+    }
+    assert!(dec.ended());
+    assert_eq!(dec.count(), ticks.len());
+    assert_eq!(decoded, Replay::read(&full).unwrap().ticks);
+}

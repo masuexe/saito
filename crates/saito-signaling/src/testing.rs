@@ -27,6 +27,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use crate::protocol::{ALPHABET, CODE_LENGTH, FromServer, IceServer, PING, PONG, RECONNECT_ROOM_KEPT, Refusal, Role, ToServer, VERSION, valid_code, valid_reconnect_code};
+use crate::spectate::{HostToServer, RoomMeta, RoomStage, RoomSummary, ServerToHost, ServerToList, ServerToWatcher, SetSnapshot, TickChunk, Visibility};
 
 /// What the clients say to each other: the server reads none of it.
 type Data = serde_json::Value;
@@ -59,6 +60,139 @@ struct Rooms {
     made: Vec<String>,
     /// The STUN and TURN servers every welcome gives.
     ice_servers: Vec<IceServer>,
+    /// Active spectator rooms by uppercase code.
+    spectate: HashMap<String, SpectateRoom>,
+    /// Active `/spectate/list` subscribers by connection id.
+    list_subs: HashMap<u64, Sender<Out>>,
+    /// Maximum spectators per room (0 means default 30).
+    max_spectators: usize,
+}
+
+struct DelayedChunk {
+    from_tick: u32,
+    count: u32,
+    data_b64: String,
+    release_at: Instant,
+    released: bool,
+}
+
+struct SpectateSet {
+    set_id: u32,
+    header_b64: String,
+    release_at: Instant,
+    released: bool,
+    chunks: Vec<DelayedChunk>,
+    ended: bool,
+    end_reason: String,
+    end_release_at: Option<Instant>,
+    end_released: bool,
+}
+
+struct SpectateRoom {
+    code: String,
+    host_peer: String,
+    host_socket: Option<(u64, Sender<Out>)>,
+    meta: RoomMeta,
+    watchers: HashMap<String, (u64, Sender<Out>)>,
+    current_set: Option<SpectateSet>,
+}
+
+impl SpectateRoom {
+    fn summary(&self) -> RoomSummary {
+        RoomSummary { code: self.code.clone(), meta: self.meta.clone(), spectators: self.watchers.len() as u32 }
+    }
+
+    fn broadcast_watchers(&self, msg: &ServerToWatcher) {
+        let text = serde_json::to_string(msg).expect("JSON");
+        for (_, tx) in self.watchers.values() {
+            let _ = tx.send(Out::Text(text.clone()));
+        }
+    }
+
+    fn flush(&mut self, now: Instant) {
+        let Some(set) = self.current_set.as_mut() else { return };
+        let mut to_send: Vec<ServerToWatcher> = Vec::new();
+        if !set.released {
+            if now < set.release_at {
+                return;
+            }
+            set.released = true;
+            to_send.push(ServerToWatcher::SetStart { set_id: set.set_id, header_b64: set.header_b64.clone() });
+        }
+        for chunk in &mut set.chunks {
+            if !chunk.released {
+                if now < chunk.release_at {
+                    break;
+                }
+                chunk.released = true;
+                to_send.push(ServerToWatcher::Ticks {
+                    set_id: set.set_id,
+                    from_tick: chunk.from_tick,
+                    count: chunk.count,
+                    data_b64: chunk.data_b64.clone(),
+                });
+            }
+        }
+        if set.ended && !set.end_released && set.end_release_at.is_none_or(|at| now >= at) {
+            set.end_released = true;
+            to_send.push(ServerToWatcher::SetEnd { set_id: set.set_id, reason: set.end_reason.clone() });
+        }
+        for msg in &to_send {
+            self.broadcast_watchers(msg);
+        }
+    }
+
+    fn set_snapshot(&self) -> Option<SetSnapshot> {
+        let set = self.current_set.as_ref()?;
+        if !set.released || set.end_released {
+            return None;
+        }
+        Some(SetSnapshot {
+            set_id: set.set_id,
+            header_b64: set.header_b64.clone(),
+            chunks: set
+                .chunks
+                .iter()
+                .filter(|c| c.released)
+                .map(|c| TickChunk { from_tick: c.from_tick, count: c.count, data_b64: c.data_b64.clone() })
+                .collect(),
+        })
+    }
+
+    fn kick_all_watchers(&mut self, reason: &str) {
+        let text = serde_json::to_string(&ServerToWatcher::Closed { reason: reason.into() }).expect("JSON");
+        for (_, tx) in self.watchers.drain().map(|(_, v)| v) {
+            let _ = tx.send(Out::Text(text.clone()));
+            let _ = tx.send(Out::Close);
+        }
+    }
+}
+
+impl Rooms {
+    fn public_list(&self) -> Vec<RoomSummary> {
+        let rank = |s: RoomStage| match s {
+            RoomStage::Playing => 0u8,
+            RoomStage::Loading => 1,
+            RoomStage::Lobby => 2,
+        };
+        let mut out: Vec<RoomSummary> = self.spectate.values().filter(|r| r.meta.visibility == Visibility::Public).map(SpectateRoom::summary).collect();
+        out.sort_by(|a, b| rank(a.meta.stage).cmp(&rank(b.meta.stage)).then(b.spectators.cmp(&a.spectators)).then(a.code.cmp(&b.code)));
+        out
+    }
+
+    fn broadcast_public_list(&self) {
+        if self.list_subs.is_empty() {
+            return;
+        }
+        let text = serde_json::to_string(&ServerToList::Rooms { rooms: self.public_list() }).expect("JSON");
+        for tx in self.list_subs.values() {
+            let _ = tx.send(Out::Text(text.clone()));
+        }
+    }
+
+    fn spectate_limit(&self) -> usize {
+        if self.max_spectators == 0 { 30 } else { self.max_spectators }
+    }
 }
 
 impl Rooms {
@@ -141,6 +275,17 @@ impl Server {
         let relayed = Arc::new(AtomicU64::new(0));
         let reachable = Arc::new(AtomicBool::new(true));
         let (r, n, up) = (rooms.clone(), relayed.clone(), reachable.clone());
+        let r_flush = rooms.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+                let Ok(mut all) = r_flush.lock() else { break };
+                let now = Instant::now();
+                for room in all.spectate.values_mut() {
+                    room.flush(now);
+                }
+            }
+        });
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 // (Off the network: the connection is dropped unanswered.)
@@ -237,6 +382,11 @@ impl Server {
     pub fn relayed(&self) -> u64 {
         self.relayed.load(Ordering::Relaxed)
     }
+
+    /// Override the maximum number of spectators per room (for tests).
+    pub fn set_max_spectators(&self, max: usize) {
+        self.rooms.lock().unwrap().max_spectators = max;
+    }
 }
 
 fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &AtomicU64) {
@@ -250,6 +400,26 @@ fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &Atomic
     let _ = ws.get_ref().set_read_timeout(Some(Duration::from_millis(10)));
     let (path, query) = uri.split_once('?').unwrap_or((&uri, ""));
     let asked = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name)?.strip_prefix('=')).unwrap_or("").to_string();
+    if let Some(rest) = path.strip_prefix("/spectate/") {
+        if asked("v") != version.to_string() {
+            return refuse(&mut ws, Refusal::Version, &format!("this server speaks version {version} of the signaling protocol"));
+        }
+        let rest = rest.trim_matches('/');
+        if rest == "list" {
+            return serve_spectate_list(&mut ws, rooms);
+        }
+        let peer = asked("peer");
+        if peer.is_empty() {
+            return refuse(&mut ws, Refusal::BadRequest, "a peer's ID is 1 to 64 letters, digits, _ and -");
+        }
+        if let Some(code) = rest.strip_prefix("host/") {
+            return serve_spectate_host(&mut ws, rooms, &code.to_ascii_uppercase(), &peer);
+        }
+        if let Some(code) = rest.strip_prefix("watch/") {
+            return serve_spectate_watch(&mut ws, rooms, &code.to_ascii_uppercase(), &peer);
+        }
+        return refuse(&mut ws, Refusal::BadRequest, "unknown spectate endpoint");
+    }
     // A new room is /rooms; an invite room, /rooms/CODE; a reconnect room,
     // /reconnect/CODE.
     let (kind, code) = match (path.strip_prefix("/rooms"), path.strip_prefix("/reconnect/")) {
@@ -385,6 +555,292 @@ fn relay(ws: &mut WebSocket<TcpStream>, rx: &Receiver<Out>, rooms: &Mutex<Rooms>
                 let _ = ws.flush();
             }
             Err(_) => return false,
+        }
+    }
+}
+
+fn serve_spectate_list(ws: &mut WebSocket<TcpStream>, rooms: &Mutex<Rooms>) {
+    let (tx, rx) = mpsc::channel();
+    let id = {
+        let mut all = rooms.lock().unwrap();
+        all.connections += 1;
+        let id = all.connections;
+        let list = all.public_list();
+        all.list_subs.insert(id, tx);
+        let _ = ws.send(Message::text(serde_json::to_string(&ServerToList::Rooms { rooms: list }).expect("JSON")));
+        id
+    };
+    loop {
+        while let Ok(out) = rx.try_recv() {
+            match out {
+                Out::Text(text) => {
+                    if ws.send(Message::text(text)).is_err() {
+                        rooms.lock().unwrap().list_subs.remove(&id);
+                        return;
+                    }
+                }
+                Out::Close => {
+                    let _ = ws.close(None);
+                    rooms.lock().unwrap().list_subs.remove(&id);
+                    return;
+                }
+            }
+        }
+        match ws.read() {
+            Ok(Message::Text(text)) if text.as_str() == PING => {
+                let _ = ws.send(Message::text(PONG));
+            }
+            Ok(Message::Text(text)) if text.as_str() == "refresh" => {
+                let list = rooms.lock().unwrap().public_list();
+                let _ = ws.send(Message::text(serde_json::to_string(&ServerToList::Rooms { rooms: list }).expect("JSON")));
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                let _ = ws.flush();
+            }
+            Err(_) => break,
+        }
+    }
+    rooms.lock().unwrap().list_subs.remove(&id);
+}
+
+fn serve_spectate_host(ws: &mut WebSocket<TcpStream>, rooms: &Mutex<Rooms>, code: &str, peer: &str) {
+    if !valid_code(code) {
+        return refuse(ws, Refusal::BadRequest, "invalid room code");
+    }
+    let (tx, rx) = mpsc::channel();
+    let id = {
+        let mut all = rooms.lock().unwrap();
+        if let Some(existing) = all.spectate.get(code)
+            && existing.host_peer != peer
+        {
+            drop(all);
+            return refuse(ws, Refusal::Full, "room already has a spectator host");
+        }
+        all.connections += 1;
+        let id = all.connections;
+        let room = all.spectate.entry(code.to_string()).or_insert_with(|| SpectateRoom {
+            code: code.to_string(),
+            host_peer: peer.to_string(),
+            host_socket: None,
+            meta: RoomMeta::default(),
+            watchers: HashMap::new(),
+            current_set: None,
+        });
+        if let Some((_, old)) = room.host_socket.replace((id, tx)) {
+            let _ = old.send(Out::Close);
+        }
+        let welcome = ServerToHost::Welcome { code: room.code.clone(), spectators: room.watchers.len() as u32 };
+        let _ = ws.send(Message::text(serde_json::to_string(&welcome).expect("JSON")));
+        id
+    };
+    let mut closed_explicitly = false;
+    loop {
+        while let Ok(out) = rx.try_recv() {
+            match out {
+                Out::Text(text) => {
+                    if ws.send(Message::text(text)).is_err() {
+                        break;
+                    }
+                }
+                Out::Close => {
+                    let _ = ws.close(None);
+                    return;
+                }
+            }
+        }
+        match ws.read() {
+            Ok(Message::Text(text)) if text.as_str() == PING => {
+                let _ = ws.send(Message::text(PONG));
+            }
+            Ok(Message::Text(text)) => match serde_json::from_str::<HostToServer>(&text) {
+                Ok(HostToServer::Config { meta }) => {
+                    let mut all = rooms.lock().unwrap();
+                    let Some(room) = all.spectate.get_mut(code) else { break };
+                    let prev_pub = room.meta.visibility == Visibility::Public;
+                    room.meta = meta;
+                    if room.meta.visibility == Visibility::Off {
+                        if !room.watchers.is_empty() {
+                            room.kick_all_watchers("disabled");
+                            let _ = ws.send(Message::text(serde_json::to_string(&ServerToHost::Spectators { count: 0 }).expect("JSON")));
+                        }
+                    } else {
+                        let summary = room.summary();
+                        room.broadcast_watchers(&ServerToWatcher::RoomUpdate { room: summary });
+                    }
+                    let now_pub = room.meta.visibility == Visibility::Public;
+                    if prev_pub || now_pub {
+                        all.broadcast_public_list();
+                    }
+                }
+                Ok(HostToServer::SetStart { set_id, header_b64 }) => {
+                    let mut all = rooms.lock().unwrap();
+                    let Some(room) = all.spectate.get_mut(code) else { break };
+                    let now = Instant::now();
+                    let delay = Duration::from_secs(room.meta.delay_secs as u64);
+                    if let Some(prev) = room.current_set.as_mut()
+                        && prev.released
+                        && !prev.end_released
+                    {
+                        prev.end_released = true;
+                        let prev_id = prev.set_id;
+                        room.broadcast_watchers(&ServerToWatcher::SetEnd { set_id: prev_id, reason: "next-set".into() });
+                    }
+                    let released = delay.is_zero();
+                    room.current_set = Some(SpectateSet {
+                        set_id,
+                        header_b64: header_b64.clone(),
+                        release_at: now + delay,
+                        released,
+                        chunks: Vec::new(),
+                        ended: false,
+                        end_reason: String::new(),
+                        end_release_at: None,
+                        end_released: false,
+                    });
+                    if released {
+                        room.broadcast_watchers(&ServerToWatcher::SetStart { set_id, header_b64 });
+                    }
+                }
+                Ok(HostToServer::Ticks { set_id, from_tick, count, data_b64 }) => {
+                    let mut all = rooms.lock().unwrap();
+                    let Some(room) = all.spectate.get_mut(code) else { break };
+                    let delay = Duration::from_secs(room.meta.delay_secs as u64);
+                    let now = Instant::now();
+                    let Some(set) = room.current_set.as_mut() else { continue };
+                    if set.set_id != set_id || set.ended {
+                        continue;
+                    }
+                    let released = delay.is_zero() && set.released;
+                    set.chunks.push(DelayedChunk { from_tick, count, data_b64: data_b64.clone(), release_at: now + delay, released });
+                    if released {
+                        room.broadcast_watchers(&ServerToWatcher::Ticks { set_id, from_tick, count, data_b64 });
+                    }
+                }
+                Ok(HostToServer::SetEnd { set_id, reason }) => {
+                    let mut all = rooms.lock().unwrap();
+                    let Some(room) = all.spectate.get_mut(code) else { break };
+                    let delay = Duration::from_secs(room.meta.delay_secs as u64);
+                    let now = Instant::now();
+                    if let Some(set) = room.current_set.as_mut()
+                        && set.set_id == set_id
+                        && !set.ended
+                    {
+                        set.ended = true;
+                        set.end_reason = reason;
+                        set.end_release_at = Some(now + delay);
+                    }
+                    room.flush(now);
+                }
+                Ok(HostToServer::Close) => {
+                    closed_explicitly = true;
+                    break;
+                }
+                Err(_) => {}
+            },
+            Ok(Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                let _ = ws.flush();
+            }
+            Err(_) => break,
+        }
+    }
+    let mut all = rooms.lock().unwrap();
+    if closed_explicitly {
+        if let Some(mut room) = all.spectate.remove(code) {
+            let was_pub = room.meta.visibility == Visibility::Public;
+            room.kick_all_watchers("host-left");
+            if was_pub {
+                all.broadcast_public_list();
+            }
+        }
+    } else if let Some(room) = all.spectate.get_mut(code)
+        && room.host_socket.as_ref().is_some_and(|(i, _)| *i == id)
+    {
+        room.host_socket = None;
+    }
+}
+
+fn serve_spectate_watch(ws: &mut WebSocket<TcpStream>, rooms: &Mutex<Rooms>, code: &str, peer: &str) {
+    if !valid_code(code) {
+        return refuse(ws, Refusal::NotFound, "no room has that code");
+    }
+    let (tx, rx) = mpsc::channel();
+    let id = {
+        let mut all = rooms.lock().unwrap();
+        let limit = all.spectate_limit();
+        let Some(room) = all.spectate.get_mut(code) else {
+            drop(all);
+            return refuse(ws, Refusal::NotFound, "no spectatable room has that code");
+        };
+        if room.meta.visibility == Visibility::Off {
+            drop(all);
+            return refuse(ws, Refusal::Disabled, "spectating is disabled for this room");
+        }
+        if !room.watchers.contains_key(peer) && room.watchers.len() >= limit {
+            drop(all);
+            return refuse(ws, Refusal::Full, "the spectator limit has been reached");
+        }
+        let now = Instant::now();
+        room.flush(now);
+        all.connections += 1;
+        let id = all.connections;
+        let room = all.spectate.get_mut(code).expect("room");
+        if let Some((_, old)) = room.watchers.insert(peer.to_string(), (id, tx)) {
+            let _ = old.send(Out::Close);
+        }
+        let snap = ServerToWatcher::Snapshot { room: room.summary(), set: room.set_snapshot() };
+        let _ = ws.send(Message::text(serde_json::to_string(&snap).expect("JSON")));
+        let count = room.watchers.len() as u32;
+        if let Some((_, host_tx)) = &room.host_socket {
+            let _ = host_tx.send(Out::Text(serde_json::to_string(&ServerToHost::Spectators { count }).expect("JSON")));
+        }
+        room.broadcast_watchers(&ServerToWatcher::Spectators { count });
+        if room.meta.visibility == Visibility::Public {
+            all.broadcast_public_list();
+        }
+        id
+    };
+    loop {
+        while let Ok(out) = rx.try_recv() {
+            match out {
+                Out::Text(text) => {
+                    if ws.send(Message::text(text)).is_err() {
+                        break;
+                    }
+                }
+                Out::Close => {
+                    let _ = ws.close(None);
+                    break;
+                }
+            }
+        }
+        match ws.read() {
+            Ok(Message::Text(text)) if text.as_str() == PING => {
+                let _ = ws.send(Message::text(PONG));
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                let _ = ws.flush();
+            }
+            Err(_) => break,
+        }
+    }
+    let mut all = rooms.lock().unwrap();
+    if let Some(room) = all.spectate.get_mut(code)
+        && room.watchers.get(peer).is_some_and(|(i, _)| *i == id)
+    {
+        room.watchers.remove(peer);
+        let count = room.watchers.len() as u32;
+        if let Some((_, host_tx)) = &room.host_socket {
+            let _ = host_tx.send(Out::Text(serde_json::to_string(&ServerToHost::Spectators { count }).expect("JSON")));
+        }
+        room.broadcast_watchers(&ServerToWatcher::Spectators { count });
+        if room.meta.visibility == Visibility::Public {
+            all.broadcast_public_list();
         }
     }
 }

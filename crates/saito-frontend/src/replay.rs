@@ -329,6 +329,13 @@ impl Driver for ReplayPlayer {
         (self.at, self.round, self.viewer) = (place.tick as usize, place.round, place.viewer);
         true
     }
+
+    fn push_ticks(&mut self, ticks: &[Tick]) {
+        if ticks.iter().any(|t| t.set_ended) {
+            self.end = End::Set;
+        }
+        self.ticks.extend_from_slice(ticks);
+    }
 }
 
 /// What playing a replay to its end made: for a list of replays, which

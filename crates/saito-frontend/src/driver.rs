@@ -186,6 +186,8 @@ pub trait Driver {
     fn go_to(&mut self, _place: Place) -> bool {
         false
     }
+    /// Append newly arrived ticks to a streaming replay driver (live spectating).
+    fn push_ticks(&mut self, _ticks: &[saito_replay::Tick]) {}
 }
 
 /// A place in a set being played back (`Driver::go_to`).

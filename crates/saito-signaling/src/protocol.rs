@@ -196,6 +196,8 @@ pub enum Refusal {
     BadRequest,
     /// The server found no free code for a new room.
     Busy,
+    /// Spectating is disabled for this room.
+    Disabled,
     /// A reason this client doesn't know (a newer server's).
     #[default]
     #[serde(other)]
@@ -236,7 +238,7 @@ pub fn valid_reconnect_code(code: &str) -> bool {
 
 /// The server at `server` as a WebSocket URL's start (`ws://`, `wss://`,
 /// or `http(s)://` for the same; no scheme: `wss://`).
-fn websocket(server: &str) -> String {
+pub(crate) fn websocket(server: &str) -> String {
     let server = server.trim_end_matches('/');
     match server.split_once("://") {
         Some(("http", rest)) => format!("ws://{rest}"),

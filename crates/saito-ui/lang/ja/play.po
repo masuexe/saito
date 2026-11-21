@@ -229,3 +229,61 @@ msgid "{n} build"
 msgid_plural "{n} builds"
 msgstr[0] "構築 {n}件"
 msgstr[1] "構築 {n}件"
+
+msgid "Spectate"
+msgstr "観戦"
+
+msgid "Spectate match"
+msgstr "対戦を観戦"
+
+msgid "Watch by room code"
+msgstr "ルームコードで観戦"
+
+msgid "Live public matches"
+msgstr "公開中の対戦一覧"
+
+msgid "Refresh"
+msgstr "更新"
+
+msgid "Loading live matches…"
+msgstr "対戦一覧を読み込み中…"
+
+msgid "No public matches right now."
+msgstr "公開中の対戦はありません。"
+
+msgid "{} watching"
+msgstr "{}人観戦中"
+
+msgid "Spectate: Off"
+msgstr "観戦：オフ"
+
+msgid "Spectate: Code"
+msgstr "観戦：コードのみ"
+
+msgid "Spectate: Public"
+msgstr "観戦：公開"
+
+msgid "Delay: Off"
+msgstr "遅延：オフ"
+
+msgid "Delay: {}s"
+msgstr "遅延：{}秒"
+
+msgid "Anti-ghosting delay: {}s"
+msgstr "ゴースティング防止遅延：{}秒"
+
+msgid "Live (no delay)"
+msgstr "リアルタイム（遅延なし）"
+
+msgid "Catching up…"
+msgstr "追いつき中…"
+
+msgid "DELAY {}s"
+msgstr "遅延 {}秒"
+
+msgid "LIVE"
+msgstr "LIVE"
+
+msgid "{} · {}s"
+msgstr "{}人 · 遅延{}秒"
+

@@ -23,6 +23,7 @@
 mod platform;
 mod protocol;
 mod room;
+pub mod spectate;
 
 #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
 pub mod testing;

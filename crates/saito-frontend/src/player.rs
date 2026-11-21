@@ -240,6 +240,11 @@ impl Player {
         self.session.record(recorder)
     }
 
+    /// Attach a secondary recorder for live spectator streaming.
+    pub fn record_spectate(&mut self, recorder: crate::replay::Recorder) -> Result<(), String> {
+        self.session.record_spectate(recorder)
+    }
+
     /// Why the recording stopped being written, if it has (a full disk).
     pub fn recording_failed(&self) -> Option<&str> {
         self.session.recorder.as_ref().and_then(|r| r.failed())

@@ -288,6 +288,139 @@ pub struct Replay {
     pub end: End,
 }
 
+/// The header of a replay (`STRP`..`STCK`), without its ticks: what a live
+/// spectator receives at the start of a set before incremental tick chunks arrive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Header {
+    pub head: Head,
+    pub info: Info,
+    pub match_bytes: Vec<u8>,
+}
+
+impl Header {
+    /// Parse a replay header produced by [`Writer::new`] (ending with `STCK`).
+    pub fn read(bytes: &[u8]) -> Result<Header, ReadError> {
+        if bytes.get(..4) != Some(MAGIC.as_slice()) {
+            return Err(ReadError::NotAReplay);
+        }
+        match bytes.get(4) {
+            Some(&LAYOUT) => Header::read_sections(&bytes[5..]).map_err(ReadError::Damaged),
+            Some(&layout) => Err(ReadError::OtherLayout { layout }),
+            None => Err(ReadError::Damaged("the file ends inside its start".into())),
+        }
+    }
+
+    fn read_sections(bytes: &[u8]) -> Result<Header, String> {
+        let mut b = Bytes { rest: bytes, what: "start" };
+        let mut h = b.section(TAG_HEAD, "head")?;
+        let head = Head { engine: h.string()?, game: h.string()?, content: h.u64()?, start: h.u64()? };
+        h.done()?;
+        let mut i = b.section(TAG_INFO, "info")?;
+        let when = i.u64()?;
+        let side = i.u8()?;
+        if side > 1 {
+            return Err(format!("the info's recording side is {side}, not 0 or 1"));
+        }
+        let kind = i.u8()?;
+        let kind = MatchKind::of_byte(kind).ok_or_else(|| format!("the info's kind of match is {kind}, not 0 (offline) or 1 (online)"))?;
+        let open_setups = match i.u8()? {
+            0 => false,
+            1 => true,
+            n => return Err(format!("the info's open setups is {n}, not 0 or 1")),
+        };
+        let info = Info { when, side, kind, open_setups, names: [i.string()?, i.string()?] };
+        i.done()?;
+        let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
+        b.what = "input";
+        if b.take(4)? != TAG_INPUT {
+            return Err("no input where it goes".into());
+        }
+        b.done()?;
+        Ok(Header { head, info, match_bytes })
+    }
+}
+
+/// Incremental decoder for `STCK` tick records written by [`Writer::tick`],
+/// carrying delta-encoded `inputs` and `delays` state across streamed chunks.
+#[derive(Clone, Debug, Default)]
+pub struct TickDecoder {
+    inputs: [u32; 2],
+    delays: [u8; 2],
+    ended: bool,
+    count: usize,
+}
+
+impl TickDecoder {
+    pub fn new() -> TickDecoder {
+        TickDecoder::default()
+    }
+
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Decode a chunk of complete tick records produced by [`Writer::tick`].
+    pub fn decode_chunk(&mut self, bytes: &[u8]) -> Result<Vec<Tick>, ReadError> {
+        self.decode_inner(bytes).map_err(ReadError::Damaged)
+    }
+
+    fn decode_inner(&mut self, bytes: &[u8]) -> Result<Vec<Tick>, String> {
+        let mut b = Bytes { rest: bytes, what: "input" };
+        let mut out = Vec::new();
+        while !b.rest.is_empty() {
+            if self.ended {
+                return Err(format!("{} bytes after the set's end", b.rest.len()));
+            }
+            let n = self.count;
+            let control = b.u8()?;
+            if control & !KNOWN != 0 {
+                return Err(format!("tick {n}: its record's bits {control:#04x} are none a writer writes"));
+            }
+            let mut t = Tick { inputs: self.inputs, delays: self.delays, ..Tick::default() };
+            for side in 0..2 {
+                if control & [INPUT_0, INPUT_1][side] != 0 {
+                    let Some(word) = b.input()? else {
+                        return Err(format!("tick {n}: truncated input"));
+                    };
+                    t.inputs[side] = word;
+                }
+            }
+            for side in 0..2 {
+                if control & [DELAY_0, DELAY_1][side] != 0 {
+                    let Ok(d) = b.u8() else {
+                        return Err(format!("tick {n}: truncated delay"));
+                    };
+                    t.delays[side] = d;
+                }
+            }
+            if control & DIGEST != 0 {
+                let Ok(d) = b.u64() else {
+                    return Err(format!("tick {n}: truncated digest"));
+                };
+                t.digest = Some(d);
+            }
+            t.round_ended = control & ROUND_ENDED != 0;
+            t.set_ended = control & SET_ENDED != 0;
+            if t.round_ended && t.digest.is_none() {
+                return Err(format!("tick {n}: a round ends without its digest"));
+            }
+            if t.set_ended && !t.round_ended {
+                return Err(format!("tick {n}: the set ends without a round"));
+            }
+            self.inputs = t.inputs;
+            self.delays = t.delays;
+            self.ended = t.set_ended;
+            self.count += 1;
+            out.push(t);
+        }
+        Ok(out)
+    }
+}
+
 const INPUT_0: u8 = 1 << 0;
 const INPUT_1: u8 = 1 << 1;
 const DIGEST: u8 = 1 << 2;

@@ -432,6 +432,19 @@ impl Viewer {
         Viewer::with(&game.game.content, replay, view, game.renderer(), game.font.clone().map(TextRenderer::new), sound_of(game, music))
     }
 
+    /// Open a live-streaming viewer from a replay header (`STRP`..`STCK`),
+    /// ready to receive incremental ticks via [`Viewer::push_ticks`].
+    pub fn open_live(game: &Loaded, header: saito_replay::Header, view: Option<u8>, music: Option<Arc<RoundMusic>>) -> Result<Viewer, Refused> {
+        let replay = Replay {
+            head: header.head,
+            match_bytes: header.match_bytes,
+            info: header.info,
+            ticks: Vec::new(),
+            end: End::Open,
+        };
+        Viewer::open_with(game, &replay, view, music)
+    }
+
     /// A viewer from its parts: the content the replay plays on, the
     /// renderer, the sharp text renderer (none: the frames carry
     /// their own text) and the sound (none: silent; it is copied for the
@@ -585,6 +598,84 @@ impl Viewer {
             return 0;
         }
         let due = self.clock.due(elapsed, self.speed.factor());
+        (0..due).take_while(|_| self.run(true)).count() as u32
+    }
+
+    /// Append newly arrived ticks to a live-spectated viewer.
+    pub fn push_ticks(&mut self, ticks: &[saito_replay::Tick]) {
+        if ticks.is_empty() {
+            return;
+        }
+        let prev_len = self.length;
+        self.session.driver.push_ticks(ticks);
+        for (i, t) in ticks.iter().enumerate() {
+            let tick_idx = prev_len + i as u32;
+            if t.round_ended && !t.set_ended {
+                let next_start = tick_idx + 1;
+                if self.rounds.last().copied() != Some(next_start) {
+                    self.rounds.push(next_start);
+                }
+            }
+            if t.set_ended {
+                self.end = End::Set;
+            }
+        }
+        self.length += ticks.len() as u32;
+        self.whole = false;
+        // If playback had temporarily hit the end of buffered ticks before the set ended, resume cleanly.
+        if self.session.finished && self.session.result.is_none() {
+            self.session.stopped = None;
+            self.session.stop_reason = None;
+            self.session.finished = false;
+        }
+    }
+
+    /// Total ticks buffered so far (including live streamed ticks).
+    pub fn buffered_ticks(&self) -> u32 {
+        self.length
+    }
+
+    /// Ticks currently buffered ahead of the playback position.
+    pub fn lag_ticks(&self) -> u32 {
+        self.length.saturating_sub(self.position())
+    }
+
+    /// Silently advance up to `max_ticks` toward the live edge (keeping `margin`
+    /// ticks of lookahead for custom screen cursor layers). Returns `true` if
+    /// more catch-up ticks remain.
+    pub fn catch_up_step(&mut self, max_ticks: u32, margin: u32) -> bool {
+        let limit = if self.end == End::Set { self.length } else { self.length.saturating_sub(margin) };
+        if self.position() >= limit || self.session.stopped.is_some() {
+            return false;
+        }
+        let mut ran = 0;
+        while ran < max_ticks && self.position() < limit && self.run(false) {
+            ran += 1;
+        }
+        if ran > 0 {
+            self.settle();
+        }
+        self.position() < limit && self.session.stopped.is_none()
+    }
+
+    /// Advance a live-spectated match in real time:
+    /// - Keeps a 6-tick lookahead margin while the set is still in progress so
+    ///   custom screen cursor layers stay exact.
+    /// - Gently speeds up (`1.15x`) when slightly behind (> 24 ticks).
+    /// - Waits cleanly without marking finished when caught up to the buffer edge.
+    pub fn advance_live(&mut self, elapsed: Duration) -> u32 {
+        if self.paused || self.session.stopped.is_some() {
+            self.clock.rest();
+            return 0;
+        }
+        let limit = if self.end == End::Set { self.length } else { self.length.saturating_sub(6) };
+        let ahead = limit.saturating_sub(self.position());
+        if ahead == 0 {
+            self.clock.rest();
+            return 0;
+        }
+        let factor = if ahead > 24 { 1.15 } else { 1.0 };
+        let due = self.clock.due(elapsed, factor).min(ahead);
         (0..due).take_while(|_| self.run(true)).count() as u32
     }
 
