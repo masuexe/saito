@@ -5378,7 +5378,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "saito"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "block2 0.6.2",
  "cc",
@@ -5535,7 +5535,7 @@ dependencies = [
 
 [[package]]
 name = "saito-extract"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "log",
  "m4a",
@@ -5570,7 +5570,7 @@ dependencies = [
 
 [[package]]
 name = "saito-frontend"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "log",
  "m4a",
