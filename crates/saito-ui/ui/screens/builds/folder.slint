@@ -110,6 +110,7 @@ export global FolderView {
     in property <int> sort;
     in property <bool> descending;
     out property <[string]> sorts: [@tr("Library order"), @tr("Name"), @tr("Code"), @tr("MB"), @tr("Element"), @tr("sort" => "Attack")];
+    out property <[string]> folder-sorts: [@tr("ID"), @tr("Code"), @tr("Name"), @tr("sort" => "Attack"), @tr("Element"), @tr("MB"), @tr("Count")];
     // The row that was refused, counted: it shakes.
     in property <int> refused: -1;
     in property <int> refused-seq;
@@ -163,21 +164,22 @@ export global FolderDrag {
     }
 }
 
-// A folder's entry as a phone's list row, 40 tall: the chip's row, and a click on it the entry's. (Its touch is
-// its own; it is in one list, and copied into it: docs/app.md §14.) `dy` is where it is shifted to while another
-// is dragged (the one dragged is drawn under the pointer, `gone` here).
+// A folder's entry as a list row (26 tall on desktop, 40 on handheld): the chip's row, and a click on it the
+// entry's. (Its touch is its own; it is in one list, and copied into it: docs/app.md §14.) `dy` is where it is
+// shifted to while another is dragged (the one dragged is drawn under the pointer, `gone` here).
 component SlotRow inherits Rectangle {
     in property <int> index;
     in property <length> dy;
     in property <bool> gone;
-    height: 40px;
+    height: Theme.handheld ? 40px : Theme.chip-row;
     ChipRow {
         x: 0;
         y: root.dy;
-        big: true;
+        width: root.width;
+        big: Theme.handheld;
         chip: FolderView.slots[root.index];
         number: FolderDrag.shown(root.index) + 1;
-        hover: touch.has-hover;
+        hover: touch.has-hover && !FolderDrag.on;
         opacity: root.gone ? 0 : 1;
         animate y {
             duration: FolderDrag.on ? Theme.quick : 0ms;
@@ -186,40 +188,6 @@ component SlotRow inherits Rectangle {
     }
 
     touch := RowTouch {
-        nav: "slot";
-        nav-index: root.index;
-        drag: "slot";
-        removable: true;
-    }
-}
-
-// One of the folder's entries: the overview's row, as a control. A click on it while it is marked takes its chip
-// out; a drag takes it to another place (`dx`, `dy`: where it is shifted to while another is dragged; the one
-// dragged is drawn under the pointer, `gone` here).
-component SlotView inherits Rectangle {
-    in property <ChipCell> chip;
-    in property <int> index;
-    in property <bool> chosen;
-    in property <length> dx;
-    in property <length> dy;
-    in property <bool> gone;
-    height: Theme.chip-row;
-    ChipRow {
-        x: root.dx;
-        y: root.dy;
-        width: root.width;
-        chip: root.chip;
-        number: FolderDrag.shown(root.index) + 1;
-        chosen: root.chosen;
-        hover: hit.has-hover && !FolderDrag.on;
-        opacity: root.gone ? 0 : 1;
-        animate x, y {
-            duration: FolderDrag.on ? Theme.quick : 0ms;
-            easing: ease-out;
-        }
-    }
-
-    hit := Focusable {
         nav: "slot";
         nav-index: root.index;
         drag: "slot";
@@ -678,32 +646,18 @@ export component FolderTab inherits Rectangle {
     // (Sideways: no strip, and the two panes share the tab's width, the folder a little the wider.)
     property <length> pane-y: Theme.sideways ? 0px : root.top + 104px + 12px;
     property <length> pane-width: Theme.sideways ? (root.width - 12px) / 2 + 24px : 528px;
-    // The panes run down to 18 over the tab's foot (482 tall at the reference window: the folder's fifteen rows and
-    // its header); the library's list fills its pane. (Sideways, to the tab's foot.)
+    // The panes run down to 18 over the tab's foot (482 tall at the reference window: fifteen rows visible in the
+    // folder list and its header); the library's list fills its pane. (Sideways, to the tab's foot.)
     property <length> pane-height: root.height - root.pane-y - (Theme.sideways ? 0px : 18px);
-    property <length> slot-width: (root.pane-width - 24px - 12px) / 2;
     // A phone: the counts' box, its last line kept for what is wrong with the folder, and the folder in one column
     // under it.
     property <length> counts-height: (FolderView.counts.tags ? 90px : 68px) + 22px;
-    // The folder's header: its title, its counts and CLEAR at its right end on one line where the language's words
-    // leave them the room, else the counts on a line of their own under the title and CLEAR. The header is 44 either
-    // way, and which it is depends on the language alone, never on what the folder holds. (What is wrong with the
-    // folder is said in the strip of each entry it is about, and by its counts in the error red:
-    // docs/design/app-ui.md §2.66.)
+    // The folder's header on desktop: title + SORT + CLEAR on line 1, counts on line 2.
     property <length> counts-width: chips.width + mega.width + giga.width + regular.width + 3 * 12px + (FolderView.counts.tags ? tag.width + 12px : 0px);
-    property <bool> two-lines: folder-title.preferred-width + 12px + root.counts-width + 12px + clear.width - 2 * clear.pad > root.pane-width - 24px;
-    property <length> counts-y: root.pane-y + (root.two-lines ? 24px : 14px);
-    // (Where the counts end: before CLEAR on its line, else at the header's right end.)
-    property <length> counts-right: root.two-lines ? root.pane-width - 12px : clear.x + clear.pad - 12px;
+    property <length> counts-y: root.pane-y + 24px;
+    property <length> counts-right: root.pane-width - 12px;
     // (The screenshot pass is told if the counts don't fit the pane even so.)
     property <bool> counts-over: Theme.audit && !Theme.handheld && root.counts-width > root.pane-width - 24px + 0.5px;
-    // Where entry `i` is in the framed folder's two columns.
-    pure function slot-x(i: int) -> length {
-        return 12px + floor(i / 15) * (root.slot-width + 12px);
-    }
-    pure function slot-y(i: int) -> length {
-        return root.pane-y + 52px + mod(i, 15) * (Theme.chip-row + 2px);
-    }
     changed counts-over => {
         if root.counts-over {
             Audit.clipped("the folder's counts");
@@ -820,9 +774,9 @@ export component FolderTab inherits Rectangle {
 
     folder-title := Label {
         x: 12px;
-        y: root.pane-y + (Theme.sideways ? 8px : root.two-lines ? 5px : 0px);
+        y: root.pane-y + (Theme.sideways ? 8px : 5px);
         width: root.pane-width - 24px;
-        height: Theme.sideways || root.two-lines ? 14px : 44px;
+        height: 14px;
         visible: !Theme.phone;
         text: I18n.upper(@tr("Folder"));
         color: FolderView.in-library ? Theme.muted : Theme.cursor;
@@ -841,7 +795,7 @@ export component FolderTab inherits Rectangle {
     }
 
     mega := CountBox {
-        x: Theme.phone ? parent.width / 2 : Theme.sideways ? 24px + chips.width : giga.x - 12px - self.width;
+        x: Theme.phone ? 12px + chips.width + 16px : Theme.sideways ? 24px + chips.width : giga.x - 12px - self.width;
         y: chips.y;
         label: @tr("Mega");
         value: FolderView.counts.mega;
@@ -883,64 +837,86 @@ export component FolderTab inherits Rectangle {
 
     // CLEAR (docs/design/app-ui.md §2.71; the user: "you should add clear for navicust/folder/patch cards/abd"): every
     // entry emptied, its marks with it, asked first; dim where the folder holds nothing. At the header's right end, its
-    // word where a count's would end; on a phone at the right of the counts' box's first line.
+    // word where a count's would end; on a phone at the right of the counts' box's first line. SORT sits just before it.
     clear := WordButton {
         x: (Theme.phone ? parent.width : root.pane-width) - 12px + self.pad - self.width;
-        y: Theme.phone ? 12px : Theme.sideways ? root.pane-y + 7px : root.two-lines ? root.pane-y + 4px : root.counts-y;
+        y: Theme.phone ? 12px : Theme.sideways ? root.pane-y + 7px : root.pane-y + 4px;
         nav: "clear";
         text: I18n.upper(@tr("Clear"));
         enabled: FolderView.counts.chips > 0;
     }
 
+    sort-btn := WordButton {
+        x: clear.x - self.width;
+        y: clear.y;
+        nav: "folder.sort";
+        text: I18n.upper(@tr("Sort"));
+        enabled: FolderView.counts.chips > 1;
+    }
+
     // (What is wrong with the folder: a phone's last line of its counts' box; sideways on the header's first line,
-    // between the title and CLEAR.)
+    // between the title and SORT/CLEAR.)
     ProblemNote {
         x: Theme.sideways ? folder-title.x + folder-title.preferred-width + 12px : 12px;
         y: Theme.sideways ? root.pane-y + 7px : root.counts-height - 12px - self.height;
-        width: Theme.sideways ? max(0px, clear.x - 12px - self.x) : parent.width - 24px;
+        width: Theme.sideways ? max(0px, sort-btn.x - 6px - self.x) : parent.width - 24px;
         visible: Theme.handheld;
         text: FolderView.problems;
     }
 
+    // The folder's 30 entries as one scrollable list (1×30).
+    folder := ListView {
+        x: Theme.phone ? 0px : 4px;
+        y: Theme.phone ? root.counts-height + 12px : Theme.sideways ? root.pane-y + 72px : root.pane-y + 52px;
+        width: Theme.phone ? parent.width : root.pane-width - 8px;
+        height: Theme.phone ? parent.height - self.y : root.pane-y + root.pane-height - 4px - self.y;
+        nav: "slot";
+        count: FolderView.slots.length;
+        row-height: Theme.handheld ? 40px : Theme.chip-row;
+        // (While an entry is dragged, the gap is where it is: no row is marked.)
+        chosen: FolderDrag.on ? -1 : FolderView.marked;
+        // (A mouse's drag on an entry moves it: the wheel scrolls.)
+        mouse-pan: false;
+        for at in folder.shown: SlotRow {
+            y: self.index * folder.pitch;
+            width: folder.row-width;
+            index: folder.first + at;
+            dy: (FolderDrag.shown(self.index) - self.index) * folder.pitch;
+            gone: FolderDrag.on && self.index == Drag.from;
 
-    if !Theme.phone: Rectangle {
-        // (Where an entry would land while one is dragged. Sideways the entries are the phone's list's, below.)
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+
+    // (Where an entry dragged would land and the landing flash, clipped to the list's view.)
+    Rectangle {
+        x: folder.x;
+        y: folder.y;
+        width: folder.row-width;
+        height: folder.height;
+        clip: true;
         DropGap {
-            x: root.slot-x(max(0, FolderDrag.to));
-            y: root.slot-y(max(0, FolderDrag.to));
-            width: root.slot-width;
-            height: Theme.chip-row;
-            visible: FolderDrag.to >= 0 && !Theme.sideways;
+            x: 0;
+            y: max(0, FolderDrag.to) * folder.pitch - folder.scroll;
+            width: parent.width;
+            height: folder.row-height;
+            visible: FolderDrag.to >= 0;
 
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
 
-        for chip[i] in FolderView.slots: SlotView {
-            x: root.slot-x(i);
-            y: root.slot-y(i);
-            visible: !Theme.sideways;
-            width: root.slot-width;
-            chip: chip;
-            index: i;
-            chosen: i == FolderView.marked;
-            dx: root.slot-x(FolderDrag.shown(i)) - self.x;
-            dy: root.slot-y(FolderDrag.shown(i)) - self.y;
-            gone: FolderDrag.on && i == Drag.from;
-
-            Rectangle { }  // (Copied in: docs/app.md §14.)
-        }
-        // (The entry a chip landed in.)
         Flash {
-            x: 12px + floor(FolderView.landed / 15) * (root.slot-width + 12px);
-            y: root.pane-y + 52px + mod(FolderView.landed, 15) * (Theme.chip-row + 2px);
-            width: root.slot-width;
-            height: Theme.chip-row;
-            visible: !Theme.sideways;
+            x: 0;
+            y: FolderView.landed * folder.pitch - folder.scroll;
+            width: parent.width;
+            height: folder.row-height;
             seq: FolderView.landed-seq;
 
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
+    }
 
+    if !Theme.phone: Rectangle {
         // ---- The library, open. (Sideways, what a slot's keys do over its rows, as the phone's sheet has them: the
         // Regular chip, a tag, taking the chip out, of the entry being filled.)
         library := LibraryPane {
@@ -997,79 +973,21 @@ export component FolderTab inherits Rectangle {
 
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
-
-        // (The entry being dragged, under the pointer, over everything; or a ghost of the library's chip, in an
-        // entry's shape, faint until it is over the entry it would go in.)
-        LiftedRow {
-            // (A library's row is wider than an entry: its ghost is held no farther in than its middle. Sideways an
-            // entry's is the phone's list's, below, and the ghost as wide as its rows.)
-            x: Drag.x - root.absolute-position.x - (FolderDrag.filling ? min(Drag.grab-x, self.width / 2) : Drag.grab-x);
-            y: Drag.y - root.absolute-position.y - Drag.grab-y;
-            width: Theme.sideways ? root.pane-width - 8px : root.slot-width;
-            height: Theme.sideways ? 40px : Theme.chip-row;
-            big: Theme.sideways;
-            visible: (FolderDrag.on && !Theme.sideways) || FolderDrag.filling;
-            opacity: FolderDrag.filling && FolderDrag.to < 0 ? 0.7 : 1;
-            chip: FolderDrag.filling ? FolderView.ghost : FolderView.slots[max(0, Drag.from)];
-            number: FolderDrag.filling ? 0 : FolderDrag.shown(max(0, Drag.from)) + 1;
-            removing: Drag.removing;
-        }
     }
 
-    // (A phone's folder, one column of the lists' rows: upright under its counts' box, sideways in the frame under its
-    // header.)
-    if Theme.handheld: Rectangle {
-        folder := ListView {
-            x: Theme.sideways ? 4px : 0px;
-            y: Theme.sideways ? root.pane-y + 72px : root.counts-height + 12px;
-            width: Theme.sideways ? root.pane-width - 8px : parent.width;
-            height: Theme.sideways ? root.pane-y + root.pane-height - 4px - self.y : parent.height - self.y;
-            nav: "slot";
-            count: FolderView.slots.length;
-            row-height: 40px;
-            // (While an entry is dragged, the gap is where it is: no row is marked.)
-            chosen: FolderDrag.on ? -1 : FolderView.marked;
-            // (A mouse's drag on an entry moves it: the wheel scrolls.)
-            mouse-pan: false;
-            for at in folder.shown: SlotRow {
-                y: self.index * folder.pitch;
-                width: folder.row-width;
-                index: folder.first + at;
-                dy: (FolderDrag.shown(self.index) - self.index) * folder.pitch;
-                gone: FolderDrag.on && self.index == Drag.from;
-
-                Rectangle { }  // (Copied in: docs/app.md §14.)
-            }
-        }
-
-        // (Where the entry dragged would land, over the list where it is scrolled to.)
-        Rectangle {
-            x: folder.x;
-            y: folder.y;
-            width: folder.row-width;
-            height: folder.height;
-            visible: FolderDrag.to >= 0;
-            clip: true;
-            DropGap {
-                x: 0;
-                y: max(0, FolderDrag.to) * folder.pitch - folder.scroll;
-                width: parent.width;
-                height: 40px;
-
-                Rectangle { }  // (Copied in: docs/app.md §14.)
-            }
-        }
-
-        LiftedRow {
-            x: Drag.x - root.absolute-position.x - Drag.grab-x;
-            y: Drag.y - root.absolute-position.y - Drag.grab-y;
-            width: folder.row-width;
-            height: 40px;
-            visible: FolderDrag.on;
-            big: true;
-            chip: FolderView.slots[max(0, Drag.from)];
-            number: FolderDrag.shown(max(0, Drag.from)) + 1;
-        }
+    // (The entry being dragged, under the pointer, over everything; or a ghost of the library's chip, in an
+    // entry's shape, faint until it is over the entry it would go in.)
+    LiftedRow {
+        x: Drag.x - root.absolute-position.x - (FolderDrag.filling ? min(Drag.grab-x, self.width / 2) : Drag.grab-x);
+        y: Drag.y - root.absolute-position.y - Drag.grab-y;
+        width: folder.row-width;
+        height: folder.row-height;
+        big: Theme.handheld;
+        visible: FolderDrag.on || FolderDrag.filling;
+        opacity: FolderDrag.filling && FolderDrag.to < 0 ? 0.7 : 1;
+        chip: FolderDrag.filling ? FolderView.ghost : FolderView.slots[max(0, Drag.from)];
+        number: FolderDrag.filling ? 0 : FolderDrag.shown(max(0, Drag.from)) + 1;
+        removing: Drag.removing;
     }
 }
 

@@ -134,6 +134,34 @@ pub enum FolderEdit {
     Move(usize, usize),
 }
 
+/// Sort `folder`'s filled entries before empty ones using `cmp`, preserving relative order among equal
+/// entries; returns the sorted folder and `new_pos[old_idx]` mapping if any entry moved. Regular and tag marks
+/// move with their chips.
+pub fn sort_folder(
+    folder: &saito_match::Folder,
+    mut cmp: impl FnMut(FolderChip, FolderChip) -> std::cmp::Ordering,
+) -> Option<(saito_match::Folder, [usize; saito_battle::custom::folder::FOLDER_SIZE])> {
+    let mut indexed: Vec<(usize, Option<FolderChip>)> = folder.chips.iter().copied().enumerate().collect();
+    indexed.sort_by(|&(ai, a), &(bi, b)| match (a, b) {
+        (Some(a), Some(b)) => cmp(a, b).then_with(|| ai.cmp(&bi)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => ai.cmp(&bi),
+    });
+    let mut after = *folder;
+    let mut new_pos = [0usize; saito_battle::custom::folder::FOLDER_SIZE];
+    for (to, &(from, chip)) in indexed.iter().enumerate() {
+        after.chips[to] = chip;
+        new_pos[from] = to;
+    }
+    after.regular = folder.regular.map(|i| new_pos[i as usize] as u8);
+    after.tags = folder.tags.map(|(a, b)| {
+        let (na, nb) = (new_pos[a as usize] as u8, new_pos[b as usize] as u8);
+        (na.min(nb), na.max(nb))
+    });
+    (after != *folder).then_some((after, new_pos))
+}
+
 /// The folder `edit` makes of `f`; none: it changes nothing (an entry past the folder, a mark on an empty
 /// entry, a tag in a game whose folders have none).
 pub fn folder_after(content: &Content, f: &saito_match::Folder, edit: FolderEdit) -> Option<saito_match::Folder> {
@@ -235,5 +263,27 @@ mod tests {
         // (Cleared, all at once; an empty list, no change.)
         assert!(list(&six, side, "patch_cards", ListEdit::Clear) && !list(&six, side, "patch_cards", ListEdit::Clear));
         assert!(side.facts.get(&six, "patch_cards").unwrap().defs().is_empty());
+    }
+
+    #[test]
+    fn sort_folder_moves_marks_and_pushes_empty_slots_to_end() {
+        let mut before = saito_match::Folder::EMPTY;
+        before.chips[1] = Some(FolderChip::new(ChipHandle(20), ChipCode(0)));
+        before.chips[3] = Some(FolderChip::new(ChipHandle(10), ChipCode(1)));
+        before.chips[5] = Some(FolderChip::new(ChipHandle(30), ChipCode(0)));
+        before.regular = Some(1);
+        before.tags = Some((3, 5));
+
+        let (after, new_pos) = sort_folder(&before, |a, b| a.id.0.cmp(&b.id.0)).expect("unsorted folder changes");
+        assert_eq!(after.chips[0].map(|c| c.id), Some(ChipHandle(10)));
+        assert_eq!(after.chips[1].map(|c| c.id), Some(ChipHandle(20)));
+        assert_eq!(after.chips[2].map(|c| c.id), Some(ChipHandle(30)));
+        assert!(after.chips[3..].iter().all(Option::is_none));
+        assert_eq!(new_pos[3], 0);
+        assert_eq!(new_pos[1], 1);
+        assert_eq!(new_pos[5], 2);
+        assert_eq!(after.regular, Some(1));
+        assert_eq!(after.tags, Some((0, 2)));
+        assert!(sort_folder(&after, |a, b| a.id.0.cmp(&b.id.0)).is_none());
     }
 }

@@ -210,6 +210,12 @@ msgctxt "sort"
 msgid "Attack"
 msgstr "공격력순"
 
+msgid "ID"
+msgstr "ID"
+
+msgid "Count"
+msgstr "수량"
+
 # Over the library while a row of the build's is dragged there: let go, it is taken out.
 msgid "Drop to remove"
 msgstr "놓아서 빼기"

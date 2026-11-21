@@ -51,6 +51,28 @@ use std::collections::HashMap;
 /// The sorts, in the order the library's select lists them (the UI's `FolderView.sorts`).
 const SORTS: [Sort; 6] = [Sort::Library, Sort::Name, Sort::Code, Sort::Mb, Sort::Element, Sort::Attack];
 
+/// The folder's sorts, in the order the picker lists them (the UI's `FolderView.folder-sorts`).
+#[derive(Clone, Copy)]
+enum FolderSort {
+    Id,
+    Code,
+    Name,
+    Attack,
+    Element,
+    Mb,
+    Count,
+}
+
+const FOLDER_SORTS: [FolderSort; 7] = [
+    FolderSort::Id,
+    FolderSort::Code,
+    FolderSort::Name,
+    FolderSort::Attack,
+    FolderSort::Element,
+    FolderSort::Mb,
+    FolderSort::Count,
+];
+
 /// The most letters a search has.
 const SEARCH_LENGTH: usize = 24;
 
@@ -63,6 +85,7 @@ pub struct Folder {
     row: usize,
     search: String,
     sort: usize,
+    folder_sort: usize,
     descending: bool,
     /// The library's chips, and its rows as sorted and searched.
     chips: Vec<ChipInfo>,
@@ -555,9 +578,7 @@ impl Folder {
     /// Where entry `from` dragged to `at` (the window's point) would land: the entry under the pointer; none off the
     /// folder.
     fn drop_at(shell: &Shell, at: i32) -> Option<usize> {
-        let point = editor::pointer_at(at);
-        let size = saito_battle::custom::folder::FOLDER_SIZE;
-        if shell.scale.handheld() { editor::list_row(shell, "slot", point, size) } else { editor::nearest(shell, "slot", 0..size, point, None) }
+        editor::list_row(shell, "slot", editor::pointer_at(at), saito_battle::custom::folder::FOLDER_SIZE)
     }
 
     /// Move entry `from` to `to`, those between shifting toward where it was; its marks go with it (and the entry
@@ -592,6 +613,59 @@ impl Folder {
         self.sort = sort.min(SORTS.len() - 1);
         self.list(shell, draft);
         self.show_library(shell, draft);
+    }
+
+    fn sort_folder(&mut self, shell: &mut Shell, draft: &mut Draft, choice: usize) {
+        let choice = choice.min(FOLDER_SORTS.len() - 1);
+        self.folder_sort = choice;
+        let mode = FOLDER_SORTS[choice];
+        let content = draft.content().clone();
+        let before = draft.side().folder(&content);
+        let mut counts: HashMap<ChipHandle, usize> = HashMap::new();
+        if matches!(mode, FolderSort::Count) {
+            for chip in before.chips() {
+                *counts.entry(chip.id).or_default() += 1;
+            }
+        }
+        let names: HashMap<ChipHandle, String> = if matches!(mode, FolderSort::Name) {
+            draft.with_words(shell, |words| before.chips().map(|c| (c.id, words.names.chip(c.id).to_lowercase())).collect())
+        } else {
+            HashMap::new()
+        };
+        let lib_key = |id: ChipHandle| {
+            let key = content.defs.chip(id).key.as_str();
+            let rank = draft.kit.order.chip_rank(saito_match::ids::local(key));
+            (rank.is_none(), rank, key)
+        };
+        let cmp = |a: FolderChip, b: FolderChip| match mode {
+            FolderSort::Id => lib_key(a.id).cmp(&lib_key(b.id)).then_with(|| a.code.0.cmp(&b.code.0)),
+            FolderSort::Code => a.code.0.cmp(&b.code.0).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))),
+            FolderSort::Name => names[&a.id].cmp(&names[&b.id]).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+            FolderSort::Attack => content.chip(b.id).damage.cmp(&content.chip(a.id).damage).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+            FolderSort::Element => content.chip(a.id).family.cmp(&content.chip(b.id).family).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+            FolderSort::Mb => content.chip(a.id).mb.cmp(&content.chip(b.id).mb).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+            FolderSort::Count => counts[&b.id].cmp(&counts[&a.id]).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+        };
+        match edit::sort_folder(&before, cmp) {
+            Some((after, new_pos)) => {
+                if !draft.edit(|content, side| side.set_folder(content, &after).is_ok()) {
+                    return shell.sound.play(Cue::Refused);
+                }
+                self.tagging = self.tagging.map(|t| new_pos[t]);
+                shell.sound.play(Cue::Pick);
+                self.slot = 0;
+                self.described = Some(Described::Slot(0));
+                self.notice = None;
+                self.changed(shell, draft);
+                let ui = shell.ui();
+                shell.nav.list_to_top(&ui, "slot");
+                shell.nav.focus("slot", 0);
+            }
+            None => {
+                shell.sound.play(Cue::Pick);
+                shell.nav.focus("slot", self.slot as i32);
+            }
+        }
     }
 }
 
@@ -674,6 +748,13 @@ impl Tab for Folder {
                 self.leave_library(shell, self.slot);
             }
             "lib.close" => self.leave_library(shell, self.slot),
+            "folder.sort" => {
+                if draft.side().folder(draft.content()).chips().count() <= 1 {
+                    return shell.sound.play(Cue::Refused);
+                }
+                let options = view.get_folder_sorts().iter().map(|s| s.to_string()).collect();
+                shell.pick(id, 0, options, self.folder_sort);
+            }
             "clear" => {
                 let empty = draft.side().folder(draft.content()).chips().next().is_none();
                 editor::ask_clear(shell, view.get_clear_question(), empty);
@@ -691,6 +772,7 @@ impl Tab for Folder {
     fn choose(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, index: i32, choice: i32) {
         match id {
             "lib.sort" => self.sort_by(shell, draft, choice.max(0) as usize),
+            "folder.sort" => self.sort_folder(shell, draft, choice.max(0) as usize),
             // An entry dragged: where it would land; let go there, it moves (over the library, its chip is taken
             // out; elsewhere off the folder, it goes back).
             "drag-over" if editor::over_library(shell, choice) => editor::show_remove(shell),
@@ -776,10 +858,13 @@ impl Tab for Folder {
             return true;
         }
         if let Some(slot) = Folder::focused_slot(shell) {
+            let allow_sort = crate::input::menu_action(key.code, key.shift, &shell.bindings).is_none();
             match key.code {
                 KeyCode::KeyR if !key.repeat => self.regular(shell, draft, slot),
                 KeyCode::KeyT if !key.repeat => self.tag(shell, draft, slot),
+                KeyCode::KeyS if !key.repeat && allow_sort => self.activate(shell, draft, "folder.sort", 0),
                 KeyCode::KeyR | KeyCode::KeyT => {}
+                KeyCode::KeyS if allow_sort => {}
                 _ => return false,
             }
             return true;
