@@ -287,6 +287,8 @@ pub struct Shell {
     /// The app's update: checked for, downloaded and installed at the loading screen as the app starts
     /// (saito-updater).
     pub updates: saito_updater::Updater,
+    /// True while a user-initiated check from Settings is running so Checking does not cover Settings with the full loading screen.
+    pub manual_update: bool,
     awake: Option<crate::lifecycle::Awake>,
     /// This frame is being drawn (the window's rendering runs it). When the window isn't drawn (minimized,
     /// hidden, covered), a timer runs the frames instead, and no picture is presented in them: there is no
@@ -605,6 +607,18 @@ impl Shell {
         self.save_settings();
         #[cfg(target_os = "android")]
         crate::activity::set_hide_landscape_status_bar(hide);
+    }
+
+    pub fn check_updates_now(&mut self, manual: bool) {
+        if self.updates.check_now() {
+            self.manual_update = manual;
+            if manual {
+                let ui = self.ui();
+                let view = ui.global::<saito_ui::SettingsView>();
+                let note = view.get_update_checking_note();
+                view.set_update_note(note);
+            }
+        }
     }
 
     /// Tell the UI which of the on-screen pad's buttons are held, if that changed: it draws them pressed.
@@ -1193,6 +1207,7 @@ impl App {
             stay_awake: false,
             // (saito's releases: GitHub's masuexe/saito, its desktop packages and its APK.)
             updates: saito_updater::Updater::new(saito_updater::Releases::github("masuexe", "saito")),
+            manual_update: false,
             awake: None,
             drawing: true,
             chord: false,
@@ -2205,28 +2220,55 @@ impl App {
     /// update that failed is said in the footer; the app goes on as it is.
     fn follow_games(&mut self) {
         let status = self.shell.updates.poll();
-        let held = matches!(status, Status::Checking | Status::Downloading { .. } | Status::Installing { .. });
+        let held = matches!(status, Status::Downloading { .. } | Status::Installing { .. }) || (status == Status::Checking && !self.shell.manual_update);
         self.follow_game_loading(held);
         let ui = self.shell.ui();
         let shell = ui.global::<saito_ui::Shell>();
         let words = ui.global::<saito_ui::UpdateWords>();
         shell.set_update_checking(status == Status::Checking);
         match status {
-            Status::Idle => shell.set_update_line("".into()),
-            Status::Failed => {
+            Status::Idle => {
                 shell.set_update_line("".into());
+                if self.shell.manual_update {
+                    self.shell.manual_update = false;
+                    ui.global::<saito_ui::SettingsView>().set_update_note("".into());
+                }
+            }
+            Status::UpToDate => {
+                self.shell.manual_update = false;
+                shell.set_update_line("".into());
+                let view = ui.global::<saito_ui::SettingsView>();
+                let note = view.get_update_latest_note();
+                view.set_update_note(note);
+            }
+            Status::Failed => {
+                let was_manual = std::mem::take(&mut self.shell.manual_update);
+                shell.set_update_line("".into());
+                if was_manual {
+                    let view = ui.global::<saito_ui::SettingsView>();
+                    let note = view.get_update_failed_note();
+                    view.set_update_note(note);
+                }
                 shell.set_updating(words.get_failed());
             }
             Status::Checking => {
-                shell.set_loading(true);
-                shell.set_update_line(words.get_checking());
+                if !self.shell.manual_update {
+                    shell.set_loading(true);
+                    shell.set_update_line(words.get_checking());
+                }
             }
             Status::Downloading { version, progress } => {
+                if std::mem::take(&mut self.shell.manual_update) {
+                    ui.global::<saito_ui::SettingsView>().set_update_note("".into());
+                }
                 shell.set_loading(true);
                 shell.set_loading_progress(progress);
                 shell.set_update_line(words.invoke_updating(version.into()));
             }
             Status::Installing { version } => {
+                if std::mem::take(&mut self.shell.manual_update) {
+                    ui.global::<saito_ui::SettingsView>().set_update_note("".into());
+                }
                 shell.set_loading(true);
                 shell.set_loading_progress(1.0);
                 shell.set_update_line(words.invoke_updating(version.into()));

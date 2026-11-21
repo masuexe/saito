@@ -1,14 +1,24 @@
 //! The desktop's updates: Velopack's, for an app installed from one of its packages (packaging/), from the app's
-//! GitHub releases ([`crate::Releases`]; `velopack::sources::GithubSource`: the ten newest published, unauthenticated,
-//! one request a start), on its system's and architecture's channel ([`options`]). A build run from the repository isn't
-//! installed: its manager can't be made, and it asks nothing. The update is downloaded into Velopack's packages
-//! folder, and Velopack's updater puts it in place once the app has ended, silently (no window of its own), and starts
-//! the app again.
+//! GitHub releases ([`crate::Releases`]), on its system's and architecture's channel ([`options`]). A build run from
+//! the repository isn't installed: its manager returns `NotInstalled`, and asks nothing.
+//!
+//! Instead of `velopack::sources::GithubSource` (which lists multiple releases and opens separate `ureq` connections
+//! without system HTTP(S) proxy support), [`LatestGithubSource`] queries `/releases/latest` once via `crate::http`
+//! (pooled `reqwest` + `rustls` + desktop system proxy) and reads only the latest release's `releases.<channel>.json`.
 
 use crate::{Releases, Told};
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::future::Future;
+use std::path::Path;
 use std::sync::mpsc::{self, Sender};
-use velopack::sources::GithubSource;
-use velopack::{UpdateCheck, UpdateInfo, UpdateManager, UpdateOptions};
+use std::sync::Mutex;
+use velopack::sources::UpdateSource;
+use velopack::{UpdateCheck, UpdateInfo, UpdateManager, UpdateOptions, VelopackAsset, VelopackAssetFeed};
+
+/// Max size of GitHub's `/releases/latest` JSON response and of `releases.<channel>.json`.
+const MAX_RELEASE: u64 = 1 << 20;
+const MAX_FEED: u64 = 4 << 20;
 
 /// An update found: Velopack's.
 pub struct Found(UpdateInfo);
@@ -25,10 +35,96 @@ pub fn startup() {
     velopack::VelopackApp::build().run();
 }
 
-/// The installed app's update manager, of `releases`; none for an app that isn't installed.
-fn manager(releases: &Releases) -> Option<UpdateManager> {
+#[derive(Deserialize)]
+struct GithubRelease {
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// Parse GitHub `/releases/latest` JSON into a case-insensitive map of `asset_name -> browser_download_url`.
+pub(crate) fn parse_latest_release_assets(json: &[u8]) -> Result<HashMap<String, String>, String> {
+    let release: GithubRelease = serde_json::from_slice(json).map_err(|e| format!("the release's JSON: {e}"))?;
+    Ok(release.assets.into_iter().map(|a| (a.name.to_ascii_lowercase(), a.browser_download_url)).collect())
+}
+
+/// Fast single-release GitHub source backed by `crate::http` (pooled HTTPS + system proxy).
+struct LatestGithubSource {
+    latest_api_url: String,
+    assets: Mutex<HashMap<String, String>>,
+}
+
+impl LatestGithubSource {
+    fn new(latest_api_url: &str) -> LatestGithubSource {
+        LatestGithubSource {
+            latest_api_url: latest_api_url.to_owned(),
+            assets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn with_runtime<T>(work: impl Future<Output = Result<T, String>>) -> Result<T, velopack::Error> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| velopack::Error::Other(format!("runtime: {e}")))?;
+        runtime.block_on(work).map_err(velopack::Error::Other)
+    }
+
+    async fn fetch_assets(&self, client: &reqwest::Client) -> Result<HashMap<String, String>, String> {
+        let json = crate::http::get_bytes(client, &self.latest_api_url, MAX_RELEASE).await?;
+        let map = parse_latest_release_assets(&json)?;
+        *self.assets.lock().unwrap_or_else(|e| e.into_inner()) = map.clone();
+        Ok(map)
+    }
+}
+
+impl UpdateSource for LatestGithubSource {
+    fn get_release_feed(&self, channel: &str, _app: &velopack::bundle::Manifest, _staged_user_id: &str) -> Result<VelopackAssetFeed, velopack::Error> {
+        let feed_name = format!("releases.{channel}.json").to_ascii_lowercase();
+        Self::with_runtime(async {
+            let client = crate::http::client()?;
+            let assets = self.fetch_assets(&client).await?;
+            let Some(url) = assets.get(&feed_name) else {
+                return Ok(VelopackAssetFeed { Assets: Vec::new() });
+            };
+            let bytes = crate::http::get_bytes(&client, url, MAX_FEED).await?;
+            serde_json::from_slice(&bytes).map_err(|e| format!("parsing {feed_name}: {e}"))
+        })
+    }
+
+    fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path, progress_sender: Option<Sender<i16>>) -> Result<(), velopack::Error> {
+        let key = asset.FileName.to_ascii_lowercase();
+        let size = asset.Size;
+        Self::with_runtime(async {
+            let client = crate::http::client()?;
+            let cached = self.assets.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
+            let url = match cached {
+                Some(url) => url,
+                None => self
+                    .fetch_assets(&client)
+                    .await?
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?,
+            };
+            crate::http::download_to_file(&client, &url, local_file, size, |pct| {
+                if let Some(tx) = &progress_sender {
+                    let _ = tx.send(pct);
+                }
+            })
+            .await
+        })
+    }
+}
+
+/// The installed app's update manager, of `releases`.
+fn manager(releases: &Releases) -> Result<UpdateManager, velopack::Error> {
     let options = options(std::env::consts::OS, std::env::consts::ARCH);
-    UpdateManager::new(GithubSource::new(&releases.repository(), None, false), Some(options), None).ok()
+    UpdateManager::new(LatestGithubSource::new(&releases.latest()), Some(options), None)
 }
 
 /// The channel the app asks for its updates on, whatever channel its package was made on (`vpk pack --channel`,
@@ -55,14 +151,14 @@ fn options(os: &str, arch: &str) -> UpdateOptions {
 pub fn check(releases: &Releases, tell: Sender<Told>) -> bool {
     let releases = releases.clone();
     std::thread::spawn(move || {
-        let Some(manager) = manager(&releases) else { return drop(tell.send(Told::None)) };
-        let told = match manager.check_for_updates() {
-            Ok(UpdateCheck::UpdateAvailable(info)) => Told::Found(Found(*info)),
-            Ok(_) => Told::None,
-            Err(why) => {
-                log::warn!("checking for an update: {why}");
-                Told::None
-            }
+        let told = match manager(&releases) {
+            Err(velopack::Error::NotInstalled(_)) => Told::None,
+            Err(why) => Told::CheckFailed(why.to_string()),
+            Ok(manager) => match manager.check_for_updates() {
+                Ok(UpdateCheck::UpdateAvailable(info)) => Told::Found(Found(*info)),
+                Ok(_) => Told::UpToDate,
+                Err(why) => Told::CheckFailed(why.to_string()),
+            },
         };
         let _ = tell.send(told);
     });
@@ -73,7 +169,10 @@ pub fn check(releases: &Releases, tell: Sender<Told>) -> bool {
 pub fn download(releases: &Releases, found: &Found, tell: Sender<Told>) {
     let (releases, info) = (releases.clone(), found.0.clone());
     std::thread::spawn(move || {
-        let Some(manager) = manager(&releases) else { return drop(tell.send(Told::Downloaded(Err("the app isn't installed".into())))) };
+        let manager = match manager(&releases) {
+            Ok(m) => m,
+            Err(why) => return drop(tell.send(Told::Downloaded(Err(why.to_string())))),
+        };
         let (progress, heard) = mpsc::channel::<i16>();
         let forward = {
             let tell = tell.clone();
@@ -92,7 +191,7 @@ pub fn download(releases: &Releases, found: &Found, tell: Sender<Told>) {
 /// The updater waits for this process to end, then puts the update in place silently (no window of its own) and
 /// starts the app again. The process ends here (the app writes its settings as each changes).
 pub fn install(releases: &Releases, found: Found, _tell: Sender<Told>) -> Result<(), String> {
-    let manager = manager(releases).ok_or("the app isn't installed")?;
+    let manager = manager(releases).map_err(|why| why.to_string())?;
     match manager.wait_exit_then_apply_updates(&found.0.TargetFullRelease, true, true, Vec::<String>::new()) {
         Ok(()) => std::process::exit(0),
         Err(why) => Err(why.to_string()),
@@ -101,10 +200,33 @@ pub fn install(releases: &Releases, found: Found, _tell: Sender<Told>) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::options;
+    use super::{options, parse_latest_release_assets};
     use velopack::locator::VelopackLocatorConfig;
     use velopack::sources::FileSource;
     use velopack::{UpdateCheck, UpdateManager};
+
+    #[test]
+    fn parses_latest_release_assets_case_insensitively() {
+        let json = br#"{
+            "tag_name": "v0.2.0",
+            "assets": [
+                {
+                    "name": "releases.win-x64.json",
+                    "browser_download_url": "https://example.invalid/releases.win-x64.json"
+                },
+                {
+                    "name": "Saito-0.2.0-win-x64-full.nupkg",
+                    "browser_download_url": "https://example.invalid/saito-0.2.0-win-x64-full.nupkg"
+                }
+            ]
+        }"#;
+        let map = parse_latest_release_assets(json).unwrap();
+        assert_eq!(map.get("releases.win-x64.json").map(String::as_str), Some("https://example.invalid/releases.win-x64.json"));
+        assert_eq!(
+            map.get("saito-0.2.0-win-x64-full.nupkg").map(String::as_str),
+            Some("https://example.invalid/saito-0.2.0-win-x64-full.nupkg")
+        );
+    }
 
     /// The full package an installed app of `version`, packaged on `channel` and running on `os`/`arch`, updates
     /// to from a release's feeds (`releases.<channel>.json`, each channel's versions), if any: Velopack's own check,

@@ -29,6 +29,8 @@ export global SettingsView {
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> check-updates;
+    in property <bool> can-update;
+    in property <string> update-note;
     in property <bool> keyboard-only-custom;
     in property <bool> landscape-touch-pad: true;
     // The graphics enhancements, each on or off.
@@ -54,6 +56,9 @@ export global SettingsView {
     in property <bool> about;
     // The picture size that isn't a number, as the list of sizes says it.
     out property <string> largest: @tr("Largest that fits");
+    out property <string> update-checking-note: @tr("Checking for updates");
+    out property <string> update-latest-note: @tr("You're on the latest version.");
+    out property <string> update-failed-note: @tr("Couldn't check for updates.");
 }
 
 // A row's label and its note. The row's control is put beside it (at `SettingsScreen.control-x`, in a column
@@ -286,6 +291,22 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.check-updates ? 1 : 0;
+                    }
+                }
+
+                if SettingsView.can-update: Rectangle {
+                    height: check-now-row.height;
+                    check-now-row := SettingLabel {
+                        note: SettingsView.update-note;
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.check-now";
+                        text: I18n.upper(@tr("Check now"));
                     }
                 }
 

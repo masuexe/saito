@@ -224,3 +224,12 @@ msgstr "横屏隐藏通知栏"
 
 msgid "Hide Android's top status bar while holding the phone sideways."
 msgstr "手机横屏时隐藏顶部系统状态栏和通知栏。"
+
+msgid "Check now"
+msgstr "立即检查"
+
+msgid "You're on the latest version."
+msgstr "当前已是最新版本。"
+
+msgid "Couldn't check for updates."
+msgstr "无法检查更新。"

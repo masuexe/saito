@@ -225,3 +225,12 @@ msgstr "横画面でステータスバーを隠す"
 
 msgid "Hide Android's top status bar while holding the phone sideways."
 msgstr "横向き表示のときに Android の上部ステータスバーを非表示にします。"
+
+msgid "Check now"
+msgstr "今すぐ確認"
+
+msgid "You're on the latest version."
+msgstr "最新バージョンです。"
+
+msgid "Couldn't check for updates."
+msgstr "更新を確認できませんでした。"

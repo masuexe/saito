@@ -112,11 +112,8 @@ pub fn check(releases: &Releases, tell: Sender<Told>) -> bool {
     let started = on_thread("saito-updater: checking", async move {
         let told = match ask(&latest).await {
             Ok(Some(found)) => Told::Found(found),
-            Ok(None) => Told::None,
-            Err(why) => {
-                log::warn!("checking for an update: {why}");
-                Told::None
-            }
+            Ok(None) => Told::UpToDate,
+            Err(why) => Told::CheckFailed(why),
         };
         let _ = tell.send(told);
     });

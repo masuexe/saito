@@ -33,7 +33,7 @@ const SIZES: u32 = 8;
 /// The group a control of the page is in.
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
-        "set.name" | "set.language" | "set.updates" => 0,
+        "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
@@ -84,6 +84,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_check_updates(s.check_updates);
+    view.set_can_update(saito_updater::supported());
     view.set_keyboard_only_custom(s.keyboard_only_custom);
     view.set_landscape_touch_pad(s.landscape_touch_pad);
     view.set_sharp_text(s.sharp_text);
@@ -284,13 +285,13 @@ impl Settings {
         self.show(shell);
     }
 
-    /// The check for updates on or off: turned on, the games' content is checked now, and the app at its next start
-    /// (its loading screen is where it updates: saito-updater).
+    /// The check for updates on or off: turned on, both game content and app updates are checked right away.
     fn set_check_updates(&mut self, shell: &mut Shell, on: bool) {
         shell.settings.check_updates = on;
         shell.save_settings();
         if on {
             shell.games.download(true);
+            shell.check_updates_now(false);
         }
         self.show(shell);
     }
@@ -347,6 +348,10 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, !shell.reduces_motion()),
             "set.updates" => self.set_check_updates(shell, !shell.settings.check_updates),
+            "set.check-now" => {
+                shell.games.download(true);
+                shell.check_updates_now(true);
+            }
             "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),

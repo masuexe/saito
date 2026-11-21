@@ -4,21 +4,26 @@
 //! and asks nothing), and Android's (the release's APK). A browser's page is new each time it is loaded, and iOS's app
 //! is its sideloading tool's: neither asks, and no update is found there.
 //!
-//! [`Updater::check`] asks the releases, once, whether a newer one is out; [`Updater::poll`] says where the update
-//! stands, on the app's thread (the work is on threads of this crate's): asked ([`CHECK_WAIT`] at most: releases that
-//! don't answer by then are let go, and asked again next start), the one found downloading, then being installed. The
-//! app ends once it is: on the desktop Velopack's updater puts it in place and starts the app again; Android's
-//! installer ends the app. What goes wrong is logged (`log`, a warning) and said once ([`Status::Failed`]); the app
-//! goes on as it is, and it is tried again next start. Nothing is asked of the player (but by Android, the first time).
+//! [`Updater::check`] asks the releases, once, whether a newer one is out; [`Updater::check_now`] triggers a fresh check
+//! anytime an update is idle or settled; [`Updater::poll`] says where the update stands, on the app's thread (the work
+//! is on threads of this crate's): asked ([`CHECK_WAIT`] at most: releases that don't answer by then are let go, and asked
+//! again next start), the one found downloading, then being installed.
 //!
 //! Each system is a module (`src/platform.rs`). Unsafe code is Android's JNI alone (`src/platform/android.rs`).
 #![deny(unsafe_code)]
 
+#[cfg(any(desktop, android))]
+mod http;
 mod platform;
 
 use platform::system;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+
+/// Whether this platform supports in-app updates.
+pub fn supported() -> bool {
+    cfg!(any(desktop, android))
+}
 
 /// Where an app's releases are published: a GitHub repository whose releases carry the desktop's Velopack packages
 /// (each system's and architecture's channel) and Android's APK. The app names its own ([`Updater::new`]).
@@ -34,21 +39,15 @@ impl Releases {
         Releases { owner: owner.to_owned(), repo: repo.to_owned() }
     }
 
-    /// The repository's address, as Velopack's GitHub source takes it.
-    #[cfg_attr(not(desktop), allow(dead_code))]
-    pub(crate) fn repository(&self) -> String {
-        format!("https://github.com/{}/{}", self.owner, self.repo)
-    }
-
     /// GitHub's API for its newest published release.
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(desktop, android)), allow(dead_code))]
     pub(crate) fn latest(&self) -> String {
         format!("https://api.github.com/repos/{}/{}/releases/latest", self.owner, self.repo)
     }
 }
 
 /// How long the releases are waited on for their answer.
-pub const CHECK_WAIT: Duration = Duration::from_secs(5);
+pub const CHECK_WAIT: Duration = Duration::from_secs(12);
 
 /// Run first thing in the app's `main`: on the desktop Velopack's hook, which, run by its installer or its updater,
 /// does its part and ends the process there; elsewhere nothing.
@@ -60,10 +59,12 @@ pub fn startup() {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     /// Nothing is going on: not asked (by the app, or on a system with no updater), or nothing more this session (no
-    /// update, no answer in time, or it failed).
+    /// update, not installed, or it settled).
     Idle,
     /// The releases are asked whether a newer one is out.
     Checking,
+    /// An explicit check completed with no newer release available (said once, [`Status::Idle`] after).
+    UpToDate,
     /// The update to `version` is downloading, this far (0 to 1).
     Downloading { version: String, progress: f32 },
     /// The update to `version` is downloaded and being installed: the app ends once it is (Android's installer may
@@ -77,8 +78,12 @@ pub enum Status {
 #[cfg_attr(any(web, ios), allow(dead_code))]
 pub(crate) enum Told {
     Found(system::Found),
-    /// No update: none is out, the app isn't installed, or the releases couldn't be asked (logged).
+    /// Nothing to check (unsupported or uninstalled build).
     None,
+    /// Check succeeded and the app is already up-to-date.
+    UpToDate,
+    /// Checking the release feed failed (reason logged).
+    CheckFailed(String),
     /// The download, this far (0 to 1).
     Progress(f32),
     Downloaded(Result<(), String>),
@@ -88,10 +93,17 @@ pub(crate) enum Told {
     NotInstalled { why: String, declined: bool },
 }
 
-/// The app's update: one an app, asked as it starts.
+enum PollOutcome {
+    None,
+    UpToDate,
+    Failed,
+}
+
+/// The app's update: one an app, asked as it starts or manually from Settings.
 pub struct Updater {
     releases: Releases,
     stage: Stage,
+    explicit: bool,
     tell: Sender<Told>,
     heard: Receiver<Told>,
 }
@@ -105,7 +117,7 @@ enum Stage {
     Downloading(Box<system::Found>, f32),
     /// The update to this version is being installed.
     Installing(String),
-    /// Nothing more this session.
+    /// Nothing more until checked again.
     Settled,
 }
 
@@ -113,7 +125,7 @@ impl Updater {
     /// The updater of an app published as `releases`.
     pub fn new(releases: Releases) -> Updater {
         let (tell, heard) = mpsc::channel();
-        Updater { releases, stage: Stage::Idle, tell, heard }
+        Updater { releases, stage: Stage::Idle, explicit: false, tell, heard }
     }
 
     /// Ask the releases whether a newer one is out: once, as the app starts. Where the system has no updater nothing
@@ -122,25 +134,53 @@ impl Updater {
         if !matches!(self.stage, Stage::Idle) {
             return;
         }
+        self.explicit = false;
         // (Only a system with an updater asks, and keeps the time: a browser's `Instant` has none.)
         self.stage = if system::check(&self.releases, self.tell.clone()) { Stage::Checking(Instant::now()) } else { Stage::Settled };
+    }
+
+    /// Ask the releases right now whether a newer one is out, even if checked earlier this session.
+    /// Returns `false` if this target has no updater or a check/update is already active.
+    pub fn check_now(&mut self) -> bool {
+        if !matches!(self.stage, Stage::Idle | Stage::Settled) {
+            return false;
+        }
+        self.explicit = true;
+        if system::check(&self.releases, self.tell.clone()) {
+            self.stage = Stage::Checking(Instant::now());
+            true
+        } else {
+            self.explicit = false;
+            self.stage = Stage::Settled;
+            false
+        }
     }
 
     /// Where the update stands, with what the system said since: an update found is downloaded, one downloaded
     /// installed.
     pub fn poll(&mut self) -> Status {
-        let mut failed = false;
+        let mut outcome = PollOutcome::None;
         while let Ok(told) = self.heard.try_recv() {
-            failed |= self.take(told);
+            match self.take(told) {
+                PollOutcome::Failed => outcome = PollOutcome::Failed,
+                PollOutcome::UpToDate if !matches!(outcome, PollOutcome::Failed) => outcome = PollOutcome::UpToDate,
+                _ => {}
+            }
         }
         if let Stage::Checking(since) = self.stage
             && since.elapsed() >= CHECK_WAIT
         {
-            log::info!("no answer about an update in {} seconds: asked again next start", CHECK_WAIT.as_secs());
+            log::warn!("no answer about an update in {} seconds: asked again next start", CHECK_WAIT.as_secs());
+            let explicit = std::mem::replace(&mut self.explicit, false);
             self.stage = Stage::Settled;
+            if explicit {
+                outcome = PollOutcome::Failed;
+            }
         }
-        if failed {
-            return Status::Failed;
+        match outcome {
+            PollOutcome::Failed => return Status::Failed,
+            PollOutcome::UpToDate => return Status::UpToDate,
+            PollOutcome::None => {}
         }
         match &self.stage {
             Stage::Checking(_) => Status::Checking,
@@ -152,54 +192,77 @@ impl Updater {
         }
     }
 
-    /// What a system said, taken: whether the update failed.
-    fn take(&mut self, told: Told) -> bool {
+    /// What a system said, taken: one-shot status outcome (`UpToDate` or `Failed`) where applicable.
+    fn take(&mut self, told: Told) -> PollOutcome {
         match told {
             Told::Found(found) => {
                 if !matches!(self.stage, Stage::Checking(_)) {
                     log::info!("saito {} is out: it is downloaded next start", found.version());
-                    return false;
+                    return PollOutcome::None;
                 }
+                self.explicit = false;
                 system::download(&self.releases, &found, self.tell.clone());
                 self.stage = Stage::Downloading(Box::new(found), 0.0);
-                false
+                PollOutcome::None
             }
             Told::None => {
                 if matches!(self.stage, Stage::Checking(_)) {
+                    self.explicit = false;
                     self.stage = Stage::Settled;
                 }
-                false
+                PollOutcome::None
+            }
+            Told::UpToDate => {
+                if !matches!(self.stage, Stage::Checking(_)) {
+                    return PollOutcome::None;
+                }
+                let explicit = std::mem::replace(&mut self.explicit, false);
+                self.stage = Stage::Settled;
+                if explicit { PollOutcome::UpToDate } else { PollOutcome::None }
+            }
+            Told::CheckFailed(why) => {
+                log::warn!("checking for an update: {why}");
+                if !matches!(self.stage, Stage::Checking(_)) {
+                    return PollOutcome::None;
+                }
+                let explicit = std::mem::replace(&mut self.explicit, false);
+                self.stage = Stage::Settled;
+                if explicit { PollOutcome::Failed } else { PollOutcome::None }
             }
             Told::Progress(progress) => {
                 if let Stage::Downloading(_, at) = &mut self.stage {
                     *at = progress.clamp(0.0, 1.0);
                 }
-                false
+                PollOutcome::None
             }
             Told::Downloaded(done) => {
-                let Stage::Downloading(found, _) = std::mem::replace(&mut self.stage, Stage::Settled) else { return false };
+                let Stage::Downloading(found, _) = std::mem::replace(&mut self.stage, Stage::Settled) else {
+                    return PollOutcome::None;
+                };
                 if let Err(why) = done {
                     log::warn!("downloading the update to saito {}: {why}", found.version());
-                    return true;
+                    return PollOutcome::Failed;
                 }
                 self.stage = Stage::Installing(found.version().to_owned());
                 match system::install(&self.releases, *found, self.tell.clone()) {
-                    Ok(()) => false,
+                    Ok(()) => PollOutcome::None,
                     Err(why) => {
                         log::warn!("installing the update: {why}");
                         self.stage = Stage::Settled;
-                        true
+                        PollOutcome::Failed
                     }
                 }
             }
             Told::NotInstalled { why, declined } => {
-                let Stage::Installing(version) = std::mem::replace(&mut self.stage, Stage::Settled) else { return false };
+                let Stage::Installing(version) = std::mem::replace(&mut self.stage, Stage::Settled) else {
+                    return PollOutcome::None;
+                };
                 if declined {
                     log::info!("the update to saito {version} was turned down: {why}");
                 } else {
                     log::warn!("installing the update to saito {version}: {why}");
                 }
-                !declined
+                if !declined { PollOutcome::Failed } else { PollOutcome::None }
             }
         }
     }
