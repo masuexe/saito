@@ -135,6 +135,11 @@ pub trait Screen {
         false
     }
 
+    /// A mouse button pressed, before Slint sees it (a key or mouse binding being asked for). True if the screen took it.
+    fn mouse(&mut self, _shell: &mut Shell, _button: i_slint_backend_winit::winit::event::MouseButton) -> bool {
+        false
+    }
+
     /// A pad's button pressed, as [`Screen::key`].
     fn button(&mut self, _shell: &mut Shell, _button: saito_gamepad::Button) -> bool {
         false

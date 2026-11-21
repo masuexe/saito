@@ -5,7 +5,7 @@
 //! A screen that remembers something of its own (the builds Practice last used, the rounds last played) keeps
 //! it by a key in [`Settings::remembered`], so it adds no field here.
 
-use crate::input::{BUTTONS, Bindings, key_name, key_named, pad_name, pad_named};
+use crate::input::{BUTTONS, Bindings, bind_name, bind_named, pad_name, pad_named};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -183,7 +183,7 @@ impl Settings {
     pub fn bindings(&self) -> Bindings {
         let mut b = Bindings::default();
         for (i, (_, name)) in BUTTONS.iter().enumerate() {
-            if let Some(key) = self.keys.get(*name).and_then(|k| key_named(k)) {
+            if let Some(key) = self.keys.get(*name).and_then(|k| bind_named(k)) {
                 b.keys[i] = key;
             }
             if let Some(button) = self.pad.get(*name).and_then(|p| pad_named(p)) {
@@ -200,7 +200,7 @@ impl Settings {
         self.pad.clear();
         for (i, (_, name)) in BUTTONS.iter().enumerate() {
             if bindings.keys[i] != usual.keys[i]
-                && let Some(key) = key_name(bindings.keys[i])
+                && let Some(key) = bind_name(bindings.keys[i])
             {
                 self.keys.insert(name.to_string(), key.to_string());
             }
@@ -216,6 +216,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use i_slint_backend_winit::winit::event::MouseButton;
     use i_slint_backend_winit::winit::keyboard::KeyCode;
 
     /// Settings read back as written; a file of other keys, or none, is the defaults.
@@ -255,9 +256,11 @@ mod tests {
         let mut b = s.bindings();
         assert_eq!(b, Bindings::default());
         b.bind_key(4, KeyCode::KeyJ);
+        b.bind_key(5, MouseButton::Right);
         b.bind_pad(5, saito_gamepad::Button::LeftStick);
         s.set_bindings(&b);
-        assert_eq!((s.keys.len(), s.pad.len()), (1, 1));
+        assert_eq!((s.keys.len(), s.pad.len()), (2, 1));
+        assert_eq!(s.keys.get("b").map(String::as_str), Some("MouseRight"));
         assert_eq!(s.bindings(), b);
     }
 }

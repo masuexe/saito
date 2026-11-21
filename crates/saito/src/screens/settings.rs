@@ -8,7 +8,7 @@
 
 mod about;
 
-use crate::input::{Action, Bindings, KeyPress, Scroll, key_cap, key_name, pad_cap, pad_name};
+use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
 use crate::settings::{DEFAULT_SIGNAL_SERVER, MAX_INPUT_DELAY, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
@@ -16,6 +16,7 @@ use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
 use saito_gamepad::Button;
 use saito_ui::{PadBinding, PadButton, SettingsView};
+use i_slint_backend_winit::winit::event::MouseButton;
 use i_slint_backend_winit::winit::keyboard::KeyCode;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -197,7 +198,7 @@ impl Binding {
     pub fn show(&self, shell: &Shell) {
         let ui = shell.ui();
         let view = ui.global::<SettingsView>();
-        let keys: Vec<slint::SharedString> = shell.bindings.keys.iter().map(|k| key_cap(*k).into()).collect();
+        let keys: Vec<slint::SharedString> = shell.bindings.keys.iter().map(|k| bind_cap(*k).into()).collect();
         let buttons: Vec<PadBinding> = shell
             .bindings
             .pad
@@ -235,6 +236,27 @@ impl Binding {
             shell.sound.play(Cue::Pick);
         } else {
             // (A key that can't be bound: the question stands.)
+            shell.sound.play(Cue::Refused);
+        }
+        self.show(shell);
+        true
+    }
+
+    /// A mouse button pressed while asking: bound, or asks no more if asking for a pad button.
+    pub fn mouse(&mut self, shell: &mut Shell, button: MouseButton) -> bool {
+        let Some((at, pad)) = self.asking else { return false };
+        if pad {
+            self.asking = None;
+            self.show(shell);
+            return false;
+        }
+        if mouse_name(button).is_some() {
+            let mut bindings = shell.bindings.clone();
+            bindings.bind_key(at, button);
+            shell.set_bindings(bindings);
+            self.asking = None;
+            shell.sound.play(Cue::Pick);
+        } else {
             shell.sound.play(Cue::Refused);
         }
         self.show(shell);
@@ -495,6 +517,10 @@ impl Screen for Settings {
 
     fn key(&mut self, shell: &mut Shell, key: &KeyPress) -> bool {
         self.binding.key(shell, key)
+    }
+
+    fn mouse(&mut self, shell: &mut Shell, button: MouseButton) -> bool {
+        self.binding.mouse(shell, button)
     }
 
     fn scroll(&mut self, shell: &mut Shell, action: Action) -> bool {

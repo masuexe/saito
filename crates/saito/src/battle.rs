@@ -442,7 +442,12 @@ impl Shell {
     pub(crate) fn run_battle(&mut self, now: Instant, samples: &mut Vec<[f32; 2]>) -> (Option<u32>, Option<(ScreenId, BattleEvent)>) {
         let Some(mut b) = self.battle.take() else { return (None, None) };
         b.hold.before(b.menu, &mut b.stage.player);
-        let held = if b.playing() && !b.kept && self.dialog.is_none() { self.keys.held | self.pad.held(&self.bindings) | self.touch.held() } else { 0 };
+        let custom_open = b.stage.player.battle().round.mode == saito_battle::battle::mode::CUSTOM;
+        if custom_open {
+            self.keys.release_mouse();
+        }
+        let mouse_held = if custom_open { 0 } else { self.keys.mouse_held };
+        let held = if b.playing() && !b.kept && self.dialog.is_none() { self.keys.held | mouse_held | self.pad.held(&self.bindings) | self.touch.held() } else { 0 };
         // (A party battle's switches are asked of the player; the battle's buttons alone go on.)
         let buttons = b.party.take_switches(&mut b.stage.player, b.viewer, held);
         let ran = b.stage.advance(now, buttons, &mut self.keys.pressed);
@@ -461,7 +466,7 @@ impl Shell {
         let shell = ui.global::<saito_ui::Shell>();
         let kit = self.games.ready(&b.game).and_then(|ready| crate::builds::kit_of(&b.game, &ready));
         let keys = [crate::input::SWITCH_LEFT, crate::input::SWITCH_RIGHT].map(|bit| saito_ui::Hint {
-            key: crate::input::key_cap(self.bindings.key(bit)).into(),
+            key: crate::input::bind_cap(self.bindings.key(bit)).into(),
             pad: crate::input::pad_face(self.bindings.pad_button(bit)),
             ..Default::default()
         });

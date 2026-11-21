@@ -123,8 +123,8 @@ msgstr "左"
 msgid "Right"
 msgstr "右"
 
-msgid "Press a key"
-msgstr "キーを押してください"
+msgid "Key or click"
+msgstr "キー/クリック"
 
 msgid "Press a button"
 msgstr "ボタンを押してください"

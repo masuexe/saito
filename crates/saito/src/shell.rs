@@ -10,7 +10,7 @@
 use crate::battle::{Battle, Loading};
 use crate::errors::UserError;
 use crate::games::{Games, Notice, Ready, State};
-use crate::input::{Action, Bindings, KeyPress, Keys, Pad, Scroll, menu_action, scroll_key};
+use crate::input::{Action, Bindings, KeyPress, Keys, Pad, Scroll, bind_cap, menu_action, scroll_key};
 use crate::nav::{Did, Direction, Key, Nav, Rect};
 use crate::screens::{self, Screen, ScreenId};
 use crate::settings::Settings;
@@ -22,7 +22,7 @@ use crate::page::text_entry::Entry;
 use saito_ui::{AppWindow, ButtonKind, DialogButton, Theme};
 use saito_updater::Status;
 use i_slint_backend_winit::WinitWindowAccessor;
-use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, TouchPhase};
+use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, MouseButton, TouchPhase};
 use i_slint_backend_winit::winit::keyboard::{KeyCode, PhysicalKey};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::cell::RefCell;
@@ -303,6 +303,10 @@ pub struct Shell {
     pub keep_nothing: bool,
     /// The Legacy Collection offered to devices nearby, or looked for on a computer nearby (`crate::nearby`).
     pub nearby: crate::nearby::Nearby,
+    /// The player's latest cursor position in logical window units (none when off the window).
+    cursor_pos: Option<(f32, f32)>,
+    /// Mouse button whose press was consumed for key/mouse rebinding and whose release must also be swallowed.
+    swallow_mouse_up: Option<MouseButton>,
     /// When the player last did anything: a key or a pad's button pressed, the pointer moved, clicked or
     /// scrolled, a finger on the window. (A replay's viewer shows its controls for a while after it.)
     pub last_input: Option<Instant>,
@@ -643,14 +647,25 @@ impl Shell {
     fn show_bindings(&self) {
         let ui = self.ui();
         let shell = ui.global::<saito_ui::Shell>();
-        shell.set_key_l(crate::input::key_cap(self.bindings.key(keys::L)).into());
-        shell.set_key_r(crate::input::key_cap(self.bindings.key(keys::R)).into());
+        shell.set_key_l(bind_cap(self.bindings.key(keys::L)).into());
+        shell.set_key_r(bind_cap(self.bindings.key(keys::R)).into());
         // (The keys that confirm and go back are Enter and Esc; the pad's, the buttons bound to A and B.)
         shell.set_key_a("Enter".into());
         shell.set_key_b("Esc".into());
         shell.set_pad_a(crate::input::pad_face(self.bindings.confirm_button()));
         shell.set_pad_b(crate::input::pad_face(self.bindings.back_button()));
         shell.set_pad_delete(crate::input::pad_face(self.bindings.delete_button()));
+    }
+
+    /// Whether the latest mouse cursor position lies inside the displayed battle picture (in logical units).
+    fn in_battle_picture(&self) -> bool {
+        let Some((cx, cy)) = self.cursor_pos else { return false };
+        let ui = self.ui();
+        let s = ui.global::<saito_ui::Shell>();
+        let x0 = s.get_safe_left() + s.get_picture_room_x() + s.get_picture_x();
+        let y0 = s.get_safe_top() + s.get_picture_room_y() + s.get_picture_y();
+        let (w, h) = (s.get_picture_width(), s.get_picture_height());
+        w > 0.0 && h > 0.0 && cx >= x0 && cx < x0 + w && cy >= y0 && cy < y0 + h
     }
 
     // ---- Motion ------------------------------------------------------------------------------------------
@@ -1215,6 +1230,8 @@ impl App {
             composing: false,
             keep_nothing: still,
             nearby: Default::default(),
+            cursor_pos: None,
+            swallow_mouse_up: None,
             last_input: None,
         };
         App {
@@ -1778,9 +1795,57 @@ impl App {
         true
     }
 
+    /// Update the tracked cursor position (in logical window units), or clear it when leaving the window.
+    pub fn cursor_moved(&mut self, pos: Option<(f32, f32)>) {
+        self.shell.cursor_pos = pos;
+    }
+
+    /// A mouse button pressed or released on the window, before Slint sees it.
+    /// Returns true if the event should be swallowed (`PreventDefault`) instead of reaching Slint.
+    pub fn mouse_input(&mut self, button: MouseButton, state: ElementState) -> bool {
+        if !self.pointer() {
+            return true;
+        }
+        let now = Instant::now();
+        if state == ElementState::Released {
+            self.shell.keys.mouse(&self.shell.bindings, button, false, now);
+            if self.shell.swallow_mouse_up == Some(button) {
+                self.shell.swallow_mouse_up = None;
+                return true;
+            }
+            return false;
+        }
+        if self.shell.battle_has_keys() {
+            let custom_open = self
+                .shell
+                .battle
+                .as_ref()
+                .is_some_and(|b| b.stage.player.battle().round.mode == saito_battle::battle::mode::CUSTOM);
+            let full = self.shell.battle.as_ref().is_some_and(|b| b.full);
+            let connection_open = self.shell.ui().global::<saito_ui::Shell>().get_connection_open();
+            if !self.shell.keys_kept() && !custom_open && !connection_open && (full || self.shell.in_battle_picture()) {
+                self.shell.keys.mouse(&self.shell.bindings, button, true, now);
+            }
+            return false;
+        }
+        let over = self.shell.dialog.is_some() || self.shell.picking.is_some() || self.shell.nav.editing();
+        if !over {
+            let hearer = self.hearer();
+            let taken = self.call(hearer, |s, shell| s.mouse(shell, button)).unwrap_or(false);
+            self.settle();
+            if taken {
+                self.shell.swallow_mouse_up = Some(button);
+                return true;
+            }
+        }
+        false
+    }
+
     /// The window lost the keyboard: nothing is held.
     pub fn unfocused(&mut self) {
         self.shell.keys.release();
+        self.shell.cursor_pos = None;
+        self.shell.swallow_mouse_up = None;
         self.shell.touch.clear();
         self.shell.show_pad();
     }

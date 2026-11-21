@@ -213,7 +213,26 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     EventResult::PreventDefault
                 }
             }
-            WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => {
+            WindowEvent::CursorMoved { position, .. } => {
+                let taken = state.try_borrow_mut().map_or(true, |mut app| {
+                    let scale = app.shell.ui().window().scale_factor() as f64;
+                    let scale = if scale > 0.0 { scale } else { 1.0 };
+                    app.cursor_moved(Some(((position.x / scale) as f32, (position.y / scale) as f32)));
+                    app.pointer()
+                });
+                if taken { EventResult::Propagate } else { EventResult::PreventDefault }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Ok(mut app) = state.try_borrow_mut() {
+                    app.cursor_moved(None);
+                }
+                EventResult::Propagate
+            }
+            WindowEvent::MouseInput { state: btn_state, button, .. } => {
+                let prevent = state.try_borrow_mut().is_ok_and(|mut app| app.mouse_input(*button, *btn_state));
+                if prevent { EventResult::PreventDefault } else { EventResult::Propagate }
+            }
+            WindowEvent::MouseWheel { .. } => {
                 let taken = state.try_borrow_mut().map_or(true, |mut app| app.pointer());
                 if taken { EventResult::Propagate } else { EventResult::PreventDefault }
             }

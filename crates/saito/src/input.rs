@@ -16,7 +16,7 @@ use crate::nav::Rect;
 use saito_gamepad::{Axis, Button, EventKind, Id};
 use saito_battle::input::{Joypad, keys};
 use saito_frontend::player::time_of;
-use i_slint_backend_winit::winit::event::{ElementState, KeyEvent};
+use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, MouseButton};
 use i_slint_backend_winit::winit::keyboard::{KeyCode, PhysicalKey};
 use web_time::Instant;
 
@@ -242,6 +242,34 @@ const PAD_BUTTONS: &[(Button, &str, &str)] = &[
     (Button::RightPaddle2, "right-paddle-2", "P4"),
 ];
 
+/// The mouse buttons that can be bound, each with its name in the settings' file and its cap in the UI.
+const MOUSE_BUTTONS: &[(MouseButton, &str, &str)] = &[
+    (MouseButton::Left, "MouseLeft", "M1"),
+    (MouseButton::Right, "MouseRight", "M2"),
+    (MouseButton::Middle, "MouseMiddle", "M3"),
+    (MouseButton::Back, "MouseBack", "M4"),
+    (MouseButton::Forward, "MouseForward", "M5"),
+];
+
+/// A keyboard or mouse binding for a battle button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KeyBind {
+    Key(KeyCode),
+    Mouse(MouseButton),
+}
+
+impl From<KeyCode> for KeyBind {
+    fn from(key: KeyCode) -> KeyBind {
+        KeyBind::Key(key)
+    }
+}
+
+impl From<MouseButton> for KeyBind {
+    fn from(button: MouseButton) -> KeyBind {
+        KeyBind::Mouse(button)
+    }
+}
+
 /// A bindable key by its name in the settings' file.
 pub fn key_named(name: &str) -> Option<KeyCode> {
     KEYS.iter().find(|(_, n, _)| *n == name).map(|(k, _, _)| *k)
@@ -261,6 +289,42 @@ pub fn key_cap(key: KeyCode) -> &'static str {
     }
 }
 
+/// A bindable mouse button by its name in the settings' file.
+pub fn mouse_named(name: &str) -> Option<MouseButton> {
+    MOUSE_BUTTONS.iter().find(|(_, n, _)| *n == name).map(|(b, _, _)| *b)
+}
+
+/// A mouse button's name in the settings' file, if it can be bound.
+pub fn mouse_name(button: MouseButton) -> Option<&'static str> {
+    MOUSE_BUTTONS.iter().find(|(b, _, _)| *b == button).map(|(_, n, _)| *n)
+}
+
+/// A mouse button's cap, as the UI shows it.
+pub fn mouse_cap(button: MouseButton) -> &'static str {
+    MOUSE_BUTTONS.iter().find(|(b, _, _)| *b == button).map_or("?", |(_, _, c)| *c)
+}
+
+/// A keyboard key or mouse button by its name in the settings' file.
+pub fn bind_named(name: &str) -> Option<KeyBind> {
+    key_named(name).map(KeyBind::Key).or_else(|| mouse_named(name).map(KeyBind::Mouse))
+}
+
+/// A binding's name in the settings' file, if it can be bound.
+pub fn bind_name(bind: KeyBind) -> Option<&'static str> {
+    match bind {
+        KeyBind::Key(k) => key_name(k),
+        KeyBind::Mouse(b) => mouse_name(b),
+    }
+}
+
+/// A binding's cap, as the UI shows it.
+pub fn bind_cap(bind: KeyBind) -> &'static str {
+    match bind {
+        KeyBind::Key(k) => key_cap(k),
+        KeyBind::Mouse(b) => mouse_cap(b),
+    }
+}
+
 pub fn pad_named(name: &str) -> Option<Button> {
     PAD_BUTTONS.iter().find(|(_, n, _)| *n == name).map(|(b, _, _)| *b)
 }
@@ -274,10 +338,10 @@ pub fn pad_cap(button: Button) -> &'static str {
     PAD_BUTTONS.iter().find(|(b, _, _)| *b == button).map_or("?", |(_, _, c)| *c)
 }
 
-/// The battle's buttons: the key and the pad button of each of [`BUTTONS`], in its order.
+/// The battle's buttons: the key (or mouse button) and the pad button of each of [`BUTTONS`], in its order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bindings {
-    pub keys: [KeyCode; 12],
+    pub keys: [KeyBind; 12],
     pub pad: [Button; 12],
 }
 
@@ -290,18 +354,18 @@ impl Default for Bindings {
     fn default() -> Bindings {
         Bindings {
             keys: [
-                KeyCode::ArrowUp,
-                KeyCode::ArrowDown,
-                KeyCode::ArrowLeft,
-                KeyCode::ArrowRight,
-                KeyCode::KeyZ,
-                KeyCode::KeyX,
-                KeyCode::KeyA,
-                KeyCode::KeyS,
-                KeyCode::Enter,
-                KeyCode::Backspace,
-                KeyCode::KeyC,
-                KeyCode::KeyV,
+                KeyBind::Key(KeyCode::ArrowUp),
+                KeyBind::Key(KeyCode::ArrowDown),
+                KeyBind::Key(KeyCode::ArrowLeft),
+                KeyBind::Key(KeyCode::ArrowRight),
+                KeyBind::Key(KeyCode::KeyZ),
+                KeyBind::Key(KeyCode::KeyX),
+                KeyBind::Key(KeyCode::KeyA),
+                KeyBind::Key(KeyCode::KeyS),
+                KeyBind::Key(KeyCode::Enter),
+                KeyBind::Key(KeyCode::Backspace),
+                KeyBind::Key(KeyCode::KeyC),
+                KeyBind::Key(KeyCode::KeyV),
             ],
             pad: [
                 Button::DPadUp,
@@ -324,15 +388,20 @@ impl Default for Bindings {
 impl Bindings {
     /// The GBA button a key is bound to.
     pub fn of_key(&self, key: KeyCode) -> Option<u16> {
-        self.keys.iter().position(|k| *k == key).map(|i| BUTTONS[i].0)
+        self.keys.iter().position(|k| *k == KeyBind::Key(key)).map(|i| BUTTONS[i].0)
+    }
+
+    /// The GBA button a mouse button is bound to.
+    pub fn of_mouse(&self, button: MouseButton) -> Option<u16> {
+        self.keys.iter().position(|k| *k == KeyBind::Mouse(button)).map(|i| BUTTONS[i].0)
     }
 
     fn of_pad(&self, button: Button) -> u16 {
         self.pad.iter().position(|b| *b == button).map_or(0, |i| BUTTONS[i].0)
     }
 
-    /// The key bound to a GBA button.
-    pub fn key(&self, bit: u16) -> KeyCode {
+    /// The key or mouse binding for a GBA button.
+    pub fn key(&self, bit: u16) -> KeyBind {
         self.keys[button_index(bit)]
     }
 
@@ -387,8 +456,9 @@ impl Bindings {
         })
     }
 
-    /// Bind `key` to the GBA button at `index`; the button that had it takes the key this one had.
-    pub fn bind_key(&mut self, index: usize, key: KeyCode) {
+    /// Bind `key` (or mouse button) to the GBA button at `index`; the button that had it takes the binding this one had.
+    pub fn bind_key(&mut self, index: usize, key: impl Into<KeyBind>) {
+        let key = key.into();
         if let Some(other) = self.keys.iter().position(|k| *k == key) {
             self.keys[other] = self.keys[index];
         }
@@ -466,10 +536,13 @@ pub fn menu_action(code: KeyCode, shift: bool, bindings: &Bindings) -> Option<Ac
     }
 }
 
-/// The keys held, as GBA buttons, and when each press came (for the latency figures).
+/// The keys and mouse buttons held, as GBA buttons, and when each press came (for the latency figures).
 #[derive(Default)]
 pub struct Keys {
     pub held: u16,
+    /// Battle buttons currently held via bound mouse buttons (kept separate from `held` so opening the custom
+    /// screen can cleanly release mouse-bound battle inputs without disturbing held keyboard keys).
+    pub mouse_held: u16,
     /// The presses since the last tick, when each came.
     pub pressed: Vec<Instant>,
     /// Tab is held: in an online match, both builds show while it is (no button is bound to it).
@@ -505,9 +578,30 @@ impl Keys {
         fresh.then_some(bit)
     }
 
+    /// A mouse button event during real-time battle: the bound GBA button, held or let go.
+    pub fn mouse(&mut self, bindings: &Bindings, button: MouseButton, pressed: bool, at: Instant) -> Option<u16> {
+        let bit = bindings.of_mouse(button)?;
+        if !pressed {
+            self.mouse_held &= !bit;
+            return None;
+        }
+        let fresh = self.mouse_held & bit == 0;
+        if fresh {
+            self.pressed.push(at);
+        }
+        self.mouse_held |= bit;
+        fresh.then_some(bit)
+    }
+
+    /// Release all mouse-bound battle buttons (when the custom screen opens or battle loses focus).
+    pub fn release_mouse(&mut self) {
+        self.mouse_held = 0;
+    }
+
     /// Every key let go (the window lost the keyboard, the bindings changed).
     pub fn release(&mut self) {
         self.held = 0;
+        self.mouse_held = 0;
         self.tab = false;
         self.moving.stop();
     }
@@ -1073,24 +1167,60 @@ mod tests {
     fn binding_a_taken_key_swaps() {
         let mut b = Bindings::default();
         b.bind_key(button_index(keys::A), KeyCode::KeyX);
-        assert_eq!(b.key(keys::A), KeyCode::KeyX);
-        assert_eq!(b.key(keys::B), KeyCode::KeyZ);
+        assert_eq!(b.key(keys::A), KeyBind::Key(KeyCode::KeyX));
+        assert_eq!(b.key(keys::B), KeyBind::Key(KeyCode::KeyZ));
         assert_eq!(b.of_key(KeyCode::KeyX), Some(keys::A));
+        b.bind_key(button_index(keys::A), MouseButton::Left);
+        b.bind_key(button_index(keys::B), MouseButton::Right);
+        assert_eq!(b.of_mouse(MouseButton::Left), Some(keys::A));
+        assert_eq!(b.of_mouse(MouseButton::Right), Some(keys::B));
+        assert_eq!(b.of_key(KeyCode::KeyX), None);
+        // Swapping a mouse button back to another slot preserves uniqueness.
+        b.bind_key(button_index(keys::B), MouseButton::Left);
+        assert_eq!(b.key(keys::B), KeyBind::Mouse(MouseButton::Left));
+        assert_eq!(b.key(keys::A), KeyBind::Mouse(MouseButton::Right));
         b.bind_pad(button_index(keys::B), Button::East);
         assert_eq!((b.pad[button_index(keys::B)], b.pad[button_index(keys::A)]), (Button::East, Button::South));
     }
 
-    /// Every bindable key and pad button reads back from its name in the settings' file.
+    /// Mouse battle bindings stay independent from keyboard bindings and release cleanly when custom screen opens.
+    #[test]
+    fn mouse_battle_bindings_track_independently() {
+        let mut b = Bindings::default();
+        b.bind_key(button_index(keys::UP), KeyCode::KeyW);
+        b.bind_key(button_index(keys::A), MouseButton::Left);
+        b.bind_key(button_index(keys::B), MouseButton::Right);
+        let mut k = Keys::default();
+        let now = Instant::now();
+        assert_eq!(k.key(&b, KeyCode::KeyW, true, false, now), Some(keys::UP));
+        assert_eq!(k.mouse(&b, MouseButton::Left, true, now), Some(keys::A));
+        assert_eq!(k.mouse(&b, MouseButton::Left, true, now), None, "already held");
+        assert_eq!(k.held | k.mouse_held, keys::UP | keys::A);
+        assert_eq!(k.pressed.len(), 2);
+        k.release_mouse();
+        assert_eq!(k.held, keys::UP, "releasing mouse keeps keyboard movement held");
+        assert_eq!(k.mouse_held, 0);
+        assert_eq!(k.mouse(&b, MouseButton::Right, true, now), Some(keys::B));
+        assert_eq!(k.mouse(&b, MouseButton::Right, false, now), None);
+        assert_eq!(k.mouse_held, 0);
+    }
+
+    /// Every bindable key, mouse button and pad button reads back from its name in the settings' file.
     #[test]
     fn names_read_back() {
         for (key, name, _) in KEYS {
             assert_eq!(key_named(name), Some(*key));
+            assert_eq!(bind_named(name), Some(KeyBind::Key(*key)));
+        }
+        for (button, name, _) in MOUSE_BUTTONS {
+            assert_eq!(mouse_named(name), Some(*button));
+            assert_eq!(bind_named(name), Some(KeyBind::Mouse(*button)));
         }
         for (button, name, _) in PAD_BUTTONS {
             assert_eq!(pad_named(name), Some(*button));
         }
         let b = Bindings::default();
-        assert!(b.keys.iter().all(|k| key_name(*k).is_some()) && b.pad.iter().all(|p| pad_name(*p).is_some()));
+        assert!(b.keys.iter().all(|k| bind_name(*k).is_some()) && b.pad.iter().all(|p| pad_name(*p).is_some()));
     }
 
     /// Shift with Page Up, Page Down, Home or End scrolls; without Shift they are the menus' moves. A page is the

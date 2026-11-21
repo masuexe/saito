@@ -124,8 +124,8 @@ msgstr "左"
 msgid "Right"
 msgstr "右"
 
-msgid "Press a key"
-msgstr "请按下按键"
+msgid "Key or click"
+msgstr "请按键/点击"
 
 msgid "Press a button"
 msgstr "请按下按钮"

@@ -124,8 +124,8 @@ msgstr "왼쪽"
 msgid "Right"
 msgstr "오른쪽"
 
-msgid "Press a key"
-msgstr "키를 누르세요"
+msgid "Key or click"
+msgstr "키/클릭"
 
 msgid "Press a button"
 msgstr "버튼을 누르세요"

@@ -66,8 +66,9 @@ use crate::rulesets::{self, Pickable};
 use list::Naming;
 use crate::errors::UserError;
 use crate::games::Names;
+use i_slint_backend_winit::winit::event::MouseButton;
 use i_slint_backend_winit::winit::keyboard::KeyCode;
-use crate::input::{Action, KeyPress, Scroll, button_index, key_cap, pad_cap, pad_face};
+use crate::input::{Action, KeyPress, Scroll, bind_cap, button_index, pad_cap, pad_face};
 use crate::nav::Key;
 use crate::screens::{Screen, ScreenId, practice, settings};
 use crate::settings::MAX_INPUT_DELAY;
@@ -1245,7 +1246,7 @@ impl Play {
                         Button::North => PadButton::North,
                         _ => PadButton::None,
                     };
-                    PlayControl { key: key_cap(*key).into(), face, pad: pad_cap(*button).into() }
+                    PlayControl { key: bind_cap(*key).into(), face, pad: pad_cap(*button).into() }
                 })
                 .collect();
             view.set_controls(ModelRc::new(VecModel::from(controls)));
@@ -2195,6 +2196,14 @@ impl Screen for Play {
 
     /// A pad can't type a code: its confirm on the code's field opens the six boxes. (A pad's button for a binding
     /// asked for is the binding's.)
+    fn mouse(&mut self, shell: &mut Shell, button: MouseButton) -> bool {
+        if self.binding.mouse(shell, button) {
+            self.show_match(shell);
+            return true;
+        }
+        false
+    }
+
     fn button(&mut self, shell: &mut Shell, button: Button) -> bool {
         if self.binding.button(shell, button) {
             self.show_match(shell);
@@ -2556,9 +2565,9 @@ impl Play {
 fn match_keys(shell: &Shell, view: &PlayView) -> Vec<Hint> {
     let (keys, pad) = (&shell.bindings.keys, &shell.bindings.pad);
     let at = button_index;
-    let one = |button: u16, text: &str| Hint { key: key_cap(keys[at(button)]).into(), pad: pad_face(pad[at(button)]), text: text.into(), ..Default::default() };
+    let one = |button: u16, text: &str| Hint { key: bind_cap(keys[at(button)]).into(), pad: pad_face(pad[at(button)]), text: text.into(), ..Default::default() };
     let ways = [keys::UP, keys::DOWN, keys::LEFT, keys::RIGHT];
-    let caps: Vec<&str> = ways.iter().map(|&b| key_cap(keys[at(b)])).collect();
+    let caps: Vec<&str> = ways.iter().map(|&b| bind_cap(keys[at(b)])).collect();
     let moving = Hint {
         // (Single glyphs together, "↑↓←→"; longer names apart.)
         key: caps.join(if caps.iter().all(|c| c.chars().count() == 1) { "" } else { " " }).into(),
@@ -2572,11 +2581,11 @@ fn match_keys(shell: &Shell, view: &PlayView) -> Vec<Hint> {
     let mut out = vec![moving, one(keys::A, "A"), one(keys::B, "B")];
     let shoulders = [keys::L, keys::R].iter().all(|&b| pad_face(pad[at(b)]) == PadButton::Shoulders);
     match shoulders {
-        true => out.push(Hint { key2: key_cap(keys[at(keys::R)]).into(), text: "L R".into(), ..one(keys::L, "") }),
+        true => out.push(Hint { key2: bind_cap(keys[at(keys::R)]).into(), text: "L R".into(), ..one(keys::L, "") }),
         false => out.extend([one(keys::L, "L"), one(keys::R, "R")]),
     }
     out.push(Hint { key: "Tab".into(), pad: pad_face(pad[at(keys::SELECT)]), text: view.get_show_builds_word(), ..Default::default() });
-    out.push(Hint { key: "Esc".into(), key2: key_cap(keys[at(keys::START)]).into(), pad: pad_face(pad[at(keys::START)]), text: view.get_menu_word() });
+    out.push(Hint { key: "Esc".into(), key2: bind_cap(keys[at(keys::START)]).into(), pad: pad_face(pad[at(keys::START)]), text: view.get_menu_word() });
     out
 }
 
