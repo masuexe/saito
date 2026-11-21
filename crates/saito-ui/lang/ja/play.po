@@ -291,3 +291,9 @@ msgstr "{}人 · 遅延{}秒"
 msgctxt "sides"
 msgid "Both"
 msgstr "両方"
+
+msgid "Back to spectate"
+msgstr "観戦にもどる"
+
+msgid "Reduce flashes"
+msgstr "フラッシュ軽減"

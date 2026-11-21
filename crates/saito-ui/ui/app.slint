@@ -145,7 +145,7 @@ export component AppWindow inherits Window {
         if Shell.battle == BattleKind.practice && Shell.battle-menu: PracticeMenu {
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
-        if Shell.battle == BattleKind.online && Shell.battle-menu: MatchMenu {
+        if (Shell.battle == BattleKind.online && Shell.battle-menu) || PlayView.watch-menu: MatchMenu {
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
         // (Both builds, while Tab is held in a match, the match menu open or not.)

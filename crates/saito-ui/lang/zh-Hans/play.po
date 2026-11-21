@@ -291,3 +291,9 @@ msgstr "{} 人 · 延迟{}秒"
 msgctxt "sides"
 msgid "Both"
 msgstr "双方"
+
+msgid "Back to spectate"
+msgstr "返回观战"
+
+msgid "Reduce flashes"
+msgstr "防爆闪模式"

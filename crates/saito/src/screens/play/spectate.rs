@@ -317,6 +317,10 @@ impl WatchSession {
         }
     }
 
+    pub fn mark_stale(&mut self) {
+        self.surface.stale = true;
+    }
+
     pub fn close(&mut self) {
         self.watcher.close();
         self.viewer = None;

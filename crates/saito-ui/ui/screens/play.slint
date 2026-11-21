@@ -208,6 +208,7 @@ export global PlayView {
     // 0 = P1, 1 = P2, 2 = Both consoles.
     in property <int> watch-view;
     in property <string> watch-problem;
+    in property <bool> watch-menu;
 
     // ---- In a match --------------------------------------------------------------------------------------
     in property <MatchPage> page;
@@ -1568,9 +1569,16 @@ export component PlayScreen inherits Page {
                 color: Theme.dim;
             }
 
-            Button {
-                x: (parent.width - self.width) / 2;
+            settings-wait := Button {
+                x: (parent.width - self.width - 12px - leave-wait.width) / 2;
                 y: parent.height - self.height - 24px;
+                nav: "watch.settings";
+                text: I18n.upper(@tr("Settings"));
+            }
+
+            leave-wait := Button {
+                x: settings-wait.x + settings-wait.width + 12px;
+                y: settings-wait.y;
                 nav: "watch.leave";
                 text: I18n.upper(@tr("Leave"));
                 kind: ButtonKind.ghost;
@@ -1604,18 +1612,18 @@ export component PlayScreen inherits Page {
                 }
 
                 Mono {
-                    x: Theme.phone ? 10px : 12px;
+                    x: Theme.phone ? 8px : 12px;
                     y: Theme.phone ? 4px : 0px;
-                    width: Theme.phone ? 96px : 104px;
+                    width: Theme.phone ? 76px : 104px;
                     height: Theme.phone ? 36px : parent.height;
                     text: PlayView.watch-catching-up ? @tr("Catching up…") : PlayView.watch-delay > 0 ? @tr("DELAY {}s", PlayView.watch-delay) : @tr("LIVE");
                     color: PlayView.watch-catching-up ? Theme.cursor : Theme.good;
                 }
 
                 Note {
-                    x: Theme.phone ? 110px : 120px;
+                    x: Theme.phone ? 88px : 120px;
                     y: Theme.phone ? 4px : 0px;
-                    width: max(0px, (Theme.phone ? watch-leave-btn.x - 118px : view-p1.x - 130px));
+                    width: max(0px, (Theme.phone ? watch-settings-btn.x - 94px : view-p1.x - 130px));
                     height: Theme.phone ? 36px : parent.height;
                     text: PlayView.watch-players;
                     color: Theme.text;
@@ -1646,7 +1654,7 @@ export component PlayScreen inherits Page {
                 }
 
                 view-both := Button {
-                    x: Theme.phone ? 20px + 2 * parent.seg-w : watch-leave-btn.x - self.width - 10px;
+                    x: Theme.phone ? 20px + 2 * parent.seg-w : watch-settings-btn.x - self.width - 10px;
                     y: view-p1.y;
                     width: Theme.phone ? parent.seg-w : self.natural-width;
                     height: view-p1.height;
@@ -1656,10 +1664,21 @@ export component PlayScreen inherits Page {
                     text: @tr("sides" => "Both");
                 }
 
+                watch-settings-btn := Button {
+                    x: watch-leave-btn.x - self.width - 6px;
+                    y: Theme.phone ? 4px : 6px;
+                    width: Theme.phone ? 80px : self.natural-width;
+                    height: Theme.phone ? 36px : 32px;
+                    compact: true;
+                    nav: "watch.settings";
+                    kind: ButtonKind.ghost;
+                    text: I18n.upper(@tr("Settings"));
+                }
+
                 watch-leave-btn := Button {
                     x: parent.width - self.width - (Theme.phone ? 8px : 10px);
                     y: Theme.phone ? 4px : 6px;
-                    width: Theme.phone ? 96px : self.natural-width;
+                    width: Theme.phone ? 70px : self.natural-width;
                     height: Theme.phone ? 36px : 32px;
                     compact: true;
                     nav: "watch.leave";
@@ -1681,10 +1700,10 @@ export component PlayScreen inherits Page {
 export component MatchMenu inherits MenuOverlay {
     property <[string]> actions: [@tr("Up"), @tr("Down"), @tr("Left"), @tr("Right"), "A", "B", "L", "R", "START", "SELECT", @tr("Navi change left"), @tr("Navi change right")];
     title: PlayView.page == MatchPage.controls ? I18n.upper(@tr("Controls")) : PlayView.page == MatchPage.settings ? I18n.upper(@tr("Settings")) : I18n.upper(@tr("Menu"));
-    note: PlayView.page == MatchPage.menu ? @tr("The match keeps running") : "";
+    note: PlayView.page == MatchPage.menu ? (PlayView.watch-menu ? "" : @tr("The match keeps running")) : "";
     side: PlayView.page != MatchPage.menu;
-    content-height: 192px;
-    hints: PlayView.match-keys;
+    content-height: PlayView.watch-menu ? 144px : 192px;
+    hints: PlayView.watch-menu ? [] : PlayView.match-keys;
     if PlayView.page == MatchPage.menu: Rectangle {
         x: 0;
         y: 0;
@@ -1695,10 +1714,10 @@ export component MatchMenu inherits MenuOverlay {
             y: 0;
             width: root.inner-width;
             nav: "menu.resume";
-            text: I18n.upper(@tr("Back to match"));
+            text: PlayView.watch-menu ? I18n.upper(@tr("Back to spectate")) : I18n.upper(@tr("Back to match"));
         }
 
-        MenuItem {
+        if !PlayView.watch-menu: MenuItem {
             x: 0;
             y: 48px;
             width: root.inner-width;
@@ -1708,7 +1727,7 @@ export component MatchMenu inherits MenuOverlay {
 
         MenuItem {
             x: 0;
-            y: 96px;
+            y: PlayView.watch-menu ? 48px : 96px;
             width: root.inner-width;
             nav: "menu.settings";
             text: I18n.upper(@tr("Settings"));
@@ -1716,10 +1735,10 @@ export component MatchMenu inherits MenuOverlay {
 
         MenuItem {
             x: 0;
-            y: 144px;
+            y: PlayView.watch-menu ? 96px : 144px;
             width: root.inner-width;
             nav: "menu.leave";
-            text: I18n.upper(@tr("Leave match"));
+            text: PlayView.watch-menu ? I18n.upper(@tr("Leave")) : I18n.upper(@tr("Leave match"));
             danger: true;
         }
     }
@@ -1828,13 +1847,22 @@ export component MatchMenu inherits MenuOverlay {
             width: root.inner-width + 12px;
             height: max(0px, root.inner-height - 52px);
             nav: "menu.set.";
-            content-height: 10 * settings-page.pitch;
-            for label[i] in [@tr("Language"), @tr("Picture size"), @tr("Full screen"), @tr("Sharp text"), @tr("Sharp HUD"), @tr("Smooth motion"), @tr("Fill the window"), @tr("Music"), @tr("Sound effects"), @tr("Input delay")]: Value {
+            content-height: (PlayView.watch-menu ? 10 : 11) * settings-page.pitch;
+            for label[i] in [@tr("Language"), @tr("Picture size"), @tr("Full screen"), @tr("Reduce flashes"), @tr("Sharp text"), @tr("Sharp HUD"), @tr("Smooth motion"), @tr("Fill the window"), @tr("Music"), @tr("Sound effects")]: Value {
                 x: 0;
                 y: i * settings-page.pitch;
                 width: settings-page.label-width;
                 height: settings-page.label-height;
                 text: label;
+            }
+
+            Value {
+                x: 0;
+                y: 10 * settings-page.pitch;
+                width: settings-page.label-width;
+                height: settings-page.label-height;
+                visible: !PlayView.watch-menu;
+                text: @tr("Input delay");
             }
 
             Select {
@@ -1865,6 +1893,15 @@ export component MatchMenu inherits MenuOverlay {
             Seg {
                 x: settings-page.control-x;
                 y: 3 * settings-page.pitch + settings-page.below + 4px;
+                nav: "menu.set.reduce-flashes";
+                first: I18n.upper(@tr("Off"));
+                second: I18n.upper(@tr("On"));
+                chosen: SettingsView.reduce-flashes ? 1 : 0;
+            }
+
+            Seg {
+                x: settings-page.control-x;
+                y: 4 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.text";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1873,7 +1910,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 4 * settings-page.pitch + settings-page.below + 4px;
+                y: 5 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.hud";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1882,7 +1919,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 5 * settings-page.pitch + settings-page.below + 4px;
+                y: 6 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.smooth";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1891,7 +1928,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 6 * settings-page.pitch + settings-page.below + 4px;
+                y: 7 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.fill";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1900,7 +1937,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Slider {
                 x: settings-page.control-x;
-                y: 7 * settings-page.pitch + settings-page.below + 2px;
+                y: 8 * settings-page.pitch + settings-page.below + 2px;
                 width: settings-page.control-width;
                 nav: "menu.set.music";
                 value: PlayView.music;
@@ -1908,7 +1945,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Slider {
                 x: settings-page.control-x;
-                y: 8 * settings-page.pitch + settings-page.below + 2px;
+                y: 9 * settings-page.pitch + settings-page.below + 2px;
                 width: settings-page.control-width;
                 nav: "menu.set.effects";
                 value: PlayView.effects;
@@ -1916,7 +1953,9 @@ export component MatchMenu inherits MenuOverlay {
 
             Stepper {
                 x: Theme.phone ? 0px : root.inner-width - self.width;
-                y: 9 * settings-page.pitch + settings-page.below + 4px;
+                y: 10 * settings-page.pitch + settings-page.below + 4px;
+                visible: !PlayView.watch-menu;
+                enabled: !PlayView.watch-menu;
                 nav: "menu.set.delay";
                 value: PlayView.input-delay;
                 value-width: 48px;

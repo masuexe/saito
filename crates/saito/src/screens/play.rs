@@ -332,6 +332,10 @@ pub struct Play {
     watching: Option<WatchSession>,
     /// Selected game before spectating started, restored on leave if still loaded.
     watch_return_game: Option<String>,
+    /// Live settings/pause menu overlay open while spectating (`PlayView.watch-menu`).
+    watch_menu: bool,
+    /// Overlay opened directly onto `MatchPage::Settings` from the HUD button.
+    watch_menu_direct: bool,
 }
 
 impl Default for Play {
@@ -371,6 +375,8 @@ impl Default for Play {
             spectate_error: String::new(),
             watching: None,
             watch_return_game: None,
+            watch_menu: false,
+            watch_menu_direct: false,
         }
     }
 }
@@ -594,6 +600,7 @@ impl Play {
             watch.close();
         }
         self.watch_return_game = None;
+        self.close_watch_menu(shell);
         self.spectate_dir.close();
         shell.ui().global::<PlayView>().set_spectators(0);
         shell.ui().global::<PlayView>().set_spectate_browser(false);
@@ -1207,41 +1214,68 @@ impl Play {
     /// What the match's menu and panels show: both builds (the other player's has no name here: none was
     /// ever sent), whether the setups are open, the controls (and the footer's of them), the levels.
     fn show_match(&self, shell: &Shell) {
-        let (Some(agreed), Some(kit)) = (&self.agreed, builds::kit(shell)) else { return };
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
-        // (The agreement's sides are as the match plays them: without their patch cards where those are off.
-        // Where the setups aren't open the other player's isn't shown, and isn't made.)
-        let (me, other) = (agreed.side, 1 - agreed.side);
-        view.set_mine(overview::sheet(shell, &kit, &view.get_you(), &shell.settings.name, &agreed.sides[me]));
-        view.set_theirs(match agreed.open_setups() {
-            true => overview::sheet(shell, &kit, &view.get_opponent(), &agreed.names[other], &agreed.sides[other]),
-            false => BuildSheet::default(),
-        });
-        view.set_open_match(agreed.open_setups());
-        let controls: Vec<PlayControl> = shell
-            .bindings
-            .keys
-            .iter()
-            .zip(&shell.bindings.pad)
-            .map(|(key, button)| {
-                let face = match button {
-                    Button::South => PadButton::South,
-                    Button::East => PadButton::East,
-                    Button::West => PadButton::West,
-                    Button::North => PadButton::North,
-                    _ => PadButton::None,
-                };
-                PlayControl { key: key_cap(*key).into(), face, pad: pad_cap(*button).into() }
-            })
-            .collect();
-        view.set_controls(ModelRc::new(VecModel::from(controls)));
-        view.set_match_keys(ModelRc::new(VecModel::from(match_keys(shell, &view))));
+        view.set_watch_menu(self.watch_menu);
+        if let (Some(agreed), Some(kit)) = (&self.agreed, builds::kit(shell)) {
+            // (The agreement's sides are as the match plays them: without their patch cards where those are off.
+            // Where the setups aren't open the other player's isn't shown, and isn't made.)
+            let (me, other) = (agreed.side, 1 - agreed.side);
+            view.set_mine(overview::sheet(shell, &kit, &view.get_you(), &shell.settings.name, &agreed.sides[me]));
+            view.set_theirs(match agreed.open_setups() {
+                true => overview::sheet(shell, &kit, &view.get_opponent(), &agreed.names[other], &agreed.sides[other]),
+                false => BuildSheet::default(),
+            });
+            view.set_open_match(agreed.open_setups());
+            let controls: Vec<PlayControl> = shell
+                .bindings
+                .keys
+                .iter()
+                .zip(&shell.bindings.pad)
+                .map(|(key, button)| {
+                    let face = match button {
+                        Button::South => PadButton::South,
+                        Button::East => PadButton::East,
+                        Button::West => PadButton::West,
+                        Button::North => PadButton::North,
+                        _ => PadButton::None,
+                    };
+                    PlayControl { key: key_cap(*key).into(), face, pad: pad_cap(*button).into() }
+                })
+                .collect();
+            view.set_controls(ModelRc::new(VecModel::from(controls)));
+            view.set_match_keys(ModelRc::new(VecModel::from(match_keys(shell, &view))));
+        } else {
+            view.set_match_keys(ModelRc::new(VecModel::default()));
+        }
         view.set_music(shell.settings.music as i32);
         view.set_effects(shell.settings.effects as i32);
         view.set_input_delay(shell.settings.input_delay as i32);
         settings::show_values(shell, &self.binding);
         view.set_page(self.page);
+    }
+
+    fn open_watch_menu(&mut self, shell: &mut Shell, page: MatchPage) {
+        self.watch_menu = true;
+        self.watch_menu_direct = page == MatchPage::Settings;
+        self.page = page;
+        self.show_match(shell);
+        shell.nav.open("menu.", Key::new(if page == MatchPage::Menu { "menu.resume" } else { "menu.back" }, 0));
+    }
+
+    fn close_watch_menu(&mut self, shell: &mut Shell) {
+        if !self.watch_menu {
+            return;
+        }
+        self.watch_menu = false;
+        self.watch_menu_direct = false;
+        self.page = MatchPage::Menu;
+        self.binding.stop(shell);
+        shell.nav.close("menu.");
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_watch_menu(false);
+        view.set_page(MatchPage::Menu);
     }
 
     fn set_page(&mut self, shell: &mut Shell, page: MatchPage) {
@@ -1810,6 +1844,7 @@ impl Screen for Play {
                     self.sync_watch_view(shell);
                 }
             }
+            "watch.settings" => self.open_watch_menu(shell, MatchPage::Settings),
             "watch.leave" => self.stop_watching(shell, None),
             // (The browser has no direct links: its button isn't there.)
             "direct" if !cfg!(target_arch = "wasm32") => self.open_direct(shell),
@@ -1916,21 +1951,36 @@ impl Screen for Play {
             "change.cancel" => self.close_change(shell),
             "lobby.leave" => self.leave(shell),
             // ---- The match's menu. (The practice session's beside an invite is Practice's to hear.)
-            "menu.resume" => shell.close_menu(),
+            "menu.resume" => {
+                if self.watch_menu {
+                    self.close_watch_menu(shell);
+                } else {
+                    shell.close_menu();
+                }
+            }
             "menu.controls" => self.set_page(shell, MatchPage::Controls),
             "menu.settings" => self.set_page(shell, MatchPage::Settings),
-            "menu.back" => self.set_page(shell, MatchPage::Menu),
+            "menu.back" => {
+                if self.watch_menu && self.watch_menu_direct {
+                    self.close_watch_menu(shell);
+                } else {
+                    self.set_page(shell, MatchPage::Menu);
+                }
+            }
             "menu.set.delay" => {}
             // (The settings and the controls as the Settings screen changes them.)
             "menu.set.language" => settings::pick_language(shell, id),
             "menu.set.picture" => settings::pick_picture_size(shell, id),
             "menu.set.fullscreen" => self.set_full_screen(shell, !shell.settings.full_screen),
-            "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => self.set_enhancement(shell, id, None),
+            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+                self.set_enhancement(shell, id, None);
+            }
             "menu.keys.key" | "menu.keys.button" => self.binding.ask(shell, index, id == "menu.keys.button"),
             "menu.reset" => {
                 self.binding.reset(shell);
                 self.show_match(shell);
             }
+            "menu.leave" if self.watch_menu => self.stop_watching(shell, None),
             "menu.leave" if matches!(self.stage, Stage::Match { .. }) => self.reopen(shell, None),
             // ---- The match's result.
             "result.go" => self.go_on(shell),
@@ -1964,11 +2014,16 @@ impl Screen for Play {
             "menu.set.language" => settings::set_language(shell, crate::lang::step(shell.i18n.code, by)),
             "menu.set.picture" => {
                 settings::step_picture_size(shell, by);
+                if let Some(w) = &mut self.watching {
+                    w.mark_stale();
+                }
                 self.show_match(shell);
             }
             "menu.set.fullscreen" => self.set_full_screen(shell, by > 0),
             // (Enhanced is the first of the two.)
-            "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => self.set_enhancement(shell, id, Some(by > 0)),
+            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+                self.set_enhancement(shell, id, Some(by > 0));
+            }
             "name.version" => self.step_version(shell, by),
             _ => {}
         }
@@ -1992,10 +2047,15 @@ impl Screen for Play {
             "menu.set.language" => settings::choose_language(shell, choice),
             "menu.set.picture" => {
                 settings::set_picture_size(shell, choice.max(0) as u32);
+                if let Some(w) = &mut self.watching {
+                    w.mark_stale();
+                }
                 self.show_match(shell);
             }
             "menu.set.fullscreen" => self.set_full_screen(shell, choice == 1),
-            "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
+            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+                self.set_enhancement(shell, id, Some(choice == 1));
+            }
             _ => {}
         }
     }
@@ -2155,8 +2215,14 @@ impl Screen for Play {
             self.close_direct(shell);
         } else if self.spectate_dir.is_open() {
             self.close_spectate_browser(shell);
+        } else if self.watch_menu {
+            if self.page != MatchPage::Menu && !self.watch_menu_direct {
+                self.set_page(shell, MatchPage::Menu);
+            } else {
+                self.close_watch_menu(shell);
+            }
         } else if matches!(self.stage, Stage::Spectating) {
-            self.stop_watching(shell, None);
+            self.open_watch_menu(shell, MatchPage::Menu);
         } else if self.changing {
             self.close_change(shell);
         } else if matches!(self.stage, Stage::Lobby) {
@@ -2760,6 +2826,7 @@ impl Play {
     }
 
     fn stop_watching(&mut self, shell: &mut Shell, notice: Option<String>) {
+        self.close_watch_menu(shell);
         if let Some(mut watch) = self.watching.take() {
             watch.close();
         }
@@ -2839,6 +2906,19 @@ mod tests {
         play.stage = Stage::Spectating;
         assert_eq!(play.part(), PlayPart::Spectate);
         assert_eq!(play.view(), ("play.spectate", "watch.leave"));
+        assert!(!play.watch_menu);
+    }
+
+    #[test]
+    fn spectating_settings_menu_stays_in_room() {
+        let mut play = Play::default();
+        play.stage = Stage::Spectating;
+        play.watch_menu = true;
+        play.watch_menu_direct = true;
+        play.page = MatchPage::Settings;
+        assert_eq!(play.part(), PlayPart::Spectate);
+        assert_eq!(play.view(), ("play.spectate", "watch.leave"));
+        assert!(matches!(play.stage, Stage::Spectating));
     }
 }
 

@@ -291,3 +291,9 @@ msgstr "{}명 · 지연{}초"
 msgctxt "sides"
 msgid "Both"
 msgstr "양쪽"
+
+msgid "Back to spectate"
+msgstr "관전으로 돌아가기"
+
+msgid "Reduce flashes"
+msgstr "깜빡임 감소"
