@@ -292,3 +292,64 @@ impl Sound {
         battle.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saito_audio::Songs;
+    use saito_audio::m4a::SoundBank;
+    use saito_audio::m4a::bank::MixerConfig;
+    use saito_battle::sound::SoundId;
+    use std::sync::Arc;
+
+    fn dummy_sound() -> Sound {
+        let bank = Arc::new(SoundBank {
+            mixer: MixerConfig { mix_rate: 13379, ds_channels: 8, master_volume: 15, reverb: 0, dac_resolution: 2 },
+            players: Vec::new(),
+            songs: Vec::new(),
+            voicegroups: Vec::new(),
+            key_maps: Vec::new(),
+            samples: Vec::new(),
+            waves: Vec::new(),
+        });
+        let songs = Songs::numbers(1);
+        let mut s = Sound::silent();
+        s.menu = Some(Menu {
+            effects: BattleAudio::new(bank.clone(), songs.clone()),
+            cursor: None,
+            pick: None,
+            back: None,
+            refused: None,
+            jack_in: None,
+            music: BattleAudio::new(bank, songs),
+            title: Some(SoundCue::Music(SoundId(0))),
+            playing: false,
+        });
+        s
+    }
+
+    #[test]
+    fn title_music_stays_suppressed_across_zero_tick_spectate_frames() {
+        let mut s = dummy_sound();
+        let mut t = Instant::now();
+        let mut battle = Vec::new();
+        // Title music fades up while in menus (`want_music(true)`).
+        s.want_music(true);
+        for _ in 0..30 {
+            t += Duration::from_millis(16);
+            s.frame(t, None, &mut battle);
+        }
+        assert!(s.fade > 0.9);
+        assert!(s.menu.as_ref().unwrap().playing);
+
+        // Entering spectate suppresses title music even on frames with `ticks == Some(0)`.
+        s.want_music(false);
+        for i in 0..80 {
+            t += Duration::from_millis(16);
+            let ticks = if i % 2 == 0 { Some(0) } else { Some(1) };
+            s.frame(t, ticks, &mut battle);
+        }
+        assert_eq!(s.fade, 0.0);
+        assert!(!s.menu.as_ref().unwrap().playing);
+    }
+}

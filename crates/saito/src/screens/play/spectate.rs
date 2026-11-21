@@ -374,6 +374,7 @@ impl WatchSession {
             let (music, effects) = shell.sound.battle_levels();
             viewer.set_sound_levels(music, effects);
 
+            let mut played = 0;
             if self.catching_up {
                 let still_behind = viewer.catch_up_step(CATCHUP_TICKS_PER_FRAME, CATCHUP_MARGIN);
                 if !still_behind || viewer.lag_ticks() <= CATCHUP_END_LAG {
@@ -387,13 +388,19 @@ impl WatchSession {
                 let ran = viewer.advance_live(dt);
                 if ran > 0 {
                     viewer.take_samples(&mut self.samples);
-                    shell.play_samples(&mut self.samples, ran);
+                    played = ran;
                     self.surface.stale = true;
                 }
                 if viewer.lag_ticks() > CATCHUP_START_LAG {
                     self.catching_up = true;
                 }
             }
+            if played == 0 {
+                self.samples.clear();
+            }
+            // Always submit a frame's tick count (including 0 while catching up or on >60Hz frames
+            // with no new GBA tick) so `App::run` keeps title music suppressed.
+            shell.play_samples(&mut self.samples, played);
 
             shell.show_surface(&mut self.surface, true, |_, buffer, width, height| {
                 viewer.present(buffer, width, height);
