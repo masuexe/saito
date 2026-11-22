@@ -320,8 +320,12 @@ function custom_souls.open(_side: number)
     s.arm_chip = nil
 end
 
--- The screen's hand (0x08025BE4): the soul's, if it says (NumberSoul's ten).
+-- The screen's hand (0x08025BE4): the soul's, if it says (NumberSoul's ten), while the screen is still for the field
+-- navi (a switch on the screen to a team navi drops back to that navi's own custom_level).
 function custom_souls.hand_size(side: number): number?
+    if custom.player(side).member ~= nil then
+        return nil
+    end
     local part = united(side)
     if part ~= nil and part.hand_size ~= nil then
         return part.hand_size(side, rules.state())

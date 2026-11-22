@@ -407,6 +407,8 @@ pub struct PlayerView<'a> {
     pub class_uses: &'a ClassCounts,
     /// The round's Beast Out and Crosses so far.
     pub round: &'a RoundMemory,
+    /// The screen's number in the round (1 = first).
+    pub turn: u8,
     /// The folder's Regular chip hasn't been used yet.
     pub regular_pending: bool,
     /// Battle flag 0x40 (the own-gauges mode; never in a netbattle without chip gates).
@@ -493,7 +495,7 @@ impl Screen {
         extras.opened(&mut screen);
         // sub_802A40C: the side's rules' hand size (EXE6's rules/cross's,
         // with ChargeCross's chips), else the framework's.
-        screen.hand_size = extras.hand_size().unwrap_or_else(|| hand_size(view, turn));
+        screen.hand_size = extras.hand_size(&screen).unwrap_or_else(|| hand_size(view, turn));
         screen.lay_out(view, extras);
         // EXE5's offer of a team navi's own chip (0x08023EFE) picks between
         // its table's two entries for the navi, the same chip, with a draw
@@ -715,6 +717,7 @@ impl Screen {
                 let stats = view.party.member(member).unwrap_or(view.stats);
                 let navi_view = PlayerView { stats, ..*view };
                 self.megaman = navi_view.megaman();
+                self.hand_size = extras.hand_size(self).unwrap_or_else(|| hand_size(&navi_view, view.turn));
                 self.selection = [0; MAX_SELECTIONS];
                 self.selected = 0;
                 self.trade = None;

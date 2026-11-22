@@ -58,7 +58,7 @@ struct TestButtons {
 }
 
 impl Extras for TestButtons {
-    fn hand_size(&mut self) -> Option<u8> {
+    fn hand_size(&mut self, _: &Screen) -> Option<u8> {
         None
     }
 
@@ -1868,6 +1868,7 @@ fn switching_party_member_clears_picked_column_and_selection() {
             emotion: ctx.emotion,
             class_uses: &p.side.class_uses,
             round: &p.side.round,
+            turn: ctx.turn,
             regular_pending: p.side.folder.regular_pending,
             own_gauges: false,
             random_battle: false,
@@ -1891,6 +1892,112 @@ fn switching_party_member_clears_picked_column_and_selection() {
     assert_eq!(s.look.column_kept, None);
     assert_eq!(s.slots[0].state, SlotState::Selectable);
     assert_eq!(s.slots[1].state, SlotState::Selectable);
+}
+
+/// Switching party members on the custom screen recomputes `hand_size` for the
+/// incoming member both ways: MegaMan (custom_level 8) -> partner (5) shrinks
+/// the dealt chips to 5, and partner (5) -> MegaMan (8) expands them to 8.
+#[test]
+fn switching_party_member_updates_hand_size_both_ways() {
+    let chips = [(SHOT, 0), (WAVE, 0), (SHOT, 1), (WAVE, 1), (MEGA, 0), (MEGA, 1), (SHOT, 2), (WAVE, 2), (SHOT, 3), (WAVE, 3)];
+    let switch_to = |p: &mut Player, party: crate::party::Party, target: u8| {
+        let mut switched = false;
+        for _ in 0..32 {
+            let mut ctx = context_of(&p.lib, p.stats, 1, false, None, p.tick);
+            ctx.party = party;
+            ctx.switch_request = Some(target);
+            let view = PlayerView {
+                library: ctx.library,
+                stats: &ctx.stats,
+                emotion: ctx.emotion,
+                class_uses: &p.side.class_uses,
+                round: &p.side.round,
+                turn: ctx.turn,
+                regular_pending: p.side.folder.regular_pending,
+                own_gauges: false,
+                random_battle: false,
+                battle_mode: 0,
+                party: &ctx.party,
+                switch_request: ctx.switch_request,
+                late_turns: false,
+                run_key: false,
+            };
+            let screen = p.side.screen.as_mut().unwrap();
+            if matches!(screen.tick(None, &view, &mut p.side.folder, &mut p.console, &mut NoExtras), Some(super::screen::Request::Switched(m)) if m == target) {
+                switched = true;
+                break;
+            }
+        }
+        assert!(switched, "party switch to member {target} should complete");
+        // Finish fade-in so the screen returns to Choosing for a subsequent switch.
+        for _ in 0..16 {
+            let mut ctx = context_of(&p.lib, p.stats, 1, false, None, p.tick);
+            ctx.party = party;
+            let view = PlayerView {
+                library: ctx.library,
+                stats: &ctx.stats,
+                emotion: ctx.emotion,
+                class_uses: &p.side.class_uses,
+                round: &p.side.round,
+                turn: ctx.turn,
+                regular_pending: p.side.folder.regular_pending,
+                own_gauges: false,
+                random_battle: false,
+                battle_mode: 0,
+                party: &ctx.party,
+                switch_request: None,
+                late_turns: false,
+                run_key: false,
+            };
+            p.side.screen.as_mut().unwrap().tick(None, &view, &mut p.side.folder, &mut p.console, &mut NoExtras);
+        }
+    };
+
+    // Case 1: MegaMan (custom_level 8) on field -> switch to partner (custom_level 5) -> switch back to MegaMan.
+    let mut p = Player::new(&chips);
+    p.stats.custom_level = 8;
+    p.open();
+    p.wait(10);
+    p.step(0);
+    assert_eq!(p.screen().hand_size, 8);
+    assert_eq!(p.screen().slots[..8].iter().filter(|s| matches!(s.kind, SlotKind::Chip { .. })).count(), 8);
+
+    let mut partner = p.stats;
+    partner.navi = saito_content_api::NaviHandle(p.stats.navi.0 + 1);
+    partner.custom_level = 5;
+    let mut party = crate::party::Party::of(p.stats);
+    party.join(partner);
+
+    switch_to(&mut p, party, 1);
+    assert_eq!(p.screen().hand_size, 5);
+    assert_eq!(p.screen().slots[..5].iter().filter(|s| matches!(s.kind, SlotKind::Chip { .. })).count(), 5);
+    assert!(p.screen().slots[5..8].iter().all(|s| matches!(s.kind, SlotKind::Empty)));
+
+    switch_to(&mut p, party, 0);
+    assert_eq!(p.screen().hand_size, 8);
+    assert_eq!(p.screen().slots[..8].iter().filter(|s| matches!(s.kind, SlotKind::Chip { .. })).count(), 8);
+
+    // Case 2: Partner (custom_level 5) active on field -> switch to MegaMan (custom_level 8).
+    let mut p2 = Player::new(&chips);
+    let mut megaman = p2.stats;
+    megaman.custom_level = 8;
+    let mut partner2 = p2.stats;
+    partner2.navi = saito_content_api::NaviHandle(p2.stats.navi.0 + 1);
+    partner2.custom_level = 5;
+    p2.stats = partner2;
+    let mut party2 = crate::party::Party::of(megaman);
+    party2.join(partner2);
+    party2.active = 1;
+
+    p2.open();
+    p2.wait(10);
+    p2.step(0);
+    assert_eq!(p2.screen().hand_size, 5);
+    assert_eq!(p2.screen().slots[..5].iter().filter(|s| matches!(s.kind, SlotKind::Chip { .. })).count(), 5);
+
+    switch_to(&mut p2, party2, 0);
+    assert_eq!(p2.screen().hand_size, 8);
+    assert_eq!(p2.screen().slots[..8].iter().filter(|s| matches!(s.kind, SlotKind::Chip { .. })).count(), 8);
 }
 
 #[test]

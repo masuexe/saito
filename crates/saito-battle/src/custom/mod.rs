@@ -195,8 +195,8 @@ pub struct Context<'a> {
 /// (the screen's own tests) gets no answers.
 pub trait Extras {
     /// `custom.hand_size(side)`: how many chips the screen deals, as it
-    /// opens; none: the framework's rule.
-    fn hand_size(&mut self) -> Option<u8>;
+    /// opens or switches to another party member; none: the framework's rule.
+    fn hand_size(&mut self, screen: &Screen) -> Option<u8>;
     /// The buttons on the screen `screen` (as it opens), in the order the
     /// side's rules are listed: each that its `shown` says is.
     fn buttons(&mut self, screen: &Screen) -> Vec<screen::ButtonPlace>;
@@ -241,7 +241,7 @@ pub trait Extras {
 pub struct NoExtras;
 
 impl Extras for NoExtras {
-    fn hand_size(&mut self) -> Option<u8> {
+    fn hand_size(&mut self, _: &Screen) -> Option<u8> {
         None
     }
 
@@ -297,6 +297,7 @@ impl Side {
             emotion: ctx.emotion,
             class_uses: &self.class_uses,
             round: &self.round,
+            turn: ctx.turn,
             regular_pending,
             own_gauges: ctx.own_gauges,
             random_battle: ctx.random_battle,
@@ -701,6 +702,7 @@ impl Battle {
             emotion: s.emotion,
             class_uses: &s.class_uses,
             round: &s.round,
+            turn: self.round.turn,
             regular_pending: s.folder.regular_pending,
             own_gauges: self.round.flags & battle_flags::OWN_GAUGES != 0,
             random_battle: self.setup.settings.effects & effects::RANDOM != 0,
@@ -830,8 +832,10 @@ impl SideExtras<'_> {
 }
 
 impl Extras for SideExtras<'_> {
-    fn hand_size(&mut self) -> Option<u8> {
-        self.b.rules_custom_hand_size(self.side)
+    fn hand_size(&mut self, screen: &Screen) -> Option<u8> {
+        let mut screen = *screen;
+        let side = self.side;
+        self.with_screen(&mut screen, None, |b| b.rules_custom_hand_size(side))
     }
 
     fn buttons(&mut self, screen: &Screen) -> Vec<screen::ButtonPlace> {
