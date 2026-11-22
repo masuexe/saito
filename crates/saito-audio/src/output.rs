@@ -21,7 +21,7 @@ use crate::{BattleAudio, SAMPLE_RATE, SoundCue};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use m4a::SoundBank;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// Opening the audio output failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +159,9 @@ struct Shared {
     /// The volume, as f32 bits.
     volume: AtomicU32,
     counters: Counters,
+    /// Set when the underlying cpal stream reports an error (e.g. Android AAudio
+    /// disconnect after long backgrounding) or fails to resume; the host should reopen.
+    broken: AtomicBool,
 }
 
 /// The resampler's filter, as a table of taps by the read position's
@@ -392,8 +395,10 @@ impl Output {
             ring: Ring::new(ROOM),
             volume: AtomicU32::new(0.8f32.to_bits()),
             counters: Counters { least_fill: AtomicUsize::new(usize::MAX), ..Counters::default() },
+            broken: AtomicBool::new(false),
         });
         let st = shared.clone();
+        let st_err = shared.clone();
         let base = SAMPLE_RATE as f64 / device_rate as f64;
         let mut reader = Reader::new(base);
         let mut fill = move |out: &mut [f32]| {
@@ -414,7 +419,10 @@ impl Output {
                 }
             }
         };
-        let err = |e| eprintln!("audio stream error: {e}");
+        let err = move |e| {
+            st_err.broken.store(true, Ordering::Relaxed);
+            eprintln!("audio stream error: {e}");
+        };
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(config.clone().into(), move |d: &mut [f32], _| fill(d), err, None),
             cpal::SampleFormat::I16 => {
@@ -441,9 +449,25 @@ impl Output {
 
     /// Start the device again if it was held: a browser starts a page's sound only after a click or a key, so its
     /// host calls this on each; a phone stops it while the app is away or a call has the sound, so its host calls
-    /// this as the app comes back.
-    pub fn resume(&self) {
-        let _ = self._stream.play();
+    /// this as the app comes back. Returns `false` if the stream is broken or failed to restart (caller should reopen).
+    pub fn resume(&self) -> bool {
+        if self.shared.broken.load(Ordering::Relaxed) {
+            return false;
+        }
+        match self._stream.play() {
+            Ok(()) => true,
+            Err(e) => {
+                self.shared.broken.store(true, Ordering::Relaxed);
+                eprintln!("audio stream resume error: {e}");
+                false
+            }
+        }
+    }
+
+    /// Whether the underlying audio stream has reported a fatal error (such as an Android AAudio disconnect)
+    /// and needs to be recreated with [`Output::open`].
+    pub fn is_broken(&self) -> bool {
+        self.shared.broken.load(Ordering::Relaxed)
     }
 
     /// Stop the device till [`Output::resume`]: an Android app's sound while it is in the background, where Android

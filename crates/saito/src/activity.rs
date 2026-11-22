@@ -246,6 +246,7 @@ struct Activity {
 impl CustomApplicationHandler for Activity {
     fn resumed(&mut self, _: &ActiveEventLoop) -> EventResult {
         self.window = true;
+        crate::lifecycle::came_back();
         // (Slint makes it on the activity's window once this returns.)
         with_window(|ui| {
             if !ui.window().is_visible()
@@ -259,6 +260,7 @@ impl CustomApplicationHandler for Activity {
 
     fn suspended(&mut self, _: &ActiveEventLoop) -> EventResult {
         self.window = false;
+        crate::lifecycle::went_background();
         with_window(|ui| {
             if let Err(e) = ui.hide() {
                 crate::errors::log("hiding the window in the background", &e);

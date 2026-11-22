@@ -56,6 +56,10 @@ struct Menu {
 
 pub struct Sound {
     out: Option<Output>,
+    /// True for [`Sound::silent`] (screenshot / headless mode), which must never open an audio device.
+    silent: bool,
+    /// Backoff timestamp before retrying [`Output::open`] after a stream error or failed reopen.
+    reopen_after: Option<Instant>,
     menu: Option<Menu>,
     /// Which game's sounds the menus have.
     game: Option<String>,
@@ -88,7 +92,32 @@ impl Sound {
                 None
             }
         };
-        Sound { out, stats: std::env::var_os("SAITO_PLAY_STATS").map(|_| (Instant::now(), 0.0, 0.0)), ..Sound::silent() }
+        Sound {
+            out,
+            silent: false,
+            reopen_after: None,
+            stats: std::env::var_os("SAITO_PLAY_STATS").map(|_| (Instant::now(), 0.0, 0.0)),
+            ..Sound::silent()
+        }
+    }
+
+    /// Drop any stale/disconnected stream and open a fresh output device, restoring full volume.
+    fn reopen(&mut self, now: Instant) {
+        if self.silent {
+            return;
+        }
+        self.out = None;
+        match Output::open() {
+            Ok(o) => {
+                o.set_volume(FULL);
+                self.out = Some(o);
+                self.reopen_after = None;
+            }
+            Err(e) => {
+                crate::errors::log("reopening the sound device", &e);
+                self.reopen_after = Some(now + Duration::from_secs(1));
+            }
+        }
     }
 
     /// The player clicked or pressed a key: a browser starts a page's sound only then, so the device is started
@@ -111,7 +140,7 @@ impl Sound {
 
     /// No device: nothing is heard (the screenshot pass).
     pub fn silent() -> Sound {
-        Sound { out: None, menu: None, game: None, music: 0.8, effects: 1.0, wanted: false, fade: 0.0, leaving: None, faded: Vec::new(), last: None, owed: 0.0, mix: Vec::new(), tune: Vec::new(), stats: None }
+        Sound { out: None, silent: true, reopen_after: None, menu: None, game: None, music: 0.8, effects: 1.0, wanted: false, fade: 0.0, leaving: None, faded: Vec::new(), last: None, owed: 0.0, mix: Vec::new(), tune: Vec::new(), stats: None }
     }
 
     /// The sound queued for the device, in seconds.
@@ -189,11 +218,22 @@ impl Sound {
     /// What there is goes to the device.
     pub fn frame(&mut self, now: Instant, ticks: Option<u32>, battle: &mut Vec<[f32; 2]>) {
         // (A phone's app back from the background, or its sound given back after a call: the device stopped then,
-        // and is started again.)
-        if crate::lifecycle::resumed()
-            && let Some(out) = &self.out
+        // and is started again — or recreated if Android disconnected/reclaimed the stream while backgrounded.)
+        if crate::lifecycle::resumed() {
+            let force_reopen = crate::lifecycle::take_reopen_audio();
+            if force_reopen || self.out.as_ref().is_none_or(|out| !out.resume()) {
+                self.reopen(now);
+            }
+        } else if !self.silent
+            && self.reopen_after.is_none_or(|at| now >= at)
+            && self.out.as_ref().is_some_and(Output::is_broken)
         {
-            out.resume();
+            self.reopen(now);
+        } else if !self.silent
+            && self.out.is_none()
+            && self.reopen_after.is_some_and(|at| now >= at)
+        {
+            self.reopen(now);
         }
         let elapsed = self.last.map_or(Duration::ZERO, |l| now.saturating_duration_since(l)).min(Duration::from_millis(250));
         self.last = Some(now);

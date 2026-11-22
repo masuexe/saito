@@ -13,11 +13,14 @@ pub use awake::Awake;
 #[allow(unused_imports)]
 pub use platform::*;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// How many times the app came back, and how many [`resumed`] has said.
 static CAME: AtomicU64 = AtomicU64::new(0);
 static SAID: AtomicU64 = AtomicU64::new(0);
+/// Set when Android suspends the activity into the background, signaling that the audio
+/// output stream should be reopened rather than merely resumed when the app returns.
+static REOPEN_AUDIO: AtomicBool = AtomicBool::new(false);
 
 /// Whether the app came back since this was last asked. (On iOS the first call starts watching: from the main
 /// thread, the window's.)
@@ -27,9 +30,21 @@ pub fn resumed() -> bool {
     SAID.swap(came, Ordering::Relaxed) != came
 }
 
+/// Whether the audio output should be recreated on resume (e.g. after Android background suspend).
+/// Consumes the flag.
+pub fn take_reopen_audio() -> bool {
+    REOPEN_AUDIO.swap(false, Ordering::Relaxed)
+}
+
 /// The system says the app came back (its module's watch, or Android's entry point). (Where nothing stops the app,
 /// nothing calls it.)
 #[allow(dead_code)]
 pub(crate) fn came() {
     CAME.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The system suspended the app to the background: mark the audio stream for reopening on return.
+#[allow(dead_code)]
+pub(crate) fn mark_reopen_audio() {
+    REOPEN_AUDIO.store(true, Ordering::Relaxed);
 }

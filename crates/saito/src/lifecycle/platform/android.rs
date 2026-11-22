@@ -2,10 +2,15 @@
 //! android/saito/lifecycle/SaitoAwake.kt on the activity's thread), and the activity resumed, which the entry
 //! point says ([`came_back`]).
 
-/// Android's activity resumed (`MainEvent::Resume`): the entry point's event listener says so, as Slint's Android
-/// backend hears the activity's events.
+/// Android's activity resumed (`MainEvent::Resume` / `Focused(true)`): the entry point's event listener says so.
 pub fn came_back() {
     crate::lifecycle::came();
+}
+
+/// Android's activity suspended to the background: mark the audio output stream for full reopen on return,
+/// because Android's AAudio/Oboe server may disconnect or reclaim streams left paused in the background.
+pub fn went_background() {
+    crate::lifecycle::mark_reopen_audio();
 }
 
 /// Nothing to watch: the entry point says when the activity resumes.

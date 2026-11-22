@@ -22,4 +22,4 @@ pub(crate) use android as system;
 pub(crate) use none as system;
 
 #[cfg(target_os = "android")]
-pub use android::came_back;
+pub use android::{came_back, went_background};
