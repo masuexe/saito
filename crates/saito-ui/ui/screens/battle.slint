@@ -7,7 +7,7 @@
 
 import { Theme, I18n } from "../theme.slint";
 import { Nav, Focusable } from "../nav.slint";
-import { Shell, BattleKind, Picture, LinkFigures, Footer, Hint, HintView, PartyMember, PartyHud } from "../shell.slint";
+import { Shell, BattleKind, Picture, LinkFigures, Footer, Hint, HintView, PartyMember, PartyHud, PadLayout, PadMath } from "../shell.slint";
 import { Cut, Heading, Label, Note, Mono, Bars, Button } from "../widgets.slint";
 import { Tween } from "../motion.slint";
 
@@ -707,100 +707,111 @@ component TouchPad inherits Rectangle {
     property <float> apart: (root.a-x - root.b-x) / 1px;
     property <float> reach: (root.face + 4px) / 1px;
     property <length> drop: max(root.face / 3, sqrt(max(0, root.reach * root.reach - root.apart * root.apart)) * 1px);
+    property <PadLayout> lay: Shell.portrait-pad-layout;
+    property <length> avail-h: max(24px, root.height - root.top);
+    property <length> dpad-size: PadMath.fit-square(root.square, root.lay.dpad.scale, root.width, root.avail-h);
+    property <length> dpad-key: root.dpad-size / 3;
+    property <length> dpad-x: PadMath.place-x(0px, root.square, root.dpad-size, root.lay.dpad.dx, root.width);
+    property <length> dpad-y: PadMath.place-y(root.square-y, root.square, root.dpad-size, root.lay.dpad.dy, root.top, root.height);
+    property <length> dpad-glyph: 18px * root.scale * PadMath.safe-scale(root.lay.dpad.scale);
     PadKey {
-        x: 0;
-        y: root.square-y - 12px - self.height;
-        width: 132px;
-        height: root.shoulder;
+        width: PadMath.fit-w(132px, root.lay.l.scale, root.width);
+        height: PadMath.fit-h(root.shoulder, root.lay.l.scale, root.avail-h);
+        x: PadMath.place-x(0px, 132px, self.width, root.lay.l.dx, root.width);
+        y: PadMath.place-y(root.square-y - 12px - root.shoulder, root.shoulder, self.height, root.lay.l.dy, root.top, root.height);
+        font-size: 16px * PadMath.safe-scale(root.lay.l.scale);
         text: "L";
         button: 9;
     }
 
     PadKey {
-        x: parent.width - self.width;
-        y: root.square-y - 12px - self.height;
-        width: 132px;
-        height: root.shoulder;
+        width: PadMath.fit-w(132px, root.lay.r.scale, root.width);
+        height: PadMath.fit-h(root.shoulder, root.lay.r.scale, root.avail-h);
+        x: PadMath.place-x(root.width - 132px, 132px, self.width, root.lay.r.dx, root.width);
+        y: PadMath.place-y(root.square-y - 12px - root.shoulder, root.shoulder, self.height, root.lay.r.dy, root.top, root.height);
+        font-size: 16px * PadMath.safe-scale(root.lay.r.scale);
         text: "R";
         button: 8;
     }
 
     PadKey {
-        x: root.key;
-        y: root.square-y;
-        width: root.key;
-        height: root.key;
-        glyph: 18px * root.scale;
+        x: root.dpad-x + root.dpad-key;
+        y: root.dpad-y;
+        width: root.dpad-key;
+        height: root.dpad-key;
+        glyph: root.dpad-glyph;
         shape: "M 7 1 L 13 12 L 1 12 Z";
         button: 6;
     }
 
     PadKey {
-        x: 0;
-        y: root.square-y + root.key;
-        width: root.key;
-        height: root.key;
-        glyph: 18px * root.scale;
+        x: root.dpad-x;
+        y: root.dpad-y + root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
+        glyph: root.dpad-glyph;
         shape: "M 1 7 L 12 1 L 12 13 Z";
         button: 5;
     }
 
     PadKey {
-        x: 2 * root.key;
-        y: root.square-y + root.key;
-        width: root.key;
-        height: root.key;
-        glyph: 18px * root.scale;
+        x: root.dpad-x + 2 * root.dpad-key;
+        y: root.dpad-y + root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
+        glyph: root.dpad-glyph;
         shape: "M 13 7 L 2 1 L 2 13 Z";
         button: 4;
     }
 
     PadKey {
-        x: root.key;
-        y: root.square-y + 2 * root.key;
-        width: root.key;
-        height: root.key;
-        glyph: 18px * root.scale;
+        x: root.dpad-x + root.dpad-key;
+        y: root.dpad-y + 2 * root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
+        glyph: root.dpad-glyph;
         shape: "M 7 13 L 13 2 L 1 2 Z";
         button: 7;
     }
 
     PadKey {
-        x: root.a-x;
-        y: root.middle - root.drop / 2 - root.face / 2;
-        width: root.face;
-        height: root.face;
-        font-size: 20px * root.scale;
+        width: PadMath.fit-square(root.face, root.lay.a.scale, root.width, root.avail-h);
+        height: self.width;
+        x: PadMath.place-x(root.a-x, root.face, self.width, root.lay.a.dx, root.width);
+        y: PadMath.place-y(root.middle - root.drop / 2 - root.face / 2, root.face, self.height, root.lay.a.dy, root.top, root.height);
+        font-size: 20px * root.scale * PadMath.safe-scale(root.lay.a.scale);
         text: "A";
         button: 0;
         round: true;
     }
 
     PadKey {
-        x: root.b-x;
-        y: root.middle + root.drop / 2 - root.face / 2;
-        width: root.face;
-        height: root.face;
-        font-size: 20px * root.scale;
+        width: PadMath.fit-square(root.face, root.lay.b.scale, root.width, root.avail-h);
+        height: self.width;
+        x: PadMath.place-x(root.b-x, root.face, self.width, root.lay.b.dx, root.width);
+        y: PadMath.place-y(root.middle + root.drop / 2 - root.face / 2, root.face, self.height, root.lay.b.dy, root.top, root.height);
+        font-size: 20px * root.scale * PadMath.safe-scale(root.lay.b.scale);
         text: "B";
         button: 1;
         round: true;
     }
 
     PadKey {
-        x: parent.width / 2 - 104px;
-        y: parent.height - self.height;
-        width: 96px;
-        height: root.foot;
+        width: PadMath.fit-w(96px, root.lay.select.scale, root.width);
+        height: PadMath.fit-h(root.foot, root.lay.select.scale, root.avail-h);
+        x: PadMath.place-x(root.width / 2 - 104px, 96px, self.width, root.lay.select.dx, root.width);
+        y: PadMath.place-y(root.height - root.foot, root.foot, self.height, root.lay.select.dy, root.top, root.height);
+        font-size: 16px * PadMath.safe-scale(root.lay.select.scale);
         text: "SELECT";
         button: 2;
     }
 
     PadKey {
-        x: parent.width / 2 + 8px;
-        y: parent.height - self.height;
-        width: 96px;
-        height: root.foot;
+        width: PadMath.fit-w(96px, root.lay.start.scale, root.width);
+        height: PadMath.fit-h(root.foot, root.lay.start.scale, root.avail-h);
+        x: PadMath.place-x(root.width / 2 + 8px, 96px, self.width, root.lay.start.dx, root.width);
+        y: PadMath.place-y(root.height - root.foot, root.foot, self.height, root.lay.start.dy, root.top, root.height);
+        font-size: 16px * PadMath.safe-scale(root.lay.start.scale);
         text: "START";
         button: 3;
     }
@@ -820,109 +831,115 @@ component TouchOverlay inherits Rectangle {
     property <length> foot-y: self.height - root.margin - 8.5 * root.u;
     property <length> text-size: 4.5 * root.u;
     property <length> glyph: 4.5 * root.u;
+    property <PadLayout> lay: Shell.landscape-pad-layout;
+    property <length> dpad-size: PadMath.fit-square(3 * root.key, root.lay.dpad.scale, root.width, root.height);
+    property <length> dpad-key: root.dpad-size / 3;
+    property <length> dpad-x: PadMath.place-x(root.margin, 3 * root.key, root.dpad-size, root.lay.dpad.dx, root.width);
+    property <length> dpad-y: PadMath.place-y(root.pad-top, 3 * root.key, root.dpad-size, root.lay.dpad.dy, 0px, root.height);
+    property <length> dpad-glyph: root.glyph * PadMath.safe-scale(root.lay.dpad.scale);
     PadKey {
-        x: root.margin;
-        y: root.margin;
-        width: 26 * root.u;
-        height: 10.5 * root.u;
+        width: PadMath.fit-w(26 * root.u, root.lay.l.scale, root.width);
+        height: PadMath.fit-h(10.5 * root.u, root.lay.l.scale, root.height);
+        x: PadMath.place-x(root.margin, 26 * root.u, self.width, root.lay.l.dx, root.width);
+        y: PadMath.place-y(root.margin, 10.5 * root.u, self.height, root.lay.l.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size;
+        font-size: root.text-size * PadMath.safe-scale(root.lay.l.scale);
         text: "L";
         button: 9;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.width - root.margin - self.width;
-        y: root.margin;
-        width: 26 * root.u;
-        height: 10.5 * root.u;
+        width: PadMath.fit-w(26 * root.u, root.lay.r.scale, root.width);
+        height: PadMath.fit-h(10.5 * root.u, root.lay.r.scale, root.height);
+        x: PadMath.place-x(root.width - root.margin - 26 * root.u, 26 * root.u, self.width, root.lay.r.dx, root.width);
+        y: PadMath.place-y(root.margin, 10.5 * root.u, self.height, root.lay.r.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size;
+        font-size: root.text-size * PadMath.safe-scale(root.lay.r.scale);
         text: "R";
         button: 8;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.margin + root.key;
-        y: root.pad-top;
-        width: root.key;
-        height: root.key;
+        x: root.dpad-x + root.dpad-key;
+        y: root.dpad-y;
+        width: root.dpad-key;
+        height: root.dpad-key;
         over: true;
-        glyph: root.glyph;
+        glyph: root.dpad-glyph;
         shape: "M 7 1 L 13 12 L 1 12 Z";
         button: 6;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.margin;
-        y: root.pad-top + root.key;
-        width: root.key;
-        height: root.key;
+        x: root.dpad-x;
+        y: root.dpad-y + root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
         over: true;
-        glyph: root.glyph;
+        glyph: root.dpad-glyph;
         shape: "M 1 7 L 12 1 L 12 13 Z";
         button: 5;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.margin + 2 * root.key;
-        y: root.pad-top + root.key;
-        width: root.key;
-        height: root.key;
+        x: root.dpad-x + 2 * root.dpad-key;
+        y: root.dpad-y + root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
         over: true;
-        glyph: root.glyph;
+        glyph: root.dpad-glyph;
         shape: "M 13 7 L 2 1 L 2 13 Z";
         button: 4;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.margin + root.key;
-        y: root.pad-top + 2 * root.key;
-        width: root.key;
-        height: root.key;
+        x: root.dpad-x + root.dpad-key;
+        y: root.dpad-y + 2 * root.dpad-key;
+        width: root.dpad-key;
+        height: root.dpad-key;
         over: true;
-        glyph: root.glyph;
+        glyph: root.dpad-glyph;
         shape: "M 7 13 L 13 2 L 1 2 Z";
         button: 7;
         visible: !Shell.pad-gives-way;
     }
 
     PadKey {
-        x: root.width - root.margin - root.face;
-        y: 31 * root.u;
-        width: root.face;
-        height: root.face;
+        width: PadMath.fit-square(root.face, root.lay.a.scale, root.width, root.height);
+        height: self.width;
+        x: PadMath.place-x(root.width - root.margin - root.face, root.face, self.width, root.lay.a.dx, root.width);
+        y: PadMath.place-y(31 * root.u, root.face, self.height, root.lay.a.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size;
+        font-size: root.text-size * PadMath.safe-scale(root.lay.a.scale);
         text: "A";
         button: 0;
         round: true;
     }
 
     PadKey {
-        x: root.width - root.margin - root.face - 19 * root.u;
-        y: 50 * root.u;
-        width: root.face;
-        height: root.face;
+        width: PadMath.fit-square(root.face, root.lay.b.scale, root.width, root.height);
+        height: self.width;
+        x: PadMath.place-x(root.width - root.margin - root.face - 19 * root.u, root.face, self.width, root.lay.b.dx, root.width);
+        y: PadMath.place-y(50 * root.u, root.face, self.height, root.lay.b.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size;
+        font-size: root.text-size * PadMath.safe-scale(root.lay.b.scale);
         text: "B";
         button: 1;
         round: true;
     }
 
     PadKey {
-        x: root.margin + 16 * root.u;
-        y: root.foot-y;
-        width: 21 * root.u;
-        height: 8.5 * root.u;
+        width: PadMath.fit-w(21 * root.u, root.lay.select.scale, root.width);
+        height: PadMath.fit-h(8.5 * root.u, root.lay.select.scale, root.height);
+        x: PadMath.place-x(root.margin + 16 * root.u, 21 * root.u, self.width, root.lay.select.dx, root.width);
+        y: PadMath.place-y(root.foot-y, 8.5 * root.u, self.height, root.lay.select.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size * 0.8;
+        font-size: root.text-size * 0.8 * PadMath.safe-scale(root.lay.select.scale);
         text: "SELECT";
         button: 2;
         visible: !Shell.pad-gives-way;
@@ -961,12 +978,12 @@ component TouchOverlay inherits Rectangle {
     }
 
     PadKey {
-        x: root.width - root.margin - self.width;
-        y: root.foot-y;
-        width: 21 * root.u;
-        height: 8.5 * root.u;
+        width: PadMath.fit-w(21 * root.u, root.lay.start.scale, root.width);
+        height: PadMath.fit-h(8.5 * root.u, root.lay.start.scale, root.height);
+        x: PadMath.place-x(root.width - root.margin - 21 * root.u, 21 * root.u, self.width, root.lay.start.dx, root.width);
+        y: PadMath.place-y(root.foot-y, 8.5 * root.u, self.height, root.lay.start.dy, 0px, root.height);
         over: true;
-        font-size: root.text-size * 0.8;
+        font-size: root.text-size * 0.8 * PadMath.safe-scale(root.lay.start.scale);
         text: "START";
         button: 3;
     }

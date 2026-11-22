@@ -56,7 +56,7 @@ pub fn group_for_scroll(scroll: f32, view_height: f32, content_height: f32, tops
 /// Update `SettingsView.group` from the page's scroll position when Settings is on screen and laid out.
 pub fn scrolled(ui: &saito_ui::AppWindow, scroll: f32, view_height: f32, content_height: f32, tops: &[f32]) {
     let view = ui.global::<SettingsView>();
-    if view.get_about() || !laid_out(view_height, content_height, tops) {
+    if view.get_about() || view.get_touch_editor() || !laid_out(view_height, content_height, tops) {
         return;
     }
     let group = group_for_scroll(scroll, view_height, content_height, tops);
@@ -79,7 +79,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
-        "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" => 4,
+        "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
     })
@@ -334,11 +334,28 @@ pub struct Settings {
     binding: Binding,
     /// About, shown in the page's place while it is open.
     about: about::About,
+    /// Interactive virtual touch pad layout editor, shown in the page's place while it is open.
+    touch_editor: bool,
     /// Target `IP:port` entered for manual nearby transfer.
     nearby_target: String,
 }
 
 impl Settings {
+    fn open_touch_editor(&mut self, shell: &mut Shell) {
+        self.touch_editor = true;
+        let ui = shell.ui();
+        let view = ui.global::<SettingsView>();
+        view.set_touch_selected(0);
+        view.set_touch_editor(true);
+        shell.nav.enter("settings.touch", "");
+    }
+
+    fn close_touch_editor(&mut self, shell: &mut Shell) {
+        if std::mem::take(&mut self.touch_editor) {
+            shell.ui().global::<SettingsView>().set_touch_editor(false);
+        }
+    }
+
     fn try_send_nearby(&self, shell: &mut Shell) {
         if !crate::nearby::send_to(shell, &self.nearby_target) {
             shell.sound.play(Cue::Refused);
@@ -389,6 +406,7 @@ impl Screen for Settings {
 
     fn hide(&mut self, shell: &mut Shell) {
         self.binding.stop(shell);
+        self.close_touch_editor(shell);
         // (Shown again, Settings show their page, the focus on SHOW LICENSES.)
         if self.about.is_open() {
             self.about.close(shell);
@@ -396,6 +414,9 @@ impl Screen for Settings {
     }
 
     fn activate(&mut self, shell: &mut Shell, id: &str, index: i32) {
+        if self.touch_editor {
+            return;
+        }
         if self.about.is_open() {
             return self.about.activate(shell, id, index);
         }
@@ -429,6 +450,7 @@ impl Screen for Settings {
                 shell.set_landscape_touch_pad(!shell.settings.landscape_touch_pad);
                 self.show(shell);
             }
+            "set.touch-layout" => self.open_touch_editor(shell),
             "set.folder" => show_folder(&crate::paths::data()),
             "set.nearby.send" => self.try_send_nearby(shell),
             "set.about" => self.about.open(shell),
@@ -546,6 +568,9 @@ impl Screen for Settings {
     }
 
     fn focused(&mut self, shell: &mut Shell, id: &str, index: i32) {
+        if self.touch_editor {
+            return;
+        }
         if self.about.is_open() {
             return self.about.focused(shell, id, index);
         }
@@ -578,8 +603,14 @@ impl Screen for Settings {
         self.about.is_open().then(|| self.about.scroll_view(shell, by)).flatten()
     }
 
-    /// Back in About: within it, else to the settings, the focus back on SHOW LICENSES.
+    /// Back in About or TouchLayoutEditor: within it, else to the settings.
     fn back(&mut self, shell: &mut Shell) -> bool {
+        if self.touch_editor {
+            self.close_touch_editor(shell);
+            shell.save_settings();
+            shell.nav.enter(ScreenId::Settings.name(), self.main());
+            return true;
+        }
         if !self.about.is_open() {
             return false;
         }

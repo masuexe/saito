@@ -126,6 +126,52 @@ export struct PartyHud {
     right-key: Hint,
 }
 
+// Offset (fraction of container) and scale multiplier for one virtual touch pad control.
+export struct PadControlPos {
+    dx: float,
+    dy: float,
+    scale: float,
+}
+
+// Custom virtual touch pad layout for all seven movable controls in one orientation.
+export struct PadLayout {
+    dpad: PadControlPos,
+    a: PadControlPos,
+    b: PadControlPos,
+    l: PadControlPos,
+    r: PadControlPos,
+    select: PadControlPos,
+    start: PadControlPos,
+}
+
+// Pure geometry helpers shared by the live battle pad and the Settings layout editor.
+export global PadMath {
+    public pure function safe-scale(scale: float) -> float {
+        return scale > 0 ? clamp(scale, 0.6, 1.6) : 1;
+    }
+    public pure function fit-w(base-w: length, scale: float, max-w: length) -> length {
+        return clamp(base-w * safe-scale(scale), 24px, max(24px, max-w));
+    }
+    public pure function fit-h(base-h: length, scale: float, max-h: length) -> length {
+        return clamp(base-h * safe-scale(scale), 24px, max(24px, max-h));
+    }
+    public pure function fit-square(base: length, scale: float, max-w: length, max-h: length) -> length {
+        return clamp(base * safe-scale(scale), 24px, max(24px, min(max-w, max-h)));
+    }
+    public pure function place-x(base-x: length, base-w: length, w: length, dx: float, area-w: length) -> length {
+        return clamp(base-x + (base-w - w) / 2 + dx * area-w, 0px, max(0px, area-w - w));
+    }
+    public pure function place-y(base-y: length, base-h: length, h: length, dy: float, min-y: length, area-h: length) -> length {
+        return clamp(base-y + (base-h - h) / 2 + dy * area-h, min-y, max(min-y, area-h - h));
+    }
+    public pure function invert-dx(base-x: length, base-w: length, w: length, target-x: length, area-w: length) -> float {
+        return area-w > 0px ? clamp((clamp(target-x, 0px, max(0px, area-w - w)) - (base-x + (base-w - w) / 2)) / area-w, -1, 1) : 0;
+    }
+    public pure function invert-dy(base-y: length, base-h: length, h: length, target-y: length, min-y: length, area-h: length) -> float {
+        return area-h > 0px ? clamp((clamp(target-y, min-y, max(min-y, area-h - h)) - (base-y + (base-h - h) / 2)) / area-h, -1, 1) : 0;
+    }
+}
+
 // A ground behind the menus (`Backdrop`): a game's look, and the side it sweeps in from over the grounds before it
 // (-1 the left, 1 the right; 0 it is there at once).
 export struct Ground {
@@ -346,6 +392,9 @@ export global Shell {
     // The player's party beside the battle, in a party battle (`PartyHud`): read from the battle each frame. On a
     // phone the pad has the switches' two buttons (bits 14 and 15), each with the member it names.
     in property <PartyHud> party;
+    // Customizable offsets and scale multipliers for the mobile virtual touch pad (`Settings::touch_pad_layout`).
+    in property <PadLayout> portrait-pad-layout: { dpad: { scale: 1 }, a: { scale: 1 }, b: { scale: 1 }, l: { scale: 1 }, r: { scale: 1 }, select: { scale: 1 }, start: { scale: 1 } };
+    in property <PadLayout> landscape-pad-layout: { dpad: { scale: 1 }, a: { scale: 1 }, b: { scale: 1 }, l: { scale: 1 }, r: { scale: 1 }, select: { scale: 1 }, start: { scale: 1 } };
 }
 
 // What can go wrong, as the player reads it (docs/design/app-ui.md §7; the app's `UserError`). The code's own

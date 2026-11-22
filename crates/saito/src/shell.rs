@@ -13,7 +13,7 @@ use crate::games::{Games, Notice, Ready, State};
 use crate::input::{Action, Bindings, KeyPress, Keys, Pad, Scroll, bind_cap, menu_action, scroll_key};
 use crate::nav::{Did, Direction, Key, Nav, Rect};
 use crate::screens::{self, Screen, ScreenId};
-use crate::settings::Settings;
+use crate::settings::{Settings, TOUCH_SCALE_MAX, TOUCH_SCALE_MIN, TouchControlLayout, TouchPadLayout};
 use crate::sound::{Cue, Sound};
 use saito_battle::input::keys;
 use saito_frontend::game::Enhancements;
@@ -625,6 +625,13 @@ impl Shell {
         }
     }
 
+    pub fn apply_touch_pad_layout(&self) {
+        let ui = self.ui();
+        let shell = ui.global::<saito_ui::Shell>();
+        shell.set_portrait_pad_layout(to_ui_pad_layout(&self.settings.touch_pad_layout.portrait));
+        shell.set_landscape_pad_layout(to_ui_pad_layout(&self.settings.touch_pad_layout.landscape));
+    }
+
     pub fn set_hide_landscape_status_bar(&mut self, hide: bool) {
         self.settings.hide_landscape_status_bar = hide;
         self.save_settings();
@@ -1145,6 +1152,32 @@ impl Shell {
     }
 }
 
+fn to_ui_pad_pos(pos: &TouchControlLayout) -> saito_ui::PadControlPos {
+    saito_ui::PadControlPos { dx: pos.dx, dy: pos.dy, scale: pos.scale }
+}
+
+fn to_ui_pad_layout(layout: &TouchPadLayout) -> saito_ui::PadLayout {
+    saito_ui::PadLayout {
+        dpad: to_ui_pad_pos(&layout.dpad),
+        a: to_ui_pad_pos(&layout.a),
+        b: to_ui_pad_pos(&layout.b),
+        l: to_ui_pad_pos(&layout.l),
+        r: to_ui_pad_pos(&layout.r),
+        select: to_ui_pad_pos(&layout.select),
+        start: to_ui_pad_pos(&layout.start),
+    }
+}
+
+/// Interactive edits from `TouchLayoutEditor` (`SettingsView`).
+pub enum TouchLayoutEdit {
+    Select(i32),
+    Move { landscape: bool, index: i32, dx: f32, dy: f32 },
+    Scale { landscape: bool, index: i32, delta: f32 },
+    Reset { landscape: bool },
+    Commit,
+    Close,
+}
+
 /// What the UI's callbacks tell the app (`main::wire`).
 pub enum NavInput {
     /// A click or a tap on a control.
@@ -1168,6 +1201,8 @@ pub enum NavInput {
     /// The pointer on the battle's picture, for the custom screen (`Shell.picture-pointer`): its kind, its button,
     /// its place in the picture (logical pixels), whether it is a finger.
     Picture { kind: i32, button: i32, x: f32, y: f32 },
+    /// Interactive virtual touch pad layout adjustments from Settings.
+    TouchLayout(TouchLayoutEdit),
 }
 
 pub struct App {
@@ -1275,6 +1310,7 @@ impl App {
         shell.set_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
         shell.set_player(self.shell.settings.name.as_str().into());
         shell.set_landscape_pad(self.shell.settings.landscape_touch_pad);
+        self.shell.apply_touch_pad_layout();
         #[cfg(target_os = "android")]
         crate::activity::set_hide_landscape_status_bar(self.shell.settings.hide_landscape_status_bar);
         // (The games' content the store hasn't is downloaded whatever the settings say: there is nothing to play
@@ -1745,8 +1781,65 @@ impl App {
             }
             NavInput::PadKey(bit, rect) => self.shell.touch.place(bit.clamp(0, 15) as u8, rect),
             NavInput::Picture { kind, button, x, y } => self.shell.picture_pointer(kind, button, x, y),
+            NavInput::TouchLayout(edit) => self.edit_touch_layout(edit),
         }
         self.settle();
+    }
+
+    fn edit_touch_layout(&mut self, edit: TouchLayoutEdit) {
+        match edit {
+            TouchLayoutEdit::Select(idx) => {
+                let clamped = idx.clamp(0, 6);
+                let ui = self.shell.ui();
+                let view = ui.global::<saito_ui::SettingsView>();
+                if view.get_touch_selected() != clamped {
+                    view.set_touch_selected(clamped);
+                    crate::haptics::tap();
+                }
+            }
+            TouchLayoutEdit::Move { landscape, index, dx, dy } => {
+                if !dx.is_finite() || !dy.is_finite() {
+                    return;
+                }
+                if let Some(ctrl) = self.shell.settings.touch_pad_layout.for_orientation_mut(landscape).get_mut(index) {
+                    ctrl.dx = dx.clamp(-1.0, 1.0);
+                    ctrl.dy = dy.clamp(-1.0, 1.0);
+                    self.shell.apply_touch_pad_layout();
+                }
+            }
+            TouchLayoutEdit::Scale { landscape, index, delta } => {
+                if !delta.is_finite() {
+                    return;
+                }
+                if let Some(ctrl) = self.shell.settings.touch_pad_layout.for_orientation_mut(landscape).get_mut(index) {
+                    let next = ((ctrl.scale + delta) * 10.0).round() / 10.0;
+                    let clamped = next.clamp(TOUCH_SCALE_MIN, TOUCH_SCALE_MAX);
+                    if (clamped - ctrl.scale).abs() > f32::EPSILON {
+                        ctrl.scale = clamped;
+                        self.shell.apply_touch_pad_layout();
+                        self.shell.save_settings();
+                        self.shell.sound.play(Cue::Cursor);
+                        crate::haptics::tap();
+                    }
+                }
+            }
+            TouchLayoutEdit::Reset { landscape } => {
+                *self.shell.settings.touch_pad_layout.for_orientation_mut(landscape) = TouchPadLayout::default();
+                self.shell.apply_touch_pad_layout();
+                self.shell.save_settings();
+                self.shell.sound.play(Cue::Pick);
+                crate::haptics::tap();
+            }
+            TouchLayoutEdit::Commit => {
+                self.shell.save_settings();
+            }
+            TouchLayoutEdit::Close => {
+                if self.shell.ui().global::<saito_ui::SettingsView>().get_touch_editor() {
+                    self.shell.save_settings();
+                    self.back();
+                }
+            }
+        }
     }
 
     /// The modifiers held changed.

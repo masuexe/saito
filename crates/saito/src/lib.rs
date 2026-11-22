@@ -422,4 +422,17 @@ fn wire(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.global::<saito_ui::Shell>().on_pad_key(move |bit, x, y, w, h| tell(&a, NavInput::PadKey(bit, Rect { x, y, w, h })));
     let a = app.clone();
     ui.global::<saito_ui::Shell>().on_picture_pointer(move |kind, button, x, y| tell(&a, NavInput::Picture { kind, button, x, y }));
+    let sv = ui.global::<saito_ui::SettingsView>();
+    let a = app.clone();
+    sv.on_touch_select(move |idx| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Select(idx))));
+    let a = app.clone();
+    sv.on_touch_move(move |landscape, index, dx, dy| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Move { landscape, index, dx, dy })));
+    let a = app.clone();
+    sv.on_touch_scale(move |landscape, index, delta| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Scale { landscape, index, delta })));
+    let a = app.clone();
+    sv.on_touch_reset(move |landscape| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Reset { landscape })));
+    let a = app.clone();
+    sv.on_touch_commit(move || tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Commit)));
+    let a = app.clone();
+    sv.on_touch_close(move || tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Close)));
 }

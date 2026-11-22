@@ -219,6 +219,30 @@ msgstr "가로 화면 가상 패드"
 msgid "Show on-screen controls in landscape."
 msgstr "가로 화면 전투 중에 화면 가상 버튼을 표시합니다."
 
+msgid "Touch pad layout"
+msgstr "가상 패드 배치"
+
+msgid "Customize button positions and sizes."
+msgstr "가상 버튼의 위치와 크기를 사용자 지정합니다."
+
+msgid "Customize"
+msgstr "사용자 지정"
+
+msgid "Portrait"
+msgstr "세로 화면"
+
+msgid "Landscape"
+msgstr "가로 화면"
+
+msgid "Drag buttons to move. Use − / + to resize."
+msgstr "버튼을 드래그해 이동하고 − / + 로 크기를 조절하세요."
+
+msgid "D-Pad"
+msgstr "방향키"
+
+msgid "Reset"
+msgstr "초기화"
+
 msgid "Keyboard-only custom screen"
 msgstr "키보드 전용 커스텀 화면"
 

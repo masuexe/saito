@@ -220,6 +220,30 @@ msgstr "横画面タッチパッド"
 msgid "Show on-screen controls in landscape."
 msgstr "横画面のバトル中に画面上の仮想ボタンを表示します。"
 
+msgid "Touch pad layout"
+msgstr "タッチパッド配置"
+
+msgid "Customize button positions and sizes."
+msgstr "仮想ボタンの位置とサイズをカスタマイズします。"
+
+msgid "Customize"
+msgstr "カスタマイズ"
+
+msgid "Portrait"
+msgstr "縦画面"
+
+msgid "Landscape"
+msgstr "横画面"
+
+msgid "Drag buttons to move. Use − / + to resize."
+msgstr "ボタンをドラッグして移動し、− / + でサイズを調整します。"
+
+msgid "D-Pad"
+msgstr "十字キー"
+
+msgid "Reset"
+msgstr "リセット"
+
 msgid "Keyboard-only custom screen"
 msgstr "キーボード専用カスタム画面"
 

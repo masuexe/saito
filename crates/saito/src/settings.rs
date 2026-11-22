@@ -18,6 +18,113 @@ pub const DEFAULT_SIGNAL_SERVER: &str = "wss://matchmaking.exessrhub.top";
 /// The longest signaling server URL kept in settings.
 pub const SIGNAL_SERVER_LENGTH: usize = 256;
 
+/// Minimum and maximum scale multipliers for customizable virtual touch pad controls.
+pub const TOUCH_SCALE_MIN: f32 = 0.6;
+pub const TOUCH_SCALE_MAX: f32 = 1.6;
+
+/// Position offset (fraction of pad container) and size multiplier for one virtual touch pad control.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TouchControlLayout {
+    pub dx: f32,
+    pub dy: f32,
+    pub scale: f32,
+}
+
+impl Default for TouchControlLayout {
+    fn default() -> Self {
+        Self { dx: 0.0, dy: 0.0, scale: 1.0 }
+    }
+}
+
+impl TouchControlLayout {
+    pub fn sanitized(self) -> Self {
+        let dx = if self.dx.is_finite() { self.dx.clamp(-1.0, 1.0) } else { 0.0 };
+        let dy = if self.dy.is_finite() { self.dy.clamp(-1.0, 1.0) } else { 0.0 };
+        let scale = if self.scale.is_finite() { self.scale.clamp(TOUCH_SCALE_MIN, TOUCH_SCALE_MAX) } else { 1.0 };
+        Self { dx, dy, scale }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Customizable virtual touch pad controls for one screen orientation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TouchPadLayout {
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub dpad: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub a: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub b: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub l: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub r: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub select: TouchControlLayout,
+    #[serde(skip_serializing_if = "TouchControlLayout::is_default")]
+    pub start: TouchControlLayout,
+}
+
+impl TouchPadLayout {
+    pub fn get_mut(&mut self, index: i32) -> Option<&mut TouchControlLayout> {
+        Some(match index {
+            0 => &mut self.dpad,
+            1 => &mut self.a,
+            2 => &mut self.b,
+            3 => &mut self.l,
+            4 => &mut self.r,
+            5 => &mut self.select,
+            6 => &mut self.start,
+            _ => return None,
+        })
+    }
+
+    pub fn sanitized(self) -> Self {
+        Self {
+            dpad: self.dpad.sanitized(),
+            a: self.a.sanitized(),
+            b: self.b.sanitized(),
+            l: self.l.sanitized(),
+            r: self.r.sanitized(),
+            select: self.select.sanitized(),
+            start: self.start.sanitized(),
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Portrait and landscape virtual touch pad layouts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TouchPadLayouts {
+    #[serde(skip_serializing_if = "TouchPadLayout::is_default")]
+    pub portrait: TouchPadLayout,
+    #[serde(skip_serializing_if = "TouchPadLayout::is_default")]
+    pub landscape: TouchPadLayout,
+}
+
+impl TouchPadLayouts {
+    pub fn for_orientation_mut(&mut self, landscape: bool) -> &mut TouchPadLayout {
+        if landscape { &mut self.landscape } else { &mut self.portrait }
+    }
+
+    pub fn sanitized(self) -> Self {
+        Self { portrait: self.portrait.sanitized(), landscape: self.landscape.sanitized() }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// What the file keeps.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -71,6 +178,9 @@ pub struct Settings {
     pub pad: BTreeMap<String, String>,
     /// What screens remember, by their own keys (`play.build.<game>`).
     pub remembered: BTreeMap<String, String>,
+    /// Custom virtual touch pad button offsets and sizes, separately for portrait and landscape.
+    #[serde(skip_serializing_if = "TouchPadLayouts::is_default")]
+    pub touch_pad_layout: TouchPadLayouts,
 }
 
 impl Default for Settings {
@@ -100,6 +210,7 @@ impl Default for Settings {
             legacy_collection: None,
             pad: BTreeMap::new(),
             remembered: BTreeMap::new(),
+            touch_pad_layout: TouchPadLayouts::default(),
         }
     }
 }
@@ -170,6 +281,7 @@ impl Settings {
         s.effects = s.effects.min(100);
         s.input_delay = s.input_delay.min(MAX_INPUT_DELAY);
         s.signaling_server = clean_signaling_server(&s.signaling_server);
+        s.touch_pad_layout = s.touch_pad_layout.sanitized();
         s
     }
 
@@ -273,5 +385,23 @@ mod tests {
         assert_eq!((s.keys.len(), s.pad.len()), (2, 1));
         assert_eq!(s.keys.get("b").map(String::as_str), Some("MouseRight"));
         assert_eq!(s.bindings(), b);
+    }
+
+    #[test]
+    fn touch_pad_layout_roundtrips_and_sanitizes() {
+        let mut s = Settings::default();
+        assert!(!toml::to_string(&s).unwrap().contains("touch_pad_layout"), "default layout omitted from TOML");
+
+        s.touch_pad_layout.portrait.a = TouchControlLayout { dx: -0.25, dy: 0.15, scale: 1.3 };
+        s.touch_pad_layout.landscape.dpad = TouchControlLayout { dx: 0.2, dy: -0.1, scale: 0.8 };
+        let text = toml::to_string(&s).unwrap();
+        assert!(text.contains("touch_pad_layout"));
+        let decoded: Settings = toml::from_str(&text).unwrap();
+        assert_eq!(decoded.touch_pad_layout, s.touch_pad_layout);
+
+        let dirty = TouchControlLayout { dx: 4.0, dy: f32::NAN, scale: 0.1 }.sanitized();
+        assert_eq!(dirty, TouchControlLayout { dx: 1.0, dy: 0.0, scale: TOUCH_SCALE_MIN });
+        let infinite = TouchControlLayout { dx: f32::NEG_INFINITY, dy: -2.5, scale: f32::INFINITY }.sanitized();
+        assert_eq!(infinite, TouchControlLayout { dx: 0.0, dy: -1.0, scale: 1.0 });
     }
 }

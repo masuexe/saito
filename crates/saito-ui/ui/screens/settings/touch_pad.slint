@@ -1,0 +1,939 @@
+// Interactive WYSIWYG layout editor for the mobile virtual touch pad (`SettingsView.touch-editor`).
+// Shares exact base geometry and clamping math (`PadMath`) with `TouchPad` and `TouchOverlay` in `battle.slint`.
+
+import { Theme, I18n } from "../../theme.slint";
+import { Shell, PadControlPos, PadLayout, PadMath } from "../../shell.slint";
+
+component DraggablePadKey inherits Rectangle {
+    in property <int> index;
+    in property <int> selected;
+    in property <string> label;
+    in property <bool> round;
+    in property <bool> over;
+    in property <length> container-w;
+    in property <length> container-h;
+    in property <length> min-y;
+    in property <length> base-x;
+    in property <length> base-y;
+    in property <length> base-w;
+    in property <length> base-h;
+    in property <PadControlPos> pos;
+    in property <length> font-size: 16px;
+    callback select(int);
+    callback dragged(int, float, float);
+    callback commit();
+
+    property <bool> is-selected: root.selected == root.index;
+    property <length> avail-h: max(24px, root.container-h - root.min-y);
+    property <bool> dragging;
+    property <length> grab-x;
+    property <length> grab-y;
+    property <length> origin-x;
+    property <length> origin-y;
+
+    width: root.round ? PadMath.fit-square(root.base-w, root.pos.scale, root.container-w, root.avail-h) : PadMath.fit-w(root.base-w, root.pos.scale, root.container-w);
+    height: root.round ? self.width : PadMath.fit-h(root.base-h, root.pos.scale, root.avail-h);
+    x: PadMath.place-x(root.base-x, root.base-w, self.width, root.pos.dx, root.container-w);
+    y: PadMath.place-y(root.base-y, root.base-h, self.height, root.pos.dy, root.min-y, root.container-h);
+
+    Rectangle {
+        background: root.dragging ? Theme.line : Theme.raised;
+        border-width: root.is-selected ? 2px : 1px;
+        border-color: root.is-selected ? Theme.cursor : Theme.line;
+        border-radius: root.round ? self.width / 2 : 0px;
+        opacity: !root.over ? 1 : root.dragging ? 0.8 : 0.45;
+    }
+
+    if root.is-selected: Rectangle {
+        background: Theme.tint;
+        border-radius: root.round ? self.width / 2 : 0px;
+    }
+
+    Text {
+        text: root.label;
+        color: Theme.text;
+        font-family: "Chakra Petch";
+        font-size: root.font-size;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    hit := TouchArea {
+        mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.select(root.index);
+                root.dragging = true;
+                root.grab-x = self.absolute-position.x + self.mouse-x;
+                root.grab-y = self.absolute-position.y + self.mouse-y;
+                root.origin-x = root.x;
+                root.origin-y = root.y;
+            } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                if root.dragging {
+                    root.dragging = false;
+                    root.commit();
+                }
+            }
+        }
+        moved => {
+            if root.dragging {
+                root.dragged(
+                    root.index,
+                    PadMath.invert-dx(root.base-x, root.base-w, root.width, root.origin-x + (self.absolute-position.x + self.mouse-x) - root.grab-x, root.container-w),
+                    PadMath.invert-dy(root.base-y, root.base-h, root.height, root.origin-y + (self.absolute-position.y + self.mouse-y) - root.grab-y, root.min-y, root.container-h),
+                );
+            }
+        }
+    }
+}
+
+component DraggableDPadKey inherits Rectangle {
+    in property <length> glyph;
+    in property <string> shape;
+    in property <bool> selected;
+    in property <bool> over;
+    in property <bool> dragging;
+    Rectangle {
+        background: root.dragging ? Theme.line : Theme.raised;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? Theme.cursor : Theme.line;
+        opacity: !root.over ? 1 : root.dragging ? 0.8 : 0.45;
+    }
+
+    Path {
+        width: root.glyph;
+        height: root.glyph;
+        commands: root.shape;
+        fill: Theme.text;
+        viewbox-width: 14;
+        viewbox-height: 14;
+    }
+}
+
+component DraggableDPad inherits Rectangle {
+    in property <int> selected;
+    in property <bool> over;
+    in property <length> container-w;
+    in property <length> container-h;
+    in property <length> min-y;
+    in property <length> base-x;
+    in property <length> base-y;
+    in property <length> base-size;
+    in property <length> base-glyph;
+    in property <PadControlPos> pos;
+    callback select(int);
+    callback dragged(int, float, float);
+    callback commit();
+
+    property <bool> is-selected: root.selected == 0;
+    property <length> avail-h: max(24px, root.container-h - root.min-y);
+    property <length> size: PadMath.fit-square(root.base-size, root.pos.scale, root.container-w, root.avail-h);
+    property <length> key: root.size / 3;
+    property <length> glyph: root.base-glyph * PadMath.safe-scale(root.pos.scale);
+    property <bool> dragging;
+    property <length> grab-x;
+    property <length> grab-y;
+    property <length> origin-x;
+    property <length> origin-y;
+
+    width: root.size;
+    height: root.size;
+    x: PadMath.place-x(root.base-x, root.base-size, self.width, root.pos.dx, root.container-w);
+    y: PadMath.place-y(root.base-y, root.base-size, self.height, root.pos.dy, root.min-y, root.container-h);
+
+    if root.is-selected: Rectangle {
+        background: Theme.tint;
+        border-width: 1px;
+        border-color: Theme.cursor.with-alpha(0.6);
+    }
+
+    DraggableDPadKey {
+        x: root.key;
+        y: 0;
+        width: root.key;
+        height: root.key;
+        glyph: root.glyph;
+        shape: "M 7 1 L 13 12 L 1 12 Z";
+        selected: root.is-selected;
+        over: root.over;
+        dragging: root.dragging;
+    }
+
+    DraggableDPadKey {
+        x: 0;
+        y: root.key;
+        width: root.key;
+        height: root.key;
+        glyph: root.glyph;
+        shape: "M 1 7 L 12 1 L 12 13 Z";
+        selected: root.is-selected;
+        over: root.over;
+        dragging: root.dragging;
+    }
+
+    DraggableDPadKey {
+        x: 2 * root.key;
+        y: root.key;
+        width: root.key;
+        height: root.key;
+        glyph: root.glyph;
+        shape: "M 13 7 L 2 1 L 2 13 Z";
+        selected: root.is-selected;
+        over: root.over;
+        dragging: root.dragging;
+    }
+
+    DraggableDPadKey {
+        x: root.key;
+        y: 2 * root.key;
+        width: root.key;
+        height: root.key;
+        glyph: root.glyph;
+        shape: "M 7 13 L 13 2 L 1 2 Z";
+        selected: root.is-selected;
+        over: root.over;
+        dragging: root.dragging;
+    }
+
+    TouchArea {
+        mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.select(0);
+                root.dragging = true;
+                root.grab-x = self.absolute-position.x + self.mouse-x;
+                root.grab-y = self.absolute-position.y + self.mouse-y;
+                root.origin-x = root.x;
+                root.origin-y = root.y;
+            } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                if root.dragging {
+                    root.dragging = false;
+                    root.commit();
+                }
+            }
+        }
+        moved => {
+            if root.dragging {
+                root.dragged(
+                    0,
+                    PadMath.invert-dx(root.base-x, root.base-size, root.width, root.origin-x + (self.absolute-position.x + self.mouse-x) - root.grab-x, root.container-w),
+                    PadMath.invert-dy(root.base-y, root.base-size, root.height, root.origin-y + (self.absolute-position.y + self.mouse-y) - root.grab-y, root.min-y, root.container-h),
+                );
+            }
+        }
+    }
+}
+
+component EditorActionBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 36px;
+    Rectangle {
+        y: hit.pressed ? 1px : 0px;
+        background: root.primary ? (hit.has-hover ? Theme.action.brighter(12%) : Theme.action) : (hit.has-hover ? Theme.raised-hover : Theme.raised);
+        border-width: 1px;
+        border-color: root.primary ? Theme.action : Theme.line;
+        opacity: root.enabled ? 1 : 0.45;
+    }
+
+    Text {
+        y: hit.pressed ? 1px : 0px;
+        text: root.text;
+        color: root.primary ? Theme.action-ink : Theme.text;
+        font-family: Theme.display;
+        font-size: 13px;
+        font-weight: Theme.display-bold;
+        letter-spacing: Theme.button-tracking;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        opacity: root.enabled ? 1 : 0.45;
+    }
+
+    hit := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component EditorToolbar inherits Rectangle {
+    in property <bool> landscape;
+    in property <string> selected-name;
+    in property <float> selected-scale;
+    callback scale-by(float);
+    callback reset();
+    callback close();
+
+    width: 336px;
+    height: col.preferred-height + 20px;
+
+    Rectangle {
+        background: Theme.panel.with-alpha(0.94);
+        border-width: 1px;
+        border-color: Theme.line;
+    }
+
+    col := VerticalLayout {
+        x: 12px;
+        y: 10px;
+        width: parent.width - 24px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.landscape ? I18n.upper(@tr("Landscape")) : I18n.upper(@tr("Portrait"));
+                color: Theme.cursor;
+                font-family: Theme.display;
+                font-size: 11px;
+                font-weight: Theme.display-bold;
+                letter-spacing: Theme.label-tracking;
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+            }
+
+            Text {
+                text: @tr("Drag buttons to move. Use − / + to resize.");
+                color: Theme.muted;
+                font-family: Theme.body;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.selected-name;
+                color: Theme.text;
+                font-family: Theme.display;
+                font-size: 14px;
+                font-weight: Theme.display-bold;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            EditorActionBtn {
+                width: 44px;
+                text: "−";
+                enabled: root.selected-scale > 0.605;
+                clicked => {
+                    root.scale-by(-0.1);
+                }
+            }
+
+            Text {
+                width: 52px;
+                text: "\{round(root.selected-scale * 100)}%";
+                color: Theme.text;
+                font-family: Theme.mono;
+                font-size: 13px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            EditorActionBtn {
+                width: 44px;
+                text: "+";
+                enabled: root.selected-scale < 1.595;
+                clicked => {
+                    root.scale-by(0.1);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            EditorActionBtn {
+                horizontal-stretch: 1;
+                text: I18n.upper(@tr("Reset"));
+                clicked => {
+                    root.reset();
+                }
+            }
+
+            EditorActionBtn {
+                horizontal-stretch: 1;
+                primary: true;
+                text: I18n.upper(@tr("Done"));
+                clicked => {
+                    root.close();
+                }
+            }
+        }
+    }
+}
+
+export component TouchLayoutEditor inherits Rectangle {
+    in property <int> selected: 0;
+    callback select(int);
+    callback move(bool, int, float, float);
+    callback scale-by(bool, int, float);
+    callback reset(bool);
+    callback commit();
+    callback close();
+
+    property <bool> landscape: !Theme.phone;
+    property <PadLayout> active-layout: root.landscape ? Shell.landscape-pad-layout : Shell.portrait-pad-layout;
+    property <length> picture-height: Theme.phone ? min(self.height, self.width * 2 / 3) : self.height;
+
+    pure function control-name(idx: int) -> string {
+        if idx == 0 {
+            return @tr("D-Pad");
+        }
+        if idx == 1 {
+            return "A";
+        }
+        if idx == 2 {
+            return "B";
+        }
+        if idx == 3 {
+            return "L";
+        }
+        if idx == 4 {
+            return "R";
+        }
+        if idx == 5 {
+            return "SELECT";
+        }
+        return "START";
+    }
+
+    pure function control-scale(lay: PadLayout, idx: int) -> float {
+        if idx == 0 {
+            return PadMath.safe-scale(lay.dpad.scale);
+        }
+        if idx == 1 {
+            return PadMath.safe-scale(lay.a.scale);
+        }
+        if idx == 2 {
+            return PadMath.safe-scale(lay.b.scale);
+        }
+        if idx == 3 {
+            return PadMath.safe-scale(lay.l.scale);
+        }
+        if idx == 4 {
+            return PadMath.safe-scale(lay.r.scale);
+        }
+        if idx == 5 {
+            return PadMath.safe-scale(lay.select.scale);
+        }
+        return PadMath.safe-scale(lay.start.scale);
+    }
+
+    // ---- Portrait preview ---------------------------------------------------------------------------------
+    if !root.landscape: Rectangle {
+        width: parent.width;
+        height: parent.height;
+
+        // Mock 3:2 battle stage at top, hosting the editor toolbar inside so the pad below is unobstructed.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.picture-height;
+            background: Theme.inset;
+            border-width: 1px;
+            border-color: Theme.line;
+
+            EditorToolbar {
+                width: min(336px, parent.width - 16px);
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                landscape: false;
+                selected-name: root.control-name(root.selected);
+                selected-scale: root.control-scale(root.active-layout, root.selected);
+                scale-by(d) => {
+                    root.scale-by(false, root.selected, d);
+                }
+                reset => {
+                    root.reset(false);
+                }
+                close => {
+                    root.close();
+                }
+            }
+        }
+
+        // Exact `TouchPad` container rectangle.
+        pad-area := Rectangle {
+            x: Theme.margin;
+            y: root.picture-height + 16px;
+            width: max(0px, parent.width - 2 * Theme.margin);
+            height: max(0px, parent.height - self.y - Theme.margin);
+
+            property <length> top: 40px + 12px;
+            property <length> foot: 44px;
+            property <float> scale: clamp((self.height - self.top - self.foot - 24px) / 266px, 0.5, 1);
+            property <length> key: 70px * self.scale;
+            property <length> square: 3 * self.key;
+            property <length> face: 95px * self.scale;
+            property <length> shoulder: 56px * self.scale;
+            property <length> square-y: self.height - self.foot - 12px - self.square;
+            property <length> middle: self.square-y + self.square / 2;
+            property <length> a-x: self.width - self.face;
+            property <length> b-x: max(self.square + 12px, self.a-x - 0.9 * self.face);
+            property <float> apart: (self.a-x - self.b-x) / 1px;
+            property <float> reach: (self.face + 4px) / 1px;
+            property <length> drop: max(self.face / 3, sqrt(max(0, self.reach * self.reach - self.apart * self.apart)) * 1px);
+
+            // Anchored non-movable MENU placeholder at top-left.
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: 120px;
+                height: 40px;
+                background: Theme.raised.with-alpha(0.35);
+                border-width: 1px;
+                border-color: Theme.line.with-alpha(0.45);
+                Text {
+                    text: I18n.upper(@tr("Menu"));
+                    color: Theme.muted;
+                    font-family: Theme.display;
+                    font-size: 13px;
+                    font-weight: Theme.display-semibold;
+                    letter-spacing: Theme.button-tracking;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            DraggablePadKey {
+                index: 3;
+                selected: root.selected;
+                label: "L";
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: 0px;
+                base-y: pad-area.square-y - 12px - pad-area.shoulder;
+                base-w: 132px;
+                base-h: pad-area.shoulder;
+                pos: root.active-layout.l;
+                font-size: 16px * PadMath.safe-scale(root.active-layout.l.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggablePadKey {
+                index: 4;
+                selected: root.selected;
+                label: "R";
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: pad-area.width - 132px;
+                base-y: pad-area.square-y - 12px - pad-area.shoulder;
+                base-w: 132px;
+                base-h: pad-area.shoulder;
+                pos: root.active-layout.r;
+                font-size: 16px * PadMath.safe-scale(root.active-layout.r.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggableDPad {
+                selected: root.selected;
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: 0px;
+                base-y: pad-area.square-y;
+                base-size: pad-area.square;
+                base-glyph: 18px * pad-area.scale;
+                pos: root.active-layout.dpad;
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggablePadKey {
+                index: 1;
+                selected: root.selected;
+                label: "A";
+                round: true;
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: pad-area.a-x;
+                base-y: pad-area.middle - pad-area.drop / 2 - pad-area.face / 2;
+                base-w: pad-area.face;
+                base-h: pad-area.face;
+                pos: root.active-layout.a;
+                font-size: 20px * pad-area.scale * PadMath.safe-scale(root.active-layout.a.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggablePadKey {
+                index: 2;
+                selected: root.selected;
+                label: "B";
+                round: true;
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: pad-area.b-x;
+                base-y: pad-area.middle + pad-area.drop / 2 - pad-area.face / 2;
+                base-w: pad-area.face;
+                base-h: pad-area.face;
+                pos: root.active-layout.b;
+                font-size: 20px * pad-area.scale * PadMath.safe-scale(root.active-layout.b.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggablePadKey {
+                index: 5;
+                selected: root.selected;
+                label: "SELECT";
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: pad-area.width / 2 - 104px;
+                base-y: pad-area.height - pad-area.foot;
+                base-w: 96px;
+                base-h: pad-area.foot;
+                pos: root.active-layout.select;
+                font-size: 16px * PadMath.safe-scale(root.active-layout.select.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+
+            DraggablePadKey {
+                index: 6;
+                selected: root.selected;
+                label: "START";
+                container-w: pad-area.width;
+                container-h: pad-area.height;
+                min-y: pad-area.top;
+                base-x: pad-area.width / 2 + 8px;
+                base-y: pad-area.height - pad-area.foot;
+                base-w: 96px;
+                base-h: pad-area.foot;
+                pos: root.active-layout.start;
+                font-size: 16px * PadMath.safe-scale(root.active-layout.start.scale);
+                select(i) => {
+                    root.select(i);
+                }
+                dragged(i, dx, dy) => {
+                    root.move(false, i, dx, dy);
+                }
+                commit => {
+                    root.commit();
+                }
+            }
+        }
+    }
+
+    // ---- Landscape preview --------------------------------------------------------------------------------
+    if root.landscape: over-area := Rectangle {
+        width: parent.width;
+        height: parent.height;
+
+        property <length> u: self.height / 100;
+        property <length> margin: 3 * self.u;
+        property <length> key: 12.5 * self.u;
+        property <length> pad-top: (self.height - 3 * self.key) / 2 + 4 * self.u;
+        property <length> face: 17 * self.u;
+        property <length> foot-y: self.height - self.margin - 8.5 * self.u;
+        property <length> text-size: 4.5 * self.u;
+        property <length> glyph: 4.5 * self.u;
+
+        // Mock 3:2 GBA stage in the center background.
+        Rectangle {
+            width: min(parent.width, parent.height * 3 / 2);
+            height: self.width * 2 / 3;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.inset.with-alpha(0.8);
+            border-width: 1px;
+            border-color: Theme.line.with-alpha(0.7);
+        }
+
+        // Anchored non-movable MENU & PAD placeholders matching `BattleScreen` / `TouchOverlay`.
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: over-area.foot-y;
+            width: 21 * over-area.u;
+            height: 8.5 * over-area.u;
+            background: Theme.raised.with-alpha(0.25);
+            border-width: 1px;
+            border-color: Theme.line.with-alpha(0.4);
+            Text {
+                text: I18n.upper(@tr("Menu"));
+                color: Theme.muted;
+                font-family: Theme.display;
+                font-size: over-area.text-size * 0.8;
+                font-weight: Theme.display-bold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                opacity: 0.7;
+            }
+        }
+
+        Rectangle {
+            x: 3 * over-area.u;
+            y: parent.height - 3 * over-area.u - self.height;
+            width: 12 * over-area.u;
+            height: 8.5 * over-area.u;
+            background: Theme.raised.with-alpha(0.25);
+            border-width: 1px;
+            border-color: Theme.line.with-alpha(0.4);
+            Text {
+                text: I18n.upper(@tr("Pad"));
+                color: Theme.muted;
+                font-family: Theme.display;
+                font-size: 3.4 * over-area.u;
+                font-weight: Theme.display-bold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                opacity: 0.7;
+            }
+        }
+
+        DraggablePadKey {
+            index: 3;
+            selected: root.selected;
+            label: "L";
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.margin;
+            base-y: over-area.margin;
+            base-w: 26 * over-area.u;
+            base-h: 10.5 * over-area.u;
+            pos: root.active-layout.l;
+            font-size: over-area.text-size * PadMath.safe-scale(root.active-layout.l.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggablePadKey {
+            index: 4;
+            selected: root.selected;
+            label: "R";
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.width - over-area.margin - 26 * over-area.u;
+            base-y: over-area.margin;
+            base-w: 26 * over-area.u;
+            base-h: 10.5 * over-area.u;
+            pos: root.active-layout.r;
+            font-size: over-area.text-size * PadMath.safe-scale(root.active-layout.r.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggableDPad {
+            selected: root.selected;
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.margin;
+            base-y: over-area.pad-top;
+            base-size: 3 * over-area.key;
+            base-glyph: over-area.glyph;
+            pos: root.active-layout.dpad;
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggablePadKey {
+            index: 1;
+            selected: root.selected;
+            label: "A";
+            round: true;
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.width - over-area.margin - over-area.face;
+            base-y: 31 * over-area.u;
+            base-w: over-area.face;
+            base-h: over-area.face;
+            pos: root.active-layout.a;
+            font-size: over-area.text-size * PadMath.safe-scale(root.active-layout.a.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggablePadKey {
+            index: 2;
+            selected: root.selected;
+            label: "B";
+            round: true;
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.width - over-area.margin - over-area.face - 19 * over-area.u;
+            base-y: 50 * over-area.u;
+            base-w: over-area.face;
+            base-h: over-area.face;
+            pos: root.active-layout.b;
+            font-size: over-area.text-size * PadMath.safe-scale(root.active-layout.b.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggablePadKey {
+            index: 5;
+            selected: root.selected;
+            label: "SELECT";
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.margin + 16 * over-area.u;
+            base-y: over-area.foot-y;
+            base-w: 21 * over-area.u;
+            base-h: 8.5 * over-area.u;
+            pos: root.active-layout.select;
+            font-size: over-area.text-size * 0.8 * PadMath.safe-scale(root.active-layout.select.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        DraggablePadKey {
+            index: 6;
+            selected: root.selected;
+            label: "START";
+            over: true;
+            container-w: over-area.width;
+            container-h: over-area.height;
+            min-y: 0px;
+            base-x: over-area.width - over-area.margin - 21 * over-area.u;
+            base-y: over-area.foot-y;
+            base-w: 21 * over-area.u;
+            base-h: 8.5 * over-area.u;
+            pos: root.active-layout.start;
+            font-size: over-area.text-size * 0.8 * PadMath.safe-scale(root.active-layout.start.scale);
+            select(i) => {
+                root.select(i);
+            }
+            dragged(i, dx, dy) => {
+                root.move(true, i, dx, dy);
+            }
+            commit => {
+                root.commit();
+            }
+        }
+
+        // Floating toolbar anchored at top center above the pad controls so Reset/Done stay reachable.
+        EditorToolbar {
+            width: min(336px, parent.width - 16px);
+            x: (parent.width - self.width) / 2;
+            y: 8px;
+            landscape: true;
+            selected-name: root.control-name(root.selected);
+            selected-scale: root.control-scale(root.active-layout, root.selected);
+            scale-by(d) => {
+                root.scale-by(true, root.selected, d);
+            }
+            reset => {
+                root.reset(true);
+            }
+            close => {
+                root.close();
+            }
+        }
+    }
+}

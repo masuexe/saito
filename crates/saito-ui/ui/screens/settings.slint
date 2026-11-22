@@ -9,6 +9,7 @@ import { Shell, Page, PadButton, FaceButton, NearbyWords } from "../shell.slint"
 import { Label, Note, Mono, Button, ButtonKind, Field, Select, Seg, Slider, Stepper, Row, Marker, GroupTitle, ScrollPage, Reach } from "../widgets.slint";
 import { Arrive } from "../motion.slint";
 import { AboutPage, AboutOverlay } from "settings/about.slint";
+import { TouchLayoutEditor } from "settings/touch_pad.slint";
 
 // A pad's button bound to an action: one of its four face buttons, drawn by its place, or a button with a cap.
 export struct PadBinding {
@@ -56,6 +57,15 @@ export global SettingsView {
     in property <string> nearby-target;
     // About is shown in the page's place.
     in property <bool> about;
+    // Mobile virtual touch pad layout editor is shown in the page's place.
+    in property <bool> touch-editor;
+    in property <int> touch-selected: 0;
+    callback touch-select(int);
+    callback touch-move(bool, int, float, float);
+    callback touch-scale(bool, int, float);
+    callback touch-reset(bool);
+    callback touch-commit();
+    callback touch-close();
     // The picture size that isn't a number, as the list of sizes says it.
     out property <string> largest: @tr("Largest that fits");
     out property <string> update-checking-note: @tr("Checking for updates");
@@ -705,6 +715,23 @@ component SettingsPage inherits Page {
                     }
                 }
 
+                if Theme.phone-app || Theme.phone: Rectangle {
+                    height: touch-layout-row.height;
+                    touch-layout-row := SettingLabel {
+                        label: @tr("Touch pad layout");
+                        note: @tr("Customize button positions and sizes.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.touch-layout";
+                        text: I18n.upper(@tr("Customize"));
+                    }
+                }
+
                 g-about := GroupTitle {
                     text: I18n.upper(@tr("About"));
                 }
@@ -794,13 +821,36 @@ component SettingsPage inherits Page {
     }
 }
 
-// Settings, or About in their place.
+// Settings, About, or the Touch Pad layout editor in their place.
 export component SettingsScreen inherits Rectangle {
-    if !SettingsView.about: SettingsPage {
+    if !SettingsView.about && !SettingsView.touch-editor: SettingsPage {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
     if SettingsView.about: AboutPage {
         Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if SettingsView.touch-editor && !SettingsView.about: TouchLayoutEditor {
+        width: parent.width;
+        height: parent.height;
+        selected: SettingsView.touch-selected;
+        select(i) => {
+            SettingsView.touch-select(i);
+        }
+        move(landscape, i, dx, dy) => {
+            SettingsView.touch-move(landscape, i, dx, dy);
+        }
+        scale-by(landscape, i, delta) => {
+            SettingsView.touch-scale(landscape, i, delta);
+        }
+        reset(landscape) => {
+            SettingsView.touch-reset(landscape);
+        }
+        commit => {
+            SettingsView.touch-commit();
+        }
+        close => {
+            SettingsView.touch-close();
+        }
     }
 }
 
