@@ -2475,6 +2475,16 @@ impl App {
                 let note = view.get_update_latest_note();
                 view.set_update_note(note);
             }
+            Status::CheckFailed => {
+                let was_manual = std::mem::take(&mut self.shell.manual_update);
+                shell.set_update_line("".into());
+                if was_manual {
+                    let view = ui.global::<saito_ui::SettingsView>();
+                    let note = view.get_update_failed_note();
+                    view.set_update_note(note);
+                }
+                shell.set_updating(words.get_failed());
+            }
             Status::Failed => {
                 let was_manual = std::mem::take(&mut self.shell.manual_update);
                 shell.set_update_line("".into());
@@ -2484,7 +2494,7 @@ impl App {
                     view.set_update_note(note);
                 }
                 shell.set_updating(words.get_failed());
-                if !was_manual && self.shell.scale.handheld() && !self.shell.still && self.shell.dialog.is_none() {
+                if self.shell.scale.handheld() && !self.shell.still && self.shell.dialog.is_none() {
                     self.shell.fail(UserError::UpdateFailed);
                 }
             }

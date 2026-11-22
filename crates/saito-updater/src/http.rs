@@ -117,7 +117,7 @@ pub(crate) fn parse_macos_proxy(output: &str) -> Option<String> {
     None
 }
 
-#[cfg(desktop)]
+#[cfg(any(desktop, target_os = "android"))]
 fn resolve_http_proxy() -> Option<String> {
     for var in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
         if let Ok(val) = std::env::var(var)
@@ -147,16 +147,22 @@ fn resolve_http_proxy() -> Option<String> {
             return parse_macos_proxy(&String::from_utf8_lossy(&out.stdout));
         }
     }
+    #[cfg(target_os = "android")]
+    {
+        if let Some(url) = crate::platform::system::http_proxy() {
+            return Some(url);
+        }
+    }
     None
 }
 
 /// Build an async `reqwest::Client` configured with rustls's ring provider, `saito` User-Agent, timeouts, and any
-/// active desktop HTTP(S) proxy.
+/// active desktop or Android HTTP(S) proxy.
 pub fn client() -> Result<reqwest::Client, String> {
     static PROVIDER: Once = Once::new();
     PROVIDER.call_once(|| drop(rustls::crypto::ring::default_provider().install_default()));
     let mut builder = reqwest::Client::builder().user_agent("saito").connect_timeout(CONNECT_WAIT).read_timeout(READ_WAIT);
-    #[cfg(desktop)]
+    #[cfg(any(desktop, target_os = "android"))]
     if let Some(proxy_url) = resolve_http_proxy() {
         match reqwest::Proxy::all(&proxy_url) {
             Ok(proxy) => builder = builder.proxy(proxy),

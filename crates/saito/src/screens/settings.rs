@@ -373,7 +373,7 @@ impl Settings {
         shell.save_settings();
         if on {
             shell.games.download(true);
-            shell.check_updates_now(false);
+            shell.check_updates_now(true);
         }
         self.show(shell);
     }

@@ -65,12 +65,14 @@ pub enum Status {
     Checking,
     /// An explicit check completed with no newer release available (said once, [`Status::Idle`] after).
     UpToDate,
+    /// An explicit check failed or timed out (logged): said once, [`Status::Idle`] after.
+    CheckFailed,
     /// The update to `version` is downloading, this far (0 to 1).
     Downloading { version: String, progress: f32 },
     /// The update to `version` is downloaded and being installed: the app ends once it is (Android's installer may
     /// ask the player first).
     Installing { version: String },
-    /// The update failed, just now (logged): said once, [`Status::Idle`] after.
+    /// Downloading or installing the update failed, just now (logged): said once, [`Status::Idle`] after.
     Failed,
 }
 
@@ -96,6 +98,7 @@ pub(crate) enum Told {
 enum PollOutcome {
     None,
     UpToDate,
+    CheckFailed,
     Failed,
 }
 
@@ -163,7 +166,8 @@ impl Updater {
         while let Ok(told) = self.heard.try_recv() {
             match self.take(told) {
                 PollOutcome::Failed => outcome = PollOutcome::Failed,
-                PollOutcome::UpToDate if !matches!(outcome, PollOutcome::Failed) => outcome = PollOutcome::UpToDate,
+                PollOutcome::CheckFailed if !matches!(outcome, PollOutcome::Failed) => outcome = PollOutcome::CheckFailed,
+                PollOutcome::UpToDate if matches!(outcome, PollOutcome::None) => outcome = PollOutcome::UpToDate,
                 _ => {}
             }
         }
@@ -173,12 +177,13 @@ impl Updater {
             log::warn!("no answer about an update in {} seconds: asked again next start", CHECK_WAIT.as_secs());
             let explicit = std::mem::replace(&mut self.explicit, false);
             self.stage = Stage::Settled;
-            if explicit {
-                outcome = PollOutcome::Failed;
+            if explicit && !matches!(outcome, PollOutcome::Failed) {
+                outcome = PollOutcome::CheckFailed;
             }
         }
         match outcome {
             PollOutcome::Failed => return Status::Failed,
+            PollOutcome::CheckFailed => return Status::CheckFailed,
             PollOutcome::UpToDate => return Status::UpToDate,
             PollOutcome::None => {}
         }
@@ -227,7 +232,7 @@ impl Updater {
                 }
                 let explicit = std::mem::replace(&mut self.explicit, false);
                 self.stage = Stage::Settled;
-                if explicit { PollOutcome::Failed } else { PollOutcome::None }
+                if explicit { PollOutcome::CheckFailed } else { PollOutcome::None }
             }
             Told::Progress(progress) => {
                 if let Stage::Downloading(_, at) = &mut self.stage {
@@ -265,5 +270,39 @@ impl Updater {
                 if !declined { PollOutcome::Failed } else { PollOutcome::None }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_check_failure_reports_check_failed_not_install_failed() {
+        let mut updater = Updater::new(Releases::github("masuexe", "saito"));
+        updater.stage = Stage::Checking(Instant::now());
+        updater.explicit = true;
+        updater.tell.send(Told::CheckFailed("network unreachable".into())).unwrap();
+        assert_eq!(updater.poll(), Status::CheckFailed);
+        assert_eq!(updater.poll(), Status::Idle);
+    }
+
+    #[test]
+    fn silent_startup_check_failure_stays_idle() {
+        let mut updater = Updater::new(Releases::github("masuexe", "saito"));
+        updater.stage = Stage::Checking(Instant::now());
+        updater.explicit = false;
+        updater.tell.send(Told::CheckFailed("network unreachable".into())).unwrap();
+        assert_eq!(updater.poll(), Status::Idle);
+    }
+
+    #[test]
+    fn explicit_check_up_to_date_reports_once() {
+        let mut updater = Updater::new(Releases::github("masuexe", "saito"));
+        updater.stage = Stage::Checking(Instant::now());
+        updater.explicit = true;
+        updater.tell.send(Told::UpToDate).unwrap();
+        assert_eq!(updater.poll(), Status::UpToDate);
+        assert_eq!(updater.poll(), Status::Idle);
     }
 }

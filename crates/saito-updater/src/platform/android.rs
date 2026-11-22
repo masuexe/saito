@@ -77,10 +77,14 @@ pub fn newer(json: &[u8], installed: &str) -> Result<Option<Found>, String> {
     Ok(Some(Found { version: version.to_owned(), url: apk.browser_download_url, size: apk.size, sha256 }))
 }
 
-/// A version's numbers: major, minor, patch.
-fn numbers(version: &str) -> Option<[u64; 3]> {
-    let mut parts = version.split('.').map(|part| part.parse().ok());
-    let numbers = [parts.next()??, parts.next()??, parts.next()??];
+/// A version's numbers: major, minor, patch, and whether it is a stable release (no `-prerelease` suffix).
+fn numbers(version: &str) -> Option<(u64, u64, u64, bool)> {
+    let (core, is_stable) = match version.split_once('-') {
+        Some((core, _)) => (core, false),
+        None => (version, true),
+    };
+    let mut parts = core.split('.').map(|part| part.parse().ok());
+    let numbers = (parts.next()??, parts.next()??, parts.next()??, is_stable);
     parts.next().is_none().then_some(numbers)
 }
 
@@ -225,6 +229,24 @@ fn on_thread(name: &str, work: impl Future<Output = ()> + Send + 'static) -> Res
     let runtime = runtime.map_err(|e| format!("a runtime for the update: {e}"))?;
     let spawned = std::thread::Builder::new().name(name.into()).spawn(move || runtime.block_on(work));
     spawned.map(drop).map_err(|e| format!("a thread for the update: {e}"))
+}
+
+/// `SaitoUpdater.httpProxy`: the system's configured HTTP(S) proxy URL, if any.
+pub(crate) fn http_proxy() -> Option<String> {
+    let raw = java(|env, activity| {
+        let class = helper(env, activity)?;
+        let proxy = env
+            .call_static_method(&class, jni_str!("httpProxy"), jni_sig!("()Ljava/lang/String;"), &[])?
+            .l()?;
+        if proxy.is_null() {
+            return Ok(None);
+        }
+        let proxy = env.cast_local::<JString>(proxy)?;
+        Ok(Some(proxy.try_to_string(env)?))
+    })
+    .ok()
+    .flatten()?;
+    crate::http::normalize_http_proxy(&raw)
 }
 
 /// `SaitoUpdater.version`: the installed app's version, as Android says it.
@@ -389,6 +411,13 @@ mod tests {
     #[test]
     fn a_version_that_isnt_three_numbers_doesnt_compare() {
         assert!(newer(&with_apk("v0.21"), "0.20.0").is_err());
-        assert!(newer(&with_apk("v0.21.0-rc1"), "0.20.0").is_err());
+        assert!(newer(&with_apk("v0.21.0.1"), "0.20.0").is_err());
+    }
+
+    #[test]
+    fn prerelease_suffixes_compare_below_their_stable_release() {
+        assert!(newer(&with_apk("v0.20.0"), "0.20.0-rc1").unwrap().is_some());
+        assert_eq!(newer(&with_apk("v0.20.0-rc1"), "0.20.0").unwrap(), None);
+        assert!(newer(&with_apk("v0.21.0-rc1"), "0.20.0").unwrap().is_some());
     }
 }

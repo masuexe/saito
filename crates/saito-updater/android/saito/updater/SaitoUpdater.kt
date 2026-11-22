@@ -38,6 +38,22 @@ object SaitoUpdater {
         return info.versionName ?: ""
     }
 
+    /** The system's HTTP(S) proxy URL (e.g. "http://host:port"), or null if none is configured. */
+    @JvmStatic
+    fun httpProxy(): String? {
+        val httpsHost = System.getProperty("https.proxyHost")?.trim().orEmpty()
+        if (httpsHost.isNotEmpty()) {
+            val port = System.getProperty("https.proxyPort")?.trim().orEmpty()
+            return if (port.isNotEmpty()) "http://$httpsHost:$port" else "http://$httpsHost"
+        }
+        val httpHost = System.getProperty("http.proxyHost")?.trim().orEmpty()
+        if (httpHost.isNotEmpty()) {
+            val port = System.getProperty("http.proxyPort")?.trim().orEmpty()
+            return if (port.isNotEmpty()) "http://$httpHost:$port" else "http://$httpHost"
+        }
+        return null
+    }
+
     /** Launch the standard Android package installer UI via FileProvider for [file]. */
     private fun launchInstallerIntent(activity: Activity, file: File): String? =
         try {
