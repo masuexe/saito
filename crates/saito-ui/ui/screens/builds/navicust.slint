@@ -718,18 +718,28 @@ component ProgramRowView inherits Rectangle {
         changed has-hover => {
             Nav.hover("programs", root.nav-index, self.has-hover);
         }
+        clicked => {
+            if Theme.handheld && abs(self.mouse-x - self.pressed-x) <= 8px && abs(self.mouse-y - self.pressed-y) <= 8px {
+                Nav.point("programs", root.nav-index);
+                if !NavicustView.holding && root.choice && self.pressed-x >= root.colors-x - 2px && self.pressed-x < root.colors-x + root.colors-width + 2px {
+                    Nav.choose("color", root.nav-index, max(0, min(root.program.colors.length - 1, floor((self.pressed-x - root.colors-x + 2px) / root.pitch))));
+                } else {
+                    Nav.choose("drag", 0, root.nav-index);
+                }
+            }
+        }
         pointer-event(e) => {
             if e.kind == PointerEventKind.move && !self.pressed && NavicustView.holding {
                 Nav.choose("drag", 7, Pointer.at(self.absolute-position, self.mouse-x, self.mouse-y));
-            } else if e.button == PointerEventButton.left && e.kind == PointerEventKind.down && !NavicustView.holding && root.choice && self.mouse-x >= root.colors-x - 2px && self.mouse-x < root.colors-x + root.colors-width + 2px {
+            } else if !Theme.handheld && e.button == PointerEventButton.left && e.kind == PointerEventKind.down && !NavicustView.holding && root.choice && self.mouse-x >= root.colors-x - 2px && self.mouse-x < root.colors-x + root.colors-width + 2px {
                 // (A click or a tap on one of its colors chooses it and takes that color's part in hand, as a click
                 // on the row does: the user, "selecting the color in the ncp editor should also pick up the ncp".)
                 Nav.point("programs", root.nav-index);
                 Nav.choose("color", root.nav-index, max(0, min(root.program.colors.length - 1, floor((self.mouse-x - root.colors-x + 2px) / root.pitch))));
-            } else if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+            } else if !Theme.handheld && e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
                 Nav.point("programs", root.nav-index);
                 Nav.choose("drag", 0, root.nav-index);
-            } else if e.button == PointerEventButton.left && e.kind == PointerEventKind.up {
+            } else if !Theme.handheld && e.button == PointerEventButton.left && e.kind == PointerEventKind.up {
                 Nav.choose("drag", 3, Pointer.at(self.absolute-position, self.mouse-x, self.mouse-y));
             } else if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && NavicustView.holding {
                 Nav.choose("drag", 8, 0);
@@ -960,8 +970,8 @@ component ProgramsPane inherits Rectangle {
         width: root.width;
         height: max(0px, root.height - self.y);
         nav: "programs";
-        // (A mouse's drag of a row takes its program to the board; the wheel scrolls the list.)
-        mouse-pan: false;
+        // (A mouse's drag of a row takes its program to the board; on handheld touch pans the list.)
+        mouse-pan: Theme.handheld;
         count: NavicustView.programs.length;
         row-height: Theme.list-row;
         chosen: self.focused-row;
