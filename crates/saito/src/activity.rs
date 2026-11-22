@@ -118,6 +118,17 @@ pub(crate) fn set_hide_landscape_status_bar(hide: bool) {
     }
 }
 
+/// Move the Android task to the background when Back is pressed at the root menu.
+pub(crate) fn move_to_background() {
+    let result = java(|env, activity| {
+        env.call_method(activity, jni_str!("moveToBackground"), jni_sig!("()V"), &[])?;
+        Ok(())
+    });
+    if let Err(why) = result {
+        crate::errors::log("moving Android task to background", &why);
+    }
+}
+
 /// Slint's winit backend on the activity's event loop.
 pub(crate) fn select_backend() -> Result<(), slint::PlatformError> {
     let activity = activity().map_err(slint::PlatformError::Other)?.clone();
@@ -170,6 +181,20 @@ pub(crate) fn safe_area(ui: &AppWindow) {
 #[unsafe(no_mangle)]
 extern "system" fn Java_saito_app_SaitoActivity_safeArea<'local>(_env: EnvUnowned<'local>, _activity: JObject<'local>, left: jint, top: jint, right: jint, bottom: jint) {
     *SAFE_AREA.lock().unwrap_or_else(|e| e.into_inner()) = Some([left, top, right, bottom]);
+}
+
+/// `SaitoActivity.systemBack`: Android's Back button or edge-back gesture, dispatched onto the app's event loop.
+#[unsafe(no_mangle)]
+extern "system" fn Java_saito_app_SaitoActivity_systemBack<'local>(_env: EnvUnowned<'local>, _activity: JObject<'local>) {
+    if let Err(why) = slint::invoke_from_event_loop(|| {
+        crate::with_app(|app| {
+            if !app.system_back() {
+                move_to_background();
+            }
+        });
+    }) {
+        crate::errors::log("handling Android system back", &why);
+    }
 }
 
 /// `SaitoActivity.typed`: the soft keyboard's edit, kept for the app's thread, which this wakes.

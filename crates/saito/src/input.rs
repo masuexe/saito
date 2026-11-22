@@ -16,7 +16,7 @@ use crate::nav::Rect;
 use saito_gamepad::{Axis, Button, EventKind, Id};
 use saito_battle::input::{Joypad, keys};
 use saito_frontend::player::time_of;
-use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, MouseButton};
+use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, MouseButton, TouchPhase};
 use i_slint_backend_winit::winit::keyboard::{KeyCode, PhysicalKey};
 use web_time::Instant;
 
@@ -509,7 +509,7 @@ fn fixed_action(code: KeyCode, shift: bool) -> Option<Action> {
         KeyCode::ArrowLeft => Action::Left,
         KeyCode::ArrowRight => Action::Right,
         KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => Action::Confirm,
-        KeyCode::Escape => Action::Back,
+        KeyCode::Escape | KeyCode::BrowserBack => Action::Back,
         KeyCode::Tab if shift => Action::PreviousFocus,
         KeyCode::Tab => Action::NextFocus,
         KeyCode::Delete | KeyCode::Backspace => Action::Delete,
@@ -967,6 +967,53 @@ impl TouchPad {
     }
 }
 
+/// Single-finger horizontal swipe on the main menu to switch games.
+/// Multi-touch or cancelled touches (e.g. Android edge-back gesture) are ignored cleanly.
+#[derive(Default)]
+pub struct MenuSwipe {
+    active: Vec<u64>,
+    tracked: Option<(u64, f32, f32)>,
+}
+
+impl MenuSwipe {
+    /// Minimum horizontal travel in logical UI units to trigger a game switch.
+    const MIN_DX: f32 = 48.0;
+    /// Require horizontal motion to dominate vertical drift (`|dx| > |dy| * 1.5`).
+    const MAX_SLOPE: f32 = 1.5;
+
+    pub fn event(&mut self, finger: u64, phase: TouchPhase, x: f32, y: f32) -> Option<i32> {
+        match phase {
+            TouchPhase::Started => {
+                self.tracked = if self.active.is_empty() { Some((finger, x, y)) } else { None };
+                if !self.active.contains(&finger) {
+                    self.active.push(finger);
+                }
+                None
+            }
+            TouchPhase::Moved => None,
+            TouchPhase::Cancelled => {
+                self.active.retain(|&f| f != finger);
+                self.tracked = None;
+                None
+            }
+            TouchPhase::Ended => {
+                self.active.retain(|&f| f != finger);
+                let (tracked_finger, sx, sy) = self.tracked.take()?;
+                if tracked_finger != finger {
+                    return None;
+                }
+                let (dx, dy) = (x - sx, y - sy);
+                (dx.abs() >= Self::MIN_DX && dx.abs() > dy.abs() * Self::MAX_SLOPE).then_some(if dx < 0.0 { 1 } else { -1 })
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.active.clear();
+        self.tracked = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,6 +1171,7 @@ mod tests {
             assert_eq!(at(&b, confirm), Some(Action::Confirm));
         }
         assert_eq!(at(&b, KeyCode::Escape), Some(Action::Back));
+        assert_eq!(at(&b, KeyCode::BrowserBack), Some(Action::Back));
         assert_eq!((at(&b, KeyCode::KeyZ), at(&b, KeyCode::KeyX)), (None, None));
         assert_eq!((at(&b, KeyCode::KeyA), at(&b, KeyCode::KeyS)), (Some(Action::Previous), Some(Action::Next)));
         assert_eq!(at(&b, KeyCode::ArrowUp), Some(Action::Up));
@@ -1260,5 +1308,32 @@ mod tests {
         assert_eq!(pad.scroll_speed(), Some(TILT_SPEED));
         pad.apart = true;
         assert_eq!(pad.scroll_speed(), None, "the dummy's");
+    }
+
+    #[test]
+    fn menu_swipe_switches_games_on_horizontal_swipe_only() {
+        let mut swipe = MenuSwipe::default();
+        // Swipe left -> next game (+1)
+        assert_eq!(swipe.event(1, TouchPhase::Started, 220.0, 300.0), None);
+        assert_eq!(swipe.event(1, TouchPhase::Moved, 140.0, 306.0), None);
+        assert_eq!(swipe.event(1, TouchPhase::Ended, 120.0, 310.0), Some(1));
+        // Swipe right -> previous game (-1)
+        assert_eq!(swipe.event(2, TouchPhase::Started, 100.0, 300.0), None);
+        assert_eq!(swipe.event(2, TouchPhase::Ended, 200.0, 315.0), Some(-1));
+        // Short tap does not switch
+        assert_eq!(swipe.event(3, TouchPhase::Started, 100.0, 300.0), None);
+        assert_eq!(swipe.event(3, TouchPhase::Ended, 125.0, 302.0), None);
+        // Steep vertical/diagonal gesture does not switch
+        assert_eq!(swipe.event(4, TouchPhase::Started, 100.0, 300.0), None);
+        assert_eq!(swipe.event(4, TouchPhase::Ended, 170.0, 420.0), None);
+        // Cancelled touch (e.g. OS edge-back gesture) does not switch
+        assert_eq!(swipe.event(5, TouchPhase::Started, 10.0, 300.0), None);
+        assert_eq!(swipe.event(5, TouchPhase::Cancelled, 90.0, 300.0), None);
+        assert_eq!(swipe.event(5, TouchPhase::Ended, 110.0, 300.0), None);
+        // Multi-touch cancels swipe
+        assert_eq!(swipe.event(6, TouchPhase::Started, 100.0, 300.0), None);
+        assert_eq!(swipe.event(7, TouchPhase::Started, 120.0, 320.0), None);
+        assert_eq!(swipe.event(6, TouchPhase::Ended, 240.0, 300.0), None);
+        assert_eq!(swipe.event(7, TouchPhase::Ended, 250.0, 320.0), None);
     }
 }

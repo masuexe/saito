@@ -18,6 +18,7 @@ import android.view.WindowManager
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.EditorInfo
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
@@ -57,6 +58,9 @@ class SaitoActivity : GameActivity() {
 
     @Volatile
     private var hideStatusBarInLandscape: Boolean = false
+
+    @Volatile
+    private var readyForNative: Boolean = false
 
     fun isNettaiInstalled(): Boolean = isNettaiInstalled(this)
 
@@ -99,6 +103,14 @@ class SaitoActivity : GameActivity() {
         // layout would turn to the desktop's.
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         applyStatusBarVisibility()
+        readyForNative = true
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (readyForNative) {
+                    systemBack()
+                }
+            }
+        })
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -141,7 +153,24 @@ class SaitoActivity : GameActivity() {
 
     private external fun safeArea(left: Int, top: Int, right: Int, bottom: Int)
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean = SaitoGamepads.take(event) || super.dispatchKeyEvent(event)
+    /** System back (Android 3-button nav bar Back or edge swipe back): handled on the app thread (`activity.rs`). */
+    private external fun systemBack()
+
+    /** Move the app task to the background when Back is pressed at the root menu. */
+    fun moveToBackground() {
+        runOnUiThread { moveTaskToBack(true) }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (SaitoGamepads.take(event)) return true
+        if (readyForNative && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) {
+                onBackPressedDispatcher.onBackPressed()
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         SaitoGamepads.take(event) || super.dispatchGenericMotionEvent(event)

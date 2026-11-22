@@ -239,6 +239,8 @@ pub struct Shell {
     pub bindings: Bindings,
     /// The GBA buttons the on-screen pad holds.
     pub touch: crate::input::TouchPad,
+    menu_swipe: crate::input::MenuSwipe,
+    suppress_menu_click: bool,
     /// The on-screen pad's buttons as the UI was last told they are held.
     pad_shown: u16,
     /// The language shown: its code and its rules (capitals, lists), made when it was chosen (`lang::select`).
@@ -406,6 +408,23 @@ impl Shell {
 
     fn game_locked(&self) -> bool {
         self.ui().global::<saito_ui::Shell>().get_game_locked()
+    }
+
+    fn can_swipe_menu(&self) -> bool {
+        let ui = self.ui();
+        let shell_ui = ui.global::<saito_ui::Shell>();
+        !self.still
+            && self.screen == ScreenId::Menu
+            && self.swap.is_none()
+            && self.battle.is_none()
+            && !self.loading_battle()
+            && self.dialog.is_none()
+            && self.picking.is_none()
+            && !self.nav.editing()
+            && !shell_ui.get_loading()
+            && !shell_ui.get_versus()
+            && self.games.playable().len() >= 2
+            && !self.game_locked()
     }
 
     /// Select a game: it loads if it hasn't, and the screen shown is shown again with it once it is ready. Its
@@ -1194,6 +1213,8 @@ impl App {
             pad: Pad::start(),
             bindings,
             touch: Default::default(),
+            menu_swipe: Default::default(),
+            suppress_menu_click: false,
             pad_shown: 0,
             i18n,
             scale: Scale { os: 1.0, unit: 1.0, ..Scale::default() },
@@ -1517,6 +1538,36 @@ impl App {
         self.settle();
     }
 
+    /// Android system Back button / gesture: opens the battle menu in-fight, dismisses overlays/edits/sub-views
+    /// or returns to the main menu, and returns `false` at the root menu so Android can move the task to background.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn system_back(&mut self) -> bool {
+        self.shell.finish_swap();
+        let has_overlay = self.shell.picking.is_some()
+            || self.shell.dialog.is_some()
+            || self.shell.nav.editing()
+            || self.shell.nav.grabbed()
+            || self.shell.battle.as_ref().is_some_and(Battle::menu_open);
+        let (versus, loading) = {
+            let ui = self.shell.ui();
+            let shell_ui = ui.global::<saito_ui::Shell>();
+            (shell_ui.get_versus(), shell_ui.get_loading())
+        };
+        match decide_system_back(self.shell.battle_has_keys(), has_overlay, versus, loading, self.shell.screen) {
+            SystemBackAction::OpenBattleMenu => {
+                self.shell.open_menu();
+                self.settle();
+                true
+            }
+            SystemBackAction::Back => {
+                self.act(Action::Back);
+                true
+            }
+            SystemBackAction::Ignore => true,
+            SystemBackAction::Background => false,
+        }
+    }
+
     /// One of the menus' actions, from a key or a pad's button. It acts at once: a screen still leaving is
     /// gone, and if the controls it is for don't exist yet (the screen was shown this frame) it is done as
     /// soon as they do.
@@ -1635,6 +1686,9 @@ impl App {
     pub fn input(&mut self, input: NavInput) {
         // (A click on a screen that is leaving is on nothing: its controls are going.)
         if self.shell.swap.is_some() && matches!(input, NavInput::Activate(..) | NavInput::Step(..) | NavInput::Choose(..) | NavInput::Point(..) | NavInput::Hover(..)) {
+            return;
+        }
+        if self.shell.suppress_menu_click && matches!(input, NavInput::Activate(..) | NavInput::Step(..) | NavInput::Choose(..)) {
             return;
         }
         let ui = self.shell.ui();
@@ -1815,6 +1869,7 @@ impl App {
             }
             return false;
         }
+        self.shell.suppress_menu_click = false;
         if self.shell.battle_has_keys() {
             let custom_open = self
                 .shell
@@ -1847,7 +1902,25 @@ impl App {
         self.shell.cursor_pos = None;
         self.shell.swallow_mouse_up = None;
         self.shell.touch.clear();
+        self.shell.menu_swipe.clear();
+        self.shell.suppress_menu_click = false;
         self.shell.show_pad();
+    }
+
+    fn menu_touch(&mut self, finger: u64, phase: TouchPhase, x: f64, y: f64) {
+        if matches!(phase, TouchPhase::Started) {
+            self.shell.suppress_menu_click = false;
+        }
+        if !self.shell.can_swipe_menu() {
+            self.shell.menu_swipe.clear();
+            return;
+        }
+        let unit = (self.shell.scale.os * self.shell.scale.unit).max(0.01);
+        if let Some(by) = self.shell.menu_swipe.event(finger, phase, x as f32 / unit, y as f32 / unit) {
+            self.shell.suppress_menu_click = true;
+            self.did(Did::Step(Key::new("game", 0), by));
+            crate::haptics::tap();
+        }
     }
 
     /// A finger on the window (`main`'s winit hook, before Slint; `x` and `y` in the display's pixels): the
@@ -1860,8 +1933,10 @@ impl App {
         if !(pad && self.shell.battle_has_keys()) {
             self.shell.touch.clear();
             self.shell.show_pad();
+            self.menu_touch(finger, phase, x, y);
             return false;
         }
+        self.shell.menu_swipe.clear();
         let unit = (self.shell.scale.os * self.shell.scale.unit).max(0.01);
         let (x, y) = (x as f32 / unit, y as f32 / unit);
         let (before, was_under) = (self.shell.touch.held(), self.shell.touch.under(finger));
@@ -2027,6 +2102,7 @@ impl App {
     pub fn frame(&mut self, now: Instant) {
         // (A phone's dialogs answer on the system's threads: what came is heard here, on the app's.)
         saito_dialogs::poll();
+        self.shell.suppress_menu_click = false;
         // (The browser's input over a field goes once its edit has ended, however it ended.)
         #[cfg(target_arch = "wasm32")]
         if !self.shell.nav.editing() && crate::page::text_entry::is_open() {
@@ -2511,9 +2587,48 @@ impl App {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+enum SystemBackAction {
+    OpenBattleMenu,
+    Back,
+    Ignore,
+    Background,
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn decide_system_back(battle_has_keys: bool, has_overlay: bool, versus: bool, loading: bool, screen: ScreenId) -> SystemBackAction {
+    if battle_has_keys {
+        SystemBackAction::OpenBattleMenu
+    } else if has_overlay {
+        SystemBackAction::Back
+    } else if versus {
+        SystemBackAction::Ignore
+    } else if screen == ScreenId::Menu && loading {
+        SystemBackAction::Background
+    } else if screen == ScreenId::Menu {
+        SystemBackAction::Background
+    } else {
+        SystemBackAction::Back
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_back_routing_matches_screen_and_overlay_state() {
+        assert_eq!(decide_system_back(true, false, false, false, ScreenId::Play), SystemBackAction::OpenBattleMenu);
+        assert_eq!(decide_system_back(false, true, false, false, ScreenId::Menu), SystemBackAction::Back);
+        assert_eq!(decide_system_back(false, true, false, true, ScreenId::Menu), SystemBackAction::Back);
+        assert_eq!(decide_system_back(false, false, true, false, ScreenId::Play), SystemBackAction::Ignore);
+        assert_eq!(decide_system_back(false, false, false, true, ScreenId::Menu), SystemBackAction::Background);
+        assert_eq!(decide_system_back(false, false, false, false, ScreenId::Menu), SystemBackAction::Background);
+        for screen in [ScreenId::Play, ScreenId::Practice, ScreenId::Builds, ScreenId::Replays, ScreenId::Settings] {
+            assert_eq!(decide_system_back(false, false, false, false, screen), SystemBackAction::Back, "{screen:?}");
+        }
+    }
 
     /// A select's list is as tall as its rows, up to ten and to the room the window has by the select: under
     /// it, or over it where it doesn't fit under and there is more room over. It is never taller than its room.
