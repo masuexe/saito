@@ -139,10 +139,11 @@ impl Tab for Navi {
         EditorTab::Navi
     }
 
-    /// The navi, and the forms the build chooses.
+    /// The navi, its base HP (where customizable), and the forms the build chooses.
     fn fields(&self, content: &Content) -> Vec<String> {
         let navi = content.defs.fact_name(PlayerFact::Navi).map(str::to_string);
-        navi.into_iter().chain(saito_match::facts::form_facts(content).iter().map(|f| f.name.to_string())).collect()
+        let hp = content.defs.fact_name(PlayerFact::BaseHp).map(str::to_string);
+        navi.into_iter().chain(hp).chain(saito_match::facts::form_facts(content).iter().map(|f| f.name.to_string())).collect()
     }
 
     fn main(&self) -> &'static str {
@@ -198,6 +199,18 @@ impl Tab for Navi {
                 })
                 .collect();
             view.set_choices(ModelRc::new(VecModel::from(choices)));
+            if let Some((min, max)) = kit.builds.base_hp_range(&content, draft.side()) {
+                let hp = kit.builds.base_hp(&content, draft.side()).unwrap_or(max);
+                view.set_has_base_hp(true);
+                view.set_base_hp(hp.to_string().into());
+                view.set_base_hp_min(hp <= min);
+                view.set_base_hp_max(hp >= max);
+            } else {
+                view.set_has_base_hp(false);
+                view.set_base_hp(Default::default());
+                view.set_base_hp_min(false);
+                view.set_base_hp_max(false);
+            }
             let own = saito_match::first_navi(&content, &kit.game);
             view.set_own(own.map(|n| names.navi(n)).unwrap_or_default().into());
             view.set_other_navi(own.is_some_and(|n| n != chosen));
@@ -311,7 +324,7 @@ impl Tab for Navi {
         view.set_face(face);
         view.set_element(kit.pictures.element(family(&content, content.navi(chosen).element)));
         // (The focus starts on the build's navi's card: in the grid, or on a phone the one that opens its sheet.)
-        let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "tab", "ruleset", "ruleset-edit", "practice"];
+        let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "base-hp", "base-hp-step", "tab", "ruleset", "ruleset-edit", "practice"];
         if shell.nav.focused().is_none_or(|k| (!known.contains(&k.id.as_str()) && !k.id.starts_with(SHEET)) || (!phone && k.id == "navi-pick")) {
             if phone {
                 shell.nav.focus("navi-pick", 0);
@@ -403,8 +416,53 @@ impl Tab for Navi {
                     take(self, shell, draft, index, at + 1);
                 }
             }
+            // (Step buttons for base HP: -20, -1, +1, +20.)
+            "base-hp-step" => {
+                let delta = match index {
+                    0 => -20,
+                    1 => -1,
+                    2 => 1,
+                    3 => 20,
+                    _ => return,
+                };
+                if step_base_hp(draft, delta) {
+                    shell.sound.play(crate::sound::Cue::Pick);
+                    self.show(shell, draft);
+                } else {
+                    shell.sound.play(crate::sound::Cue::Refused);
+                }
+            }
             _ => {}
         }
+    }
+
+    fn edit(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, _index: i32, text: &str, done: bool) {
+        if id != "base-hp" {
+            return;
+        }
+        let kit = draft.kit.clone();
+        let Some((min, max)) = kit.builds.base_hp_range(draft.content(), draft.side()) else { return };
+        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
+        if !done {
+            shell.ui().global::<NaviView>().set_base_hp(digits.clone().into());
+            if let Ok(n) = digits.parse::<u16>()
+                && n >= min
+                && n <= max
+                && set_base_hp(draft, n)
+            {
+                let view_text = digits;
+                self.show(shell, draft);
+                shell.ui().global::<NaviView>().set_base_hp(view_text.into());
+            }
+            return;
+        }
+        let target = digits
+            .parse::<u32>()
+            .ok()
+            .map(|n| n.clamp(min as u32, max as u32) as u16)
+            .unwrap_or_else(|| kit.builds.base_hp(draft.content(), draft.side()).unwrap_or(max));
+        let _ = set_base_hp(draft, target);
+        self.show(shell, draft);
     }
 
     /// Left or Right on a choice: its preset that way, none past its ends (a segmented control's).
@@ -463,4 +521,31 @@ fn take(tab: &mut Navi, shell: &mut Shell, draft: &mut Draft, index: i32, preset
     if changed {
         tab.show(shell, draft);
     }
+}
+
+/// Set the build's base HP to `hp` (within its legal range). Returns whether it changed.
+fn set_base_hp(draft: &mut Draft, hp: u16) -> bool {
+    let kit = draft.kit.clone();
+    draft.edit(|content, side| {
+        let before = side.clone();
+        match kit.builds.set_base_hp(content, side, hp) {
+            Ok(()) => *side != before,
+            Err(why) => {
+                crate::errors::log("setting a build's base HP", &why);
+                false
+            }
+        }
+    })
+}
+
+/// Adjust the build's base HP by `delta`, clamped to its legal range. Returns whether it changed.
+fn step_base_hp(draft: &mut Draft, delta: i32) -> bool {
+    let kit = draft.kit.clone();
+    let Some((min, max)) = kit.builds.base_hp_range(draft.content(), draft.side()) else { return false };
+    let cur = kit.builds.base_hp(draft.content(), draft.side()).unwrap_or(max);
+    let next = (cur as i32 + delta).clamp(min as i32, max as i32) as u16;
+    if next == cur {
+        return false;
+    }
+    set_base_hp(draft, next)
 }

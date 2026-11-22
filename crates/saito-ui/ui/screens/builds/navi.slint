@@ -15,7 +15,7 @@
 import { Theme, I18n } from "../../theme.slint";
 import { Nav, NavKind, Focusable } from "../../nav.slint";
 import { Shell, Hint, PadButton } from "../../shell.slint";
-import { Cut, PanelBack, Label, Select, Button, ProblemNote, AllNone, ScrollPage, ArrowDown } from "../../widgets.slint";
+import { Cut, PanelBack, Label, Select, Button, Field, ProblemNote, AllNone, ScrollPage, ArrowDown } from "../../widgets.slint";
 import { Tween } from "../../motion.slint";
 import { VersionTag, StatLine } from "../../build.slint";
 
@@ -112,6 +112,11 @@ export global NaviView {
     in property <string> fault;
     // The game's choices the build's navi has (none in a game without, or for a navi without).
     in property <[NaviChoice]> choices;
+    // Customizable base HP for games/navis that support it (EXE4/EXE5 MegaMan, 1..=1000).
+    in property <bool> has-base-hp;
+    in property <string> base-hp;
+    in property <bool> base-hp-min;
+    in property <bool> base-hp-max;
     // The game's own navi's name: the one a NaviCust and patch cards are of; and whether the build's navi is another,
     // for whom the note says so.
     in property <string> own;
@@ -526,8 +531,8 @@ export component NaviTab inherits Rectangle {
     }
 
     // Under the navi's facts, one after the other: the choices (the user: "the light/dark switcher should be above the
-    // souls"), then the selector's facts of forms. A phone's forms scroll in the room the panel has; a desktop's are
-    // all shown, nothing to scroll.
+    // souls"), then customizable base HP (when offered), then the selector's facts of forms. A phone's forms scroll in
+    // the room the panel has; a desktop's are all shown, nothing to scroll.
     choices := VerticalLayout {
         x: root.panel-x + root.pad;
         y: root.body-y;
@@ -543,7 +548,82 @@ export component NaviTab inherits Rectangle {
         }
     }
 
-    property <length> forms-y: root.body-y + (NaviView.choices.length > 0 ? choices.preferred-height + root.fact-gap : 0px);
+    property <length> base-hp-y: root.body-y + (NaviView.choices.length > 0 ? choices.preferred-height + root.fact-gap : 0px);
+    base-hp-box := VerticalLayout {
+        x: root.panel-x + root.pad;
+        y: root.base-hp-y;
+        width: root.panel-width - 2 * root.pad;
+        height: NaviView.has-base-hp ? self.preferred-height : 0px;
+        visible: NaviView.has-base-hp;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            height: 16px;
+            text: I18n.upper(@tr("Base HP"));
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            vertical-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 4px;
+            Button {
+                width: 40px;
+                height: 34px;
+                compact: true;
+                enabled: NaviView.has-base-hp && !NaviView.base-hp-min;
+                nav: NaviView.has-base-hp ? "base-hp-step" : "";
+                nav-index: 0;
+                text: "-20";
+            }
+
+            Button {
+                width: 34px;
+                height: 34px;
+                compact: true;
+                enabled: NaviView.has-base-hp && !NaviView.base-hp-min;
+                nav: NaviView.has-base-hp ? "base-hp-step" : "";
+                nav-index: 1;
+                text: "-1";
+            }
+
+            Field {
+                width: 78px;
+                height: 34px;
+                code: true;
+                enabled: NaviView.has-base-hp;
+                nav: NaviView.has-base-hp ? "base-hp" : "";
+                text: NaviView.base-hp;
+                placeholder: "1000";
+            }
+
+            Button {
+                width: 34px;
+                height: 34px;
+                compact: true;
+                enabled: NaviView.has-base-hp && !NaviView.base-hp-max;
+                nav: NaviView.has-base-hp ? "base-hp-step" : "";
+                nav-index: 2;
+                text: "+1";
+            }
+
+            Button {
+                width: 40px;
+                height: 34px;
+                compact: true;
+                enabled: NaviView.has-base-hp && !NaviView.base-hp-max;
+                nav: NaviView.has-base-hp ? "base-hp-step" : "";
+                nav-index: 3;
+                text: "+20";
+            }
+        }
+    }
+
+    property <length> forms-y: root.base-hp-y + (NaviView.has-base-hp ? base-hp-box.preferred-height + root.fact-gap : 0px);
     // (Its scroll bar in the panel's padding at its right.)
     forms := ScrollPage {
         x: root.panel-x + root.pad;

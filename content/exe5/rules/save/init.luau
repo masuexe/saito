@@ -105,6 +105,15 @@ local function validate(side: number, problem: (p: SetupProblem) -> ())
             field = "hp",
             text = string.format("hp: %s's HP is its level's; a side states the base HP of the navi that compiles a NaviCust", name),
         })
+    elseif navi.forms ~= nil and (setup.hp < 1 or setup.hp > MAX_HP) then
+        problem({
+            kind = "range",
+            field = "hp",
+            value = setup.hp,
+            least = 1,
+            most = MAX_HP,
+            text = string.format("hp %d: MegaMan's HP is 1 to %d", setup.hp, MAX_HP),
+        })
     end
 end
 

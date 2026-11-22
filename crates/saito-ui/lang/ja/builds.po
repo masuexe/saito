@@ -125,6 +125,9 @@ msgstr[0] "ナビ {n}体"
 msgid "Element"
 msgstr "属性"
 
+msgid "Base HP"
+msgstr "ベースHP"
+
 # The game's own navi's name goes in ("MegaMan").
 msgid "NaviCust and patch cards are {} only."
 msgstr "ナビカスと改造カードは{}専用です。"

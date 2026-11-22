@@ -125,6 +125,9 @@ msgstr[0] "내비 {n}기"
 msgid "Element"
 msgstr "속성"
 
+msgid "Base HP"
+msgstr "기본 HP"
+
 # The game's own navi's name goes in ("MegaMan").
 msgid "NaviCust and patch cards are {} only."
 msgstr "내비커스트와 개조 카드는 {} 전용입니다."

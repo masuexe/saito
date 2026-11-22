@@ -125,6 +125,9 @@ msgstr[0] "{n} 名领航员"
 msgid "Element"
 msgstr "属性"
 
+msgid "Base HP"
+msgstr "基础 HP"
+
 # The game's own navi's name goes in ("MegaMan").
 msgid "NaviCust and patch cards are {} only."
 msgstr "个人化装置和改造卡仅限{}使用。"
