@@ -6,6 +6,8 @@
 // app before Slint sees them; a click or a tap arrives here and is passed on with the control's name. What a
 // control does is the app's too: `Nav.activate("ready", 0)` goes to the Rust module of the screen shown.
 
+import { Theme } from "theme.slint";
+
 // What a control does with the keys.
 export enum NavKind {
     // Enter activates; the arrows move on.
@@ -100,6 +102,9 @@ export global Drag {
     out property <string> list;
     out property <int> from: -1;
     out property <bool> on;
+    // On handheld touch screens, holding a draggable row arms the drag after a short press so vertical swipes scroll
+    // the list instead of fighting the drag.
+    out property <bool> holding: root.list != "" && !root.on && Theme.handheld;
     // The pointer, in the window, and where in the row it went down.
     out property <length> x;
     out property <length> y;
@@ -114,11 +119,16 @@ export global Drag {
     out property <length> threshold: 6px;
     property <length> start-x;
     property <length> start-y;
+    property <bool> suppress-click;
     pure function at() -> int {
         return max(0, round(root.x / 1px)) * 65536 + max(0, round(root.y / 1px));
     }
     // A click on row `index` of `nav`.
     public function clicked(list: string, nav: string, index: int) {
+        if root.suppress-click {
+            root.suppress-click = false;
+            return;
+        }
         if list != "" && root.on {
             // (A press that became a drag is no click.)
         } else {
@@ -140,6 +150,7 @@ export global Drag {
             root.into = list;
             root.from = row;
             root.on = false;
+            root.suppress-click = false;
             root.to = -1;
             root.swap = false;
             root.removing = false;
@@ -151,11 +162,19 @@ export global Drag {
             root.start-y = root.y;
         } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left && root.list == list {
             if root.on {
+                root.suppress-click = true;
                 Nav.choose("drag-drop", root.from, root.at());
             }
             root.end();
         } else if e.kind == PointerEventKind.cancel && root.list == list {
             root.end();
+        }
+    }
+    // The handheld long-press timer fired: lift the row under the finger.
+    public function hold-fired() {
+        if root.holding {
+            root.on = true;
+            root.over();
         }
     }
     // The pointer moved with the button held.
@@ -165,10 +184,37 @@ export global Drag {
         }
         root.x = origin.x + mx;
         root.y = origin.y + my;
-        if !root.on && (abs(root.x - root.start-x) > root.threshold || abs(root.y - root.start-y) > root.threshold) {
-            root.on = true;
+        if !root.on {
+            if Theme.handheld {
+                if abs(root.x - root.start-x) > 10px || abs(root.y - root.start-y) > 10px {
+                    root.end();
+                }
+                return;
+            }
+            if abs(root.x - root.start-x) > root.threshold || abs(root.y - root.start-y) > root.threshold {
+                root.on = true;
+            }
         }
         root.over();
+    }
+    // Cancel a pending handheld long-press if the raw touch moves > 10px (even if Flickable already took the pan).
+    public function touch-hold-move(wx: length, wy: length) {
+        if root.holding && (abs(wx - root.start-x) > 10px || abs(wy - root.start-y) > 10px) {
+            root.end();
+        }
+    }
+    // Raw window-level touch tracking while a drag is active on handheld, immune to Flickable scrolling and row recycling.
+    public function touch-move(wx: length, wy: length) -> int {
+        if !root.on {
+            return -1;
+        }
+        root.x = wx;
+        root.y = wy;
+        return root.at();
+    }
+    public function finish-touch-drop() {
+        root.suppress-click = true;
+        root.end();
     }
     // Where the row would land, asked again (the list scrolled under it).
     public function over() {

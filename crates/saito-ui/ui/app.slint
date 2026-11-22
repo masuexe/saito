@@ -5,7 +5,7 @@
 // what a screen adds to its view, and the structs and enums it uses there, reach Rust with no edit here.
 
 import { Theme, Audit } from "theme.slint";
-import { Nav, NavKind } from "nav.slint";
+import { Nav, NavKind, Drag } from "nav.slint";
 import { Shell, Screen, BattleKind, Backdrop, Cursor, DialogLayer, PickerLayer, Fx, JackIn } from "shell.slint";
 import { Pulse } from "motion.slint";
 import { LoadingScreen } from "screens/loading.slint";
@@ -61,6 +61,15 @@ export component AppWindow inherits Window {
     // times". Its pattern costs about a millisecond a frame there.)
     Backdrop {
         Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // Long-press timer for handheld touch drag-to-reorder so quick vertical swipes scroll lists cleanly.
+    Timer {
+        interval: 220ms;
+        running: Drag.holding;
+        triggered => {
+            Drag.hold-fired();
+        }
     }
 
     // (A phone keeps some of its screen for itself: a notch or an island, the home bar, rounded corners. The screens

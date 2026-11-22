@@ -2027,6 +2027,46 @@ impl App {
             self.shell.touch.clear();
             self.shell.show_pad();
             self.menu_touch(finger, phase, x, y);
+            let ui = self.shell.ui();
+            let drag = ui.global::<saito_ui::Drag>();
+            if drag.get_on() {
+                let scale = ui.window().scale_factor().max(0.01);
+                let (lx, ly) = (x as f32 / scale, y as f32 / scale);
+                let from = drag.get_from();
+                match phase {
+                    TouchPhase::Moved => {
+                        let at = drag.invoke_touch_move(lx, ly);
+                        if at >= 0 {
+                            self.input(NavInput::Choose("drag-over".into(), from, at));
+                        }
+                        return true;
+                    }
+                    TouchPhase::Ended => {
+                        let at = drag.invoke_touch_move(lx, ly);
+                        if at >= 0 {
+                            self.input(NavInput::Choose("drag-drop".into(), from, at));
+                        }
+                        drag.invoke_finish_touch_drop();
+                        return false;
+                    }
+                    TouchPhase::Cancelled => {
+                        drag.invoke_end();
+                        return false;
+                    }
+                    TouchPhase::Started => {}
+                }
+            } else if drag.get_holding() {
+                match phase {
+                    TouchPhase::Moved => {
+                        let scale = ui.window().scale_factor().max(0.01);
+                        drag.invoke_touch_hold_move(x as f32 / scale, y as f32 / scale);
+                    }
+                    TouchPhase::Cancelled => drag.invoke_end(),
+                    TouchPhase::Started | TouchPhase::Ended => {}
+                }
+            } else if matches!(phase, TouchPhase::Cancelled) && !drag.get_list().is_empty() {
+                drag.invoke_end();
+            }
             return false;
         }
         self.shell.menu_swipe.clear();
