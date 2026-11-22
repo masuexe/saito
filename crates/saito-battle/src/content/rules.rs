@@ -1276,11 +1276,11 @@ pub struct BarrierRegrowth {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BarrierWind {
-    /// Pops it (EXE6's, EXE5's), wind being the raw elements' 0x20 or the
+    /// Pops it (EXE6's), wind being the raw elements' 0x20 or the
     /// raw hit flags' 0xA20: popped, it absorbs every hit until its visual
     /// clears it.
     Pops,
-    /// Takes it away at once (EXE4's 0x08012E0C: no popped barrier), wind
+    /// Takes it away at once (EXE4's 0x08012E0C, EXE5's: no popped barrier), wind
     /// being the raw hit flags' 0x20 (its raw channel, 0x08012D1E, keeps
     /// the hitters' self words and no elements); the hit is absorbed all
     /// the same.

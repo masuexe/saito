@@ -431,8 +431,10 @@ local status = {
         hp_loss = "gauge",
         -- A player hears its own navi's hit as `own_hit`, another's as `hit`, as EXE6's.
         hit_sound = "by_console",
-        -- A barrier stands still while paused; wind, or the hit flags 0xA20, pop it (EXE6's code).
-        barrier = { stops_while_paused = true, wind = "pops" },
+        -- A barrier stands still while paused; only barrier-removing hits (hit flag 0x20: NrthWind, WindMan CS,
+        -- GyroSoul tornado, LarkMan) take it away at once — Wind/Fan gusts (0x200 / element 5) and pushing hits (0x800)
+        -- do not strip barriers or auras in EXE5, and EXE5's barrier visual has no blown-away action (0x080E0AA0).
+        barrier = { stops_while_paused = true, wind = "takes_away" },
         -- Its defensive chips (0x08029A60): AntiDmg, or the trap the navi's status arms, catches a hit of any damage
         -- (one of none passes); AntiSwrd any sword's hit (the hit flags 0x2000). A caught hit leaves the navi's pending
         -- requests (0x08029AE0 zeroes the hit alone): a move that ended on ice that tick slides.

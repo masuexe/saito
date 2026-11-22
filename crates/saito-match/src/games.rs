@@ -1449,3 +1449,50 @@ fn life_aura_visual_stays_unflipped_on_both_consoles() {
         }
     }
 }
+
+/// In EXE5, Wind/Fan gusts (collision `pull` / element 5) do NOT strip barriers
+/// or LifeAura, whereas NrthWind (hit flag 0x20) still takes them away.
+#[test]
+fn exe5_wind_and_fan_do_not_strip_barriers_but_nrthwind_does() {
+    use saito_battle::input::{PlayerTick, keys};
+    let content = exe5_content();
+    let run_chip = |chip_key: &str| -> u8 {
+        let mut m = crate::pick::live(&content, "exe5", 3, None).unwrap();
+        let chip = crate::ids::chip(&content, "exe5", chip_key).unwrap();
+        let cards = crate::testing::patch_cards(&content, "exe5", "life-virus");
+        m.sides[1].set_fact(&content, "navi", &[Fact::Value(Value::Def(Registry::Navi, crate::ids::navi(&content, "exe5", "megaman").unwrap().0))]).unwrap();
+        m.sides[1].set_fact(&content, "patch_cards", &cards).unwrap();
+
+        let mut setup = m.round(&content, 0x5EED);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+        let p1 = b.player(1).expect("side 1 navi");
+        let c1 = b.objects.get(p1).collision.expect("side 1 collision");
+        assert_ne!(b.collision.get(c1).barrier, 0, "side 1 should start with LifeAura");
+
+        b.hands[0].cursor = 0;
+        b.hands[0].ids[0] = Some(chip);
+
+        let mut spawned_gust = false;
+        for t in 0..260 {
+            let input = if t == 0 {
+                [PlayerTick { held: keys::A, ..Default::default() }, Default::default()]
+            } else {
+                Default::default()
+            };
+            b.tick(&input, Default::default());
+            if b.objects.in_order().any(|r| b.local_kind_key(r) == "gust") {
+                spawned_gust = true;
+            }
+        }
+        if matches!(chip_key, "wind" | "fan") {
+            assert!(spawned_gust, "EXE5 {chip_key} should have spawned gusts");
+        }
+        b.collision.get(c1).barrier
+    };
+
+    assert_ne!(run_chip("wind"), 0, "EXE5 Wind must not strip LifeAura");
+    assert_ne!(run_chip("fan"), 0, "EXE5 Fan must not strip LifeAura");
+    assert_eq!(run_chip("nrthwind"), 0, "EXE5 NrthWind must still strip LifeAura");
+}
