@@ -527,9 +527,10 @@ export component LibraryRowLook inherits Rectangle {
     property <length> note-width: Theme.handheld ? 96px : 104px;
     property <length> note-x: root.end-x - (root.end-room > 0px ? 8px : 0px) - root.note-width;
     property <length> name-x: 8px + root.lead-width + 8px;
-    // (The name's room, up to the note — or to the end column where there is no note; the version's mark follows the
-    // name, a square of its color where the two don't fit.)
-    property <length> name-end: root.note == "" ? root.end-x - (root.end-room > 0px ? 8px : 0px) : root.note-x - 8px;
+    // (The name's room, up to the note's used width — or to the end column where there is no note; the version's mark
+    // follows the name, a square of its color where the two don't fit.)
+    property <length> note-used: root.note == "" ? 0px : min(root.note-width, note-text.preferred-width) + 8px;
+    property <length> name-end: root.end-x - (root.end-room > 0px ? 8px : 0px) - root.note-used;
     property <length> name-room: max(0px, root.name-end - root.name-x);
     Rectangle {
         background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
@@ -561,7 +562,7 @@ export component LibraryRowLook inherits Rectangle {
         opacity: root.refused ? 0.5 : 1;
     }
 
-    Text {
+    note-text := Text {
         x: root.note-x + root.dx;
         width: root.note-width;
         text: root.note;

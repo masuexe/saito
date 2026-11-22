@@ -277,9 +277,9 @@ language = "zh-Hans"
 "rflectr1" = { name = "反射盾1", description = "防御敌人的攻击\n并反弹冲击!" }
 "rflectr2" = { name = "反射盾2", description = "防御敌人的攻击\n并反弹冲击!" }
 "rflectr3" = { name = "反射盾3", description = "防御敌人的攻击\n并反弹冲击!" }
-"rlnglog1" = { name = "滚动记录1", description = "向前方2格射出\n2发滚动圆木!" }
-"rlnglog2" = { name = "滚动记录2", description = "向前方2格射出\n2发滚动圆木!" }
-"rlnglog3" = { name = "滚动记录3", description = "向前方2格射出\n2发滚动圆木!" }
+"rlnglog1" = { name = "滚动圆木1", description = "向前方2格射出\n2发滚动圆木!" }
+"rlnglog2" = { name = "滚动圆木2", description = "向前方2格射出\n2发滚动圆木!" }
+"rlnglog3" = { name = "滚动圆木3", description = "向前方2格射出\n2发滚动圆木!" }
 "rockcube" = { name = "石头方块", description = "在正前方的格子上\n产生一个\n石头方块" }
 "roll" = { name = "萝露", description = "攻击1个敌方\n以回复之心\n进行疗伤" }
 "roll2" = { name = "萝露V2", description = "攻击1个敌方\n以回复之心\n进行疗伤" }
@@ -344,7 +344,7 @@ language = "zh-Hans"
 "trnarrw3" = { name = "火车箭3", description = "向前方敌人射出箭\n与敌人距离越远\n效果越佳" }
 "trplshot" = { name = "三重射击", description = "将前方纵向3格地面\n吹向前方\n进行攻击!" }
 "twinldrs" = { name = "双生领袖", description = "代表EXE5\n布鲁斯与卡尼尔的\n双重攻击!" }
-"uninstll" = { name = "反安装", description = "在不转暗的攻击芯片\n后选择可赋予关闭\n个人化装置效果" }
+"uninstll" = { name = "卸载", description = "在不转暗的攻击芯片\n后选择可赋予关闭\n个人化装置效果" }
 "varswrd" = { name = "变化剑", description = "自由变化的\n战术剑" }
 "vdoll" = { name = "稻草人", description = "向前方3格处\n投掷让人害怕的\n诅咒稻草人" }
 "volcchrg" = { name = "喷发冲锋", description = "石炭从烟囱中\n飞出攻击敌人!" }
