@@ -707,6 +707,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         // (Practice's own plays the pick; the session beside a waiting invite leaves the menus' music on.)
         music: if start.from.is_none() { crate::battle::BattleMusic::Picked } else { crate::battle::BattleMusic::None },
         gate: None,
+        presentation: None,
     });
     shell.practice.session = Some(session);
     Ok(())
@@ -842,6 +843,33 @@ fn want_pictures(shell: &mut Shell, game: &str) {
     let Some(ready) = shell.games.ready(game) else { return };
     let now = shell.still;
     shell.practice.thumbs.want(game, ready.content(), &ready.loaded.graphics, now);
+}
+
+/// Ordered background keys for `game` (matching [`open_background_grid`] indices minus 1).
+pub(crate) fn background_list(content: &Content, game: &str) -> Vec<String> {
+    Places::of(content, game).backgrounds
+}
+
+/// Game id and local background name resolved from a pool/written background name.
+pub(crate) fn pool_background_parts<'c>(content: &'c Content, game: &str, written: &str) -> Option<(&'c str, &'c str)> {
+    pool_background(content, game, written)
+}
+
+/// Begin generating background preview thumbnails for `game` if not already started.
+pub(crate) fn want_background_thumbs(shell: &mut Shell, game: &str) {
+    want_pictures(shell, game);
+}
+
+/// Poll background thumbnail generation and populate any open grid picker.
+pub(crate) fn poll_background_thumbs(shell: &mut Shell) {
+    shell.practice.thumbs.poll();
+}
+
+/// Open the background thumbnail grid picker for any screen control (`id`, `index`).
+pub(crate) fn open_background_grid(shell: &mut Shell, id: &str, index: i32, game: &str, at: usize) {
+    let Some(ready) = shell.games.ready(game) else { return };
+    let labels = Places::of(ready.content(), game).labels(ready.content())[BACKGROUND].clone();
+    open_places(shell, id, index, game, BACKGROUND, &labels, at);
 }
 
 /// A build's card before the battle, `role` (YOU, DUMMY) over `name`: the build's name and its navi's name in the

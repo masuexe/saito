@@ -148,6 +148,10 @@ pub struct Preload {
     sound: Option<SoundParts>,
     /// The music by the rounds' backgrounds ([`Preload::round_music`]).
     round_music: Option<Arc<saito_audio::RoundMusic>>,
+    /// Extra backgrounds requested beyond the set's own stages (client-local stage overrides).
+    extra_backgrounds: Vec<saito_battle::content::BackgroundId>,
+    /// Optional client-local per-round presentation resolver for the resulting [`Player`].
+    round_presentation: Option<crate::player::RoundResolver>,
     audio: Option<BattleAudio>,
     /// The round's first battle, once made, as the viewer's console shows
     /// it.
@@ -209,7 +213,22 @@ impl Preload {
         if sound.is_some() {
             steps.push(Step { part: Part::Match, share: 2, work: Work::Sound, done: false });
         }
-        Preload { content, set: set.clone(), viewer, size, renderer, text, sound, round_music: None, audio: None, battle: None, steps, stopped: None }
+        Preload {
+            content,
+            set: set.clone(),
+            viewer,
+            size,
+            renderer,
+            text,
+            sound,
+            round_music: None,
+            extra_backgrounds: Vec::new(),
+            round_presentation: None,
+            audio: None,
+            battle: None,
+            steps,
+            stopped: None,
+        }
     }
 
     /// Run the next step. True while a step is left after it.
@@ -272,6 +291,24 @@ impl Preload {
         self
     }
 
+    /// Preload additional backgrounds needed for client-local stage presentation.
+    pub fn extra_backgrounds(mut self, ids: impl IntoIterator<Item = saito_battle::content::BackgroundId>) -> Preload {
+        self.extra_backgrounds.extend(ids);
+        self.renderer.graphics().want_backgrounds(&self.content, self.extra_backgrounds.iter().copied());
+        if !self.renderer.graphics().backgrounds_ready(&self.content, self.extra_backgrounds.iter().copied())
+            && let Some(step) = self.steps.iter_mut().find(|s| matches!(s.work, Work::Backgrounds))
+        {
+            step.share = 30;
+        }
+        self
+    }
+
+    /// Attach a client-local per-round presentation resolver to the constructed [`Player`].
+    pub fn round_presentation(mut self, resolver: Option<crate::player::RoundResolver>) -> Preload {
+        self.round_presentation = resolver;
+        self
+    }
+
     /// The battle's sound from its parts, with the music by background.
     fn audio_of(&mut self, (banks, songs): SoundParts) -> BattleAudio {
         let mut audio = BattleAudio::with_banks(banks, songs);
@@ -285,7 +322,11 @@ impl Preload {
     /// without a preload makes everything ([`Player::late`] counts it).
     pub fn player(mut self, driver: Box<dyn Driver>) -> Player {
         let audio = self.audio.take().or_else(|| self.sound.take().map(|parts| self.audio_of(parts)));
-        Player::with(self.renderer, self.text, audio, driver)
+        let mut player = Player::with(self.renderer, self.text, audio, driver);
+        if let Some(resolver) = self.round_presentation.take() {
+            player.set_round_presentation(Some(resolver));
+        }
+        player
     }
 
     /// The viewer of `replay` (the replay whose set this was made for:
@@ -312,7 +353,9 @@ impl Preload {
             }
             Work::Battle => self.make_battle(),
             Work::Backgrounds => {
-                let backgrounds = saito_render::graphics::set_backgrounds(self.set.first());
+                let backgrounds = saito_render::graphics::set_backgrounds(self.set.first())
+                    .into_iter()
+                    .chain(self.extra_backgrounds.iter().copied());
                 if !self.renderer.graphics().backgrounds_ready(&self.content, backgrounds) {
                     // (Not yet: the step runs again. Off a page, a moment's rest between asks.)
                     self.steps[i].done = false;

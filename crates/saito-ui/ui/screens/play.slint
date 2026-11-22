@@ -94,6 +94,12 @@ export struct PlayControl {
     pad: string,
 }
 
+// Per-round Stage & BGM entry shown in the online lobby's Custom configuration dialog.
+export struct StageRoundEntry {
+    bg: string,
+    bgm: string,
+}
+
 // What Play shows: src/screens/play.rs sets these. (A struct or an enum a property here uses reaches Rust by
 // that use: nothing is added to app.slint for it.)
 export global PlayView {
@@ -186,6 +192,10 @@ export global PlayView {
     in property <string> note-error;
     // Another build is being chosen.
     in property <bool> changing;
+    // Client-local Stage & BGM mode (0 = Default, 1 = Full random, 2 = Escalating, 3 = Custom) and dialog state.
+    in property <int> stage-mode: 0;
+    in property <bool> stage-dialog;
+    in property <[StageRoundEntry]> stage-rounds;
 
     // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
     // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
@@ -280,6 +290,7 @@ export global PlayView {
         return direct ? I18n.upper(@tr("Stop hosting")) : I18n.upper(@tr("Cancel invite"));
     }
     out property <string> stop-practice: I18n.upper(@tr("Stop practice"));
+    out property <string> stage-random: @tr("Random");
 }
 
 // ---- The builds ------------------------------------------------------------------------------------------
@@ -1454,32 +1465,48 @@ export component PlayScreen inherits Page {
                 big: Theme.sideways;
             }
 
-            // Host spectator controls (visibility + anti-ghosting delay) for signaling rooms.
-            if PlayView.host && !PlayView.invite-direct: Rectangle {
+            // Client-local Stage & BGM mode + host spectator controls (visibility + anti-ghosting delay).
+            Rectangle {
+                property <bool> show-spec: PlayView.host && !PlayView.invite-direct;
+                property <length> gap: Theme.sideways ? 6px : 10px;
+                property <length> row-w: stage-btn.width + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
+                property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
                 x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 114px : 92px);
+                y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 108px : 92px);
                 width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
-                height: Theme.sideways ? 30px : 36px;
-                property <length> total: spec-vis.width + 10px + spec-delay.width;
+                height: Theme.phone ? (self.show-spec ? 74px : 36px) : Theme.sideways ? 30px : 36px;
 
-                spec-vis := Button {
-                    x: (parent.width - parent.total) / 2;
+                stage-btn := Button {
+                    x: Theme.phone ? (parent.width - self.width) / 2 : (parent.width - parent.row-w) / 2;
                     y: 0;
                     height: Theme.sideways ? 28px : 34px;
                     compact: true;
+                    nav: "lobby.stage";
+                    kind: ButtonKind.ghost;
+                    text: @tr("Stage & BGM: {}", PlayView.stage-mode == 1 ? @tr("stage mode" => "Full random") : PlayView.stage-mode == 2 ? @tr("stage mode" => "Escalating") : PlayView.stage-mode == 3 ? @tr("stage mode" => "Custom") : @tr("stage mode" => "Default"));
+                }
+
+                spec-vis := Button {
+                    x: Theme.phone ? (parent.width - parent.spec-w) / 2 : stage-btn.x + stage-btn.width + parent.gap;
+                    y: Theme.phone ? 40px : 0px;
+                    height: Theme.sideways ? 28px : 34px;
+                    compact: true;
+                    visible: parent.show-spec;
+                    enabled: parent.show-spec;
                     nav: "lobby.spectate";
                     kind: ButtonKind.ghost;
                     text: PlayView.spectate-visibility == 0 ? @tr("Room: Private") : PlayView.spectate-visibility == 2 ? @tr("Room: Public") : @tr("Room: Code");
                 }
 
                 spec-delay := Button {
-                    x: spec-vis.x + spec-vis.width + 10px;
-                    y: 0;
+                    x: spec-vis.x + spec-vis.width + parent.gap;
+                    y: spec-vis.y;
                     height: Theme.sideways ? 28px : 34px;
                     compact: true;
+                    visible: parent.show-spec;
+                    enabled: parent.show-spec && PlayView.spectate-visibility != 0;
                     nav: "lobby.spectate-delay";
                     kind: ButtonKind.ghost;
-                    enabled: PlayView.spectate-visibility != 0;
                     text: PlayView.spectate-delay == 0 ? @tr("Delay: Off") : @tr("Delay: {}s", PlayView.spectate-delay);
                 }
             }
@@ -1488,7 +1515,7 @@ export component PlayScreen inherits Page {
             // ended, or what keeps this player's build from being played.
             Message {
                 x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: Theme.sideways ? root.buttons-top - 22px : root.buttons-top + (Theme.phone ? 156px : 56px);
+                y: Theme.sideways ? root.buttons-top - 22px : root.buttons-top + (Theme.phone ? (PlayView.host && !PlayView.invite-direct ? 188px : 150px) : 56px);
                 width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
                 text: PlayView.note == LobbyNote.reconnecting ? @tr("Reconnecting {} s", PlayView.note-seconds) : PlayView.note == LobbyNote.unusable ? PlayView.note-problem : PlayView.note-error != "" ? PlayView.note-error : PlayView.note == LobbyNote.you ? @tr("Waiting for you to ready up.") : PlayView.note == LobbyNote.them ? @tr("Waiting for your opponent to ready up.") : "";
                 tone: PlayView.note-error != "" || PlayView.note == LobbyNote.reconnecting || PlayView.note == LobbyNote.unusable ? Theme.bad : Theme.muted;
@@ -2771,6 +2798,199 @@ export component PlayOverlay inherits Rectangle {
             nav: "boxes.cancel";
             text: I18n.upper(@tr("Cancel"));
             kind: ButtonKind.ghost;
+        }
+    }
+
+    // Client-local Stage & BGM mode and per-round configuration dialog.
+    if PlayView.stage-dialog: stage := DialogFrame {
+        property <bool> custom: PlayView.stage-mode == 3;
+        property <length> mode-y: Theme.sideways ? 18px : 22px;
+        property <length> mode-row-h: Theme.sideways ? 34px : 38px;
+        property <length> mode-h: Theme.phone ? 2 * self.mode-row-h + 8px : self.mode-row-h;
+        property <length> mode-btn-w: Theme.phone ? (self.inner-width - 8px) / 2 : (self.inner-width - 24px) / 4;
+        property <length> desc-y: self.mode-y + self.mode-h + (Theme.sideways ? 6px : 10px);
+        property <length> desc-h: Theme.sideways ? (self.custom ? 20px : 36px) : self.custom ? (Theme.phone ? 34px : 22px) : (Theme.phone ? 54px : 40px);
+        property <length> list-y: Theme.sideways ? 96px : Theme.phone ? 182px : 142px;
+        property <length> list-height: self.custom ? (Theme.sideways ? 122px : Theme.phone ? 216px : 240px) : 0px;
+        property <length> row-height: Theme.phone ? 104px : 44px;
+        property <length> row-pitch: self.row-height + 6px;
+        property <length> footer-y: self.custom ? self.list-y + self.list-height + 12px : self.desc-y + self.desc-h + 14px;
+        title: @tr("Stage & BGM");
+        wide: true;
+        panel-width: 640px;
+        content-height: self.footer-y + 40px;
+
+        Label {
+            x: 0;
+            y: 0;
+            width: stage.inner-width;
+            height: 14px;
+            text: I18n.upper(@tr("Mode"));
+        }
+
+        Button {
+            x: 0;
+            y: stage.mode-y;
+            width: stage.mode-btn-w;
+            height: stage.mode-row-h;
+            compact: true;
+            nav: "stage.mode-0";
+            kind: PlayView.stage-mode == 0 ? ButtonKind.main : ButtonKind.ghost;
+            text: @tr("stage mode" => "Default");
+        }
+
+        Button {
+            x: stage.mode-btn-w + 8px;
+            y: stage.mode-y;
+            width: stage.mode-btn-w;
+            height: stage.mode-row-h;
+            compact: true;
+            nav: "stage.mode-1";
+            kind: PlayView.stage-mode == 1 ? ButtonKind.main : ButtonKind.ghost;
+            text: @tr("stage mode" => "Full random");
+        }
+
+        Button {
+            x: Theme.phone ? 0px : 2 * (stage.mode-btn-w + 8px);
+            y: Theme.phone ? stage.mode-y + stage.mode-row-h + 8px : stage.mode-y;
+            width: stage.mode-btn-w;
+            height: stage.mode-row-h;
+            compact: true;
+            nav: "stage.mode-2";
+            kind: PlayView.stage-mode == 2 ? ButtonKind.main : ButtonKind.ghost;
+            text: @tr("stage mode" => "Escalating");
+        }
+
+        Button {
+            x: Theme.phone ? stage.mode-btn-w + 8px : 3 * (stage.mode-btn-w + 8px);
+            y: Theme.phone ? stage.mode-y + stage.mode-row-h + 8px : stage.mode-y;
+            width: stage.mode-btn-w;
+            height: stage.mode-row-h;
+            compact: true;
+            nav: "stage.mode-3";
+            kind: PlayView.stage-mode == 3 ? ButtonKind.main : ButtonKind.ghost;
+            text: @tr("stage mode" => "Custom");
+        }
+
+        Note {
+            x: 0;
+            y: stage.desc-y;
+            width: stage.inner-width;
+            height: stage.desc-h;
+            text: PlayView.stage-mode == 1 ? @tr("Every round picks a random background from the full pool and a random battle BGM.")
+                : PlayView.stage-mode == 2 ? @tr("Virus battle on normal rounds, Boss battle on single match point, Final Boss on double match point (or 1st-to-1).")
+                : PlayView.stage-mode == 3 ? @tr("Configure each round's background and BGM ({} rounds max, First to {}).", PlayView.stage-rounds.length, PlayView.first-to)
+                : @tr("Matches GBA link battle rules (random link battle stage background and default link battle BGM).");
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+
+        if stage.custom && !Theme.phone && !Theme.sideways: Rule {
+            x: 0;
+            y: stage.list-y - 28px;
+            width: stage.inner-width;
+
+            Rectangle { }
+        }
+
+        if stage.custom && !Theme.phone && !Theme.sideways: Rectangle {
+            x: 0;
+            y: stage.list-y - 20px;
+            width: stage.inner-width;
+            height: 16px;
+            property <length> col-w: (stage.inner-width - 104px) / 2;
+
+            Label {
+                x: 4px;
+                width: 78px;
+                height: 16px;
+                text: I18n.upper(@tr("Round"));
+            }
+
+            Label {
+                x: 88px;
+                width: parent.col-w;
+                height: 16px;
+                text: I18n.upper(@tr("Background"));
+            }
+
+            Label {
+                x: 88px + parent.col-w + 8px;
+                width: parent.col-w;
+                height: 16px;
+                text: I18n.upper(@tr("BGM"));
+            }
+        }
+
+        if stage.custom: stage-scroll := ScrollPage {
+            x: 0;
+            y: stage.list-y;
+            width: stage.inner-width;
+            height: stage.list-height;
+            nav: "stage.list.";
+            content-height: max(0px, PlayView.stage-rounds.length * stage.row-pitch - 6px);
+            for entry[i] in PlayView.stage-rounds: Rectangle {
+                property <length> col-w: (stage-scroll.view-width - 96px) / 2;
+                x: 0;
+                y: i * stage.row-pitch;
+                width: stage-scroll.view-width;
+                height: stage.row-height;
+
+                Rectangle {
+                    visible: Theme.phone;
+                    background: Theme.inset;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                }
+
+                Value {
+                    x: Theme.phone ? 10px : 4px;
+                    y: Theme.phone ? 6px : 4px;
+                    width: Theme.phone ? stage-scroll.view-width - 20px : 80px;
+                    height: Theme.phone ? 16px : 36px;
+                    font-size: Theme.phone ? 12px : 13px;
+                    color: Theme.muted;
+                    text: @tr("Round {}", i + 1);
+                }
+
+                bg-sel := Select {
+                    x: Theme.phone ? 10px : 88px;
+                    y: Theme.phone ? 24px : 4px;
+                    width: Theme.phone ? stage-scroll.view-width - 20px : parent.col-w;
+                    height: Theme.phone ? 34px : 36px;
+                    nav: "stage.list.bg";
+                    nav-index: i;
+                    value: entry.bg;
+                }
+
+                Select {
+                    x: Theme.phone ? 10px : bg-sel.x + bg-sel.width + 8px;
+                    y: Theme.phone ? 62px : 4px;
+                    width: Theme.phone ? stage-scroll.view-width - 20px : stage-scroll.view-width - self.x;
+                    height: Theme.phone ? 34px : 36px;
+                    nav: "stage.list.bgm";
+                    nav-index: i;
+                    value: entry.bgm;
+                }
+            }
+        }
+
+        Button {
+            x: 0;
+            y: stage.footer-y;
+            visible: stage.custom;
+            enabled: stage.custom;
+            nav: "stage.reset";
+            text: I18n.upper(@tr("Reset"));
+            kind: ButtonKind.ghost;
+        }
+
+        Button {
+            x: stage.inner-width - self.width;
+            y: stage.footer-y;
+            nav: "stage.close";
+            text: I18n.upper(@tr("Done"));
+            kind: ButtonKind.main;
         }
     }
 

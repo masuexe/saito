@@ -28,6 +28,7 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 | `附件` | `fvfeZn` | attachment | Legacy attachments (unreadable via MCP; kept for historical records) |
 | `创建人` | `fxO0vR` | createdUser | Auto-recorded submitter account (web UI & row-level self-edit permissions; omitted in MCP records) |
 | `维护者备注` | `fikdq2` | text | Technical evaluation, fix summary, or rejection reason |
+| `落盘版本` | `f5xFuf` | text | Release version tag (e.g. `v0.x.y`) that shipped this item; leave empty until packaged/released |
 | `提交时间` | `fFlBj3` | createdTime | Automatically recorded timestamp (web UI; omitted in MCP records) |
 
 ---
@@ -44,7 +45,7 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
    - Before implementing a specific item (e.g., `S-002`), call `smartsheet_update_records` to set its `状态` to `开发中`.
 3. **Resolve**
    - Always include the board item ID (e.g., `(S-002)`) in the git commit message.
-   - After implementation, passing build/test verification, and committing, update `状态` to `已完成` and record the commit hash (e.g., `commit abc603f`) plus a concise summary in `维护者备注`.
+   - After implementation, passing build/test verification, and committing, update `状态` to `已完成` and record the commit hash (e.g., `commit abc603f`) plus a concise summary in `维护者备注`. When cutting a GitHub release, batch-fill `落盘版本` for all `已完成` rows whose `落盘版本` is still empty.
 4. **Safety Constraints**
    - Never delete community-submitted records.
-   - Only update maintainer fields (`状态`, `优先级`, `维护者备注`); preserve original submission content and submitter information.
+   - Only update maintainer fields (`状态`, `优先级`, `维护者备注`, `落盘版本`); preserve original submission content and submitter information.

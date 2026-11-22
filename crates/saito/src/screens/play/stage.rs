@@ -1,0 +1,863 @@
+//! Client-local online match Stage (background) & BGM presentation configuration (`S-008`).
+//!
+//! All modes operate strictly on the local frontend presentation layer (`Renderer` background
+//! override + `BattleAudio` song/bank selection) and never alter `BattleSettings`, simulation
+//! state, RNG, or netplay wire compatibility.
+
+use crate::battle::BattlePresentation;
+use crate::games::{Games, Ready};
+use crate::music::{self, Music};
+use crate::screens::practice;
+use saito_battle::Content;
+use saito_battle::content::{BackgroundId, pool_key};
+use saito_frontend::player::{RoundContext, RoundLook};
+use saito_frontend::preload::SoundParts;
+use saito_match::pick::Picks;
+use std::collections::BTreeMap;
+
+const REMEMBERED_STAGE_MODE: &str = "play.stage-mode";
+const REMEMBERED_STAGE_ROUNDS: &str = "play.stage-rounds";
+
+/// Background prefixes/keys reserved for boss/final-stage or postgame encounters, excluded from
+/// the "normal" tier in [`StageMode::Escalating`].
+const NON_REGULAR_BACKGROUNDS: &[&str] = &[
+    "black-earth",
+    "darksoul",
+    "duo",
+    "meteor-comp",
+    "factory-comp",
+    "soulserv-comp",
+    "nebula-area",
+    "nebulagray",
+    "copybot-comp",
+    "underground",
+    "graveyard",
+];
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StageMode {
+    #[default]
+    Default,
+    Random,
+    Escalating,
+    Custom,
+}
+
+impl StageMode {
+    pub fn to_int(self) -> i32 {
+        match self {
+            Self::Default => 0,
+            Self::Random => 1,
+            Self::Escalating => 2,
+            Self::Custom => 3,
+        }
+    }
+
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Random => "random",
+            Self::Escalating => "escalating",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key.trim() {
+            "random" => Self::Random,
+            "escalating" => Self::Escalating,
+            "custom" => Self::Custom,
+            _ => Self::Default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EscalationTier {
+    Normal,
+    SingleMatchPoint,
+    DoubleMatchPoint,
+}
+
+/// Computes the escalating intensity tier from the current score and match target.
+///
+/// A 1-win match (`first_to <= 1`) is immediately both players' match point, so it starts at
+/// [`EscalationTier::DoubleMatchPoint`].
+pub(crate) fn escalation_tier(wins: u8, losses: u8, first_to: u8) -> EscalationTier {
+    if first_to <= 1 {
+        return EscalationTier::DoubleMatchPoint;
+    }
+    let match_point = first_to - 1;
+    match (wins >= match_point, losses >= match_point) {
+        (true, true) => EscalationTier::DoubleMatchPoint,
+        (true, false) | (false, true) => EscalationTier::SingleMatchPoint,
+        (false, false) => EscalationTier::Normal,
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RoundBg {
+    #[default]
+    Random,
+    /// Canonical `<game>:<background>` pool key.
+    Named(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RoundBgm {
+    #[default]
+    ByBackground,
+    Random,
+    Theme {
+        game: String,
+        song: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RoundCustom {
+    pub bg: RoundBg,
+    pub bgm: RoundBgm,
+}
+
+impl RoundCustom {
+    pub fn is_default(&self) -> bool {
+        self.bg == RoundBg::Random && self.bgm == RoundBgm::ByBackground
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StageConfig {
+    pub mode: StageMode,
+    pub rounds: Vec<RoundCustom>,
+}
+
+impl StageConfig {
+    pub fn load(remembered: &BTreeMap<String, String>) -> Self {
+        let mode = remembered.get(REMEMBERED_STAGE_MODE).map(|s| StageMode::from_key(s)).unwrap_or_default();
+        let max_rounds = saito_match::rounds_for(saito_match::MAX_FIRST_TO);
+        let rounds = remembered
+            .get(REMEMBERED_STAGE_ROUNDS)
+            .map(|raw| raw.split(';').take(max_rounds).map(decode_round).collect())
+            .unwrap_or_default();
+        Self { mode, rounds }
+    }
+
+    pub fn save(&self, remembered: &mut BTreeMap<String, String>) {
+        if self.mode == StageMode::Default {
+            remembered.remove(REMEMBERED_STAGE_MODE);
+        } else {
+            remembered.insert(REMEMBERED_STAGE_MODE.into(), self.mode.as_key().into());
+        }
+        let used_len = self.rounds.iter().rposition(|r| !r.is_default()).map_or(0, |last| last + 1);
+        if used_len == 0 {
+            remembered.remove(REMEMBERED_STAGE_ROUNDS);
+        } else {
+            let encoded: Vec<String> = self.rounds[..used_len].iter().map(encode_round).collect();
+            remembered.insert(REMEMBERED_STAGE_ROUNDS.into(), encoded.join(";"));
+        }
+    }
+
+    pub fn ensure_rounds(&mut self, count: usize) {
+        if self.rounds.len() < count {
+            self.rounds.resize_with(count, RoundCustom::default);
+        }
+    }
+
+    pub fn round_bg(&self, index: usize) -> &RoundBg {
+        self.rounds.get(index).map_or(&RoundBg::Random, |r| &r.bg)
+    }
+
+    pub fn round_bgm(&self, index: usize) -> &RoundBgm {
+        self.rounds.get(index).map_or(&RoundBgm::ByBackground, |r| &r.bgm)
+    }
+
+    pub fn set_round_bg(&mut self, index: usize, bg: RoundBg) {
+        self.ensure_rounds(index + 1);
+        self.rounds[index].bg = bg;
+    }
+
+    pub fn set_round_bgm(&mut self, index: usize, bgm: RoundBgm) {
+        self.ensure_rounds(index + 1);
+        self.rounds[index].bgm = bgm;
+    }
+
+    pub fn reset_custom(&mut self) {
+        self.rounds.clear();
+    }
+
+    /// Build the client-local [`BattlePresentation`] attached when an online match starts loading.
+    pub fn build_presentation(&self, games: &Games, ready: &Ready, seed: u32, first_to: u8) -> BattlePresentation {
+        let content = ready.content().clone();
+        let max_rounds = saito_match::rounds_for(first_to.clamp(1, saito_match::MAX_FIRST_TO));
+        let own_sound = music::sound(games, ready, &Music::Background);
+
+        match self.mode {
+            StageMode::Default => {
+                let pool = default_link_backgrounds(&content);
+                let mut pre: Vec<Option<BackgroundId>> = Vec::with_capacity(max_rounds);
+                let mut picks = Picks::new(seed ^ 0x4446_4C54);
+                for _ in 0..max_rounds {
+                    pre.push((!pool.is_empty()).then(|| pool[picks.below(pool.len())]));
+                }
+                let first_background = pre.first().copied().flatten();
+                let extra_backgrounds: Vec<BackgroundId> = pre.iter().flatten().copied().collect();
+                let pre_sound = own_sound.clone();
+                let resolver = Box::new(move |ctx: RoundContext| {
+                    let bg = pre
+                        .get(ctx.round as usize)
+                        .copied()
+                        .flatten()
+                        .or_else(|| {
+                            (!pool.is_empty()).then(|| {
+                                let mut p = Picks::new(seed ^ 0x4446_4C54 ^ ((ctx.round as u32) << 16));
+                                pool[p.below(pool.len())]
+                            })
+                        });
+                    RoundLook { background: bg, sound: pre_sound.clone() }
+                });
+                BattlePresentation { extra_backgrounds, first_background, resolver }
+            }
+            StageMode::Random => {
+                let pool_bgs = available_pool_backgrounds(&content, &ready.loaded.game.others);
+                let themes = available_themes(games, ready);
+                let mut bg_picks = Picks::new(seed ^ 0x5241_4E44);
+                let mut bgm_picks = Picks::new(seed ^ 0x4247_4D52);
+                let mut pre: Vec<RoundLook> = Vec::with_capacity(max_rounds);
+                for _ in 0..max_rounds {
+                    let bg = (!pool_bgs.is_empty()).then(|| pool_bgs[bg_picks.below(pool_bgs.len())]);
+                    let sound = if !themes.is_empty() {
+                        Some(themes[bgm_picks.below(themes.len())].clone())
+                    } else {
+                        own_sound.clone()
+                    };
+                    pre.push(RoundLook { background: bg, sound });
+                }
+                let first_background = pre.first().and_then(|l| l.background);
+                let extra_backgrounds: Vec<BackgroundId> = pre.iter().filter_map(|l| l.background).collect();
+                let resolver = Box::new(move |ctx: RoundContext| {
+                    if let Some(look) = pre.get(ctx.round as usize) {
+                        return look.clone();
+                    }
+                    let bg = (!pool_bgs.is_empty()).then(|| {
+                        let mut p = Picks::new(seed ^ 0x5241_4E44 ^ ((ctx.round as u32) << 16));
+                        pool_bgs[p.below(pool_bgs.len())]
+                    });
+                    let sound = if !themes.is_empty() {
+                        let mut p = Picks::new(seed ^ 0x4247_4D52 ^ ((ctx.round as u32) << 16));
+                        Some(themes[p.below(themes.len())].clone())
+                    } else {
+                        own_sound.clone()
+                    };
+                    RoundLook { background: bg, sound }
+                });
+                BattlePresentation { extra_backgrounds, first_background, resolver }
+            }
+            StageMode::Escalating => {
+                let normal_bgs = escalating_backgrounds(&content, EscalationTier::Normal);
+                let single_mp_bgs = escalating_backgrounds(&content, EscalationTier::SingleMatchPoint);
+                let double_mp_bgs = escalating_backgrounds(&content, EscalationTier::DoubleMatchPoint);
+                let normal_bgm = theme_for_game(games, ready, "virus-battle").or_else(|| own_sound.clone());
+                let single_mp_bgm = theme_for_game(games, ready, "boss-battle").or_else(|| own_sound.clone());
+                let double_mp_bgm = theme_for_game(games, ready, "final-battle").or_else(|| own_sound.clone());
+
+                let pick_from = |round: u8, list: &[BackgroundId]| -> Option<BackgroundId> {
+                    if list.is_empty() {
+                        return None;
+                    }
+                    let mut p = Picks::new(seed ^ 0x4553_4341 ^ ((round as u32) << 8));
+                    Some(list[p.below(list.len())])
+                };
+
+                let first_tier = escalation_tier(0, 0, first_to);
+                let first_background = match first_tier {
+                    EscalationTier::Normal => pick_from(0, &normal_bgs),
+                    EscalationTier::SingleMatchPoint => pick_from(0, &single_mp_bgs),
+                    EscalationTier::DoubleMatchPoint => pick_from(0, &double_mp_bgs),
+                };
+                let mut extra_backgrounds = Vec::new();
+                for id in normal_bgs.iter().chain(&single_mp_bgs).chain(&double_mp_bgs).copied() {
+                    if !extra_backgrounds.contains(&id) {
+                        extra_backgrounds.push(id);
+                    }
+                }
+                let resolver = Box::new(move |ctx: RoundContext| {
+                    let tier = escalation_tier(ctx.wins, ctx.losses, ctx.first_to);
+                    let (bgs, bgm) = match tier {
+                        EscalationTier::Normal => (&normal_bgs, &normal_bgm),
+                        EscalationTier::SingleMatchPoint => (&single_mp_bgs, &single_mp_bgm),
+                        EscalationTier::DoubleMatchPoint => (&double_mp_bgs, &double_mp_bgm),
+                    };
+                    let mut p = Picks::new(seed ^ 0x4553_4341 ^ ((ctx.round as u32) << 8));
+                    let background = (!bgs.is_empty()).then(|| bgs[p.below(bgs.len())]);
+                    RoundLook { background, sound: bgm.clone() }
+                });
+                BattlePresentation { extra_backgrounds, first_background, resolver }
+            }
+            StageMode::Custom => {
+                let pool_bgs = available_pool_backgrounds(&content, &ready.loaded.game.others);
+                let themes = available_themes(games, ready);
+                let round_music = music::round_music(games, ready, &Music::Background);
+                let mut bg_picks = Picks::new(seed ^ 0x4355_5354);
+                let mut bgm_picks = Picks::new(seed ^ 0x4342_474D);
+                let mut pre: Vec<RoundLook> = Vec::with_capacity(max_rounds);
+
+                for r in 0..max_rounds {
+                    let rand_bg = (!pool_bgs.is_empty()).then(|| pool_bgs[bg_picks.below(pool_bgs.len())]);
+                    let rand_bgm = (!themes.is_empty()).then(|| themes[bgm_picks.below(themes.len())].clone());
+                    let cfg = self.rounds.get(r).cloned().unwrap_or_default();
+
+                    let bg = match &cfg.bg {
+                        RoundBg::Random => rand_bg,
+                        RoundBg::Named(canonical) => resolve_background(&content, &ready.loaded.game.others, canonical).or(rand_bg),
+                    };
+                    let sound = match &cfg.bgm {
+                        RoundBgm::ByBackground => bg
+                            .and_then(|id| round_music.as_ref().map(|rm| rm.parts(id).clone()))
+                            .or_else(|| own_sound.clone()),
+                        RoundBgm::Random => rand_bgm.or_else(|| own_sound.clone()),
+                        RoundBgm::Theme { game, song } => resolve_theme(games, ready, game, song).or_else(|| own_sound.clone()),
+                    };
+                    pre.push(RoundLook { background: bg, sound });
+                }
+
+                let first_background = pre.first().and_then(|l| l.background);
+                let extra_backgrounds: Vec<BackgroundId> = pre.iter().filter_map(|l| l.background).collect();
+                let resolver = Box::new(move |ctx: RoundContext| {
+                    pre.get(ctx.round as usize).cloned().unwrap_or_else(|| RoundLook {
+                        background: Some(ctx.default_background),
+                        sound: own_sound.clone(),
+                    })
+                });
+                BattlePresentation { extra_backgrounds, first_background, resolver }
+            }
+        }
+    }
+}
+
+/// Canonicalizes a background selection index from `practice::background_list(content, game)`
+/// (where 0 = Random, 1.. = list entry) into a [`RoundBg`].
+pub(crate) fn round_bg_from_list_index(content: &Content, game: &str, backgrounds: &[String], index: usize) -> RoundBg {
+    let Some(written) = index.checked_sub(1).and_then(|i| backgrounds.get(i)) else {
+        return RoundBg::Random;
+    };
+    match practice::pool_background_parts(content, game, written) {
+        Some((of, name)) => RoundBg::Named(pool_key(of, name)),
+        None => RoundBg::Named(pool_key(game, written)),
+    }
+}
+
+/// Returns the picker list index (0 = Random, 1.. = list entry) for a stored [`RoundBg`].
+pub(crate) fn list_index_for_round_bg(content: &Content, game: &str, backgrounds: &[String], bg: &RoundBg) -> usize {
+    let RoundBg::Named(canonical) = bg else {
+        return 0;
+    };
+    let Some((target_game, target_name)) = split_bg_key(canonical, game) else {
+        return 0;
+    };
+    backgrounds
+        .iter()
+        .position(|written| practice::pool_background_parts(content, game, written) == Some((target_game, target_name)))
+        .map_or(0, |i| i + 1)
+}
+
+/// Formats a [`RoundBg`] for UI display.
+pub(crate) fn round_bg_label(bg: &RoundBg, random_label: &str) -> String {
+    match bg {
+        RoundBg::Random => random_label.to_string(),
+        RoundBg::Named(canonical) => match canonical.split_once(':') {
+            Some((game, name)) => crate::backgrounds::name(game, name),
+            None => canonical.clone(),
+        },
+    }
+}
+
+/// Offered BGM choices for [`StageMode::Custom`]: `[ByBackground, Random, ...themes]`.
+pub(crate) fn bgm_choices(games: &Games) -> Vec<RoundBgm> {
+    let mut out = vec![RoundBgm::ByBackground, RoundBgm::Random];
+    for m in music::offered(games) {
+        if let Music::Theme { game, song } = m {
+            out.push(RoundBgm::Theme { game, song });
+        }
+    }
+    out
+}
+
+/// Index into [`bgm_choices`], defaulting to `0` (`ByBackground`) if an external theme is unavailable.
+pub(crate) fn bgm_choice_index(choices: &[RoundBgm], bgm: &RoundBgm) -> usize {
+    choices.iter().position(|c| c == bgm).unwrap_or(0)
+}
+
+/// Formats a [`RoundBgm`] for UI display.
+pub(crate) fn round_bgm_label(bgm: &RoundBgm, by_bg_label: &str, random_label: &str) -> String {
+    match bgm {
+        RoundBgm::ByBackground => by_bg_label.to_string(),
+        RoundBgm::Random => random_label.to_string(),
+        RoundBgm::Theme { game, song } => music::name(&Music::Theme { game: game.clone(), song: song.clone() }, ""),
+    }
+}
+
+fn encode_round(round: &RoundCustom) -> String {
+    let bg = match &round.bg {
+        RoundBg::Random => String::new(),
+        RoundBg::Named(key) => key.replace(['|', ';'], ""),
+    };
+    let bgm = match &round.bgm {
+        RoundBgm::ByBackground => String::new(),
+        RoundBgm::Random => "random".into(),
+        RoundBgm::Theme { game, song } => format!("{}/{}", game.replace(['/', '|', ';'], ""), song.replace(['/', '|', ';'], "")),
+    };
+    format!("{bg}|{bgm}")
+}
+
+fn decode_round(raw: &str) -> RoundCustom {
+    let (bg_raw, bgm_raw) = raw.split_once('|').unwrap_or((raw, ""));
+    let bg = if bg_raw.is_empty() { RoundBg::Random } else { RoundBg::Named(bg_raw.to_string()) };
+    let bgm = match bgm_raw {
+        "" => RoundBgm::ByBackground,
+        "random" => RoundBgm::Random,
+        other => match other.split_once('/') {
+            Some((game, song)) if !game.is_empty() && !song.is_empty() => RoundBgm::Theme {
+                game: game.to_string(),
+                song: song.to_string(),
+            },
+            _ => RoundBgm::ByBackground,
+        },
+    };
+    RoundCustom { bg, bgm }
+}
+
+fn split_bg_key<'a>(canonical: &'a str, fallback_game: &'a str) -> Option<(&'a str, &'a str)> {
+    match canonical.split_once(':') {
+        Some((game, name)) if !game.is_empty() && !name.is_empty() => Some((game, name)),
+        None if !canonical.is_empty() => Some((fallback_game, canonical)),
+        _ => None,
+    }
+}
+
+fn resolve_background(content: &Content, others: &saito_render::graphics::OtherBackgrounds, canonical: &str) -> Option<BackgroundId> {
+    let (game, name) = split_bg_key(canonical, content.game())?;
+    let id = content.background_handle(game, name)?;
+    if content.is_own_background(id) || others.game(game).is_some() {
+        Some(id)
+    } else {
+        None
+    }
+}
+
+fn available_pool_backgrounds(content: &Content, others: &saito_render::graphics::OtherBackgrounds) -> Vec<BackgroundId> {
+    let pool: Vec<BackgroundId> = content
+        .pool_backgrounds()
+        .into_iter()
+        .filter(|&id| content.is_own_background(id) || content.background_of(id).is_some_and(|(g, _)| others.game(g).is_some()))
+        .collect();
+    if !pool.is_empty() {
+        return pool;
+    }
+    let game_pool = content.game_pool_backgrounds();
+    if !game_pool.is_empty() {
+        game_pool
+    } else {
+        default_link_backgrounds(content)
+    }
+}
+
+fn default_link_backgrounds(content: &Content) -> Vec<BackgroundId> {
+    let bgs = content.link_battle_backgrounds();
+    if !bgs.is_empty() {
+        bgs
+    } else {
+        content.stage_background().into_iter().collect()
+    }
+}
+
+fn available_themes(games: &Games, ready: &Ready) -> Vec<SoundParts> {
+    let mut parts = Vec::new();
+    for m in music::offered(games) {
+        if matches!(m, Music::Theme { .. })
+            && let Some(p) = music::sound(games, ready, &m)
+        {
+            parts.push(p);
+        }
+    }
+    if parts.is_empty()
+        && let Some(sound) = ready.loaded.sound.as_ref()
+    {
+        for song in ready.loaded.battle_themes() {
+            if let Some(theme) = ready.loaded.theme(song) {
+                parts.push(sound.parts(ready.content(), Some(&theme)));
+            }
+        }
+    }
+    parts
+}
+
+fn resolve_theme(games: &Games, ready: &Ready, game: &str, song: &str) -> Option<SoundParts> {
+    if let Some(parts) = music::sound(games, ready, &Music::Theme { game: game.to_string(), song: song.to_string() }) {
+        // Note: `music::sound` returns game's own sound when `games.read(game)` is None; prefer `ready` directly if same game.
+        if games.read(game).is_some() {
+            return Some(parts);
+        }
+    }
+    if game == ready.content().game()
+        && let (Some(sound), Some(theme)) = (ready.loaded.sound.as_ref(), ready.loaded.theme(song))
+    {
+        return Some(sound.parts(ready.content(), Some(&theme)));
+    }
+    None
+}
+
+fn theme_for_game(games: &Games, ready: &Ready, song: &str) -> Option<SoundParts> {
+    resolve_theme(games, ready, ready.content().game(), song)
+}
+
+fn escalating_backgrounds(content: &Content, tier: EscalationTier) -> Vec<BackgroundId> {
+    let game = content.game();
+    let named = |names: &[&str]| -> Vec<BackgroundId> { names.iter().filter_map(|n| content.background_handle(game, n)).collect() };
+
+    let picked = match tier {
+        EscalationTier::DoubleMatchPoint => {
+            let specific = match game {
+                "exe4" => named(&["duo"]),
+                "exe5" => named(&["nebulagray"]),
+                "exe6" => named(&["copybot-comp"]),
+                _ => Vec::new(),
+            };
+            if !specific.is_empty() {
+                specific
+            } else {
+                own_backgrounds_with_music(content, "final-battle", false)
+            }
+        }
+        EscalationTier::SingleMatchPoint => {
+            let specific = match game {
+                "exe4" => named(&["meteor-comp"]),
+                "exe5" => named(&["factory-comp", "soulserv-comp"]),
+                "exe6" => named(&["underground"]),
+                _ => Vec::new(),
+            };
+            if !specific.is_empty() {
+                specific
+            } else {
+                own_backgrounds_with_music(content, "boss-battle", false)
+            }
+        }
+        EscalationTier::Normal => {
+            let regular = own_backgrounds_with_music(content, "virus-battle", true);
+            if !regular.is_empty() {
+                regular
+            } else {
+                own_backgrounds_with_music(content, "virus-battle", false)
+            }
+        }
+    };
+
+    if !picked.is_empty() {
+        picked
+    } else {
+        default_link_backgrounds(content)
+    }
+}
+
+fn own_backgrounds_with_music(content: &Content, song: &str, exclude_non_regular: bool) -> Vec<BackgroundId> {
+    let game = content.game();
+    content
+        .background_pool
+        .iter()
+        .filter(|(g, name)| {
+            *g == game
+                && content.music_of_background(name) == Some(song)
+                && (!exclude_non_regular || !NON_REGULAR_BACKGROUNDS.contains(name))
+        })
+        .filter_map(|(g, name)| content.background_handle(g, name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::games::Games;
+    use saito_audio::{BankId, MUSIC_PLAYER, m4a::SongId};
+    use saito_battle::Content;
+    use saito_frontend::driver::LivePlayer;
+    use saito_frontend::game::{Enhancements, Game, Loaded, Sound};
+    use std::sync::Arc;
+
+    fn loaded_game(content: Arc<Content>) -> Loaded {
+        let mut bank = (*saito_frontend::testing::bank(&content)).clone();
+        let (held, short) = (bank.songs[0].clone(), bank.songs[1].clone());
+        let assets = saito_frontend::testing::numbered_by_handle(&content);
+        let songs = saito_audio::Songs::of(&assets);
+        let mut index = saito_content_api::AssetIndex::default();
+        for (h, name) in content.assets.sounds.iter().enumerate() {
+            index.sounds.insert(name.clone(), h as u16);
+        }
+        for theme in content.battle_themes() {
+            let n = index.sounds.len() as u16;
+            index.sounds.entry(theme.clone()).or_insert(n);
+        }
+        let music: Vec<u16> = content
+            .battle_music()
+            .into_iter()
+            .map(|m| m.0)
+            .chain(content.battle_themes().iter().filter_map(|t| index.sounds.get(t).copied()))
+            .collect();
+        let numbers = songs.0.iter().map(|s| s.song as usize + 1).max().unwrap_or(0).max(index.sounds.len());
+        bank.songs = vec![short; numbers];
+        for n in &music {
+            bank.songs[*n as usize] = held.clone();
+        }
+        let bank = Arc::new(bank);
+        Loaded {
+            game: Game {
+                name: content.game().to_string(),
+                content: content.clone(),
+                dir: saito_content::index::content(),
+                graphics: Default::default(),
+                sound: bank.clone(),
+                numbers: Arc::new(assets),
+                index: Arc::new(index),
+                others: Default::default(),
+                report: Default::default(),
+            },
+            graphics: saito_frontend::testing::graphics(&content, 0x7FFF),
+            enhancements: Enhancements::NONE,
+            font: None,
+            sound: Some(Sound { bank, songs, report: Default::default() }),
+        }
+    }
+
+    fn all_games() -> Games {
+        Games::read_of(vec![
+            ("exe4", loaded_game(saito_match::testing::exe4_content())),
+            ("exe5", loaded_game(saito_match::testing::exe5_content())),
+            ("exe6", loaded_game(saito_match::testing::exe6_content())),
+        ])
+    }
+
+    fn song_num(games: &Games, game: &str, song: &str) -> u16 {
+        games.read(game).unwrap().loaded.game.index.number(saito_content_api::AssetKind::Sound, song).unwrap()
+    }
+
+    fn resolved_song(sound: &Option<SoundParts>, content: &Content) -> Option<(usize, u16)> {
+        let (banks, songs) = sound.as_ref()?;
+        let handle = content.defs.roles().link_battle_music(true);
+        let bank_song = songs.0.get(handle.0 as usize)?;
+        let bank = banks.get(bank_song.bank.index())?;
+        let _ = bank;
+        Some((bank_song.bank.index(), bank_song.song))
+    }
+
+    #[test]
+    fn config_persistence_roundtrips_and_trims_defaults() {
+        let mut remembered = BTreeMap::new();
+        let mut cfg = StageConfig {
+            mode: StageMode::Custom,
+            rounds: vec![
+                RoundCustom {
+                    bg: RoundBg::Named("exe6:graveyard".into()),
+                    bgm: RoundBgm::Theme { game: "exe4".into(), song: "tournament-battle".into() },
+                },
+                RoundCustom::default(),
+                RoundCustom { bg: RoundBg::Random, bgm: RoundBgm::Random },
+                RoundCustom::default(),
+            ],
+        };
+        cfg.save(&mut remembered);
+        assert_eq!(remembered.get(REMEMBERED_STAGE_MODE).map(String::as_str), Some("custom"));
+        assert!(remembered.contains_key(REMEMBERED_STAGE_ROUNDS));
+
+        let loaded = StageConfig::load(&remembered);
+        assert_eq!(loaded.mode, StageMode::Custom);
+        assert_eq!(loaded.rounds.len(), 3, "trailing defaults trimmed, middle default kept");
+        assert_eq!(loaded.rounds[0], cfg.rounds[0]);
+        assert_eq!(loaded.rounds[1], RoundCustom::default());
+        assert_eq!(loaded.rounds[2], cfg.rounds[2]);
+
+        cfg.mode = StageMode::Default;
+        cfg.reset_custom();
+        cfg.save(&mut remembered);
+        assert!(!remembered.contains_key(REMEMBERED_STAGE_MODE));
+        assert!(!remembered.contains_key(REMEMBERED_STAGE_ROUNDS));
+
+        // Malformed saved strings degrade gracefully without panicking.
+        remembered.insert(REMEMBERED_STAGE_MODE.into(), "bogus".into());
+        remembered.insert(REMEMBERED_STAGE_ROUNDS.into(), "|bad;exe5:comp|random;;|/onlysong".into());
+        let bad = StageConfig::load(&remembered);
+        assert_eq!(bad.mode, StageMode::Default);
+        assert_eq!(bad.rounds[0], RoundCustom::default());
+        assert_eq!(bad.rounds[1], RoundCustom { bg: RoundBg::Named("exe5:comp".into()), bgm: RoundBgm::Random });
+        assert_eq!(bad.rounds[2], RoundCustom::default());
+        assert_eq!(bad.rounds[3], RoundCustom::default());
+    }
+
+    #[test]
+    fn escalation_tiers_match_score_and_bo1_rule() {
+        // Single battle (FT1) -> immediately treated as double match point.
+        assert_eq!(escalation_tier(0, 0, 1), EscalationTier::DoubleMatchPoint);
+
+        // Triple battle (FT2).
+        assert_eq!(escalation_tier(0, 0, 2), EscalationTier::Normal);
+        assert_eq!(escalation_tier(1, 0, 2), EscalationTier::SingleMatchPoint);
+        assert_eq!(escalation_tier(0, 1, 2), EscalationTier::SingleMatchPoint);
+        assert_eq!(escalation_tier(1, 1, 2), EscalationTier::DoubleMatchPoint);
+
+        // Best of 5 (FT3).
+        assert_eq!(escalation_tier(0, 0, 3), EscalationTier::Normal);
+        assert_eq!(escalation_tier(1, 0, 3), EscalationTier::Normal);
+        assert_eq!(escalation_tier(1, 1, 3), EscalationTier::Normal);
+        assert_eq!(escalation_tier(2, 0, 3), EscalationTier::SingleMatchPoint);
+        assert_eq!(escalation_tier(2, 1, 3), EscalationTier::SingleMatchPoint);
+        assert_eq!(escalation_tier(0, 2, 3), EscalationTier::SingleMatchPoint);
+        assert_eq!(escalation_tier(2, 2, 3), EscalationTier::DoubleMatchPoint);
+    }
+
+    #[test]
+    fn default_and_random_modes_pick_expected_pools() {
+        let games = all_games();
+        let ready = games.read("exe6").unwrap();
+        let content = ready.content();
+        let link_set = content.link_battle_backgrounds();
+        let default_bg = content.stage_background().unwrap();
+
+        let cfg = StageConfig { mode: StageMode::Default, ..Default::default() };
+        let mut pres = cfg.build_presentation(&games, &ready, 42, 2);
+        let look0 = (pres.resolver)(RoundContext { round: 0, wins: 0, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+        assert!(link_set.contains(&look0.background.unwrap()));
+        let virus_song = song_num(&games, "exe6", "virus-battle");
+        assert_eq!(resolved_song(&look0.sound, content), Some((0, virus_song)));
+
+        let random_cfg = StageConfig { mode: StageMode::Random, ..Default::default() };
+        let mut rpres = random_cfg.build_presentation(&games, &ready, 99, 2);
+        let r0 = (rpres.resolver)(RoundContext { round: 0, wins: 0, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+        assert!(r0.background.is_some());
+        assert!(r0.sound.is_some());
+    }
+
+    #[test]
+    fn escalating_mode_picks_authentic_stages_and_bgms_for_exe4_5_6() {
+        let games = all_games();
+        let cfg = StageConfig { mode: StageMode::Escalating, ..Default::default() };
+
+        for (game, mp_allowed, final_bg) in [
+            ("exe4", vec!["meteor-comp"], "duo"),
+            ("exe5", vec!["factory-comp", "soulserv-comp"], "nebulagray"),
+            ("exe6", vec!["underground"], "copybot-comp"),
+        ] {
+            let ready = games.read(game).unwrap();
+            let content = ready.content();
+            let default_bg = content.stage_background().unwrap();
+
+            // FT1 -> starts on Final Boss directly.
+            let mut bo1 = cfg.build_presentation(&games, &ready, 7, 1);
+            let bo1_name = content.background_of(bo1.first_background.unwrap()).unwrap().1.to_string();
+            assert_eq!(bo1_name, final_bg, "{game} FT1 first background");
+            let bo1_look = (bo1.resolver)(RoundContext { round: 0, wins: 0, losses: 0, max_rounds: 1, first_to: 1, default_background: default_bg });
+            assert_eq!(resolved_song(&bo1_look.sound, content), Some((0, song_num(&games, game, "final-battle"))));
+
+            // FT2 (Bo3) progression: 0-0 -> Virus+Normal, 1-0 -> Boss+FinalDungeon, 1-1 -> FinalBoss.
+            let mut bo3 = cfg.build_presentation(&games, &ready, 7, 2);
+            let normal = (bo3.resolver)(RoundContext { round: 0, wins: 0, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+            let normal_name = content.background_of(normal.background.unwrap()).unwrap().1;
+            assert!(!NON_REGULAR_BACKGROUNDS.contains(&normal_name), "{game} normal skipped {normal_name}");
+            assert_eq!(content.music_of_background(normal_name), Some("virus-battle"), "{game} normal music");
+            assert_eq!(resolved_song(&normal.sound, content), Some((0, song_num(&games, game, "virus-battle"))));
+
+            let mp = (bo3.resolver)(RoundContext { round: 1, wins: 1, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+            let mp_name = content.background_of(mp.background.unwrap()).unwrap().1;
+            assert!(mp_allowed.contains(&mp_name), "{game} single MP bg was {mp_name}");
+            assert_eq!(resolved_song(&mp.sound, content), Some((0, song_num(&games, game, "boss-battle"))));
+
+            let dmp = (bo3.resolver)(RoundContext { round: 2, wins: 1, losses: 1, max_rounds: 3, first_to: 2, default_background: default_bg });
+            assert_eq!(content.background_of(dmp.background.unwrap()).unwrap().1, final_bg);
+            assert_eq!(resolved_song(&dmp.sound, content), Some((0, song_num(&games, game, "final-battle"))));
+        }
+    }
+
+    #[test]
+    fn custom_mode_resolves_per_round_background_and_bgm() {
+        let games = all_games();
+        let ready = games.read("exe6").unwrap();
+        let content = ready.content();
+        let default_bg = content.stage_background().unwrap();
+
+        let cfg = StageConfig {
+            mode: StageMode::Custom,
+            rounds: vec![
+                RoundCustom {
+                    bg: RoundBg::Named("exe6:graveyard".into()),
+                    bgm: RoundBgm::ByBackground,
+                },
+                RoundCustom {
+                    bg: RoundBg::Named("exe6:comp".into()),
+                    bgm: RoundBgm::Theme { game: "exe4".into(), song: "tournament-battle".into() },
+                },
+                RoundCustom { bg: RoundBg::Random, bgm: RoundBgm::Random },
+            ],
+        };
+        let mut pres = cfg.build_presentation(&games, &ready, 15, 2);
+
+        let r0 = (pres.resolver)(RoundContext { round: 0, wins: 0, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+        assert_eq!(content.background_of(r0.background.unwrap()), Some(("exe6", "graveyard")));
+        assert_eq!(resolved_song(&r0.sound, content), Some((0, song_num(&games, "exe6", "crossover-battle"))));
+
+        let r1 = (pres.resolver)(RoundContext { round: 1, wins: 1, losses: 0, max_rounds: 3, first_to: 2, default_background: default_bg });
+        assert_eq!(content.background_of(r1.background.unwrap()), Some(("exe6", "comp")));
+        assert_eq!(resolved_song(&r1.sound, content), Some((1, song_num(&games, "exe4", "tournament-battle"))));
+
+        let r2 = (pres.resolver)(RoundContext { round: 2, wins: 1, losses: 1, max_rounds: 3, first_to: 2, default_background: default_bg });
+        assert!(r2.background.is_some());
+        assert!(r2.sound.is_some());
+    }
+
+    #[test]
+    fn custom_stage_presentation_never_alters_battle_digest_and_switches_music() {
+        let games = all_games();
+        let six = games.read("exe6").unwrap();
+        let content = six.content().clone();
+        let m = saito_match::pick::live(&content, "exe6", 11, None).unwrap();
+        let folders = [0, 1].map(|side| m.sides[side].folder(&content).saved().unwrap());
+        let set = saito_match::Set::new(content.clone(), m.round(&content, 11), folders);
+
+        let make_player = |with_override: bool| {
+            let (banks, songs) = music::sound(&games, &six, &Music::Background).unwrap();
+            let driver = LivePlayer::against(set.clone(), Default::default(), 11);
+            let renderer = saito_frontend::testing::graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None);
+            let mut p = saito_frontend::Player::with(
+                renderer,
+                None,
+                Some(saito_audio::BattleAudio::with_banks(banks, songs)),
+                Box::new(driver),
+            );
+            if with_override {
+                let cfg = StageConfig {
+                    mode: StageMode::Custom,
+                    rounds: vec![RoundCustom {
+                        bg: RoundBg::Named("exe6:graveyard".into()),
+                        bgm: RoundBgm::Theme { game: "exe4".into(), song: "tournament-battle".into() },
+                    }],
+                };
+                let pres = cfg.build_presentation(&games, &six, 11, 2);
+                p.renderer().set_background_override(pres.first_background);
+                p.set_round_presentation(Some(pres.resolver));
+            }
+            for _ in 0..30 {
+                assert!(p.tick(0));
+            }
+            p
+        };
+
+        let plain = make_player(false);
+        let mut custom = make_player(true);
+        assert_eq!(custom.battle().digest(), plain.battle().digest(), "digest identical with local stage/bgm override");
+        assert_eq!(
+            custom.renderer().background_override().and_then(|id| content.background_of(id)),
+            Some(("exe6", "graveyard"))
+        );
+        let audio = custom.audio().unwrap();
+        let playing: Vec<Option<SongId>> = (0..2)
+            .map(|p| audio.driver_of(BankId(p)).unwrap().player(MUSIC_PLAYER).filter(|pl| pl.is_playing()).and_then(|pl| pl.song()))
+            .collect();
+        assert_eq!(playing, [None, Some(SongId(song_num(&games, "exe4", "tournament-battle")))]);
+    }
+}

@@ -309,3 +309,48 @@ msgstr "깜빡임 감소"
 
 msgid "Hide aura number"
 msgstr "드림오라 숫자 숨기기"
+
+# ---- Stage & BGM preset dialog ----
+
+msgid "Stage & BGM"
+msgstr "배경 및 BGM"
+
+msgid "Stage & BGM: {}"
+msgstr "배경 · BGM: {}"
+
+msgid "Mode"
+msgstr "모드"
+
+msgctxt "stage mode"
+msgid "Default"
+msgstr "기본값"
+
+msgctxt "stage mode"
+msgid "Full random"
+msgstr "전체 무작위"
+
+msgctxt "stage mode"
+msgid "Escalating"
+msgstr "단계별 강화"
+
+msgctxt "stage mode"
+msgid "Custom"
+msgstr "개별 설정"
+
+msgid "Round"
+msgstr "라운드"
+
+msgid "BGM"
+msgstr "BGM"
+
+msgid "Matches GBA link battle rules (random link battle stage background and default link battle BGM)."
+msgstr "GBA 원작 통신 대전 규칙과 동일합니다(원작 무작위 배경 및 기본 BGM)."
+
+msgid "Every round picks a random background from the full pool and a random battle BGM."
+msgstr "매 라운드 전체 풀에서 무작위 배경과 무작위 배틀 BGM을 선택합니다."
+
+msgid "Virus battle on normal rounds, Boss battle on single match point, Final Boss on double match point (or 1st-to-1)."
+msgstr "일반 라운드는 바이러스전, 한쪽 매치 포인트는 보스전과 최종 던전, 양쪽 매치 포인트(또는 1판 승부)는 최종 보스 테마."
+
+msgid "Configure each round's background and BGM ({} rounds max, First to {})."
+msgstr "최대 {}라운드({}선승)별로 배경과 BGM을 개별 설정합니다."

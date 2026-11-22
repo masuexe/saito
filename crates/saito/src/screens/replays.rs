@@ -890,6 +890,7 @@ impl Replays {
             full: false,
             music: crate::battle::BattleMusic::Background,
             gate: None,
+            presentation: None,
         });
     }
 

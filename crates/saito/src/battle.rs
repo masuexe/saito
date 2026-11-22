@@ -69,6 +69,13 @@ pub enum BattleMusic {
     None,
 }
 
+/// Client-local stage background & BGM overrides supplied for an online match.
+pub struct BattlePresentation {
+    pub extra_backgrounds: Vec<saito_battle::content::BackgroundId>,
+    pub first_background: Option<saito_battle::content::BackgroundId>,
+    pub resolver: saito_frontend::player::RoundResolver,
+}
+
 /// A battle to start.
 pub struct BattleStart {
     /// The screen that starts it: its menu's controls and its events are that screen's.
@@ -97,6 +104,8 @@ pub struct BattleStart {
     /// Online: called each frame with how far this side is (0 to 1), it tells the other side and says how far
     /// that one is. The battle starts when both are 1. None: nobody to wait for.
     pub gate: Option<Box<dyn FnMut(f32) -> f32>>,
+    /// Client-local per-round stage background & BGM resolver (none: use `music` and set stages).
+    pub presentation: Option<BattlePresentation>,
 }
 
 /// What a battle's owner hears of it.
@@ -221,15 +230,29 @@ impl Shell {
                 let enhancements = self.settings.enhancements();
                 let graphics = ready.graphics(self.i18n.code);
                 let font = ready.loaded.font_in(self.i18n.code).filter(|_| enhancements.wants_font());
-                let renderer = graphics.renderer(enhancements, font.clone());
-                // (The music the player picked, the backgrounds' or a theme, where the battle plays the pick; else
-                // the backgrounds': `crate::music`.)
-                let music = if loading.start.music == BattleMusic::Picked { self.battle_music() } else { crate::music::Music::Background };
-                let sound = crate::music::sound(&self.games, &ready, &music);
-                let rounds = crate::music::round_music(&self.games, &ready, &music);
-                loading.preload = Some(
-                    Preload::with(renderer, font.map(TextRenderer::new), sound, &loading.start.set, loading.start.viewer, size).round_music(rounds),
-                );
+                let mut renderer = graphics.renderer(enhancements, font.clone());
+                let pres = loading.start.presentation.take();
+                let (music, rounds) = if pres.is_some() {
+                    let bg_music = crate::music::Music::Background;
+                    (crate::music::sound(&self.games, &ready, &bg_music), None)
+                } else {
+                    // (The music the player picked, the backgrounds' or a theme, where the battle plays the pick; else
+                    // the backgrounds': `crate::music`.)
+                    let music = if loading.start.music == BattleMusic::Picked { self.battle_music() } else { crate::music::Music::Background };
+                    (crate::music::sound(&self.games, &ready, &music), crate::music::round_music(&self.games, &ready, &music))
+                };
+                if let Some(pres) = pres {
+                    renderer.set_background_override(pres.first_background);
+                    loading.preload = Some(
+                        Preload::with(renderer, font.map(TextRenderer::new), music, &loading.start.set, loading.start.viewer, size)
+                            .extra_backgrounds(pres.extra_backgrounds)
+                            .round_presentation(Some(pres.resolver)),
+                    );
+                } else {
+                    loading.preload = Some(
+                        Preload::with(renderer, font.map(TextRenderer::new), music, &loading.start.set, loading.start.viewer, size).round_music(rounds),
+                    );
+                }
             }
             Some(preload) => {
                 let began = Instant::now();

@@ -24,6 +24,7 @@
 mod list;
 mod session;
 mod spectate;
+mod stage;
 // (The screenshot pass's second player is the `tour` feature's; without it Play hears nothing of it.)
 #[cfg(any(test, feature = "tour"))]
 #[cfg_attr(not(feature = "tour"), allow(dead_code, unused_imports))]
@@ -87,7 +88,7 @@ use saito_match::check::Problem;
 use saito_match::ruleset::Rulesets;
 use saito_signaling::spectate::{RoomMeta, RoomStage, RoomSummary, Visibility};
 use saito_signaling::{ALPHABET, CODE_LENGTH};
-use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, RoomEntry, VersusCard};
+use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, RoomEntry, StageRoundEntry, VersusCard};
 use session::{Net, Session, Stands, Way};
 use spectate::{DELAY_PRESETS, DirectoryClient, HostPublisher, WatchSession, WatchUpdate};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -337,6 +338,10 @@ pub struct Play {
     watch_menu: bool,
     /// Overlay opened directly onto `MatchPage::Settings` from the HUD button.
     watch_menu_direct: bool,
+    /// Client-local online Stage & BGM preset configuration and dialog state.
+    stage_config: stage::StageConfig,
+    stage_loaded: bool,
+    stage_dialog: bool,
 }
 
 impl Default for Play {
@@ -378,6 +383,9 @@ impl Default for Play {
             watch_return_game: None,
             watch_menu: false,
             watch_menu_direct: false,
+            stage_config: stage::StageConfig::default(),
+            stage_loaded: false,
+            stage_dialog: false,
         }
     }
 }
@@ -621,6 +629,11 @@ impl Play {
         self.live = Live::default();
         self.changing = false;
         shell.nav.close("change.");
+        if self.stage_dialog {
+            self.stage_dialog = false;
+            shell.nav.close("stage.");
+            shell.ui().global::<PlayView>().set_stage_dialog(false);
+        }
         self.close_rules(shell);
         shell.stay_awake = false;
         self.set_peek(shell, false);
@@ -797,7 +810,14 @@ impl Play {
     /// A match is agreed: the two cards, and the match made ready behind them; each side's bar is its own
     /// machine's.
     fn load(&mut self, shell: &mut Shell, agreed: Agreement) {
-        let Some((game, _)) = shell.ready() else { return };
+        let Some((game, ready)) = shell.ready() else { return };
+        self.ensure_stage_loaded(shell);
+        if self.stage_dialog {
+            self.stage_dialog = false;
+            shell.nav.close("stage.");
+            shell.ui().global::<PlayView>().set_stage_dialog(false);
+        }
+        let presentation = Some(self.stage_config.build_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to()));
         let (me, other) = (agreed.side, 1 - agreed.side);
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
@@ -823,16 +843,22 @@ impl Play {
             recorder: None,
             cards: Some(cards),
             full: true,
-            // (A match plays its game's own music: the user, "for pvp it should use the game's default for now".)
+            // (Default GBA music or per-round presentation override; BattleStart::presentation overrides music when set.)
             music: crate::battle::BattleMusic::Background,
             gate: Some(Box::new(move |mine| {
                 said.mine.set(mine);
                 if said.go.get() { 1.0 } else { said.theirs.get().min(0.995) }
             })),
+            presentation,
         });
         self.stage = Stage::Loading { seed: agreed.seed, gate };
         self.changing = false;
         shell.nav.close("change.");
+        if self.stage_dialog {
+            self.stage_dialog = false;
+            shell.nav.close("stage.");
+            shell.ui().global::<PlayView>().set_stage_dialog(false);
+        }
         self.close_rules(shell);
         self.agreed = Some(agreed);
         self.show_match(shell);
@@ -1218,7 +1244,175 @@ impl Play {
         view.set_ping(live.ping);
         view.set_note(live.note.unwrap_or(LobbyNote::None));
         view.set_note_seconds(live.seconds);
+        let first_to_changed = live.first_to != self.live.first_to;
         self.live = live;
+        if first_to_changed {
+            self.show_stage(shell);
+        }
+    }
+
+    // ---- Client-local Stage & BGM preset configuration ---------------------------------------------------
+
+    fn ensure_stage_loaded(&mut self, shell: &Shell) {
+        if !self.stage_loaded {
+            self.stage_config = stage::StageConfig::load(&shell.settings.remembered);
+            self.stage_loaded = true;
+        }
+    }
+
+    fn save_stage_config(&self, shell: &mut Shell) {
+        self.stage_config.save(&mut shell.settings.remembered);
+        shell.save_settings();
+    }
+
+    fn lobby_first_to(&self) -> u8 {
+        if self.live.first_to > 0 {
+            self.live.first_to as u8
+        } else if let Some(waiting) = &self.waiting {
+            waiting.first_to()
+        } else {
+            saito_match::TRIPLE_BATTLE
+        }
+    }
+
+    fn show_stage(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_stage_mode(self.stage_config.mode.to_int());
+        view.set_stage_dialog(self.stage_dialog);
+        let first_to = self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO);
+        let max_rounds = saito_match::rounds_for(first_to);
+        let random_label = view.get_stage_random().to_string();
+        let by_bg_label = ui.global::<saito_ui::Shell>().get_background_music().to_string();
+        let entries: Vec<StageRoundEntry> = (0..max_rounds)
+            .map(|i| StageRoundEntry {
+                bg: stage::round_bg_label(self.stage_config.round_bg(i), &random_label).into(),
+                bgm: stage::round_bgm_label(self.stage_config.round_bgm(i), &by_bg_label, &random_label).into(),
+            })
+            .collect();
+        view.set_stage_rounds(ModelRc::new(VecModel::from(entries)));
+    }
+
+    fn open_stage_dialog(&mut self, shell: &mut Shell) {
+        self.ensure_stage_loaded(shell);
+        if matches!(self.stage, Stage::Waiting) && practice::running(shell) {
+            practice::stop(shell);
+        }
+        if let Some(game) = shell.game().map(str::to_string) {
+            practice::want_background_thumbs(shell, &game);
+        }
+        self.stage_dialog = true;
+        shell.nav.open("stage.", Key::new(&format!("stage.mode-{}", self.stage_config.mode.to_int()), 0));
+        self.show_stage(shell);
+    }
+
+    fn close_stage_dialog(&mut self, shell: &mut Shell) {
+        if !self.stage_dialog {
+            return;
+        }
+        self.stage_dialog = false;
+        shell.nav.close("stage.");
+        self.show_stage(shell);
+        if matches!(self.stage, Stage::Waiting) && !shell.scale.handheld() {
+            self.train(shell);
+        }
+    }
+
+    fn set_stage_mode(&mut self, shell: &mut Shell, mode: stage::StageMode) {
+        self.ensure_stage_loaded(shell);
+        self.stage_config.mode = mode;
+        self.save_stage_config(shell);
+        shell.sound.play(Cue::Pick);
+        self.show_stage(shell);
+    }
+
+    fn open_stage_bg_picker(&mut self, shell: &mut Shell, row: i32) {
+        let Some((game, ready)) = shell.ready() else { return };
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds {
+            return;
+        }
+        let list = practice::background_list(ready.content(), &game);
+        let at = stage::list_index_for_round_bg(ready.content(), &game, &list, self.stage_config.round_bg(row));
+        practice::open_background_grid(shell, "stage.list.bg", row as i32, &game, at);
+    }
+
+    fn choose_stage_bg(&mut self, shell: &mut Shell, row: i32, choice: i32) {
+        let Some((game, ready)) = shell.ready() else { return };
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds || choice < 0 {
+            return;
+        }
+        let list = practice::background_list(ready.content(), &game);
+        let bg = stage::round_bg_from_list_index(ready.content(), &game, &list, choice as usize);
+        self.stage_config.set_round_bg(row, bg);
+        self.save_stage_config(shell);
+        self.show_stage(shell);
+    }
+
+    fn step_stage_bg(&mut self, shell: &mut Shell, row: i32, by: i32) {
+        let Some((game, ready)) = shell.ready() else { return };
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds {
+            return;
+        }
+        let list = practice::background_list(ready.content(), &game);
+        let count = 1 + list.len();
+        let now = stage::list_index_for_round_bg(ready.content(), &game, &list, self.stage_config.round_bg(row));
+        let next = (now as i32 + by).rem_euclid(count as i32) as usize;
+        let bg = stage::round_bg_from_list_index(ready.content(), &game, &list, next);
+        self.stage_config.set_round_bg(row, bg);
+        self.save_stage_config(shell);
+        self.show_stage(shell);
+    }
+
+    fn open_stage_bgm_picker(&mut self, shell: &mut Shell, row: i32) {
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds {
+            return;
+        }
+        let choices = stage::bgm_choices(&shell.games);
+        let at = stage::bgm_choice_index(&choices, self.stage_config.round_bgm(row));
+        let ui = shell.ui();
+        let random_label = ui.global::<PlayView>().get_stage_random().to_string();
+        let by_bg_label = ui.global::<saito_ui::Shell>().get_background_music().to_string();
+        let labels: Vec<String> = choices.iter().map(|c| stage::round_bgm_label(c, &by_bg_label, &random_label)).collect();
+        shell.pick("stage.list.bgm", row as i32, labels, at);
+    }
+
+    fn choose_stage_bgm(&mut self, shell: &mut Shell, row: i32, choice: i32) {
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds || choice < 0 {
+            return;
+        }
+        let choices = stage::bgm_choices(&shell.games);
+        if let Some(bgm) = choices.get(choice as usize).cloned() {
+            self.stage_config.set_round_bgm(row, bgm);
+            self.save_stage_config(shell);
+            self.show_stage(shell);
+        }
+    }
+
+    fn step_stage_bgm(&mut self, shell: &mut Shell, row: i32, by: i32) {
+        let row = row.max(0) as usize;
+        let max_rounds = saito_match::rounds_for(self.lobby_first_to().clamp(1, saito_match::MAX_FIRST_TO));
+        if row >= max_rounds {
+            return;
+        }
+        let choices = stage::bgm_choices(&shell.games);
+        if choices.is_empty() {
+            return;
+        }
+        let now = stage::bgm_choice_index(&choices, self.stage_config.round_bgm(row));
+        let next = (now as i32 + by).rem_euclid(choices.len() as i32) as usize;
+        self.stage_config.set_round_bgm(row, choices[next].clone());
+        self.save_stage_config(shell);
+        self.show_stage(shell);
     }
 
     /// What the match's menu and panels show: both builds (the other player's has no name here: none was
@@ -1741,7 +1935,9 @@ impl Screen for Play {
         view.set_input_delay(shell.settings.input_delay as i32);
         view.set_note_error(self.ended.as_ref().map(|e| e.line(&ui)).unwrap_or_default().into());
         view.set_changing(self.changing);
+        self.ensure_stage_loaded(shell);
         self.show_live(shell);
+        self.show_stage(shell);
         self.show_match(shell);
         self.show_room_browser(shell);
         if matches!(self.stage, Stage::Spectating) {
@@ -1778,7 +1974,8 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
             _ if id.starts_with("watch.") => matches!(self.stage, Stage::Spectating),
             _ if id.starts_with("name.") => self.naming.is_some(),
@@ -1938,6 +2135,20 @@ impl Screen for Play {
             }
             "lobby.spectate" => self.cycle_host_spectate_visibility(shell),
             "lobby.spectate-delay" => self.cycle_host_spectate_delay(shell),
+            "lobby.stage" => self.open_stage_dialog(shell),
+            "stage.mode-0" => self.set_stage_mode(shell, stage::StageMode::Default),
+            "stage.mode-1" => self.set_stage_mode(shell, stage::StageMode::Random),
+            "stage.mode-2" => self.set_stage_mode(shell, stage::StageMode::Escalating),
+            "stage.mode-3" => self.set_stage_mode(shell, stage::StageMode::Custom),
+            "stage.list.bg" => self.open_stage_bg_picker(shell, index),
+            "stage.list.bgm" => self.open_stage_bgm_picker(shell, index),
+            "stage.reset" => {
+                self.stage_config.reset_custom();
+                self.save_stage_config(shell);
+                shell.sound.play(Cue::Pick);
+                self.show_stage(shell);
+            }
+            "stage.close" => self.close_stage_dialog(shell),
             // The host's Ruleset opens its rulesets as a list; the joiner's VIEW is beside it.
             "lobby.ruleset" => {
                 if let Some((picks, at)) = self.ruleset_choices(shell).filter(|_| self.is_host())
@@ -2035,6 +2246,8 @@ impl Screen for Play {
             "lobby.custom-time" => self.step_custom_time(shell, by),
             "lobby.ruleset" => self.pick_ruleset(shell, 0, by),
             "lobby.delay" | "menu.set.delay" => self.set_delay(shell, by),
+            "stage.list.bg" => self.step_stage_bg(shell, index, by),
+            "stage.list.bgm" => self.step_stage_bgm(shell, index, by),
             "menu.set.music" => self.set_levels(shell, (shell.settings.music as i32 + 5 * by).clamp(0, 100) as u32, shell.settings.effects),
             "menu.set.effects" => self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32),
             "menu.set.language" => settings::set_language(shell, crate::lang::step(shell.i18n.code, by)),
@@ -2069,6 +2282,8 @@ impl Screen for Play {
             "name.version" => self.choose_version(shell, choice.max(0) as usize),
             "lobby.open" => self.set_open(shell, choice == 1),
             "lobby.ruleset" => self.pick_ruleset(shell, choice, 0),
+            "stage.list.bg" => self.choose_stage_bg(shell, index, choice),
+            "stage.list.bgm" => self.choose_stage_bgm(shell, index, choice),
             "menu.set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "menu.set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
             "menu.set.language" => settings::choose_language(shell, choice),
@@ -2248,6 +2463,8 @@ impl Screen for Play {
             }
         } else if matches!(self.stage, Stage::Spectating) {
             self.open_watch_menu(shell, MatchPage::Menu);
+        } else if self.stage_dialog {
+            self.close_stage_dialog(shell);
         } else if self.changing {
             self.close_change(shell);
         } else if matches!(self.stage, Stage::Lobby) {
@@ -2403,6 +2620,9 @@ impl Screen for Play {
         tour::frame(shell, now);
         if self.spectate_dir.is_open() && self.spectate_dir.poll(now) {
             self.show_room_browser(shell);
+        }
+        if self.stage_dialog {
+            practice::poll_background_thumbs(shell);
         }
         if matches!(self.stage, Stage::Spectating) {
             self.poll_watching(shell, now);

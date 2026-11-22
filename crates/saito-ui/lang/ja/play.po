@@ -309,3 +309,48 @@ msgstr "フラッシュ軽減"
 
 msgid "Hide aura number"
 msgstr "ドリームオーラの数値非表示"
+
+# ---- Stage & BGM preset dialog ----
+
+msgid "Stage & BGM"
+msgstr "背景・BGM設定"
+
+msgid "Stage & BGM: {}"
+msgstr "背景・BGM：{}"
+
+msgid "Mode"
+msgstr "モード"
+
+msgctxt "stage mode"
+msgid "Default"
+msgstr "デフォルト"
+
+msgctxt "stage mode"
+msgid "Full random"
+msgstr "全ランダム"
+
+msgctxt "stage mode"
+msgid "Escalating"
+msgstr "段階強化"
+
+msgctxt "stage mode"
+msgid "Custom"
+msgstr "個別設定"
+
+msgid "Round"
+msgstr "ラウンド"
+
+msgid "BGM"
+msgstr "BGM"
+
+msgid "Matches GBA link battle rules (random link battle stage background and default link battle BGM)."
+msgstr "GBA原作の通信対戦仕様に合わせます（ランダム背景と標準BGM）。"
+
+msgid "Every round picks a random background from the full pool and a random battle BGM."
+msgstr "毎ラウンド、全プールからランダムな背景とランダムなバトルBGMを選びます。"
+
+msgid "Virus battle on normal rounds, Boss battle on single match point, Final Boss on double match point (or 1st-to-1)."
+msgstr "通常はウイルス戦と通常背景、片方マッチポイントはボス戦と終盤マップ、両者リーチ／1本勝負はラスボス曲と背景。"
+
+msgid "Configure each round's background and BGM ({} rounds max, First to {})."
+msgstr "最大{}ラウンド（{}本先取）ごとに背景とBGMを個別に設定します。"

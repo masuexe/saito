@@ -131,11 +131,38 @@ impl Clock {
 /// A battle being played. It owns everything it needs (the graphics it
 /// draws from are shared with whoever loaded them), so a host keeps it
 /// wherever it keeps its state.
+/// Client-local presentation chosen for a round (visual background override and
+/// replacement battle audio parts). Leaving either field `None` keeps the
+/// match/default value.
+#[derive(Clone, Default)]
+pub struct RoundLook {
+    pub background: Option<saito_battle::content::BackgroundId>,
+    pub sound: Option<crate::preload::SoundParts>,
+}
+
+/// Score and round context passed to a client-local [`RoundResolver`] whenever
+/// a round begins or the score changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundContext {
+    pub round: u8,
+    pub wins: u8,
+    pub losses: u8,
+    pub max_rounds: u8,
+    pub first_to: u8,
+    pub default_background: saito_battle::content::BackgroundId,
+}
+
+/// Callback resolving client-local background and BGM overrides per round.
+pub type RoundResolver = Box<dyn FnMut(RoundContext) -> RoundLook>;
+
 pub struct Player {
     session: Session,
     renderer: Renderer,
     text: Option<TextRenderer>,
     audio: Option<BattleAudio>,
+    /// Client-local per-round background/music resolver and the last key applied.
+    presentation: Option<RoundResolver>,
+    presentation_key: Option<(u8, u8, u8)>,
     /// The sound of the ticks run since the host last took it.
     samples: Vec<[f32; 2]>,
     paused: bool,
@@ -197,6 +224,8 @@ impl Player {
             renderer,
             text,
             audio,
+            presentation: None,
+            presentation_key: None,
             samples: Vec::new(),
             paused: false,
             held: false,
@@ -648,9 +677,16 @@ impl Player {
             self.renderer.scenery_frame(&self.session.battle);
         }
         let real_time = self.real_time();
+        let active_bg = if self.presentation.is_some() {
+            self.renderer
+                .background_override()
+                .unwrap_or_else(|| self.session.ended.as_deref().unwrap_or(&self.session.battle).setup.settings.background)
+        } else {
+            self.session.ended.as_deref().unwrap_or(&self.session.battle).setup.settings.background
+        };
         if let Some(audio) = &mut self.audio {
             // (The round whose cues these are: the one a step that ended a round ended, else the battle's.)
-            audio.round(self.session.ended.as_deref().unwrap_or(&self.session.battle).setup.settings.background);
+            audio.round(active_bg);
             match &self.session.sound {
                 // What a driver that runs the battle itself made of the
                 // frame (netplay: plays, and cancels of cues played on a
@@ -666,6 +702,9 @@ impl Player {
                 }
                 None => audio.handle(&crate::session::heard(&self.session.battle, self.session.driver.layers())),
             }
+        }
+        self.apply_round_presentation();
+        if let Some(audio) = &mut self.audio {
             audio.tick(&mut self.samples);
             if self.samples.len() > MOST_SAMPLES {
                 let over = self.samples.len() - MOST_SAMPLES;
@@ -846,6 +885,8 @@ impl Player {
         self.clock.rest();
         self.switch = None;
         self.choice = None;
+        self.presentation_key = None;
+        self.apply_round_presentation();
         true
     }
 
@@ -900,6 +941,49 @@ impl Player {
         if let Some(audio) = &mut self.audio {
             audio.set_round_music(Some(music));
             audio.round(self.session.battle.setup.settings.background);
+        }
+    }
+
+    /// Install or clear a client-local per-round presentation resolver (stage
+    /// background override and BGM per round/score). Presentation only: the
+    /// simulation state and digests are never modified.
+    pub fn set_round_presentation(&mut self, resolver: Option<RoundResolver>) {
+        self.presentation = resolver;
+        self.presentation_key = None;
+        if self.presentation.is_some() {
+            if let Some(audio) = &mut self.audio {
+                audio.set_round_music(None);
+            }
+            self.apply_round_presentation();
+        } else {
+            self.renderer.set_background_override(None);
+        }
+    }
+
+    fn apply_round_presentation(&mut self) {
+        let score = self.session.battle.setup.score;
+        let key = (score.round, score.wins, score.losses);
+        if self.presentation_key == Some(key) {
+            return;
+        }
+        let Some(resolver) = &mut self.presentation else { return };
+        let max_rounds = self.session.battle.setup.rounds() as u8;
+        let first_to = max_rounds.saturating_add(1) / 2;
+        let look = resolver(RoundContext {
+            round: score.round,
+            wins: score.wins,
+            losses: score.losses,
+            max_rounds,
+            first_to,
+            default_background: self.session.battle.setup.settings.background,
+        });
+        self.presentation_key = Some(key);
+        self.renderer.set_background_override(look.background);
+        if let Some(bg) = look.background {
+            self.renderer.graphics().want_backgrounds(&self.session.battle.content, [bg]);
+        }
+        if let (Some(audio), Some((banks, songs))) = (&mut self.audio, look.sound) {
+            audio.set_songs(banks, songs);
         }
     }
 

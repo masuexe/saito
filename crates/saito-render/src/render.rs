@@ -260,6 +260,8 @@ pub struct Renderer {
     /// by 160, the default, or as large as a window shows them): without it
     /// the original's, whatever this says.
     pub size: compose::Size,
+    /// Optional client-local background override (`Renderer::set_background_override`).
+    background_override: Option<saito_battle::content::BackgroundId>,
 }
 
 impl Renderer {
@@ -303,6 +305,7 @@ impl Renderer {
             scenery: StageClock::default(),
             custom_gauge: true,
             size: compose::Size::ORIGINAL,
+            background_override: None,
         }
     }
 
@@ -370,6 +373,17 @@ impl Renderer {
     /// The graphics it draws from (another renderer of the same: a clone).
     pub fn graphics(&self) -> &GameGraphics {
         &self.graphics
+    }
+
+    /// Override the background drawn for the current battle frame without
+    /// altering battle simulation state or digests.
+    pub fn set_background_override(&mut self, background: Option<saito_battle::content::BackgroundId>) {
+        self.background_override = background;
+    }
+
+    /// Current client-local background override, if set.
+    pub fn background_override(&self) -> Option<saito_battle::content::BackgroundId> {
+        self.background_override
     }
 
     /// Draw from other graphics from the next frame on: the same packs'
@@ -552,7 +566,10 @@ impl Renderer {
         // (The background is its own game's, another game's too (the
         // background pool's), or where that game's isn't here, the stage's own;
         // the field, the game's: `FieldArt`.)
-        let shown = graphics.round_background(&b.content, &b.setup.settings);
+        let shown = self
+            .background_override
+            .filter(|&id| b.content.is_own_background(id) || graphics.background(&b.content, id).is_some())
+            .unwrap_or_else(|| graphics.round_background(&b.content, &b.setup.settings));
         let background = crate::lookups::background(&graphics, &b.content, shown, &mut self.problems);
         // (The background, behind everything, where the caller asks.)
         if background.is_some()
