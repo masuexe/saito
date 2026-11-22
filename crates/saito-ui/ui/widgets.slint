@@ -1759,12 +1759,13 @@ component Scroller inherits Rectangle {
     out property <length> view-width: self.width - 12px;
     out property <length> content-height: max(self.height, root.content);
     out property <length> scroll: -root.content-y;
-    // Suppress reveal slide offset while a drag is active so `shown` cannot fluctuate mid-drag.
+    // Suppress reveal slide offset while a drag is active so rows don't shift unexpectedly mid-drag.
     out property <length> offset: Drag.on ? 0px : root.slid * (1 - slide.t);
-    // Keep `shown` independent of `scroll` (constant across the whole scroll range) so Slint's integer repeater
-    // does not destroy and recreate rows — dropping active touch grabs — when auto-scrolling reaches the bottom.
-    out property <int> shown: max(0, min(root.count, ceil((self.height + abs(root.offset)) / root.pitch) + 1));
-    out property <int> first: max(0, min(root.count - root.shown, floor(min(root.scroll, root.scroll - root.offset) / root.pitch)));
+    // Keep `shown` dependent ONLY on count, viewport height, and pitch — NEVER on `offset`, `Drag.on`, `slide.t`,
+    // or `scroll` — because Slint's integer `for` repeater allocates a new `ModelRc` on every dirty re-evaluation
+    // and compares by pointer identity (`Rc::ptr_eq`), destroying all row instances and dropping active pointer grabs.
+    out property <int> shown: max(0, min(root.count, ceil(self.height / root.pitch) + 2));
+    out property <int> first: max(0, min(root.count - root.shown, floor((root.scroll - root.offset) / root.pitch)));
     // The row the focus is on, or -1.
     out property <int> focused-row: Nav.id == root.nav ? Nav.index : -1;
     property <int> seq: Nav.reveal-seq;
@@ -1917,7 +1918,7 @@ export component ScrollPage inherits Rectangle {
         width: scroller.view-width;
         content-width: self.width;
         content-height: scroller.content-height;
-        interactive: !Drag.on;
+        interactive: !Theme.handheld || !Drag.on;
         mouse-drag-pan-enabled: root.mouse-pan;
         Rectangle {
             y: scroller.offset;
@@ -1979,7 +1980,7 @@ export component ListView inherits Rectangle {
         width: scroller.view-width;
         content-width: self.width;
         content-height: scroller.content-height;
-        interactive: !Drag.on;
+        interactive: !Theme.handheld || !Drag.on;
         mouse-drag-pan-enabled: root.mouse-pan;
         Rectangle {
             y: scroller.offset;
