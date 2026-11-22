@@ -25,6 +25,7 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
 | `优先级` | `fsC14X` | singleSelect | `P0 紧急` / `P1 高` / `P2 中` / `P3 低` |
 | `详细描述 / 复现步骤` | `fLw0GD` | text | Context, expected behavior, or reproduction steps |
 | `截图` | `fbqdLX` | image | Screenshots (readable by agents via `image_value.items[].image_url`) |
+| `附件链接` | `fk101U` | text | Direct download URL(s) (one per line) for non-image files such as replays, videos, or logs (hosted on R2, 30-day retention) |
 | `附件` | `fvfeZn` | attachment | Legacy attachments (unreadable via MCP; kept for historical records) |
 | `创建人` | `fxO0vR` | createdUser | Auto-recorded submitter account (web UI & row-level self-edit permissions; omitted in MCP records) |
 | `维护者备注` | `fikdq2` | text | Technical evaluation, fix summary, or rejection reason |
@@ -39,6 +40,7 @@ The project uses a Tencent Docs SmartSheet to collect and track feature requests
    - Call `smartsheet_list_records` on `DY2Nzd210TEhibHdr` / `t00i2h`.
    - If a newly submitted record has an empty `状态`, set it to `待评估`.
    - **Reading screenshots**: For records with `截图` (`image_value.items[].image_url`), download the image to a scratch path with `curl -sSL -H "Referer: https://docs.qq.com/" -o <path> "<image_url>"` (the `Referer` header is required; direct requests return HTTP 403) and view it with `read_file`.
+   - **Reading non-image attachments**: For records with `附件链接` (`fk101U`), download each URL to a scratch path with `curl -sSL -o <path> "<url>"` (public direct links, no auth/Referer required; note 30-day R2 retention). Inspect videos/logs with `read_file` (or `ffmpeg` frame extraction if needed) and analyze/reproduce replay files against the codebase.
    - Note that SmartSheet record comments and legacy `附件` (`fvfeZn`) files are not readable via `tencent-smartsheet` MCP.
    - Evaluate feasibility and impact against the codebase; after user confirmation, update `状态` (`待开发` or `暂不考虑`), `优先级`, and `维护者备注`.
 2. **Develop**
