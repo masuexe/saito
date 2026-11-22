@@ -424,6 +424,12 @@ impl TickDecoder {
         TickDecoder::default()
     }
 
+    /// Create a decoder pre-seeded with the delta-encoding baseline `(inputs, delays)`
+    /// at tick `count` (used when resuming live spectating from a mid-set round checkpoint).
+    pub fn with_state(inputs: [u32; 2], delays: [u8; 2], count: usize) -> TickDecoder {
+        TickDecoder { inputs, delays, ended: false, count }
+    }
+
     pub fn ended(&self) -> bool {
         self.ended
     }

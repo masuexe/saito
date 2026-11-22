@@ -27,7 +27,9 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 use crate::protocol::{ALPHABET, CODE_LENGTH, FromServer, IceServer, PING, PONG, RECONNECT_ROOM_KEPT, Refusal, Role, ToServer, VERSION, valid_code, valid_reconnect_code};
-use crate::spectate::{HostToServer, RoomMeta, RoomStage, RoomSummary, ServerToHost, ServerToList, ServerToWatcher, SetSnapshot, TickChunk, Visibility};
+use crate::spectate::{
+    HostToServer, RoomMeta, RoomStage, RoomSummary, RoundCheckpoint, ServerToHost, ServerToList, ServerToWatcher, SetSnapshot, TickChunk, Visibility,
+};
 
 /// What the clients say to each other: the server reads none of it.
 type Data = serde_json::Value;
@@ -76,11 +78,18 @@ struct DelayedChunk {
     released: bool,
 }
 
+struct DelayedCheckpoint {
+    checkpoint: RoundCheckpoint,
+    release_at: Instant,
+    released: bool,
+}
+
 struct SpectateSet {
     set_id: u32,
     header_b64: String,
     release_at: Instant,
     released: bool,
+    checkpoints: Vec<DelayedCheckpoint>,
     chunks: Vec<DelayedChunk>,
     ended: bool,
     end_reason: String,
@@ -119,6 +128,14 @@ impl SpectateRoom {
             set.released = true;
             to_send.push(ServerToWatcher::SetStart { set_id: set.set_id, header_b64: set.header_b64.clone() });
         }
+        for cp in &mut set.checkpoints {
+            if !cp.released {
+                if now < cp.release_at {
+                    break;
+                }
+                cp.released = true;
+            }
+        }
         for chunk in &mut set.chunks {
             if !chunk.released {
                 if now < chunk.release_at {
@@ -147,13 +164,16 @@ impl SpectateRoom {
         if !set.released || set.end_released {
             return None;
         }
+        let checkpoint = set.checkpoints.iter().rev().find(|c| c.released).map(|c| c.checkpoint);
+        let min_tick = checkpoint.map_or(0, |c| c.from_tick);
         Some(SetSnapshot {
             set_id: set.set_id,
             header_b64: set.header_b64.clone(),
+            checkpoint,
             chunks: set
                 .chunks
                 .iter()
-                .filter(|c| c.released)
+                .filter(|c| c.released && c.from_tick >= min_tick)
                 .map(|c| TickChunk { from_tick: c.from_tick, count: c.count, data_b64: c.data_b64.clone() })
                 .collect(),
         })
@@ -693,6 +713,7 @@ fn serve_spectate_host(ws: &mut WebSocket<TcpStream>, rooms: &Mutex<Rooms>, code
                         header_b64: header_b64.clone(),
                         release_at: now + delay,
                         released,
+                        checkpoints: Vec::new(),
                         chunks: Vec::new(),
                         ended: false,
                         end_reason: String::new(),
@@ -702,6 +723,18 @@ fn serve_spectate_host(ws: &mut WebSocket<TcpStream>, rooms: &Mutex<Rooms>, code
                     if released {
                         room.broadcast_watchers(&ServerToWatcher::SetStart { set_id, header_b64 });
                     }
+                }
+                Ok(HostToServer::RoundCheckpoint { set_id, checkpoint }) => {
+                    let mut all = rooms.lock().unwrap();
+                    let Some(room) = all.spectate.get_mut(code) else { break };
+                    let delay = Duration::from_secs(room.meta.delay_secs as u64);
+                    let now = Instant::now();
+                    let Some(set) = room.current_set.as_mut() else { continue };
+                    if set.set_id != set_id || set.ended {
+                        continue;
+                    }
+                    let released = delay.is_zero() && set.released;
+                    set.checkpoints.push(DelayedCheckpoint { checkpoint, release_at: now + delay, released });
                 }
                 Ok(HostToServer::Ticks { set_id, from_tick, count, data_b64 }) => {
                     let mut all = rooms.lock().unwrap();

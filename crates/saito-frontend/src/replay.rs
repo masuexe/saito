@@ -21,7 +21,7 @@ use std::sync::Arc;
 use saito_battle::content::Content;
 use saito_battle::custom::Layer;
 use saito_battle::{Battle, BattleResult, PlayerTick, RoundEnd, TickInput};
-use saito_match::{After, Match, Set};
+use saito_match::{After, Match, RoundStart, Set};
 // (What a host reads of a replay, without naming saito-replay.)
 pub use saito_replay::{Compat, End, Info, MatchKind, Mismatch, ReadError, Replay, Tick};
 use saito_replay::{Head, Writer};
@@ -166,6 +166,18 @@ impl From<Mismatch> for Refused {
     }
 }
 
+/// A round transition checkpoint emitted alongside settled replay ticks so live
+/// spectators joining mid-set can start directly at round >= 2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordedRoundStart {
+    /// First tick index of the new round in the set's continuous tick stream.
+    pub from_tick: u32,
+    pub start: RoundStart,
+    /// Delta-encoding baseline for `TickDecoder` immediately before `from_tick`.
+    pub prev_inputs: [u32; 2],
+    pub prev_delays: [u8; 2],
+}
+
 /// Plays a replay back, tick by tick, shown from one side: each tick's
 /// buttons as the recording has them, the set going on round after round
 /// where it marks a round's end. It compares the battle with what the
@@ -173,6 +185,7 @@ impl From<Mismatch> for Refused {
 /// (`Driver::check`).
 pub struct ReplayPlayer {
     set: Set,
+    start_round: Option<RoundStart>,
     ticks: Vec<Tick>,
     /// The ticks played.
     at: usize,
@@ -238,13 +251,26 @@ impl ReplayPlayer {
 
     /// A replay's playback on `content` under compatibility mode `compat`.
     pub fn new_compat(content: &Arc<Content>, replay: &Replay, viewer: Option<u8>, compat: Compat) -> Result<ReplayPlayer, Refused> {
+        ReplayPlayer::new_from_round(content, replay, viewer, compat, None)
+    }
+
+    /// A replay's playback starting directly at `start_round` (round >= 2) if provided,
+    /// skipping earlier rounds without replaying them.
+    pub fn new_from_round(
+        content: &Arc<Content>,
+        replay: &Replay,
+        viewer: Option<u8>,
+        compat: Compat,
+        start_round: Option<RoundStart>,
+    ) -> Result<ReplayPlayer, Refused> {
         let set = set_of_compat(content, replay, compat)?;
         let viewer = viewer.unwrap_or(replay.info.side);
         if viewer > 1 {
             return Err(Refused::NoSide(viewer));
         }
         let local_side = set.first().local_side;
-        Ok(ReplayPlayer { set, ticks: replay.ticks.clone(), at: 0, round: 1, viewer, local_side, end: replay.end, layers: None })
+        let round = start_round.map_or(1, |rs| rs.score.round as u32 + 1);
+        Ok(ReplayPlayer { set, start_round, ticks: replay.ticks.clone(), at: 0, round, viewer, local_side, end: replay.end, layers: None })
     }
 
     /// The tick last played.
@@ -256,9 +282,17 @@ impl ReplayPlayer {
 impl Driver for ReplayPlayer {
     fn start(&mut self) -> Battle {
         self.at = 0;
-        self.round = 1;
         self.layers = None;
-        let mut b = self.set.start();
+        let mut b = match self.start_round {
+            Some(rs) => {
+                self.round = rs.score.round as u32 + 1;
+                self.set.start_round(rs)
+            }
+            None => {
+                self.round = 1;
+                self.set.start()
+            }
+        };
         b.setup.local_side = self.viewer;
         b
     }

@@ -98,12 +98,36 @@ pub struct TickChunk {
     pub data_b64: String,
 }
 
+/// Minimal deterministic state at the start of round >= 2 so late-joining
+/// spectators can start directly from the current round instead of replaying R1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoundCheckpoint {
+    /// First tick index of this round in the set's continuous replay stream.
+    pub from_tick: u32,
+    pub stage: u32,
+    pub background: u16,
+    pub effects: u32,
+    pub wins: u8,
+    pub losses: u8,
+    pub round: u8,
+    pub max_combo: u8,
+    pub console_rng: [u32; 2],
+    pub console_frames: [u32; 2],
+    /// Delta-encoding baseline for `TickDecoder` immediately before `from_tick`.
+    pub prev_inputs: [u32; 2],
+    pub prev_delays: [u8; 2],
+}
+
 /// Active set state delivered to a watcher joining mid-set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetSnapshot {
     pub set_id: u32,
     /// Base64-encoded `saito-replay` header (`STRP`..`STCK`).
     pub header_b64: String,
+    /// Latest released round checkpoint (round >= 2), if any; when present,
+    /// `chunks` only contains ticks from `checkpoint.from_tick` onward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<RoundCheckpoint>,
     #[serde(default)]
     pub chunks: Vec<TickChunk>,
 }
@@ -118,6 +142,10 @@ pub enum HostToServer {
     SetStart {
         set_id: u32,
         header_b64: String,
+    },
+    RoundCheckpoint {
+        set_id: u32,
+        checkpoint: RoundCheckpoint,
     },
     Ticks {
         set_id: u32,
@@ -285,6 +313,10 @@ impl SpectateHost {
 
     pub fn start_set(&mut self, set_id: u32, header_bytes: &[u8]) {
         self.send_msg(&HostToServer::SetStart { set_id, header_b64: base64_encode(header_bytes) });
+    }
+
+    pub fn send_checkpoint(&mut self, set_id: u32, checkpoint: RoundCheckpoint) {
+        self.send_msg(&HostToServer::RoundCheckpoint { set_id, checkpoint });
     }
 
     pub fn send_ticks(&mut self, set_id: u32, from_tick: u32, count: u32, tick_bytes: &[u8]) {
@@ -935,6 +967,53 @@ mod tests {
             let mut w3 = SpectateWatcher::connect(&server.url(), "DEF567", "w3", Duration::from_secs(3)).unwrap();
             let err = wait_for(|| w3.poll(Instant::now()).err());
             assert_eq!(err.kind, ErrorKind::Refused(Refusal::Disabled));
+        }
+
+        #[test]
+        fn late_watcher_snapshot_starts_from_latest_round_checkpoint() {
+            let server = Server::start();
+            let mut host = SpectateHost::connect(&server.url(), "GHJ789", "host1");
+            wait_for(|| host.poll(Instant::now()));
+            host.update_meta(RoomMeta {
+                visibility: Visibility::Public,
+                delay_secs: 0,
+                game: "exe6".into(),
+                stage: RoomStage::Playing,
+                ..RoomMeta::default()
+            });
+            host.start_set(1, b"HEADER_BO3");
+            host.send_ticks(1, 0, 100, b"R1_CHUNK_A");
+            host.send_ticks(1, 100, 50, b"R1_CHUNK_B");
+            let cp = RoundCheckpoint {
+                from_tick: 150,
+                stage: 2,
+                background: 3,
+                effects: 0x05,
+                wins: 1,
+                losses: 0,
+                round: 1,
+                max_combo: 4,
+                console_rng: [0x1111_2222, 0x3333_4444],
+                console_frames: [150, 150],
+                prev_inputs: [0x12, 0x34],
+                prev_delays: [2, 3],
+            };
+            host.send_checkpoint(1, cp);
+            host.send_ticks(1, 150, 20, b"R2_CHUNK_A");
+            std::thread::sleep(Duration::from_millis(50));
+
+            let mut watcher = SpectateWatcher::connect(&server.url(), "GHJ789", "w1", Duration::from_secs(3)).unwrap();
+            let snap = wait_for(|| watcher.poll(Instant::now()).unwrap());
+            match snap {
+                WatcherEvent::Snapshot { set: Some(set), .. } => {
+                    assert_eq!(set.set_id, 1);
+                    assert_eq!(set.checkpoint, Some(cp));
+                    assert_eq!(set.chunks.len(), 1, "R1 chunks must be omitted");
+                    assert_eq!(set.chunks[0].from_tick, 150);
+                    assert_eq!(set.chunks[0].data_b64, base64_encode(b"R2_CHUNK_A"));
+                }
+                other => panic!("expected Snapshot with round checkpoint, got {other:?}"),
+            }
         }
     }
 }

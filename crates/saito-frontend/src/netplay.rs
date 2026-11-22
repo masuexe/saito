@@ -331,6 +331,8 @@ pub struct NetPlayer<C: Channel> {
     /// Recording: the set's ticks before this round's, and the settled
     /// ticks the session hasn't taken.
     recording: Option<(u64, Vec<saito_replay::Tick>)>,
+    /// Round >= 2 checkpoints captured at settled round transitions for live spectators.
+    round_starts: Vec<crate::replay::RecordedRoundStart>,
     /// Clock sync's skew and the lead, as the last frame read them before
     /// it decided (`NetStatus::skew`, `NetStatus::lead`).
     skew: i32,
@@ -363,6 +365,7 @@ impl<C: Channel> NetPlayer<C> {
             start,
             over: None,
             recording: None,
+            round_starts: Vec::new(),
             skew: 0,
             lead: 0,
             down: false,
@@ -529,6 +532,7 @@ impl<C: Channel> NetPlayer<C> {
                         }
                     }
                     After::Round(battle) => {
+                        let (prev_inputs, prev_delays) = last.map_or(([0; 2], [0; 2]), |t| (t.inputs, t.delays));
                         self.take_sound(&mut ran.sound);
                         // A new round, a new tracker; a recording's ticks
                         // counted on.
@@ -536,6 +540,14 @@ impl<C: Channel> NetPlayer<C> {
                             *before += frame as u64 + 1;
                             *before
                         });
+                        if let (Some(from_tick), Some(start)) = (before, saito_match::RoundStart::from_ended(&ended)) {
+                            self.round_starts.push(crate::replay::RecordedRoundStart {
+                                from_tick: from_tick as u32,
+                                start,
+                                prev_inputs,
+                                prev_delays,
+                            });
+                        }
                         let world = BattleWorld::with_observer(StandInBattle::new((*battle).clone()), self.side, Watch::new(side, before));
                         self.peer.end_round(world);
                         self.heard = 0;
@@ -603,6 +615,10 @@ impl<C: Channel> Driver for NetPlayer<C> {
         if let Some((_, recorded)) = &mut self.recording {
             out.append(recorded);
         }
+    }
+
+    fn take_round_starts(&mut self, out: &mut Vec<crate::replay::RecordedRoundStart>) {
+        out.append(&mut self.round_starts);
     }
 
     fn position(&self) -> String {

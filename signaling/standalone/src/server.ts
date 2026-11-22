@@ -39,11 +39,33 @@ interface SpectateChunk {
 	released: boolean;
 }
 
+interface RoundCheckpoint {
+	from_tick: number;
+	stage: number;
+	background: number;
+	effects: number;
+	wins: number;
+	losses: number;
+	round: number;
+	max_combo: number;
+	console_rng: [number, number];
+	console_frames: [number, number];
+	prev_inputs: [number, number];
+	prev_delays: [number, number];
+}
+
+interface DelayedCheckpoint {
+	checkpoint: RoundCheckpoint;
+	releaseAt: number;
+	released: boolean;
+}
+
 interface SpectateSet {
 	setId: number;
 	headerB64: string;
 	releaseAt: number;
 	released: boolean;
+	checkpoints: DelayedCheckpoint[];
 	chunks: SpectateChunk[];
 	ended: boolean;
 	endReason: string;
@@ -383,6 +405,12 @@ function flushDelayedSet(room: SpectateRoom, now: number): void {
 		set.released = true;
 		broadcastWatchers(room, JSON.stringify({ type: "set_start", set_id: set.setId, header_b64: set.headerB64 }));
 	}
+	for (const cp of set.checkpoints) {
+		if (!cp.released) {
+			if (now < cp.releaseAt) break;
+			cp.released = true;
+		}
+	}
 	for (const chunk of set.chunks) {
 		if (!chunk.released) {
 			if (now < chunk.releaseAt) return;
@@ -408,11 +436,19 @@ function flushDelayedSet(room: SpectateRoom, now: number): void {
 function buildSetSnapshot(room: SpectateRoom) {
 	const set = room.currentSet;
 	if (!set || !set.released || set.endReleased) return undefined;
+	let latestCheckpoint: RoundCheckpoint | undefined;
+	for (const cp of set.checkpoints) {
+		if (cp.released) {
+			latestCheckpoint = cp.checkpoint;
+		}
+	}
+	const minTick = latestCheckpoint ? latestCheckpoint.from_tick : 0;
 	return {
 		set_id: set.setId,
 		header_b64: set.headerB64,
+		...(latestCheckpoint ? { checkpoint: latestCheckpoint } : {}),
 		chunks: set.chunks
-			.filter((c) => c.released)
+			.filter((c) => c.released && c.from_tick >= minTick)
 			.map((c) => ({ from_tick: c.from_tick, count: c.count, data_b64: c.data_b64 })),
 	};
 }
@@ -567,6 +603,7 @@ function handleSpectateHostUpgrade(
 					headerB64,
 					releaseAt: now + delayMs,
 					released,
+					checkpoints: [],
 					chunks: [],
 					ended: false,
 					endReason: "",
@@ -575,6 +612,52 @@ function handleSpectateHostUpgrade(
 				if (released) {
 					broadcastWatchers(targetRoom, JSON.stringify({ type: "set_start", set_id: setId, header_b64: headerB64 }));
 				}
+			} else if (msg.type === "round_checkpoint") {
+				const set = targetRoom.currentSet;
+				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : -1;
+				const cp = msg.checkpoint as Partial<RoundCheckpoint> | undefined;
+				if (!set || set.setId !== setId || set.ended || !cp || typeof cp !== "object") return;
+				if (
+					typeof cp.from_tick !== "number" ||
+					typeof cp.stage !== "number" ||
+					typeof cp.background !== "number" ||
+					typeof cp.effects !== "number" ||
+					typeof cp.wins !== "number" ||
+					typeof cp.losses !== "number" ||
+					typeof cp.round !== "number" ||
+					typeof cp.max_combo !== "number" ||
+					!Array.isArray(cp.console_rng) ||
+					cp.console_rng.length !== 2 ||
+					!Array.isArray(cp.console_frames) ||
+					cp.console_frames.length !== 2 ||
+					!Array.isArray(cp.prev_inputs) ||
+					cp.prev_inputs.length !== 2 ||
+					!Array.isArray(cp.prev_delays) ||
+					cp.prev_delays.length !== 2
+				) {
+					return;
+				}
+				if (set.checkpoints.length >= 64) return;
+				const sanitized: RoundCheckpoint = {
+					from_tick: Math.max(0, Math.floor(cp.from_tick)),
+					stage: Math.max(0, Math.floor(cp.stage)),
+					background: Math.max(0, Math.floor(cp.background)),
+					effects: Math.max(0, Math.floor(cp.effects)),
+					wins: Math.max(0, Math.min(255, Math.floor(cp.wins))),
+					losses: Math.max(0, Math.min(255, Math.floor(cp.losses))),
+					round: Math.max(0, Math.min(255, Math.floor(cp.round))),
+					max_combo: Math.max(0, Math.min(255, Math.floor(cp.max_combo))),
+					console_rng: [Math.floor(cp.console_rng[0]) >>> 0, Math.floor(cp.console_rng[1]) >>> 0],
+					console_frames: [Math.floor(cp.console_frames[0]) >>> 0, Math.floor(cp.console_frames[1]) >>> 0],
+					prev_inputs: [Math.floor(cp.prev_inputs[0]) >>> 0, Math.floor(cp.prev_inputs[1]) >>> 0],
+					prev_delays: [Math.max(0, Math.min(255, Math.floor(cp.prev_delays[0]))), Math.max(0, Math.min(255, Math.floor(cp.prev_delays[1])))],
+				};
+				const released = delayMs === 0 && set.released;
+				set.checkpoints.push({
+					checkpoint: sanitized,
+					releaseAt: now + delayMs,
+					released,
+				});
 			} else if (msg.type === "ticks") {
 				const set = targetRoom.currentSet;
 				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : -1;

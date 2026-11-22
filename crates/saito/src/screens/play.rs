@@ -2896,8 +2896,15 @@ impl Play {
         shell.ui().global::<PlayView>().set_spectate_delay(next as i32);
     }
 
-    fn poll_host_spectate(&mut self, shell: &Shell, now: Instant) {
+    fn poll_host_spectate(&mut self, shell: &mut Shell, now: Instant) {
         let Some(host) = &mut self.host_spectate else { return };
+        if let Some(b) = shell.battle.as_mut() {
+            let mut round_starts = Vec::new();
+            b.stage.player.take_spectate_round_starts(&mut round_starts);
+            for rs in &round_starts {
+                host.push_round_start(rs);
+            }
+        }
         let (game, content_hash) = match shell.ready() {
             Some((g, ready)) => (g, format!("{:016x}", ready.content().hash().0)),
             None => (shell.game().unwrap_or_default().to_string(), String::new()),
@@ -2906,6 +2913,14 @@ impl Play {
             Stage::Match { .. } => RoomStage::Playing,
             Stage::Loading { .. } => RoomStage::Loading,
             _ => RoomStage::Lobby,
+        };
+        let score = if matches!(self.stage, Stage::Match { .. })
+            && let Some(b) = shell.battle.as_ref()
+        {
+            let r = &b.stage.player.battle().round;
+            [r.wins, r.losses]
+        } else {
+            [0, 0]
         };
         let p1 = shell.settings.name.clone();
         let p2 = if self.live.their_present { self.live.their_name.clone() } else { String::new() };
@@ -2919,7 +2934,7 @@ impl Play {
             rules,
             names: [p1, p2],
             stage,
-            score: [0, 0],
+            score,
         };
         host.poll(now, meta);
         let count = host.spectators() as i32;

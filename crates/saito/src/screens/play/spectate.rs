@@ -8,19 +8,24 @@
 //! - [`DirectoryClient`]: subscribes to `/spectate/list` for the public live
 //!   matches list.
 
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use saito_battle::Content;
+use saito_battle::content::BackgroundId;
+use saito_battle::setup::{BattleSettings, SetScore};
+use saito_content_api::StageHandle;
 use saito_frontend::game::{Enhancements, Loaded, Sound};
 use saito_frontend::lobby::Agreement;
-use saito_frontend::replay::Recorder;
+use saito_frontend::replay::{RecordedRoundStart, Recorder};
 use saito_frontend::viewer::Viewer;
+use saito_match::RoundStart;
 use saito_replay::{Header, Tick, TickDecoder};
 use saito_signaling::spectate::{
-    HostEvent, RoomMeta, RoomStage, RoomSummary, SetSnapshot, SpectateDirectory, SpectateHost, SpectateWatcher,
-    Visibility, WatcherEvent, base64_decode,
+    HostEvent, RoomMeta, RoomStage, RoomSummary, RoundCheckpoint, SetSnapshot, SpectateDirectory, SpectateHost,
+    SpectateWatcher, Visibility, WatcherEvent, base64_decode,
 };
 use web_time::Instant;
 
@@ -45,10 +50,16 @@ pub const DELAY_PRESETS: [u16; 4] = [0, 5, 10, 15];
 
 // ---- Host publisher ------------------------------------------------------------
 
+/// `saito-replay` tick control bits (mirrors `saito_replay::ROUND_END` / `SET_END`).
+const REPLAY_ROUND_END_BIT: u8 = 1 << 3;
+const REPLAY_SET_END_BIT: u8 = 1 << 4;
+
 #[derive(Default)]
 struct SinkState {
     header_done: bool,
     header: Option<Vec<u8>>,
+    /// Complete chunks split cleanly on round boundaries before `pending`.
+    completed: VecDeque<(u32, Vec<u8>)>,
     /// Accumulated tick bytes since the last drain.
     pending: Vec<u8>,
     /// Number of complete tick records in `pending`.
@@ -79,8 +90,15 @@ impl Write for SpectateSink {
                 s.header_done = true;
                 s.header = Some(bytes);
             } else {
+                let round_boundary = (bytes[0] & REPLAY_ROUND_END_BIT) != 0 && (bytes[0] & REPLAY_SET_END_BIT) == 0;
                 s.pending.extend_from_slice(&bytes);
                 s.pending_ticks += 1;
+                if round_boundary {
+                    let count = s.pending_ticks;
+                    let chunk = std::mem::take(&mut s.pending);
+                    s.pending_ticks = 0;
+                    s.completed.push_back((count, chunk));
+                }
             }
         }
         Ok(())
@@ -96,6 +114,7 @@ pub struct HostPublisher {
     set_id: u32,
     sent_ticks: u32,
     active_sink: Option<Arc<Mutex<SinkState>>>,
+    pending_checkpoints: VecDeque<RoundCheckpoint>,
     last_flush: Instant,
     last_meta: Option<RoomMeta>,
 }
@@ -110,6 +129,7 @@ impl HostPublisher {
             set_id: 0,
             sent_ticks: 0,
             active_sink: None,
+            pending_checkpoints: VecDeque::new(),
             last_flush: Instant::now(),
             last_meta: None,
         }
@@ -139,6 +159,7 @@ impl HostPublisher {
     pub fn make_recorder(&mut self, content: &Arc<Content>, agreed: &Agreement, when: u64) -> Option<Recorder> {
         self.set_id = self.set_id.wrapping_add(1).max(1);
         self.sent_ticks = 0;
+        self.pending_checkpoints.clear();
         let state = Arc::new(Mutex::new(SinkState::default()));
         let sink = SpectateSink { state: state.clone() };
         match Recorder::of_agreement(Box::new(sink), content, agreed, when) {
@@ -154,9 +175,28 @@ impl HostPublisher {
         }
     }
 
+    /// Queue a round >= 2 transition checkpoint so late-joining spectators start at the new round.
+    pub fn push_round_start(&mut self, rs: &RecordedRoundStart) {
+        self.pending_checkpoints.push_back(RoundCheckpoint {
+            from_tick: rs.from_tick,
+            stage: rs.start.settings.stage.0 as u32,
+            background: rs.start.settings.background.0,
+            effects: rs.start.settings.effects,
+            wins: rs.start.score.wins,
+            losses: rs.start.score.losses,
+            round: rs.start.score.round,
+            max_combo: rs.start.score.max_combo,
+            console_rng: rs.start.console_rng,
+            console_frames: rs.start.console_frames,
+            prev_inputs: rs.prev_inputs,
+            prev_delays: rs.prev_delays,
+        });
+    }
+
     /// Flush any remaining ticks and end the active set on the relay.
     pub fn end_set(&mut self, reason: &str) {
         self.flush_sink(true);
+        self.pending_checkpoints.clear();
         if self.active_sink.take().is_some() {
             self.host.end_set(self.set_id, reason);
         }
@@ -188,6 +228,16 @@ impl HostPublisher {
         if let Some(header) = s.header.take() {
             self.host.start_set(self.set_id, &header);
         }
+        while let Some((count, bytes)) = s.completed.pop_front() {
+            let from = self.sent_ticks;
+            self.sent_ticks += count;
+            self.last_flush = Instant::now();
+            self.host.send_ticks(self.set_id, from, count, &bytes);
+            while self.pending_checkpoints.front().is_some_and(|cp| cp.from_tick <= self.sent_ticks) {
+                let cp = self.pending_checkpoints.pop_front().expect("checked front");
+                self.host.send_checkpoint(self.set_id, cp);
+            }
+        }
         if s.pending_ticks >= BATCH_TICKS || (force && s.pending_ticks > 0) {
             let count = s.pending_ticks;
             let bytes = std::mem::take(&mut s.pending);
@@ -196,6 +246,10 @@ impl HostPublisher {
             self.sent_ticks += count;
             self.last_flush = Instant::now();
             self.host.send_ticks(self.set_id, from, count, &bytes);
+        }
+        while self.pending_checkpoints.front().is_some_and(|cp| cp.from_tick <= self.sent_ticks) {
+            let cp = self.pending_checkpoints.pop_front().expect("checked front");
+            self.host.send_checkpoint(self.set_id, cp);
         }
     }
 
@@ -225,7 +279,7 @@ pub struct WatchSession {
     active_set_id: Option<u32>,
     decoder: TickDecoder,
     viewer: Option<Viewer>,
-    pending_header: Option<(u32, Header)>,
+    pending_header: Option<(u32, Header, Option<RoundStart>)>,
     pending_ticks: Vec<Tick>,
     set_ended_remote: bool,
     set_end_since: Option<Instant>,
@@ -354,7 +408,7 @@ impl WatchSession {
                     }
                 }
                 Ok(Some(WatcherEvent::SetStart { set_id, header_b64 })) => {
-                    self.begin_set(shell, set_id, &header_b64, &[]);
+                    self.begin_set(shell, set_id, &header_b64, None, &[]);
                 }
                 Ok(Some(WatcherEvent::Ticks { set_id, data_b64, .. })) => {
                     if self.active_set_id == Some(set_id) {
@@ -382,9 +436,9 @@ impl WatchSession {
 
         // If waiting for the match's game pack to finish loading, try opening the viewer now.
         if self.viewer.is_none()
-            && let Some((set_id, header)) = self.pending_header.take()
+            && let Some((set_id, header, start_round)) = self.pending_header.take()
         {
-            if !self.try_open_viewer(shell, set_id, header) {
+            if !self.try_open_viewer(shell, set_id, header, start_round) {
                 // Still loading or failed (pending_header restored if still loading).
             }
         }
@@ -466,15 +520,35 @@ impl WatchSession {
 
     fn begin_set_snapshot(&mut self, shell: &mut Shell, snap: SetSnapshot) {
         let chunks: Vec<&str> = snap.chunks.iter().map(|c| c.data_b64.as_str()).collect();
-        self.begin_set(shell, snap.set_id, &snap.header_b64, &chunks);
+        self.begin_set(shell, snap.set_id, &snap.header_b64, snap.checkpoint, &chunks);
     }
 
-    fn begin_set(&mut self, shell: &mut Shell, set_id: u32, header_b64: &str, chunks: &[&str]) {
+    fn begin_set(&mut self, shell: &mut Shell, set_id: u32, header_b64: &str, checkpoint: Option<RoundCheckpoint>, chunks: &[&str]) {
         self.viewer = None;
         self.game = None;
         self.pending_header = None;
         self.pending_ticks.clear();
-        self.decoder = TickDecoder::new();
+        let start_round = checkpoint.map(|cp| {
+            self.decoder = TickDecoder::with_state(cp.prev_inputs, cp.prev_delays, cp.from_tick as usize);
+            RoundStart {
+                settings: BattleSettings {
+                    stage: StageHandle(cp.stage as u16),
+                    background: BackgroundId(cp.background),
+                    effects: cp.effects,
+                },
+                score: SetScore {
+                    wins: cp.wins,
+                    losses: cp.losses,
+                    round: cp.round,
+                    max_combo: cp.max_combo,
+                },
+                console_rng: cp.console_rng,
+                console_frames: cp.console_frames,
+            }
+        });
+        if start_round.is_none() {
+            self.decoder = TickDecoder::new();
+        }
         self.active_set_id = Some(set_id);
         self.set_ended_remote = false;
         self.set_end_since = None;
@@ -499,7 +573,7 @@ impl WatchSession {
         for chunk in chunks {
             self.ingest_chunk(chunk);
         }
-        self.try_open_viewer(shell, set_id, header);
+        self.try_open_viewer(shell, set_id, header, start_round);
     }
 
     fn ingest_chunk(&mut self, data_b64: &str) {
@@ -527,11 +601,11 @@ impl WatchSession {
         false
     }
 
-    fn try_open_viewer(&mut self, shell: &mut Shell, set_id: u32, header: Header) -> bool {
+    fn try_open_viewer(&mut self, shell: &mut Shell, set_id: u32, header: Header, start_round: Option<RoundStart>) -> bool {
         let game = header.head.game.clone();
         if !self.ensure_game(shell, &game) {
             if self.problem.is_none() {
-                self.pending_header = Some((set_id, header));
+                self.pending_header = Some((set_id, header, start_round));
             }
             return false;
         }
@@ -561,7 +635,7 @@ impl WatchSession {
             }),
         };
         let music = crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background);
-        match Viewer::open_live(&localized, header, Some(self.view), music) {
+        match Viewer::open_live_at(&localized, header, Some(self.view), music, start_round) {
             Ok(mut viewer) => {
                 viewer.set_both(self.both);
                 if !self.pending_ticks.is_empty() {

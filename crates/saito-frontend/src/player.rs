@@ -277,6 +277,11 @@ impl Player {
         self.session.record_spectate(recorder)
     }
 
+    /// Drain settled round >= 2 transition checkpoints for the live spectator host.
+    pub fn take_spectate_round_starts(&mut self, out: &mut Vec<crate::replay::RecordedRoundStart>) {
+        out.append(&mut self.session.spectate_round_starts);
+    }
+
     /// Why the recording stopped being written, if it has (a full disk).
     pub fn recording_failed(&self) -> Option<&str> {
         self.session.recorder.as_ref().and_then(|r| r.failed())

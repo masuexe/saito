@@ -172,6 +172,9 @@ pub trait Driver {
     /// The ticks that settled since the last call, for the recording, of a
     /// driver that runs the battle itself and records (`record`).
     fn take_recorded(&mut self, _out: &mut Vec<saito_replay::Tick>) {}
+    /// Round transition checkpoints settled since the last call, for live
+    /// spectating mid-set catch-up starting at round >= 2.
+    fn take_round_starts(&mut self, _out: &mut Vec<crate::replay::RecordedRoundStart>) {}
     /// How a recording's replay shifts what the recording console's screen
     /// shows on the frame just played, against the original's, for the
     /// frame comparison: none from a driver that replays no recording.

@@ -448,6 +448,18 @@ impl Viewer {
     /// Open a live-streaming viewer from a replay header (`STRP`..`STCK`),
     /// ready to receive incremental ticks via [`Viewer::push_ticks`].
     pub fn open_live(game: &Loaded, header: saito_replay::Header, view: Option<u8>, music: Option<Arc<RoundMusic>>) -> Result<Viewer, Refused> {
+        Viewer::open_live_at(game, header, view, music, None)
+    }
+
+    /// Open a live-streaming viewer starting directly at `start_round` (round >= 2)
+    /// when joining a BO3/BO5 match mid-set, avoiding replaying earlier rounds.
+    pub fn open_live_at(
+        game: &Loaded,
+        header: saito_replay::Header,
+        view: Option<u8>,
+        music: Option<Arc<RoundMusic>>,
+        start_round: Option<saito_match::RoundStart>,
+    ) -> Result<Viewer, Refused> {
         let replay = Replay {
             head: header.head,
             match_bytes: header.match_bytes,
@@ -455,7 +467,16 @@ impl Viewer {
             ticks: Vec::new(),
             end: End::Open,
         };
-        Viewer::open_with(game, &replay, view, music)
+        Viewer::with_compat_round(
+            &game.game.content,
+            &replay,
+            view,
+            game.renderer(),
+            game.font.clone().map(TextRenderer::new),
+            sound_of(game, music),
+            Compat::Exact,
+            start_round,
+        )
     }
 
     /// A viewer from its parts: the content the replay plays on, the
@@ -480,12 +501,26 @@ impl Viewer {
         content: &Arc<Content>,
         replay: &Replay,
         view: Option<u8>,
-        mut renderer: Renderer,
+        renderer: Renderer,
         text: Option<TextRenderer>,
         audio: Option<BattleAudio>,
         compat: Compat,
     ) -> Result<Viewer, Refused> {
-        let driver = ReplayPlayer::new_compat(content, replay, view, compat)?;
+        Viewer::with_compat_round(content, replay, view, renderer, text, audio, compat, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_compat_round(
+        content: &Arc<Content>,
+        replay: &Replay,
+        view: Option<u8>,
+        mut renderer: Renderer,
+        text: Option<TextRenderer>,
+        audio: Option<BattleAudio>,
+        compat: Compat,
+        start_round: Option<saito_match::RoundStart>,
+    ) -> Result<Viewer, Refused> {
+        let driver = ReplayPlayer::new_from_round(content, replay, view, compat, start_round)?;
         let view = view.unwrap_or(replay.info.side);
         let mut session = Session::new(Box::new(driver));
         if compat == Compat::Lenient {

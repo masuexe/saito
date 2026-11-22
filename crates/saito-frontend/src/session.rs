@@ -48,6 +48,8 @@ pub struct Session {
     pub recorder: Option<Recorder>,
     /// An optional secondary replay stream (e.g., live spectator broadcast).
     pub spectate_recorder: Option<Recorder>,
+    /// Round >= 2 checkpoints waiting to be published by the live spectator host.
+    pub spectate_round_starts: Vec<crate::replay::RecordedRoundStart>,
 }
 
 impl Session {
@@ -70,6 +72,7 @@ impl Session {
             pause_requests: [false; 2],
             recorder: None,
             spectate_recorder: None,
+            spectate_round_starts: Vec::new(),
         }
     }
 
@@ -104,6 +107,7 @@ impl Session {
     pub fn restart(&mut self) {
         self.recorder = None;
         self.spectate_recorder = None;
+        self.spectate_round_starts.clear();
         self.battle = self.driver.start();
         self.stopped = None;
         self.stop_reason = None;
@@ -157,6 +161,9 @@ impl Session {
                 if let Some(r) = &mut self.spectate_recorder {
                     r.tick(t);
                 }
+            }
+            if self.spectate_recorder.is_some() {
+                self.driver.take_round_starts(&mut self.spectate_round_starts);
             }
         }
         match ran {
@@ -372,5 +379,61 @@ mod tests {
             assert_eq!((s.battle.round.round, s.battle.round.wins), (0, 0), "{game}");
             assert!(s.step(saito_battle::PlayerTick::default()), "{game}");
         }
+    }
+
+    /// Starting a `ReplayPlayer` directly from round 2's `RoundStart` checkpoint
+    /// reproduces round 2 bit-for-bit without replaying round 1.
+    #[test]
+    fn round_checkpoint_reproduces_round_two_without_replaying_round_one() {
+        let content = saito_match::testing::exe6_content();
+        let m = short_set::of(&content, "exe6", 7);
+        let mut raw = Vec::new();
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, 7))));
+        let info = crate::replay::Info {
+            when: 0,
+            side: 0,
+            kind: crate::replay::MatchKind::Offline,
+            open_setups: true,
+            names: ["A".into(), "B".into()],
+        };
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for SharedBuf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        s.record(Recorder::new(Box::new(SharedBuf(buf.clone())), &content, &m, &info).unwrap()).unwrap();
+        let mut r2_start = None;
+        let mut r2_tick_idx = None;
+        let mut r2_end_digest = None;
+        while s.step(short_set::shooter(&s.battle, 0, s.ticks as u32)) {
+            if s.new_round && r2_start.is_none() {
+                let ended = s.ended.as_deref().expect("ended R1 battle");
+                r2_start = saito_match::RoundStart::from_ended(ended);
+                r2_tick_idx = Some(s.ticks as usize);
+            }
+            if r2_start.is_some() {
+                r2_end_digest = Some(s.battle.digest());
+            }
+        }
+        raw.extend_from_slice(&buf.lock().unwrap());
+        let full = saito_replay::Replay::read(&raw).unwrap();
+        let r2_from = r2_tick_idx.expect("entered round 2");
+        let r2_only = saito_replay::Replay {
+            ticks: full.ticks[r2_from..].to_vec(),
+            ..full.clone()
+        };
+        let driver = crate::replay::ReplayPlayer::new_from_round(&content, &r2_only, Some(0), crate::replay::Compat::Exact, r2_start).unwrap();
+        let mut r2_session = Session::new(Box::new(driver));
+        assert_eq!(r2_session.battle.round.round, 1, "starts directly in round 2 (0-indexed 1)");
+        while r2_session.step(saito_battle::PlayerTick::default()) {}
+        assert_eq!(r2_session.diverged, None, "must not diverge from recorded digests");
+        assert!(r2_session.finished, "set finishes cleanly from round 2");
+        assert_eq!(Some(r2_session.battle.digest()), r2_end_digest);
     }
 }
