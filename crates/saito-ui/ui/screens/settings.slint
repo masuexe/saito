@@ -18,8 +18,9 @@ export struct PadBinding {
 
 // What the settings show: src/screens/settings.rs sets these.
 export global SettingsView {
-    // The group the list marks: the one the focus is in.
+    // The group the list marks: the one the focus is in, or the one scrolled to.
     in property <int> group;
+    callback scrolled(length, length, length, [length]);
     in property <string> name;
     in property <string> language;
     in property <string> picture-size;
@@ -233,11 +234,19 @@ component SettingsPage inherits Page {
             width: root.body-width - root.list-width;
             nav: "set.";
             content-height: column.preferred-height;
+            user-scrolled => {
+                SettingsView.scrolled(
+                    self.scroll,
+                    self.height,
+                    column.preferred-height,
+                    [g-general.y, g-video.y, g-audio.y, g-online.y, g-controls.y, g-about.y],
+                );
+            }
             column := VerticalLayout {
                 width: page.view-width;
                 spacing: 4px;
                 alignment: start;
-                GroupTitle {
+                g-general := GroupTitle {
                     text: I18n.upper(@tr("General"));
                     first: true;
                 }
@@ -311,7 +320,7 @@ component SettingsPage inherits Page {
                     }
                 }
 
-                GroupTitle {
+                g-video := GroupTitle {
                     text: I18n.upper(@tr("Video"));
                 }
 
@@ -506,7 +515,7 @@ component SettingsPage inherits Page {
                     }
                 }
 
-                GroupTitle {
+                g-audio := GroupTitle {
                     text: I18n.upper(@tr("Audio"));
                 }
 
@@ -544,7 +553,7 @@ component SettingsPage inherits Page {
                     }
                 }
 
-                GroupTitle {
+                g-online := GroupTitle {
                     text: I18n.upper(@tr("Online"));
                 }
 
@@ -586,7 +595,7 @@ component SettingsPage inherits Page {
                     }
                 }
 
-                GroupTitle {
+                g-controls := GroupTitle {
                     text: I18n.upper(@tr("Controls"));
                 }
 
@@ -696,7 +705,7 @@ component SettingsPage inherits Page {
                     }
                 }
 
-                GroupTitle {
+                g-about := GroupTitle {
                     text: I18n.upper(@tr("About"));
                 }
 

@@ -1773,6 +1773,8 @@ component Scroller inherits Rectangle {
     property <length> ay: self.absolute-position.y;
     property <length> slid;
     property <int> slides;
+    property <length> focus-y: 1px;
+    callback user-scrolled();
     // A row being dragged into it (`Drag.into`: one of its own, or a library's) near its top or bottom edge, or a
     // little past it: it scrolls that way, and where the row would land is asked again. -1 up, 1 down, 0 neither.
     property <length> edge: 32px;
@@ -1860,12 +1862,24 @@ component Scroller inherits Rectangle {
     }
     changed scroll => {
         place();
+        if root.focus-y <= 0px && abs(root.content-y - root.focus-y) < 0.5px {
+            root.focus-y = 1px;
+        } else {
+            root.focus-y = 1px;
+            root.user-scrolled();
+        }
         Nav.scrolled();
     }
     changed seq => {
         if Nav.reveal-id == root.nav {
             root.slid = root.content-y;
+            root.focus-y = !Nav.reveal-free
+                ? clamp(root.content-y - Nav.reveal-dy, min(0px, self.height - root.content-height), 0px)
+                : 1px;
             root.content-y = clamp(root.content-y - Nav.reveal-dy, min(0px, self.height - root.content-height), 0px);
+            if abs(root.content-y - root.slid) < 0.01px {
+                root.focus-y = 1px;
+            }
             root.slid = Nav.reveal-slides ? clamp(root.slid - root.content-y, -self.height, self.height) : 0px;
             root.slides += 1;
         }
@@ -1883,6 +1897,7 @@ export component ScrollPage inherits Rectangle {
     in property <bool> mouse-pan: true;
     out property <length> view-width: flick.width;
     out property <length> scroll: scroller.scroll;
+    callback user-scrolled();
     scroller := Scroller {
         x: 0;
         y: 0;
@@ -1891,6 +1906,9 @@ export component ScrollPage inherits Rectangle {
         nav: root.nav;
         content: root.content-height;
         content-y <=> flick.content-y;
+        user-scrolled => {
+            root.user-scrolled();
+        }
     }
 
     flick := Flickable {

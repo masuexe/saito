@@ -51,7 +51,7 @@ use nav::{Rect, Registry};
 use saito_ui::AppWindow;
 use shell::{App, NavInput};
 use i_slint_backend_winit::{EventResult, WinitWindowAccessor, winit};
-use slint::{ComponentHandle, RenderingState};
+use slint::{ComponentHandle, Model, RenderingState};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -384,6 +384,13 @@ fn wire(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let r = registry.clone();
     nav.on_list(move |id, rows, pitch, row_height, scroll, row_width| r.borrow_mut().list(&id, rows, pitch, row_height, scroll, row_width));
     nav.on_scrolled(|| {});
+    let weak = ui.as_weak();
+    ui.global::<saito_ui::SettingsView>().on_scrolled(move |scroll, view_height, content_height, tops| {
+        if let Some(ui) = weak.upgrade() {
+            let tops: Vec<f32> = tops.iter().collect();
+            screens::settings::scrolled(&ui, scroll, view_height, content_height, &tops);
+        }
+    });
 
     // What happened, to the app now, or at the next frame if it is in the middle of something.
     fn tell(app: &Rc<RefCell<App>>, input: NavInput) {

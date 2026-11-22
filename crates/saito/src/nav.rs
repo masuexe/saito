@@ -827,16 +827,18 @@ impl Nav {
         };
         let name = name.to_string();
         drop(registry);
-        self.ask_scroll(ui, &name, dy, true);
+        self.ask_scroll(ui, &name, dy, true, false);
     }
 
     /// Ask the page or the list `id` to scroll by `dy`, slid there or at once (the UI clamps it to its ends).
-    fn ask_scroll(&mut self, ui: &AppWindow, id: &str, dy: f32, slides: bool) {
+    /// `free` is true when the scroll leaves the focus where it is.
+    fn ask_scroll(&mut self, ui: &AppWindow, id: &str, dy: f32, slides: bool, free: bool) {
         let nav = ui.global::<saito_ui::Nav>();
         self.reveal_seq += 1;
         nav.set_reveal_id(id.into());
         nav.set_reveal_dy(dy);
         nav.set_reveal_slides(slides);
+        nav.set_reveal_free(free);
         nav.set_reveal_seq(self.reveal_seq);
     }
 
@@ -853,7 +855,7 @@ impl Nav {
             }
             (id.to_string(), to - at)
         };
-        self.ask_scroll(ui, &id, dy, !matches!(by, Scroll::By(_)));
+        self.ask_scroll(ui, &id, dy, !matches!(by, Scroll::By(_)), true);
         true
     }
 
@@ -865,7 +867,7 @@ impl Nav {
         if scroll <= 0.0 {
             return;
         }
-        self.ask_scroll(ui, id, -scroll, true);
+        self.ask_scroll(ui, id, -scroll, true, false);
     }
 
     /// Scroll the list `id`'s row `index` into view, slid there as a reveal is, and enter the list at it next,
@@ -886,7 +888,7 @@ impl Nav {
                 return true;
             }
         };
-        self.ask_scroll(ui, id, dy, true);
+        self.ask_scroll(ui, id, dy, true, false);
         true
     }
 
@@ -898,7 +900,7 @@ impl Nav {
             let (Some((name, view)), Some(rect)) = (registry.page_of(id), registry.rect(&Key::new(id, index))) else { return };
             (name.to_string(), rect.y - room - view.y)
         };
-        self.ask_scroll(ui, &name, dy, true);
+        self.ask_scroll(ui, &name, dy, true, false);
     }
 
     /// An arrow: the focus goes to the neighbor in that direction, a list's row to the next one. On a setting

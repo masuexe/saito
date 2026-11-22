@@ -31,6 +31,47 @@ const GROUPS: [(&str, f32); 6] = [("set.name", 40.0), ("set.picture", 40.0), ("s
 /// The picture sizes offered besides the largest that fits: 1 to 8 times 240 by 160.
 const SIZES: u32 = 8;
 
+/// How far past a group's title a scroll reaches before marking that group, and how close to the page's end
+/// marks About (whose section is shorter than a screen).
+const SCROLL_TOP_LEAD: f32 = 24.0;
+const SCROLL_BOTTOM_MARGIN: f32 = 16.0;
+
+fn laid_out(view_height: f32, content_height: f32, tops: &[f32]) -> bool {
+    !tops.is_empty() && view_height > 0.0 && content_height > 0.0 && !(tops.len() > 1 && tops.last().copied().unwrap_or(0.0) <= 0.0)
+}
+
+/// Which group the list at the left marks for a scroll `scroll` down a page `view_height` tall holding
+/// `content_height` with group titles at `tops`.
+pub fn group_for_scroll(scroll: f32, view_height: f32, content_height: f32, tops: &[f32]) -> i32 {
+    if !laid_out(view_height, content_height, tops) {
+        return 0;
+    }
+    let max_scroll = (content_height - view_height).max(0.0);
+    if max_scroll > 0.5 && scroll >= max_scroll - SCROLL_BOTTOM_MARGIN {
+        return (tops.len() - 1) as i32;
+    }
+    tops.iter().rposition(|&top| top <= scroll + SCROLL_TOP_LEAD).unwrap_or(0) as i32
+}
+
+/// Update `SettingsView.group` from the page's scroll position when Settings is on screen and laid out.
+pub fn scrolled(ui: &saito_ui::AppWindow, scroll: f32, view_height: f32, content_height: f32, tops: &[f32]) {
+    let view = ui.global::<SettingsView>();
+    if view.get_about() || !laid_out(view_height, content_height, tops) {
+        return;
+    }
+    let group = group_for_scroll(scroll, view_height, content_height, tops);
+    if view.get_group() != group {
+        view.set_group(group);
+    }
+}
+
+/// Mark the group `id` belongs to in the left list when interacting with a setting directly.
+fn mark_group(shell: &Shell, id: &str) {
+    if let Some(group) = group_of(id) {
+        shell.ui().global::<SettingsView>().set_group(group);
+    }
+}
+
 /// The group a control of the page is in.
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
@@ -358,6 +399,7 @@ impl Screen for Settings {
         if self.about.is_open() {
             return self.about.activate(shell, id, index);
         }
+        mark_group(shell, id);
         match id {
             "group" => shell.nav.focus(GROUPS[index.clamp(0, GROUPS.len() as i32 - 1) as usize].0, 0),
             "set.language" => pick_language(shell, id),
@@ -395,6 +437,7 @@ impl Screen for Settings {
     }
 
     fn step(&mut self, shell: &mut Shell, id: &str, _index: i32, by: i32) {
+        mark_group(shell, id);
         match id {
             "set.language" => set_language(shell, crate::lang::step(shell.i18n.code, by)),
             "set.picture" => {
@@ -435,6 +478,7 @@ impl Screen for Settings {
     }
 
     fn choose(&mut self, shell: &mut Shell, id: &str, _index: i32, choice: i32) {
+        mark_group(shell, id);
         match id {
             "set.language" => choose_language(shell, choice),
             "set.picture" => {
@@ -467,6 +511,7 @@ impl Screen for Settings {
     }
 
     fn edit(&mut self, shell: &mut Shell, id: &str, _index: i32, text: &str, done: bool) {
+        mark_group(shell, id);
         let ui = shell.ui();
         let view = ui.global::<SettingsView>();
         match id {
@@ -580,5 +625,42 @@ mod tests {
         assert_eq!(BUTTONS[asked(10)].0, SWITCH_LEFT);
         assert_eq!(BUTTONS[asked(11)].0, SWITCH_RIGHT);
         assert_eq!(BUTTONS[asked(9)].0, keys::SELECT);
+    }
+
+    const SAMPLE_TOPS: [f32; 6] = [0.0, 234.0, 818.0, 962.0, 1106.0, 1882.0];
+    const SAMPLE_CONTENT: f32 = 2120.0;
+
+    #[test]
+    fn scroll_spy_tracks_group_transitions() {
+        let view = 650.0;
+        assert_eq!(group_for_scroll(0.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(209.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(210.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 1);
+        assert_eq!(group_for_scroll(793.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 1);
+        assert_eq!(group_for_scroll(794.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 2);
+        assert_eq!(group_for_scroll(938.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 3);
+        assert_eq!(group_for_scroll(1082.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 4);
+    }
+
+    #[test]
+    fn scroll_spy_marks_about_at_bottom_and_restores_controls_above_it() {
+        let view = 650.0;
+        let max_scroll = SAMPLE_CONTENT - view;
+        assert_eq!(group_for_scroll(max_scroll - 20.0, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 4);
+        assert_eq!(group_for_scroll(max_scroll - SCROLL_BOTTOM_MARGIN, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 5);
+        assert_eq!(group_for_scroll(max_scroll, view, SAMPLE_CONTENT, &SAMPLE_TOPS), 5);
+        // Short landscape viewport where About's title itself reaches top before the bottom margin.
+        assert_eq!(group_for_scroll(1860.0, 200.0, SAMPLE_CONTENT, &SAMPLE_TOPS), 5);
+    }
+
+    #[test]
+    fn scroll_spy_handles_non_scrollable_overscroll_and_unlaid_out_pages() {
+        assert_eq!(group_for_scroll(0.0, 2500.0, SAMPLE_CONTENT, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(-12.0, 650.0, SAMPLE_CONTENT, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(3000.0, 650.0, SAMPLE_CONTENT, &SAMPLE_TOPS), 5);
+        assert_eq!(group_for_scroll(0.0, 0.0, SAMPLE_CONTENT, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(100.0, 650.0, 0.0, &SAMPLE_TOPS), 0);
+        assert_eq!(group_for_scroll(100.0, 650.0, SAMPLE_CONTENT, &[0.0, 0.0, 0.0]), 0);
+        assert_eq!(group_for_scroll(100.0, 650.0, SAMPLE_CONTENT, &[]), 0);
     }
 }
