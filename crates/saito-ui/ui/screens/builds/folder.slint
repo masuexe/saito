@@ -32,16 +32,18 @@ export struct ChipDetail {
     facts: [string],
     problem: string,
     fault: string,
+    warning: string,
 }
 
 // A chip in one of its codes, as the library lists it. `note` is how many the folder holds, or with `refused`
-// why it can't go in.
+// why it can't go in (or with `warn`, a non-blocking warning such as illegal ABD data).
 export struct LibraryRow {
     icon: image,
     name: string,
     kind: ChipKind,
     note: string,
     refused: bool,
+    warn: bool,
     megabytes: string,
     attack: string,
     element: image,
@@ -310,8 +312,9 @@ component LibraryRowView inherits Rectangle {
         opacity: root.line.refused ? 0.5 : 1;
     }
 
-    // (The chip's version's mark follows its name: a square of its color where the two don't fit.)
-    property <length> name-room: max(0px, root.note-x - 8px - 32px);
+    // (The chip's version's mark follows its name: a square of its color where the two don't fit; reclaim empty note width.)
+    property <length> note-used: root.line.note == "" ? 0px : min(root.note-width, note-text.preferred-width) + 8px;
+    property <length> name-room: max(0px, root.megabytes-x - 8px - root.note-used - 32px);
     name := Text {
         x: 32px + root.dx;
         width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
@@ -333,14 +336,14 @@ component LibraryRowView inherits Rectangle {
         opacity: root.line.refused ? 0.5 : 1;
     }
 
-    Text {
+    note-text := Text {
         x: root.note-x + root.dx;
         width: root.note-width;
         text: root.line.note;
-        color: root.line.refused ? Theme.bad : Theme.muted;
+        color: root.line.refused ? Theme.bad : root.line.warn ? Theme.warn : Theme.muted;
         font-family: Theme.body;
         font-size: 12px;
-        font-weight: root.line.refused ? 500 : 400;
+        font-weight: root.line.refused || root.line.warn ? 500 : 400;
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;

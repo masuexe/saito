@@ -78,6 +78,8 @@ export struct ChipCell {
     // The folder's rules have something against the entry: its name is in the error red (an empty entry's box, which
     // has no name), as every item of a build is marked that has a problem (docs/design/app-ui.md §2.66).
     flagged: bool,
+    // Non-blocking warning flag (e.g., an unrecordable chip kept in ABD as illegal data).
+    warn: bool,
     // The version its chip is one's own (a Giga chip's), marked after its name; none (no text) outside the editor.
     version: VersionTag,
 }
@@ -515,7 +517,8 @@ export component ChipRow inherits Rectangle {
 
     // (A name has the mark's room too where the entry has no mark: nothing beside it moves. Its version's mark
     // follows it, a square of its color where the name and the mark's name don't both fit.)
-    property <length> name-room: max(0px, (root.chip.mark == ChipMark.none ? root.element-x : root.mark-x) - root.gap - name.x);
+    property <length> name-end: root.chip.mark != ChipMark.none ? root.mark-x : (root.chip.warn && !root.chip.flagged ? warn-mark.x : root.element-x);
+    property <length> name-room: max(0px, root.name-end - root.gap - name.x);
     name := Text {
         x: root.icon-x + 16px + root.gap;
         width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
@@ -533,6 +536,28 @@ export component ChipRow inherits Rectangle {
         y: (parent.height - self.height) / 2;
         tag: root.chip.version;
         short: name.preferred-width + 6px + self.natural-width > root.name-room;
+    }
+
+    warn-mark := Rectangle {
+        x: root.element-x - root.gap - self.width;
+        y: (parent.height - self.height) / 2;
+        width: root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none ? warn-label.preferred-width + 10px : 0px;
+        height: 16px;
+        visible: root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none;
+        border-width: 1px;
+        border-color: Theme.warn;
+        warn-label := Text {
+            x: 5px;
+            width: max(0px, parent.width - 10px);
+            text: I18n.upper(@tr("Illegal"));
+            color: Theme.warn;
+            font-family: Theme.display;
+            font-size: 9px;
+            font-weight: Theme.display-bold;
+            letter-spacing: 0.6px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
 
     Text {

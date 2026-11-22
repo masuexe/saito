@@ -674,3 +674,21 @@ msgid "{n} slot"
 msgid_plural "{n} slots"
 msgstr[0] "{n} 个槽位"
 
+# ---- Auto battle data: illegal unrecordable chips and unique slots.
+
+msgid "Illegal"
+msgstr "非法"
+
+msgid "Illegal data"
+msgstr "非法数据"
+
+msgid "Illegal · In {n} place"
+msgid_plural "Illegal · In {n} places"
+msgstr[0] "非法数据 · 已放入 {n} 处"
+
+msgid "Illegal ABD data: cannot be recorded normally in the original game"
+msgstr "非法 ABD 数据：原作中无法正常记录进 ABD"
+
+msgid "Already placed"
+msgstr "已放入"
+

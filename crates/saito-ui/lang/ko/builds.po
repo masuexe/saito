@@ -657,3 +657,21 @@ msgstr[0] "{n}슬롯 필요"
 msgid "{n} slot"
 msgid_plural "{n} slots"
 msgstr[0] "{n}슬롯"
+
+# ---- Auto battle data: illegal unrecordable chips and unique slots.
+
+msgid "Illegal"
+msgstr "불법"
+
+msgid "Illegal data"
+msgstr "불법 데이터"
+
+msgid "Illegal · In {n} place"
+msgid_plural "Illegal · In {n} places"
+msgstr[0] "불법 데이터 · {n}곳에 배치"
+
+msgid "Illegal ABD data: cannot be recorded normally in the original game"
+msgstr "불법 ABD 데이터: 원작에서 정상적으로 ABD에 기록할 수 없음"
+
+msgid "Already placed"
+msgstr "이미 배치됨"

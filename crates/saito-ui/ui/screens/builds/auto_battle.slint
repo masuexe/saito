@@ -76,9 +76,21 @@ export global AutoBattleView {
     in property <int> refused-place: -1;
     // CLEAR's question (docs/design/app-ui.md §2.71).
     out property <string> clear-question: @tr("Clear the auto battle data?");
-    // How many of the places hold a chip, the note of its library row.
+    // How many of the places hold a chip, the note of its library row, and illegal ABD data / duplicate notices.
     public pure function in-places(n: int) -> string {
         return @tr("In {n} place" | "In {n} places" % n);
+    }
+    public pure function illegal-data() -> string {
+        return @tr("Illegal data");
+    }
+    public pure function illegal-in-places(n: int) -> string {
+        return @tr("Illegal · In {n} place" | "Illegal · In {n} places" % n);
+    }
+    public pure function illegal-detail() -> string {
+        return @tr("Illegal ABD data: cannot be recorded normally in the original game");
+    }
+    public pure function already-placed() -> string {
+        return @tr("Already placed");
     }
 }
 
@@ -180,8 +192,9 @@ component AutoLibraryRowView inherits Rectangle {
         opacity: root.row-data.refused ? 0.5 : 1;
     }
 
-    // (The chip's version's mark follows its name: a square of its color where the two don't fit.)
-    property <length> name-room: max(0px, root.note-x - 8px - 32px);
+    // (The chip's version's mark follows its name: a square of its color where the two don't fit; reclaim empty note width.)
+    property <length> note-used: root.row-data.note == "" ? 0px : min(root.note-width, note-text.preferred-width) + 8px;
+    property <length> name-room: max(0px, root.megabytes-x - 8px - root.note-used - 32px);
     name := Text {
         x: 32px + root.dx;
         width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
@@ -203,13 +216,14 @@ component AutoLibraryRowView inherits Rectangle {
         opacity: root.row-data.refused ? 0.5 : 1;
     }
 
-    Text {
+    note-text := Text {
         x: root.note-x + root.dx;
         width: root.note-width;
         text: root.row-data.note;
-        color: root.row-data.refused ? Theme.bad : Theme.muted;
+        color: root.row-data.refused ? Theme.bad : root.row-data.warn ? Theme.warn : Theme.muted;
         font-family: Theme.body;
         font-size: 12px;
+        font-weight: root.row-data.refused || root.row-data.warn ? 500 : 400;
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
@@ -360,6 +374,22 @@ export component AutoBattleTab inherits Rectangle {
         problem: AutoBattleView.detail.fault;
 
         Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    Text {
+        x: root.width / 2;
+        y: root.top + 19px;
+        width: root.width / 2 - 16px;
+        height: 20px;
+        visible: !Theme.handheld && AutoBattleView.detail.problem == "" && AutoBattleView.detail.fault == "" && AutoBattleView.detail.warning != "";
+        text: AutoBattleView.detail.warning;
+        color: Theme.warn;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: 500;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
     }
 
     Text {

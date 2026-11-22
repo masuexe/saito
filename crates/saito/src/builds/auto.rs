@@ -16,13 +16,14 @@
 //! so no place points at one ([`drop_patterns`]).
 
 use saito_battle::Content;
-use saito_battle::content::ChipClass;
+use saito_battle::content::{ChipClass, ChipFlags};
 use saito_battle::rules::Fact;
-use saito_content_api::{ChipHandle, Registry, Value};
+use saito_content_api::{ChipHandle, Data, Registry, Value};
 use saito_match::Side;
 use saito_match::facts::Stated;
 use serde::Deserialize;
 use serde::de::IntoDeserializer;
+use std::collections::BTreeSet;
 
 /// The game's module that states the block's layout.
 pub const MODULE: &str = "rules/auto_battle/block";
@@ -48,14 +49,15 @@ pub enum Holds {
     Any,
 }
 
-/// A list of the data: its name, its places (from `start`, from 0), and
-/// what it holds.
+/// A list of the data: its name, its places (from `start`, from 0),
+/// what it holds, and whether each chip may appear at most once in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct List {
     pub name: String,
     pub start: usize,
     pub len: usize,
     pub holds: Holds,
+    pub unique: bool,
 }
 
 impl List {
@@ -64,13 +66,20 @@ impl List {
     }
 }
 
-/// The block's lists, as the game's module states them.
+/// The block's lists, as the game's module states them, together with any
+/// chips that cannot be legitimately recorded in ABD in the original game.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
     pub lists: Vec<List>,
+    pub unrecordable: BTreeSet<ChipHandle>,
 }
 
 impl Layout {
+    /// Whether `chip` cannot be legitimately recorded in ABD in the original game.
+    pub fn is_unrecordable(&self, chip: ChipHandle) -> bool {
+        self.unrecordable.contains(&chip)
+    }
+
     /// The layout `block` (the game's module, as data) states, where it is
     /// the one this view draws: 42 places in lists (where it states none,
     /// one list of them all), and where
@@ -88,24 +97,39 @@ impl Layout {
         if saito_match::facts::takes(content, RECORDS_FIELD) && (size("RECORDS"), size("RECORD_CHIPS")) != (Some(RECORDS), Some(RECORD_CHIPS)) {
             return None;
         }
+        let mut unrecordable = BTreeSet::new();
+        if let Data::List(keys) = d.field("UNRECORDABLE") {
+            let game = content.game();
+            for entry in keys {
+                if let Some(key) = entry.str()
+                    && let Some(chip) = saito_match::ids::chip(content, game, key)
+                {
+                    unrecordable.insert(chip);
+                }
+            }
+        }
         let items = match d.field("LISTS") {
-            saito_content_api::Data::List(items) => items.as_slice(),
-            saito_content_api::Data::Nil => return Some(Layout { lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any }] }),
+            Data::List(items) => items.as_slice(),
+            Data::Nil => return Some(Layout { lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any, unique: false }], unrecordable }),
             _ => return None,
         };
         let mut lists = Vec::new();
         for l in items {
             let name = l.field("name").str()?.to_string();
             let (start, len) = (l.field("start").int()? as usize, l.field("len").int()? as usize);
-            let holds = match (name.as_str(), matches!(l.field("own_class"), saito_content_api::Data::Bool(true))) {
-                ("patterns", _) => Holds::Patterns,
-                (n, true) => {
-                    let class: Result<ChipClass, serde::de::value::Error> = ChipClass::deserialize(n.into_deserializer());
-                    Holds::Chips(class.ok()?)
-                }
-                (_, false) => Holds::Any,
+            let unique = matches!(l.field("unique"), Data::Bool(true));
+            let holds = if name == "patterns" {
+                Holds::Patterns
+            } else if let Some(class_name) = l.field("class").str() {
+                let class: Result<ChipClass, serde::de::value::Error> = ChipClass::deserialize(class_name.into_deserializer());
+                Holds::Chips(class.ok()?)
+            } else if matches!(l.field("own_class"), Data::Bool(true)) {
+                let class: Result<ChipClass, serde::de::value::Error> = ChipClass::deserialize(name.as_str().into_deserializer());
+                Holds::Chips(class.ok()?)
+            } else {
+                Holds::Any
             };
-            lists.push(List { name, start: start.checked_sub(1)?, len, holds });
+            lists.push(List { name, start: start.checked_sub(1)?, len, holds, unique });
         }
         let mut next = 0;
         for l in &lists {
@@ -114,7 +138,7 @@ impl Layout {
             }
             next += l.len;
         }
-        (next == PLACES).then_some(Layout { lists })
+        (next == PLACES).then_some(Layout { lists, unrecordable })
     }
 
     /// The list place `place` (from 0) is in.
@@ -346,13 +370,28 @@ pub fn drop_patterns(content: &Content, side: &mut Side) -> bool {
     dropped && data.write(content, side).is_ok()
 }
 
-/// The chips a list held to chips of `class` is offered: every chip of
-/// game `game` of that class (whether a folder holds it or not: a list of
-/// Program Advances holds those no folder does).
+/// The chips a list held to chips of `class` is offered: every obtainable chip of
+/// game `game` of that class that auto battle can play (Program Advances plus
+/// Standard/Mega/Giga chips with library/dark flags or collectible = true).
 pub fn of_class(content: &Content, game: &str, class: ChipClass) -> Vec<ChipHandle> {
     (0..content.defs.chips.len() as u16)
         .map(ChipHandle)
-        .filter(|&id| saito_match::ids::in_game(content, game, &content.defs.chip(id).key) && content.chip(id).class == class)
+        .filter(|&id| {
+            let def = content.defs.chip(id);
+            let record = content.chip(id);
+            if !saito_match::ids::in_game(content, game, &def.key) || record.class != class {
+                return false;
+            }
+            if content.defs.extension(Registry::Chip, &def.key, "auto_battle").is_none() {
+                return false;
+            }
+            if class == ChipClass::ProgramAdvance {
+                return true;
+            }
+            record.flags.has(ChipFlags::LIBRARY)
+                || record.flags.has(ChipFlags::DARK)
+                || content.defs.extension(Registry::Chip, &def.key, "collectible") == Some(&Data::Bool(true))
+        })
         .collect()
 }
 
@@ -368,25 +407,35 @@ mod tests {
         let content = saito_match::testing::exe5_content();
         let block = crate::builds::module_data(&content, "exe5", MODULE);
         let layout = Layout::read(&content, block.as_ref()).expect("the block's layout");
-        let names: Vec<(&str, usize, usize, Holds)> = layout.lists.iter().map(|l| (l.name.as_str(), l.start, l.len, l.holds)).collect();
+        let names: Vec<(&str, usize, usize, Holds, bool)> = layout.lists.iter().map(|l| (l.name.as_str(), l.start, l.len, l.holds, l.unique)).collect();
         assert_eq!(
             names,
             [
-                ("first", 0, 3, Holds::Any),
-                ("standard", 3, 24, Holds::Any),
-                ("mega", 27, 5, Holds::Chips(ChipClass::Mega)),
-                ("giga", 32, 1, Holds::Chips(ChipClass::Giga)),
-                ("patterns", 33, 8, Holds::Patterns),
-                ("program_advance", 41, 1, Holds::Chips(ChipClass::ProgramAdvance)),
+                ("first", 0, 3, Holds::Chips(ChipClass::Standard), false),
+                ("standard", 3, 24, Holds::Chips(ChipClass::Standard), false),
+                ("mega", 27, 5, Holds::Chips(ChipClass::Mega), true),
+                ("giga", 32, 1, Holds::Chips(ChipClass::Giga), true),
+                ("patterns", 33, 8, Holds::Patterns, false),
+                ("program_advance", 41, 1, Holds::Chips(ChipClass::ProgramAdvance), true),
             ]
         );
+        assert_eq!(layout.unrecordable.len(), 82, "EXE5 unrecordable count matches ROM table");
+        for key in ["darkinvs", "chaoslrd", "dethphnx", "phoenix", "colonel", "leadraid"] {
+            let h = ids::chip(&content, "exe5", key).unwrap();
+            assert!(layout.is_unrecordable(h), "exe5 {key} should be flagged unrecordable");
+        }
         let six = saito_match::testing::exe6_content();
         assert!(Layout::read(&six, block.as_ref()).is_none(), "EXE6's setup takes no such data");
         // EXE4's block states EXE5's lists (its writer, 0x0800EFA8, writes them so).
         let four = saito_match::testing::exe4_content();
         let block4 = crate::builds::module_data(&four, "exe4", MODULE);
         let layout4 = Layout::read(&four, block4.as_ref()).expect("EXE4's block's layout");
-        assert_eq!(layout4, layout);
+        assert_eq!(layout4.lists, layout.lists);
+        assert_eq!(layout4.unrecordable.len(), 22, "EXE4 unrecordable count matches ROM table");
+        for key in ["duo", "prixpowr", "poisphar", "slogauge"] {
+            let h = ids::chip(&four, "exe4", key).unwrap();
+            assert!(layout4.is_unrecordable(h), "exe4 {key} should be flagged unrecordable");
+        }
         let mut m = saito_match::pick::live(&four, "exe4", 3, None).unwrap();
         let cannon = ids::chip(&four, "exe4", "cannon").unwrap();
         assert!(update(&four, &mut m.sides[0], Edit::Put(5, cannon)));
@@ -430,7 +479,7 @@ mod tests {
     /// rules let stand there. The first and standard lists take a chip of any class. In EXE4 and EXE5 alike.
     #[test]
     fn a_list_held_to_a_class_takes_its_class_alone() {
-        use saito_match::Wrong;
+        use saito_match::{Count, Wrong};
         for (content, game) in [(saito_match::testing::exe5_content(), "exe5"), (saito_match::testing::exe4_content(), "exe4")] {
             let block = crate::builds::module_data(&content, game, MODULE);
             let layout = Layout::read(&content, block.as_ref()).expect("the block's layout");
@@ -449,28 +498,81 @@ mod tests {
                 })
                 .collect();
             let names: Vec<(&str, ChipClass)> = held.iter().map(|(l, class)| (l.name.as_str(), *class)).collect();
-            assert_eq!(names, [("mega", ChipClass::Mega), ("giga", ChipClass::Giga), ("program_advance", ChipClass::ProgramAdvance)], "{game}");
+            assert_eq!(
+                names,
+                [
+                    ("first", ChipClass::Standard),
+                    ("standard", ChipClass::Standard),
+                    ("mega", ChipClass::Mega),
+                    ("giga", ChipClass::Giga),
+                    ("program_advance", ChipClass::ProgramAdvance),
+                ],
+                "{game}"
+            );
             let cannon = ids::chip(&content, game, "cannon").unwrap();
+            let sample_mega = of_class(&content, game, ChipClass::Mega)[0];
+            let sample_giga = of_class(&content, game, ChipClass::Giga)[0];
             for (list, class) in held {
                 let offered = of_class(&content, game, class);
-                assert!(offered.len() > 10, "{game} {}: {offered:?}", list.name);
+                assert!(offered.len() >= 10, "{game} {}: {offered:?}", list.name);
                 for batch in offered.chunks(list.len) {
                     for (place, &chip) in list.places().zip(batch) {
                         update(&content, side, Edit::Put(place, chip));
                     }
                     assert_eq!(problems(side), [], "{game} {}: {batch:?}", list.name);
+                    update(&content, side, Edit::Clear);
                 }
-                // A standard chip there: refused.
-                update(&content, side, Edit::Put(list.start, cannon));
-                assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: cannon }, Some(list.start))], "{game} {}", list.name);
+                // A wrong-class chip there: refused.
+                let wrong = match class {
+                    ChipClass::Standard => sample_mega,
+                    _ => cannon,
+                };
+                update(&content, side, Edit::Put(list.start, wrong));
+                assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: wrong }, Some(list.start))], "{game} {}", list.name);
+                if class == ChipClass::Standard {
+                    update(&content, side, Edit::Put(list.start, sample_giga));
+                    assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: sample_giga }, Some(list.start))], "{game} {}", list.name);
+                }
                 update(&content, side, Edit::Clear);
             }
-            // The first and standard lists: a mega chip and a program advance.
-            let (mega, advance) = (of_class(&content, game, ChipClass::Mega)[0], of_class(&content, game, ChipClass::ProgramAdvance)[0]);
-            for (place, chip) in [(0, mega), (1, advance), (3, mega), (4, advance)] {
-                update(&content, side, Edit::Put(place, chip));
+            // Duplicate Mega chips in places 28..=32 are refused with `Wrong::Copies { limit: 1 }`.
+            let mega_start = layout.lists.iter().find(|l| l.name == "mega").unwrap().start;
+            update(&content, side, Edit::Put(mega_start, sample_mega));
+            update(&content, side, Edit::Put(mega_start + 1, sample_mega));
+            assert_eq!(
+                problems(side),
+                [
+                    (Wrong::Copies { chip: sample_mega, count: Count { used: 2, limit: 1 } }, Some(mega_start)),
+                    (Wrong::Copies { chip: sample_mega, count: Count { used: 2, limit: 1 } }, Some(mega_start + 1)),
+                ],
+                "{game}: duplicate Mega in ABD mega list"
+            );
+            update(&content, side, Edit::Clear);
+
+            // Unrecordable chips stay selectable & free of blocking problems when placed in the matching list.
+            for &unrec in &layout.unrecordable {
+                let class = content.chip(unrec).class;
+                let target_list = layout.lists.iter().find(|l| l.holds == Holds::Chips(class)).unwrap();
+                assert!(of_class(&content, game, class).contains(&unrec), "{game}: unrecordable chip {} still offered", content.defs.chip(unrec).key);
+                update(&content, side, Edit::Put(target_list.start, unrec));
+                assert_eq!(problems(side), [], "{game}: unrecordable chip remains placeable without blocking problem");
+                update(&content, side, Edit::Clear);
             }
-            assert_eq!(problems(side), [], "{game}");
+
+            if game == "exe5" {
+                let finalgun = ids::chip(&content, "exe5", "finalgun").unwrap();
+                assert!(!of_class(&content, "exe5", ChipClass::Giga).contains(&finalgun), "finalgun omitted from EXE5 Giga library");
+                update(&content, side, Edit::Put(32, finalgun));
+                assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: finalgun }, Some(32))]);
+                update(&content, side, Edit::Clear);
+            } else {
+                // EXE4 standard dark chips are offered and valid in Standard ABD lists.
+                let drkcanon = ids::chip(&content, "exe4", "drkcanon").unwrap();
+                assert!(of_class(&content, "exe4", ChipClass::Standard).contains(&drkcanon));
+                update(&content, side, Edit::Put(0, drkcanon));
+                assert_eq!(problems(side), []);
+                update(&content, side, Edit::Clear);
+            }
         }
     }
 }

@@ -25,19 +25,39 @@ places.PLACE = PLACE
 export type Place = { chip: Chip?, pattern: number, zero: boolean }
 
 -- The lists the games write the places in (EXE5's 0x0802C692 to 0x0802C6E6): their names, first places (from 1) and
--- sizes, and `own_class` where the list holds chips of the class it is named for alone (`validate`; a tool reads it to
--- offer a place the chips it can hold): the mega, giga and program advance lists, which the games' writer fills with
--- the most used chips of that class (saito's choice, docs/design/app-ui.md §2.27). The first and standard lists
--- take a chip of any class, though the writer puts only standard chips there.
-local LISTS: { { name: string, start: number, len: number, own_class: boolean? } } = {
-    { name = "first", start = 1, len = 3 },
-    { name = "standard", start = 4, len = 24 },
-    { name = "mega", start = 28, len = 5, own_class = true },
-    { name = "giga", start = 33, len = 1, own_class = true },
+-- sizes, the chip `class` the list accepts (`class` or `own_class` when it matches the list's name; a tool reads it to
+-- offer a place the chips it can hold), and `unique` where a chip can appear at most once in the list (the mega, giga
+-- and program advance lists hold distinct most-used chips). Both first and standard lists hold standard chips alone.
+local LISTS: { { name: string, start: number, len: number, class: string?, own_class: boolean?, unique: boolean? } } = {
+    { name = "first", start = 1, len = 3, class = "standard" },
+    { name = "standard", start = 4, len = 24, class = "standard", own_class = true },
+    { name = "mega", start = 28, len = 5, class = "mega", own_class = true, unique = true },
+    { name = "giga", start = 33, len = 1, class = "giga", own_class = true, unique = true },
     { name = "patterns", start = 34, len = 8 },
-    { name = "program_advance", start = 42, len = 1, own_class = true },
+    { name = "program_advance", start = 42, len = 1, class = "program_advance", own_class = true, unique = true },
 }
 places.LISTS = LISTS
+
+local function has(list: any, x: any): boolean
+    return list ~= nil and table.find(list, x) ~= nil
+end
+
+local function obtainable(chip: Chip): boolean
+    if chip.class == "program_advance" then
+        return true
+    end
+    return has(chip.flags, "library") or has(chip.flags, "dark") or (chip :: any).collectible == true
+end
+
+local function list_at(i: number)
+    local list = LISTS[#LISTS]
+    for _, l in LISTS do
+        if i >= l.start and i < l.start + l.len then
+            list = l
+        end
+    end
+    return list
+end
 
 local function empty(p: Place): boolean
     return p.chip == nil and p.pattern == 0 and not p.zero
@@ -136,17 +156,27 @@ function places.turn(sent: { Place }): { Place }
 end
 
 -- A game's `validate`'s part for a setup's places: each place one thing (a chip, a pattern, a 0, or empty), a
--- pattern one of the eight records, no chip among the 42 places that the game's AI can't play (the original
--- crashes when its navi in auto battle goes to play one, and the game's own writer never puts one there), and in a
--- list that holds the class it is named for alone (`LISTS`' `own_class`), no chip of another.
+-- pattern one of the eight records, no chip among the 42 places that the game's AI can't play or that can't be obtained
+-- normally, each chip list held to its required chip class, and `unique` lists (mega/giga/PA) holding each chip at most once.
 function places.validate(stated: { Place }, problem: (p: SetupProblem) -> ())
+    local counts: { [any]: { [Chip]: number } } = {}
+    for _, l in LISTS do
+        if l.unique then
+            counts[l] = {}
+        end
+    end
     for i, p in stated do
-        local list = LISTS[#LISTS]
-        for _, l in LISTS do
-            if i >= l.start and i < l.start + l.len then
-                list = l
+        local chip: Chip? = p.chip
+        if chip ~= nil then
+            local list = list_at(i)
+            local list_counts = counts[list]
+            if list_counts ~= nil then
+                list_counts[chip] = (list_counts[chip] or 0) + 1
             end
         end
+    end
+    for i, p in stated do
+        local list = list_at(i)
         local where = string.format("place %d of the auto battle data (`%s`, entry %d)", i, list.name, i - list.start + 1)
         local things = (if p.chip ~= nil then 1 else 0) + (if p.pattern > 0 then 1 else 0) + (if p.zero then 1 else 0)
         if things > 1 then
@@ -170,21 +200,7 @@ function places.validate(stated: { Place }, problem: (p: SetupProblem) -> ())
         end
         local chip: Chip? = p.chip
         if chip ~= nil then
-            if list.own_class and chip.class ~= list.name then
-                problem({
-                    kind = "chip_not_allowed",
-                    field = "auto_battle_places",
-                    entry = i,
-                    chip = chip,
-                    text = string.format(
-                        "%s holds %s, a chip of class `%s`: the list holds `%s` chips alone",
-                        where,
-                        battle.name(chip),
-                        chip.class or "none",
-                        list.name
-                    ),
-                })
-            end
+            local required = list.class or (if list.own_class then list.name else nil)
             -- (A chip with no `auto_battle`, the game's rules/auto_battle/place: its positioning class is past the
             -- table.)
             if (chip :: any).auto_battle == nil then
@@ -197,6 +213,49 @@ function places.validate(stated: { Place }, problem: (p: SetupProblem) -> ())
                         "%s holds %s: the original can't play it in auto battle (its positioning class is past the game's table of them: the game crashes)",
                         where,
                         battle.name(chip)
+                    ),
+                })
+            elseif chip.family == "special" or not obtainable(chip) then
+                problem({
+                    kind = "chip_not_allowed",
+                    field = "auto_battle_places",
+                    entry = i,
+                    chip = chip,
+                    text = string.format(
+                        "%s holds %s: not an obtainable chip for auto battle data",
+                        where,
+                        battle.name(chip)
+                    ),
+                })
+            elseif required ~= nil and chip.class ~= required then
+                problem({
+                    kind = "chip_not_allowed",
+                    field = "auto_battle_places",
+                    entry = i,
+                    chip = chip,
+                    text = string.format(
+                        "%s holds %s, a chip of class `%s`: the list holds `%s` chips alone",
+                        where,
+                        battle.name(chip),
+                        chip.class or "none",
+                        required
+                    ),
+                })
+            end
+            local list_counts = counts[list]
+            if list_counts ~= nil and list_counts[chip] > 1 then
+                problem({
+                    kind = "copies",
+                    field = "auto_battle_places",
+                    entry = i,
+                    chip = chip,
+                    used = list_counts[chip],
+                    limit = 1,
+                    text = string.format(
+                        "%s holds %s again: `%s` holds each chip at most once",
+                        where,
+                        battle.name(chip),
+                        list.name
                     ),
                 })
             end

@@ -99,6 +99,7 @@ impl AutoBattle {
             kind: kind(record.class),
             element: draft.kit.pictures.chip_element(chip),
             flagged,
+            warn: draft.kit.auto_layout().is_some_and(|l| l.is_unrecordable(chip)),
             version: draft.kit.version_tag_of(words.names, Registry::Chip, &Item::of(chip.0)),
             ..Default::default()
         }
@@ -207,6 +208,8 @@ impl AutoBattle {
     fn show_library(&self, shell: &Shell, draft: &Draft) {
         let content = draft.content();
         let data = Data::of_side(content, draft.side());
+        let layout = draft.kit.auto_layout();
+        let active_list = layout.and_then(|l| l.list_of(self.place));
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
         let say = ui.global::<BuildWords>();
@@ -217,21 +220,33 @@ impl AutoBattle {
                     let record = content.chip(chip);
                     let copies = data.places.iter().filter(|e| **e == Entry::Chip(chip)).count() as i32;
                     // (One the build's ruleset holds back here is greyed and says so: it can't be put in,
-                    // docs/design/app-ui.md §2.68.)
+                    // docs/design/app-ui.md §2.68. Unrecordable ABD chips stay pickable but carry a warning;
+                    // a chip already placed elsewhere in a `unique` list cannot be added a second time.)
                     let banned = !draft.allows(auto::PLACES_FIELD, chip.0);
-                    let note = if banned {
-                        say.invoke_not_allowed_here()
+                    let duplicate_in_unique = active_list.is_some_and(|list| {
+                        list.unique && list.places().any(|p| p != self.place && data.places[p] == Entry::Chip(chip))
+                    });
+                    let illegal = layout.is_some_and(|l| l.is_unrecordable(chip));
+                    let (note, refused, warn) = if banned {
+                        (say.invoke_not_allowed_here(), true, false)
+                    } else if duplicate_in_unique {
+                        (view.invoke_already_placed(), true, false)
+                    } else if illegal && copies > 0 {
+                        (view.invoke_illegal_in_places(copies), false, true)
+                    } else if illegal {
+                        (view.invoke_illegal_data(), false, true)
                     } else if copies > 0 {
-                        view.invoke_in_places(copies)
+                        (view.invoke_in_places(copies), false, false)
                     } else {
-                        Default::default()
+                        (Default::default(), false, false)
                     };
                     LibraryRow {
                         icon: draft.kit.pictures.icon(chip),
                         name: words.names.chip(chip).into(),
                         kind: kind(record.class),
                         note,
-                        refused: banned,
+                        refused,
+                        warn,
                         megabytes: say.invoke_megabytes(record.mb as i32),
                         attack: if record.damage > 0 { record.damage.to_string().into() } else { Default::default() },
                         element: draft.kit.pictures.chip_element(chip),
@@ -289,6 +304,11 @@ impl AutoBattle {
             let key = &content.defs.chip(chip).key;
             let get = |s: &saito_battle::content::strings::Strings| s.chip(key).and_then(|c| c.description.clone());
             let description = words.names.strings.and_then(get).or_else(|| get(&content.strings)).map(|d| crate::games::one_line(&d)).unwrap_or_default();
+            let warning = if draft.kit.auto_layout().is_some_and(|l| l.is_unrecordable(chip)) {
+                ui.global::<AutoBattleView>().invoke_illegal_detail()
+            } else {
+                Default::default()
+            };
             ChipDetail {
                 there: true,
                 art: draft.kit.pictures.art(chip),
@@ -299,6 +319,7 @@ impl AutoBattle {
                 facts: ModelRc::new(VecModel::from(facts)),
                 problem: problem.into(),
                 fault: fault.into(),
+                warning,
                 ..Default::default()
             }
         });
@@ -327,8 +348,8 @@ impl AutoBattle {
         view.set_on_placed(false);
         if self.chips_for != Some(self.holds(draft)) {
             self.list(shell, draft);
-            self.show_library(shell, draft);
         }
+        self.show_library(shell, draft);
         self.show_detail(shell, draft);
     }
 

@@ -152,6 +152,40 @@ function block.pattern_read(side: number, i: number, k: number): (Chip | number)
 end
 
 
+-- Chips whose ROM chip record lacks ABD learnability flag (byte 0x0E bit 2 in EXE5, checked by 0x0802C1FC):
+-- kept available in the editor, but flagged as illegal ABD data since the original game cannot record them normally.
+block.UNRECORDABLE = {
+    -- Standard (35)
+    "cactbal1", "cactbal2", "cactbal3", "elemrage",
+    "quake1", "quake2", "quake3",
+    "katana1", "katana2", "katana3",
+    "drilarm1", "drilarm2", "drilarm3",
+    "skully1", "skully2", "skully3",
+    "aqwhirl1", "aqwhirl2", "aqwhirl3",
+    "astroid1", "astroid2", "astroid3",
+    "spshake2", "spshake3",
+    "voltz1", "voltz2", "voltz3",
+    "rainyday", "slogauge", "fstgauge", "copydmg", "lifesync", "attck-10", "navi-20", "colorpt",
+    -- Dark (3)
+    "drksonic", "darkinvs", "darkplus",
+    -- Mega (41)
+    "numbrbl", "poltrgst", "bugfix", "fullcust", "attck-30", "dblpoint",
+    "napalmmn", "naplmmn-sp", "naplmmn-ds",
+    "magnetmn", "magntmn-sp", "magntmn-ds",
+    "meddy", "meddy-sp", "meddy-ds",
+    "colonel", "colonel-sp", "colonel-ds",
+    "toadman", "toadman-sp", "toadman-ds",
+    "blizman", "blizman-sp", "blizman-ds",
+    "cloudman", "cloudmn-sp", "cloudmn-ds",
+    "cosmoman", "cosmomn-sp", "cosmomn-ds",
+    "larkman", "larkman-sp", "larkman-ds",
+    "gridman", "gridman-sp", "gridman-ds",
+    "django", "django-sp", "django-ds",
+    "otenko", "leadraid",
+    -- Giga (3)
+    "dethphnx", "phoenix", "chaoslrd",
+}
+
 -- `validate`'s part: each place one thing (a chip, a pattern, a 0, or empty), a pattern one of the eight records,
 -- no chip among the 42 places that the AI can't play (the original crashes when its navi in auto battle goes to
 -- play one, and the game's own writer never puts one there; a record's chip place may hold one, as the game writes

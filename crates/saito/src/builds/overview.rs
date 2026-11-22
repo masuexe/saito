@@ -44,6 +44,7 @@ pub fn chip_cell(kit: &Kit, names: &Names, folder: &Folder, entry: usize, flagge
         flagged,
         // (The editor marks a version's own chips: the overview doesn't.)
         version: Default::default(),
+        ..Default::default()
     }
 }
 

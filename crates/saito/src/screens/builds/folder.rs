@@ -268,6 +268,7 @@ impl Folder {
                                 None => Default::default(),
                             },
                             refused: banned || refusal.is_some(),
+                            warn: false,
                             megabytes: say.invoke_megabytes(record.mb as i32),
                             attack: if record.damage > 0 { record.damage.to_string().into() } else { Default::default() },
                             element: kit.pictures.chip_element(row.id),
@@ -348,6 +349,7 @@ impl Folder {
                 facts: ModelRc::new(VecModel::from(facts)),
                 problem: problem.into(),
                 fault: fault.into(),
+                ..Default::default()
             }
         });
         view.set_detail(detail);
