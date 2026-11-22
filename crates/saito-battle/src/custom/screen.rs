@@ -1849,7 +1849,7 @@ impl Screen {
     /// Whether the chip in slot `slot` goes with the picks (but the one in
     /// place `without`), as the availability counts them: a chip given up
     /// for a button, or a button's held chip, may go back among them.
-    pub(crate) fn fits(&self, slot: u8, without: Option<u8>, view: &PlayerView, folder: &BattleFolder) -> bool {
+    pub fn fits(&self, slot: u8, without: Option<u8>, view: &PlayerView, folder: &BattleFolder) -> bool {
         self.chip_in(slot, folder).is_some_and(|c| self.together(without, view, folder).goes_with(c, view))
     }
 

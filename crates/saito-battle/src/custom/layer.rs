@@ -1166,20 +1166,93 @@ impl Layer {
                 || screen.chip_in(s, p.folder).is_some_and(|c| !is_invalid(c, &p.view))
         };
 
-        // Case 1: Dragging held Arm Change button releases the held chip.
+        // Case 1: Dragging held Arm Change button returns directly to Chip Select (Outside) or inserts/replaces into picks.
         if let DragSource::Slot(s) = from
             && let Some(btn) = screen.button_slot(s)
             && p.arm_change_slot == Some(btn)
-            && screen.hold.is_some()
+            && let Some(h) = screen.hold.filter(|h| h.button == btn)
         {
-            return match to {
-                DropTarget::Button(b) if screen.button_slot(b) == Some(btn) => Pointed::Nothing,
-                DropTarget::Outside | DropTarget::InsertAt(_) | DropTarget::ReplaceOrSwap(_) => {
-                    let c = ScreenChoice::Release(btn);
-                    self.cursor_to_choice(c, screen);
-                    Pointed::Choice(c)
+            let puts_back = (h.at as usize) == n || (n < MAX_SELECTIONS && screen.fits(h.chip, None, &p.view, p.folder));
+            let release_steps = 1 + usize::from(puts_back);
+            let push_release = |this: &mut Self| {
+                this.push_macro(MacroStep::Choice(ScreenChoice::Release(btn)));
+                if puts_back {
+                    this.push_macro(MacroStep::Choice(ScreenChoice::Unpick(h.at)));
                 }
+            };
+            return match to {
                 DropTarget::Button(_) => Pointed::Nothing,
+                DropTarget::Outside => {
+                    if !puts_back {
+                        let c = ScreenChoice::Release(btn);
+                        self.cursor_to_choice(c, screen);
+                        return Pointed::Choice(c);
+                    }
+                    if p.time_left.is_some_and(|left| (left as usize) < 6) {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    push_release(self);
+                    self.emit_first_macro(screen)
+                }
+                DropTarget::InsertAt(pos) => {
+                    if n >= MAX_SELECTIONS {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    let pos = (pos as usize).min(n);
+                    if (locked && pos == 0) || !screen.fits(h.chip, None, &p.view, p.folder) {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    if pos == h.at as usize {
+                        let c = ScreenChoice::Release(btn);
+                        self.cursor_to_choice(c, screen);
+                        return Pointed::Choice(c);
+                    }
+                    let unpicks = n - pos;
+                    let picks = (n + 1) - pos;
+                    let needed = release_steps + unpicks + picks + 4;
+                    if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    push_release(self);
+                    for j in (pos..n).rev() {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+                    }
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(h.chip)));
+                    for &slot in &sel[pos..n] {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Pick(slot)));
+                    }
+                    self.emit_first_macro(screen)
+                }
+                DropTarget::ReplaceOrSwap(k) => {
+                    let k = k as usize;
+                    if k >= n {
+                        return Pointed::Nothing;
+                    }
+                    if (locked && k == 0) || !screen.fits(h.chip, Some(k as u8), &p.view, p.folder) {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    let unpicks = n - k;
+                    let picks = n - k;
+                    let needed = release_steps + unpicks + picks + 4;
+                    if p.time_left.is_some_and(|left| (left as usize) < needed) {
+                        self.play(ScreenSound::Refused);
+                        return Pointed::Took;
+                    }
+                    push_release(self);
+                    for j in (k..n).rev() {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Unpick(j as u8)));
+                    }
+                    self.push_macro(MacroStep::Choice(ScreenChoice::Pick(h.chip)));
+                    for &slot in &sel[k + 1..n] {
+                        self.push_macro(MacroStep::Choice(ScreenChoice::Pick(slot)));
+                    }
+                    self.emit_first_macro(screen)
+                }
             };
         }
 

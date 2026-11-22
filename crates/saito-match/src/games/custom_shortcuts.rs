@@ -311,11 +311,52 @@ fn exe5_drag_drops_unison_arm_change_and_meddysoul_capsules() {
     assert!(screen(&b_col).selection().is_empty());
     assert_eq!(screen(&b_col).slots[3].state, SlotState::Selectable);
 
-    // Dragging held Arm Change button outside releases `slot 2` back into picks `[2]`.
-    ls_arm.layers[0].point(Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::Outside });
+    // Dragging held Arm Change button into CHIP SELECT / Outside cancels ARM completely back into CHIP SELECT (not into picks).
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::Outside });
+    assert_eq!(screen(&b_col).hold, None);
+    assert!(screen(&b_col).selection().is_empty());
+    assert_eq!(screen(&b_col).slots[2].state, SlotState::Selectable);
+
+    // Dragging held Arm Change chip into the right pick column directly inserts (`InsertAt`) or replaces (`ReplaceOrSwap`).
+    step_choice(&mut b_col, &mut ls_arm, ScreenChoice::Pick(2)); // picks Vulcan1 * (`slot 2`)
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Slot(1), to: DropTarget::Button(8) }); // ARM holds Cannon A (`h.at == 1`)
+    assert_eq!(screen(&b_col).hold.map(|h| h.chip), Some(1));
+    assert_eq!(screen(&b_col).selection(), [2]);
+    // Insert held Cannon A before Vulcan1 * (`InsertAt(0)` != `h.at`).
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::InsertAt(0) });
+    assert_eq!(screen(&b_col).hold, None);
+    assert_eq!(screen(&b_col).selection(), [1, 2]);
+    // Re-hold Pick(0) (Cannon A, `h.at == 0`), then append it at the end (`InsertAt(1)`).
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Pick(0), to: DropTarget::Button(8) });
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::InsertAt(1) });
+    assert_eq!(screen(&b_col).hold, None);
+    assert_eq!(screen(&b_col).selection(), [2, 1]);
+
+    // Plain click on held Arm Change button keeps original click release behavior (returns to picks when compatible).
+    point_and_settle(&mut b_col, &mut ls_arm, Gesture::Drop { from: DragSource::Pick(1), to: DropTarget::Button(8) });
+    ls_arm.layers[0].point(Gesture::Click(Some(Target::Slot(8))));
     step_idle(&mut b_col, &mut ls_arm);
     assert_eq!(screen(&b_col).hold, None);
-    assert_eq!(screen(&b_col).selection(), [2]);
+    assert_eq!(screen(&b_col).selection(), [2, 1]);
+
+    // Incompatible insert from held Arm Change is refused cleanly without clearing ARM, while replacing works.
+    let mut b_arm_drop = Battle::new(m_col.round(&content, 0x5EED), content.clone());
+    b_arm_drop.stats[0].starting_form = colonelsoul;
+    let mut ls_ad = step_until_choosing(&mut b_arm_drop);
+    deal(&mut b_arm_drop, &content, "exe5", 0, "sword", S);
+    deal(&mut b_arm_drop, &content, "exe5", 1, "cannon", A);
+    step_choice(&mut b_arm_drop, &mut ls_ad, ScreenChoice::Pick(1));
+    step_choice(&mut b_arm_drop, &mut ls_ad, ScreenChoice::Press(8)); // ARM holds Cannon A (`slot 1`)
+    step_choice(&mut b_arm_drop, &mut ls_ad, ScreenChoice::Pick(0)); // picks Sword S (`slot 0`, incompatible with Cannon A)
+    ls_ad.layers[0].point(Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::InsertAt(1) });
+    step_idle(&mut b_arm_drop, &mut ls_ad);
+    assert!(ls_ad.layers[0].heard(&b_arm_drop).contains(&saito_battle::sound::SoundCue::Effect(refused_id)));
+    assert_eq!(screen(&b_arm_drop).hold.map(|h| h.chip), Some(1));
+    assert_eq!(screen(&b_arm_drop).selection(), [0]);
+    point_and_settle(&mut b_arm_drop, &mut ls_ad, Gesture::Drop { from: DragSource::Slot(8), to: DropTarget::ReplaceOrSwap(0) });
+    assert_eq!(screen(&b_arm_drop).hold, None);
+    assert_eq!(screen(&b_arm_drop).selection(), [1]);
+    assert_eq!(screen(&b_arm_drop).slots[0].state, SlotState::Unavailable);
 
     // Overwrite when old held chip is incompatible with current selection (`puts_back == false`).
     let mut b_arm_incompat = Battle::new(m_col.round(&content, 0x5EED), content.clone());

@@ -429,8 +429,18 @@ impl Player {
 
         let target = match drag.to {
             DropTarget::InsertAt(pos) => {
-                if is_capsule || held_arm {
+                if is_capsule {
                     None
+                } else if held_arm {
+                    if p.screen.hold.is_some_and(|h| n < 5 && !(locked && pos == 0) && p.screen.fits(h.chip, None, &p.view, p.folder)) {
+                        self.renderer.column_rect(side).map(|col| DropVisual::InsertLine {
+                            x: col.x,
+                            y: col.y + (pos.min(5) as i32) * 16,
+                            w: col.w,
+                        })
+                    } else {
+                        None
+                    }
                 } else if locked && (pos == 0 || matches!(drag.from, DragSource::Pick(0))) {
                     None
                 } else if matches!(drag.from, DragSource::Slot(_)) && n >= 5 {
@@ -446,12 +456,21 @@ impl Player {
                 }
             }
             DropTarget::ReplaceOrSwap(k) => {
-                if held_arm || (k as usize) >= n {
+                if (k as usize) >= n {
                     None
                 } else if matches!(drag.from, DragSource::Pick(src_k) if src_k == k) {
                     None
                 } else if locked && (k == 0 || matches!(drag.from, DragSource::Pick(0))) {
                     None
+                } else if held_arm {
+                    if p.screen.hold.is_some_and(|h| p.screen.fits(h.chip, Some(k), &p.view, p.folder)) {
+                        self.renderer
+                            .target_rect(side, Target::Pick(k))
+                            .or_else(|| self.renderer.column_rect(side).map(|col| Rect::new(col.x, col.y + k as i32 * 16, col.w, 16)))
+                            .map(DropVisual::Highlight)
+                    } else {
+                        None
+                    }
                 } else if is_capsule {
                     let target_slot = sel[k as usize];
                     let ok = matches!(p.screen.slots[target_slot as usize].kind, SlotKind::Chip { .. } | SlotKind::Offered(_))
