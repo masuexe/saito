@@ -392,9 +392,20 @@ pub fn hover<D: PartialEq>(hovered: &mut Option<D>, what: D, on: bool) -> bool {
 
 // ---- A row dragged to another place ---------------------------------------------------------------------------
 
-/// How near a list the pointer may be, past its edge, and still be over it (a drag let go there lands on the
-/// nearest row; past it, the row goes back).
+/// How near a list the pointer may be horizontally, past its edge, and still be over it.
 const NEAR: f32 = 16.0;
+
+/// How far above or below a scrollable list the pointer may be released and still land
+/// (matches `Scroller`'s `3 * edge = 96px` auto-scroll margin so top/bottom drags drop cleanly).
+const EDGE_DROP_Y: f32 = 96.0;
+
+fn in_drop_zone(bounds: crate::nav::Rect, x: f32, y: f32) -> bool {
+    x >= bounds.x - NEAR && x <= bounds.right() + NEAR && y >= bounds.y - EDGE_DROP_Y && y <= bounds.bottom() + EDGE_DROP_Y
+}
+
+fn drop_row(view: crate::nav::Rect, (x, y): (f32, f32), clamped_row: i32, rows: usize) -> Option<usize> {
+    (rows > 0 && in_drop_zone(view, x, y)).then(|| clamped_row.clamp(0, rows as i32 - 1) as usize)
+}
 
 /// Where in the window a drag's pointer is: `at` as the UI's `Drag` says it (x * 65536 + y).
 pub fn pointer_at(at: i32) -> (f32, f32) {
@@ -458,9 +469,9 @@ pub fn list_row(shell: &Shell, id: &str, (x, y): (f32, f32), rows: usize) -> Opt
     let registry = shell.nav.registry();
     let registry = registry.borrow();
     let view = registry.view(id)?;
-    let near = x >= view.x - NEAR && x <= view.right() + NEAR && y >= view.y - NEAR && y <= view.bottom() + NEAR;
-    let row = registry.row_at(id, y.clamp(view.y, view.bottom() - 1.0))?;
-    (near && rows > 0).then(|| row.clamp(0, rows as i32 - 1) as usize)
+    let clamped_y = y.clamp(view.y, (view.bottom() - 1.0).max(view.y));
+    let row = registry.row_at(id, clamped_y)?;
+    drop_row(view, (x, y), row, rows)
 }
 
 /// The control of `id` among `indices` nearest `(x, y)`, where the pointer is among them (within their bounds, and
@@ -470,7 +481,7 @@ pub fn nearest(shell: &Shell, id: &str, indices: impl Iterator<Item = usize>, (x
     let registry = registry.borrow();
     let view = page.and_then(|p| registry.view(p));
     if let Some(view) = view
-        && (x < view.x - NEAR || x > view.right() + NEAR || y < view.y - NEAR || y > view.bottom() + NEAR)
+        && !in_drop_zone(view, x, y)
     {
         return None;
     }
@@ -479,7 +490,11 @@ pub fn nearest(shell: &Shell, id: &str, indices: impl Iterator<Item = usize>, (x
     let rects: Vec<(usize, crate::nav::Rect)> = indices.filter_map(|i| registry.rect(&crate::nav::Key::new(id, i as i32)).filter(shown).map(|r| (i, r))).collect();
     let (left, top) = rects.iter().fold((f32::MAX, f32::MAX), |(l, t), (_, r)| (l.min(r.x), t.min(r.y)));
     let (right, bottom) = rects.iter().fold((f32::MIN, f32::MIN), |(l, t), (_, r)| (l.max(r.right()), t.max(r.bottom())));
-    if x < left - NEAR || x > right + NEAR || y < top - NEAR || y > bottom + NEAR {
+    if left > right || top > bottom {
+        return None;
+    }
+    let bounds = crate::nav::Rect { x: left, y: top, w: right - left, h: bottom - top };
+    if !in_drop_zone(bounds, x, y) {
         return None;
     }
     // (How far the pointer is from a row: across counted twice, so a row beside it in another column is farther
@@ -644,6 +659,7 @@ impl Editor {
         if let Some(page) = self.rules.take() {
             page.close(shell);
         }
+        shell.ui().global::<saito_ui::Drag>().invoke_end();
         let (tab, draft) = self.tab();
         tab.hide(shell, draft);
         self.save(shell);
@@ -711,6 +727,7 @@ impl Editor {
         if to == self.at || to >= self.tabs.len() || !self.enabled(to) {
             return;
         }
+        shell.ui().global::<saito_ui::Drag>().invoke_end();
         let (tab, draft) = self.tab();
         tab.hide(shell, draft);
         self.rest = None;
@@ -1018,5 +1035,19 @@ mod tests {
         assert_eq!(navi_only_fields(&exe6_content()), ["navicust_programs", "navicust_expansions", "patch_cards"]);
         assert_eq!(navi_only_fields(&exe5_content()), ["party", "navicust_programs", "navicust_expansions", "patch_cards", "auto_battle_places"]);
         assert_eq!(navi_only_fields(&exe4_content()), ["navicust_programs", "patch_cards", "auto_battle_places"]);
+    }
+
+    #[test]
+    fn edge_zone_drops_land_within_auto_scroll_margin() {
+        let view = crate::nav::Rect { x: 20.0, y: 120.0, w: 300.0, h: 480.0 };
+        // Inside horizontal NEAR tolerance and within 96px vertical Scroller.edging margin above top / below bottom.
+        assert_eq!(drop_row(view, (100.0, view.y - 80.0), 0, 30), Some(0));
+        assert_eq!(drop_row(view, (100.0, view.bottom() + 80.0), 29, 30), Some(29));
+        // Just beyond EDGE_DROP_Y vertically or beyond NEAR horizontally cancels the drop.
+        assert_eq!(drop_row(view, (100.0, view.y - EDGE_DROP_Y - 1.0), 0, 30), None);
+        assert_eq!(drop_row(view, (100.0, view.bottom() + EDGE_DROP_Y + 1.0), 29, 30), None);
+        assert_eq!(drop_row(view, (view.x - NEAR - 1.0, view.y + 40.0), 1, 30), None);
+        assert_eq!(drop_row(view, (view.right() + NEAR + 1.0, view.y + 40.0), 1, 30), None);
+        assert_eq!(drop_row(view, (100.0, view.y + 40.0), 0, 0), None);
     }
 }

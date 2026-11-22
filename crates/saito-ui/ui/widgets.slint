@@ -1759,11 +1759,12 @@ component Scroller inherits Rectangle {
     out property <length> view-width: self.width - 12px;
     out property <length> content-height: max(self.height, root.content);
     out property <length> scroll: -root.content-y;
-    // Where what is scrolled is put from where the flickable has it, while a reveal slides it there.
-    out property <length> offset: root.slid * (1 - slide.t);
-    // The first row to make, and how many: those in view, and those a slide under way passes.
-    out property <int> first: max(0, floor(min(root.scroll, root.scroll - root.offset) / root.pitch));
-    out property <int> shown: max(0, min(root.count - root.first, ceil((self.height + abs(root.offset)) / root.pitch) + 1));
+    // Suppress reveal slide offset while a drag is active so `shown` cannot fluctuate mid-drag.
+    out property <length> offset: Drag.on ? 0px : root.slid * (1 - slide.t);
+    // Keep `shown` independent of `scroll` (constant across the whole scroll range) so Slint's integer repeater
+    // does not destroy and recreate rows — dropping active touch grabs — when auto-scrolling reaches the bottom.
+    out property <int> shown: max(0, min(root.count, ceil((self.height + abs(root.offset)) / root.pitch) + 1));
+    out property <int> first: max(0, min(root.count - root.shown, floor(min(root.scroll, root.scroll - root.offset) / root.pitch)));
     // The row the focus is on, or -1.
     out property <int> focused-row: Nav.id == root.nav ? Nav.index : -1;
     property <int> seq: Nav.reveal-seq;
