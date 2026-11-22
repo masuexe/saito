@@ -856,9 +856,12 @@ pub(crate) mod tests {
         assert!(matches!(ReplayPlayer::new(&content, &cut_match, None).err().unwrap(), Refused::BadMatch(_)));
         assert_eq!(ReplayPlayer::new(&content, &replay, Some(2)).err().unwrap(), Refused::NoSide(2));
 
-        // Decoupled sim version: a 0.1.2 EXE6 replay plays strictly on 0.2.0.
+        // Decoupled sim version: 0.1.2 and 0.2.0 EXE6 replays play strictly on 0.3.0.
         let mut old_exe6 = replay.clone();
         old_exe6.head.engine = "0.1.2".into();
+        let out = play_out(&content, &old_exe6).unwrap();
+        assert_eq!(out.diverged, None);
+        old_exe6.head.engine = "0.2.0".into();
         let out = play_out(&content, &old_exe6).unwrap();
         assert_eq!(out.diverged, None);
 
@@ -874,12 +877,14 @@ pub(crate) mod tests {
         assert!(matches!(play_out_compat(&five, &lenient, Compat::Lenient), Err(Refused::OtherGame { .. })));
         assert!(matches!(play_out_compat(&content, &cut_match, Compat::Lenient), Err(Refused::BadMatch(_))));
 
-        // EXE5 0.1.2 is refused strictly on 0.2.0, but plays in lenient mode.
+        // EXE5 0.1.2 and 0.2.0 are refused strictly on 0.3.0, but play in lenient mode.
         let (exe5_replay, _) = recorded(&five, "exe5");
-        let mut old_exe5 = exe5_replay.clone();
-        old_exe5.head.engine = "0.1.2".into();
-        assert!(matches!(play_out(&five, &old_exe5), Err(Refused::OtherVersion(_))));
-        let out = play_out_compat(&five, &old_exe5, Compat::Lenient).unwrap();
-        assert_eq!((out.diverged, out.result), (None, Some(BattleResult::Won)));
+        for prev in ["0.1.2", "0.2.0"] {
+            let mut old_exe5 = exe5_replay.clone();
+            old_exe5.head.engine = prev.into();
+            assert!(matches!(play_out(&five, &old_exe5), Err(Refused::OtherVersion(_))));
+            let out = play_out_compat(&five, &old_exe5, Compat::Lenient).unwrap();
+            assert_eq!((out.diverged, out.result), (None, Some(BattleResult::Won)));
+        }
     }
 }

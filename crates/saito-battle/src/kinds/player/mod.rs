@@ -1047,7 +1047,7 @@ fn init_round_state(b: &mut Battle, r: ObjectRef) {
         let side = b.objects.get(r).alliance;
         let mood = b.rules_starting_mood(side).unwrap_or(0x80);
         stats_mut(b, r).mood = mood;
-        if b.party[side as usize].active == 0 {
+        if b.party[side as usize].has_partners() && b.party[side as usize].active == 0 {
             if let Some(m) = b.party[side as usize].members.get_mut(0) {
                 m.mood = mood;
             }
