@@ -282,7 +282,12 @@ pub fn shared_glyphs<'a>(
                 }
                 name_glyphs(b, hud, words, chip, problems)
             }
-            TelopName::Hidden => fonts::cell_glyphs(hud, "????").0,
+            TelopName::Hidden => {
+                if text.takes("????", Role::Cell) {
+                    return None;
+                }
+                fonts::cell_glyphs(hud, "????").0
+            }
             TelopName::Unknown => Vec::new(),
         };
         Some((0..8).map(|k| fonts::cell_glyph(hud, codes.get(k).copied().unwrap_or(0))).collect())
@@ -2612,12 +2617,26 @@ fn name_parts<'a>(
     let font = !words.is_empty() && text.takes(words, Role::Cell);
     let cells = if font { fonts::box_cells(text, words, name.len(), Role::Cell) } else { name.len() };
     let width = (cells + damage.len() + bonus.len()) as i32;
-    let mut x = (style.at.0 as i32 + (15 - width) * 4) & 0xFF;
+    let mut x = style.at.0 as i32 + (15 - width) * 4;
     if remote && doubled {
-        x = (x - 16) & 0xFF;
+        x -= 16;
+    }
+    if !font {
+        x &= 0xFF;
     }
     let y = style.at.1 as i32;
     let pal = style.palette;
+    let sets = (!damage.is_empty()).then(|| NumberSets::of(style.letters, &pal, text)).flatten();
+    if font && sets.is_none() {
+        let total_px = 8 * (width + if doubled { 2 } else { 0 });
+        if remote {
+            if x + total_px > crate::compose::WIDTH as i32 {
+                x = (crate::compose::WIDTH as i32 - total_px).max(0);
+            }
+        } else if x < 0 {
+            x = 0;
+        }
+    }
     let mut items: Vec<TextItem> = font
         .then(|| {
             let item = TextItem::new(words, Role::Cell, Rect::new(x, y, 8 * cells as i32, 16), pal[1], Some(pal[2]));
@@ -2642,7 +2661,6 @@ fn name_parts<'a>(
     // hand window's do, and the two are centered where the original's name
     // and numbers are (its name's glyphs fill their cells; the text layer's
     // words, narrower, centered in them, stood apart from the numbers).
-    let sets = (!damage.is_empty()).then(|| NumberSets::of(style.letters, &pal, text)).flatten();
     let mut at = after as f32;
     if let (Some(item), Some(looks)) = (items.first_mut(), sets.as_ref())
         && let Some((i0, i1)) = text.ink_extent(words, Role::Cell, 8 * cells as i32)
@@ -2651,7 +2669,17 @@ fn name_parts<'a>(
         // (The name's ink and its numbers' but the "x2" centered where the
         // original's are; the "x2" after them, as the original's.)
         let shown = (i1 - i0) + end;
-        let ink = item.rect.x as f32 + ((8 * width) as f32 - shown) / 2.0;
+        let mut ink = item.rect.x as f32 + ((8 * width) as f32 - shown) / 2.0;
+        if remote {
+            let full = looks
+                .items(text, (number, bonus_value, doubled), (0.0, y), Role::Cell)
+                .map_or(shown, |(_, full_end)| (i1 - i0) + full_end);
+            if ink + full > crate::compose::WIDTH as f32 {
+                ink = (crate::compose::WIDTH as f32 - full).max(0.0);
+            }
+        } else if ink < 0.0 {
+            ink = 0.0;
+        }
         let pen = ink - i0;
         let fine = (((pen - pen.floor()) * 65536.0) as i32, item.fine.1);
         *item = TextItem { align: Align::Left, rect: Rect { x: pen.floor() as i32, ..item.rect }, fine, ..item.clone() };
@@ -2957,6 +2985,182 @@ mod tests {
         let mut parts = Vec::new();
         telop_parts(&b, TelopStyle::banner(&hud, &hud.banners[0x4C / 4]), b.telop_for(0).unwrap(), &b.banner, &mut parts, &TextSink::original(), &mut problems);
         assert_eq!(parts.len(), 7, "its user sees the name");
+    }
+
+    #[test]
+    fn hidden_telop_shared_glyphs_respects_text_sink() {
+        let mut b = battle();
+        assert!(b.start_banner(BannerId(0x10)));
+        let mut hud = hud();
+        hud.banners[0x10 / 4] = BannerLayout {
+            x: 40,
+            y: 32,
+            kind: 0,
+            glyphs: Tiles { pixels: vec![1; 40 * Tiles::TILE] },
+            ..BannerLayout::default()
+        };
+        hud.layout.telop = Some(saito_assets::TelopLook {
+            places: [(0, 32), (120, 32)],
+            glyphs: Tiles { pixels: vec![1; 2 * saito_assets::TelopLook::GLYPHS * Tiles::TILE] },
+            palette: [0x1111; 16],
+            tiles: Some(saito_assets::TelopTiles {
+                banner: 0x360,
+                names: [0x360, 0x384],
+                signs: 0x380,
+                pause_loads_banner_palette: true,
+            }),
+        });
+        let mut numbers = saito_battle::content::AssetNumbers::default();
+        numbers.banners = vec![0x10; 0x11];
+        let assets = saito_assets::Bundle { hud, ..saito_assets::Bundle::default() };
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+        let mut state = HudState::default();
+        state.shared.right = Load::Telop(TelopName::Hidden);
+        let mut problems = Problems::default();
+
+        let shared_orig = shared_glyphs(&b, &assets, &graphics, &state, Seat::alone(0), &TextSink::original(), &mut problems);
+        assert!(!shared_orig.banner.is_empty(), "original tile mode patches shared banner tiles with ????");
+
+        let vf = crate::vfont::VectorFont::bundled();
+        let sink_all = TextSink::new(crate::textlayer::Enhancements::ALL, Some(&vf));
+        let shared_all = shared_glyphs(&b, &assets, &graphics, &state, Seat::alone(0), &sink_all, &mut problems);
+        assert!(
+            shared_all.banner.is_empty(),
+            "sharp text takes ???? so shared.banner must remain empty (got {:?})",
+            shared_all.banner
+        );
+
+        let pt = std::cell::RefCell::new(crate::pixeltext::PixelText::new(crate::vfont::Cut::Simplified).unwrap());
+        pt.borrow_mut().use_pack(&assets.hud);
+        let sink_px = TextSink::new(crate::textlayer::Enhancements::NONE, None).with_pixels(Some(&pt));
+        let shared_px = shared_glyphs(&b, &assets, &graphics, &state, Seat::alone(0), &sink_px, &mut problems);
+        assert!(
+            shared_px.banner.is_empty(),
+            "pixeltext takes ???? so shared.banner must remain empty (got {:?})",
+            shared_px.banner
+        );
+    }
+
+    #[test]
+    fn wide_font_mode_telop_does_not_wrap_off_screen() {
+        let mut b = battle();
+        let chip = testing::chip_in(&b.content, testing::SUN_GUN_3);
+        let key = b.content.defs.chip(chip).key.clone();
+        let hud = hud();
+
+        // Wide Japanese chip name ("エレメントラップ", 13 cells in VectorFont).
+        let ja_table = format!("language = \"ja\"\n[chips]\n\"{key}\" = {{ name = \"エレメントラップ\" }}\n");
+        let ja_strings = saito_content::locale::parse(&ja_table, "ja.toml").unwrap();
+        let font = crate::vfont::bundled_font(crate::vfont::Cut::Japanese);
+        let tr = std::cell::RefCell::new(crate::vfont::TextRenderer::new(font.clone()));
+        let mut problems = Problems::default();
+
+        assert!(b.start_banner(BannerId(0x4C)));
+        b.banner.telop =
+            Some(Telop { side: 0, chip: Some(chip), damage: 240, doubled: false, bonus: 0, hidden: TelopHidden::No });
+
+        // 1. Enhancements::ALL (VectorFont + sharp numbers) on left banner (remote = false).
+        let sink_all = TextSink::new(crate::textlayer::Enhancements::ALL, Some(font.as_ref()))
+            .measuring(Some(&tr))
+            .with_language(Some(&ja_strings));
+        let mut parts = Vec::new();
+        let laid = telop_parts(
+            &b,
+            TelopStyle::banner(&hud, &hud.banners[0x4C / 4]),
+            b.telop_for(0).unwrap(),
+            &b.banner,
+            &mut parts,
+            &sink_all,
+            &mut problems,
+        );
+        assert!(!laid.name.is_empty());
+        assert!(!laid.name[1..].is_empty());
+        let name_item = &laid.name[0];
+        let (i0, _) = sink_all.ink_extent(&name_item.text, Role::Cell, name_item.rect.w).unwrap();
+        let ink_x = name_item.rect.x as f32 + name_item.fine.0 as f32 / 65536.0 + i0;
+        assert!(
+            (-0.01..120.0).contains(&ink_x) && laid.name[1..].iter().all(|item| (0..120).contains(&item.rect.x)),
+            "wide sharp telop on left banner wrapped off-screen: ink_x={ink_x}, items={:?}",
+            laid.name.iter().map(|i| (i.text.as_str(), i.rect.x, i.rect.w)).collect::<Vec<_>>()
+        );
+
+        // 2. Enhancements { text: true, ..NONE } (VectorFont + bitmap numbers) on left banner.
+        let sink_text = TextSink::new(
+            crate::textlayer::Enhancements { text: true, ..crate::textlayer::Enhancements::NONE },
+            Some(font.as_ref()),
+        )
+        .measuring(Some(&tr))
+        .with_language(Some(&ja_strings));
+        let mut parts = Vec::new();
+        let laid = telop_parts(
+            &b,
+            TelopStyle::banner(&hud, &hud.banners[0x4C / 4]),
+            b.telop_for(0).unwrap(),
+            &b.banner,
+            &mut parts,
+            &sink_text,
+            &mut problems,
+        );
+        assert!(
+            laid.name.iter().all(|item| (0..120).contains(&item.rect.x)),
+            "text-only sharp telop wrapped off-screen: {:?}",
+            laid.name.iter().map(|i| (i.text.as_str(), i.rect.x)).collect::<Vec<_>>()
+        );
+        assert!(
+            parts.iter().all(|p| (0..240).contains(&p.x)),
+            "bitmap damage parts wrapped past 240: {:?}",
+            parts.iter().map(|p| p.x).collect::<Vec<_>>()
+        );
+
+        // 3. Left (0x4C) and right (0x50) banners with bonus + doubled under Enhancements::ALL.
+        b.banner.telop =
+            Some(Telop { side: 0, chip: Some(chip), damage: 240, doubled: true, bonus: 50, hidden: TelopHidden::No });
+        for (banner_id, view) in [(0x4C, 0u8), (0x50, 1u8)] {
+            let mut parts = Vec::new();
+            let laid = telop_parts(
+                &b,
+                TelopStyle::banner(&hud, &hud.banners[banner_id / 4]),
+                b.telop_for(view).unwrap(),
+                &b.banner,
+                &mut parts,
+                &sink_all,
+                &mut problems,
+            );
+            assert!(!laid.name.is_empty());
+            assert!(!laid.name[1..].is_empty());
+            let name_item = &laid.name[0];
+            let (i0, _) = sink_all.ink_extent(&name_item.text, Role::Cell, name_item.rect.w).unwrap();
+            let ink_x = name_item.rect.x as f32 + name_item.fine.0 as f32 / 65536.0 + i0;
+            assert!(
+                (-0.01..240.0).contains(&ink_x) && laid.name[1..].iter().all(|item| (0..240).contains(&item.rect.x)),
+                "view={view} boosted+doubled telop out of bounds: ink_x={ink_x}, items={:?}",
+                laid.name.iter().map(|i| (i.text.as_str(), i.rect.x, i.rect.w)).collect::<Vec<_>>()
+            );
+        }
+
+        // 4. PixelText (zh-Hans) with a long name.
+        let zh_table = format!("language = \"zh-Hans\"\n[chips]\n\"{key}\" = {{ name = \"元素陷阱超长测试名\" }}\n");
+        let zh_strings = saito_content::locale::parse(&zh_table, "zh-Hans.toml").unwrap();
+        let pt = std::cell::RefCell::new(crate::pixeltext::PixelText::new(crate::vfont::Cut::Simplified).unwrap());
+        pt.borrow_mut().use_pack(&hud);
+        let sink_px = TextSink::new(crate::textlayer::Enhancements::NONE, None)
+            .with_pixels(Some(&pt))
+            .with_language(Some(&zh_strings));
+        let mut parts = Vec::new();
+        let laid = telop_parts(
+            &b,
+            TelopStyle::banner(&hud, &hud.banners[0x4C / 4]),
+            b.telop_for(0).unwrap(),
+            &b.banner,
+            &mut parts,
+            &sink_px,
+            &mut problems,
+        );
+        assert!(
+            laid.name.iter().all(|item| (0..240).contains(&item.rect.x)),
+            "pixeltext wide telop out of bounds: {:?}",
+            laid.name.iter().map(|i| (i.text.as_str(), i.rect.x, i.rect.w)).collect::<Vec<_>>()
+        );
     }
 
     #[test]
