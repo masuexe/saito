@@ -233,35 +233,44 @@ msgstr[0] "{n} 个构筑"
 msgid "Spectate"
 msgstr "观战"
 
-msgid "Spectate match"
-msgstr "观战对战"
+msgid "Room list"
+msgstr "房间列表"
 
-msgid "Watch by room code"
-msgstr "输入房间码观战"
+msgid "Room code"
+msgstr "房间码"
 
-msgid "Live public matches"
-msgstr "公开对战列表"
+msgid "Public rooms"
+msgstr "公开房间"
+
+msgid "All games"
+msgstr "全部世代"
 
 msgid "Refresh"
 msgstr "刷新"
 
-msgid "Loading live matches…"
-msgstr "正在获取对战列表…"
+msgid "Loading rooms…"
+msgstr "正在获取房间列表…"
 
-msgid "No public matches right now."
-msgstr "当前没有公开观战的对局。"
+msgid "No public rooms right now."
+msgstr "当前没有公开房间。"
+
+msgid "Waiting"
+msgstr "等待加入"
+
+msgid "Playing"
+msgstr "对战中"
 
 msgid "{} watching"
 msgstr "{} 人观战"
 
-msgid "Spectate: Off"
-msgstr "观战：关闭"
+msgid "Room: Private"
+msgstr "房间：私密"
 
-msgid "Spectate: Code"
-msgstr "观战：仅房间码"
+msgid "Room: Code"
+msgstr "房间：仅房间码"
 
-msgid "Spectate: Public"
-msgstr "观战：公开"
+msgid "Room: Public"
+msgstr "房间：公开"
 
 msgid "Delay: Off"
 msgstr "防窥屏延迟：关"

@@ -85,9 +85,9 @@ use saito_frontend::replay::Recorder;
 use saito_match::Side;
 use saito_match::check::Problem;
 use saito_match::ruleset::Rulesets;
-use saito_signaling::spectate::{RoomMeta, RoomStage, Visibility};
+use saito_signaling::spectate::{RoomMeta, RoomStage, RoomSummary, Visibility};
 use saito_signaling::{ALPHABET, CODE_LENGTH};
-use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, SpectateRoomEntry, VersusCard};
+use saito_ui::{BattleKind, BuildSheet, Hint, LobbyNote, MatchOutcome, MatchPage, PadButton, PlayBuild, PlayControl, PlayPart, PlayView, RoomEntry, VersusCard};
 use session::{Net, Session, Stands, Way};
 use spectate::{DELAY_PRESETS, DirectoryClient, HostPublisher, WatchSession, WatchUpdate};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -325,10 +325,10 @@ pub struct Play {
     heard: ResultHeard,
     /// Host-side spectator publisher (active while hosting an invite room).
     host_spectate: Option<HostPublisher>,
-    /// Public spectator directory browser state.
+    /// Public room list browser state (shared by joining and spectating).
     spectate_dir: DirectoryClient,
-    spectate_code: String,
-    spectate_error: String,
+    room_error: String,
+    room_filter_current: bool,
     /// Active spectator watch session (when `stage == Stage::Spectating`).
     watching: Option<WatchSession>,
     /// Selected game before spectating started, restored on leave if still loaded.
@@ -372,8 +372,8 @@ impl Default for Play {
             heard: ResultHeard::default(),
             host_spectate: None,
             spectate_dir: DirectoryClient::default(),
-            spectate_code: String::new(),
-            spectate_error: String::new(),
+            room_error: String::new(),
+            room_filter_current: false,
             watching: None,
             watch_return_game: None,
             watch_menu: false,
@@ -602,9 +602,7 @@ impl Play {
         }
         self.watch_return_game = None;
         self.close_watch_menu(shell);
-        self.spectate_dir.close();
         shell.ui().global::<PlayView>().set_spectators(0);
-        shell.ui().global::<PlayView>().set_spectate_browser(false);
         if self.session.take().is_some() || !matches!(self.stage, Stage::Idle) {
             if matches!(self.stage, Stage::Waiting) {
                 practice::end(shell);
@@ -648,6 +646,7 @@ impl Play {
         self.drop_session(shell);
         self.direct = None;
         shell.nav.close("direct.");
+        self.close_room_browser(shell);
         self.show(shell);
         if let Some(error) = error {
             let button = shell.ui().global::<PlayView>().get_back_to_play();
@@ -658,12 +657,16 @@ impl Play {
     /// The link failed before the other player came: the control that asked for it says why.
     fn not_met(&mut self, shell: &mut Shell, error: UserError) {
         let direct = self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Address(_)));
+        let from_rooms = self.spectate_dir.is_open() && self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Code(_)));
         self.session = None;
         self.drop_session(shell);
         shell.sound.play(Cue::Refused);
-        match &mut self.direct {
-            Some(dialog) if direct => dialog.join_problem = Some(error),
-            _ => self.problem = Some(error),
+        if direct && let Some(dialog) = &mut self.direct {
+            dialog.join_problem = Some(error);
+        } else if from_rooms {
+            self.room_error = error.line(&shell.ui());
+        } else {
+            self.problem = Some(error);
         }
         self.show(shell);
     }
@@ -779,6 +782,7 @@ impl Play {
         self.stage = Stage::Lobby;
         self.direct = None;
         shell.nav.close("direct.");
+        self.close_room_browser(shell);
         self.problem = None;
         self.live = Live::default();
         self.show_card(shell);
@@ -1704,14 +1708,14 @@ impl Screen for Play {
             self.show_versions(shell, &kit);
         }
         self.show_dialog(shell);
-        view.set_code(code_shown(&self.code).into());
         self.show_boxes(shell);
         // The reserved line under the row: a problem, or that a link is being made, or what an import made.
         let meeting = matches!(self.stage, Stage::Meeting);
         let asked_directly = self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Address(_)));
+        let asked_rooms = self.spectate_dir.is_open() && self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Code(_)));
         view.set_message(match &self.problem {
             Some(problem) => problem.line(&ui).into(),
-            None if meeting && !asked_directly => view.get_connecting(),
+            None if meeting && !asked_directly && !asked_rooms => view.get_connecting(),
             None => self.notice.as_str().into(),
         });
         view.set_message_quiet(self.problem.is_none());
@@ -1739,6 +1743,7 @@ impl Screen for Play {
         view.set_changing(self.changing);
         self.show_live(shell);
         self.show_match(shell);
+        self.show_room_browser(shell);
         if matches!(self.stage, Stage::Spectating) {
             self.sync_watch_view(shell);
         }
@@ -1750,6 +1755,7 @@ impl Screen for Play {
             session.leave();
         }
         self.drop_session(shell);
+        self.close_room_browser(shell);
         self.direct = None;
         shell.nav.close("direct.");
         self.boxes = None;
@@ -1769,11 +1775,11 @@ impl Screen for Play {
         // (A control of a part that isn't shown any more does nothing: a press may come as the part changes.)
         let part = self.part();
         let of_its_part = match id {
-            "builds" | "build" | "new" | "edit" | "more" | "invite" | "join" | "spectate" | "direct" => part == PlayPart::Builds,
+            "builds" | "build" | "new" | "edit" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
             "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
-            _ if id.starts_with("spectate.") => self.spectate_dir.is_open(),
+            _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
             _ if id.starts_with("watch.") => matches!(self.stage, Stage::Spectating),
             _ if id.starts_with("name.") => self.naming.is_some(),
             _ if id.starts_with("direct.") => self.direct.is_some(),
@@ -1811,27 +1817,40 @@ impl Screen for Play {
                 self.problem = self.connect(shell, Way::Invite).err();
                 self.refuse_or_show(shell);
             }
-            "join" => {
-                self.problem = self.connect(shell, Way::Code(self.code.clone())).err();
-                self.refuse_or_show(shell);
+            "rooms" => self.open_room_browser(shell),
+            "rooms.join-code" => {
+                let code = self.code.clone();
+                self.join_from_rooms(shell, &code, None);
             }
-            "spectate" => self.open_spectate_browser(shell),
-            "spectate.join" => {
-                let code = self.spectate_code.clone();
+            "rooms.watch-code" => {
+                let code = self.code.clone();
                 self.start_watching(shell, &code, None);
             }
-            "spectate.refresh" => {
-                self.spectate_dir.refresh();
-                self.show_spectate_browser(shell);
+            "rooms.filter" => {
+                self.room_filter_current = !self.room_filter_current;
+                self.show_room_browser(shell);
             }
-            "spectate.room" => {
-                if let Some(room) = self.spectate_dir.rooms().get(index.max(0) as usize) {
-                    let code = room.code.clone();
-                    let game = room.meta.game.clone();
+            "rooms.refresh" => {
+                self.spectate_dir.refresh();
+                self.show_room_browser(shell);
+            }
+            "rooms.list.join" => {
+                let picked = visible_rooms(self.spectate_dir.rooms(), shell.game(), self.room_filter_current)
+                    .get(index.max(0) as usize)
+                    .map(|r| (r.code.clone(), r.meta.game.clone()));
+                if let Some((code, game)) = picked {
+                    self.join_from_rooms(shell, &code, Some(game.as_str()));
+                }
+            }
+            "rooms.list.watch" => {
+                let picked = visible_rooms(self.spectate_dir.rooms(), shell.game(), self.room_filter_current)
+                    .get(index.max(0) as usize)
+                    .map(|r| (r.code.clone(), r.meta.game.clone()));
+                if let Some((code, game)) = picked {
                     self.start_watching(shell, &code, Some(game.as_str()));
                 }
             }
-            "spectate.close" => self.close_spectate_browser(shell),
+            "rooms.close" => self.close_room_browser(shell),
             "watch.view-p1" => {
                 if let Some(w) = &mut self.watching {
                     w.set_view(0);
@@ -1857,8 +1876,8 @@ impl Screen for Play {
             // ---- The code's boxes: Enter on one goes to the next, and from the last to JOIN.
             "boxes.join" => {
                 self.close_boxes(shell);
-                self.problem = self.connect(shell, Way::Code(self.code.clone())).err();
-                self.refuse_or_show(shell);
+                let code = self.code.clone();
+                self.join_from_rooms(shell, &code, None);
             }
             "boxes.cancel" => self.close_boxes(shell),
             _ if id.starts_with("boxes.") => match Play::box_focused(shell) {
@@ -2077,20 +2096,12 @@ impl Screen for Play {
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
         match id {
-            "code" => {
+            "rooms.code" => {
                 self.code = code_typed(text);
-                view.set_code(code_shown(&self.code).into());
-                // (What was wrong with the code before is no more.)
-                if self.problem.take().is_some() {
-                    view.set_message(self.notice.as_str().into());
-                    view.set_message_quiet(true);
-                }
-            }
-            "spectate.code" => {
-                self.spectate_code = code_typed(text);
-                self.spectate_error.clear();
-                view.set_spectate_code(code_shown(&self.spectate_code).into());
-                view.set_spectate_error(Default::default());
+                self.room_error.clear();
+                view.set_room_code(code_shown(&self.code).into());
+                view.set_room_error(Default::default());
+                view.set_room_quiet(false);
             }
             "name.name" => self.edit_name(shell, text, done),
             "direct.address" => {
@@ -2106,12 +2117,10 @@ impl Screen for Play {
         }
     }
 
-    /// Enter in the code's field joins with it, as JOIN does (the user: "pressing enter in the link code dialog
-    /// box should confirm and connect"), and in the direct connection's address connects, as CONNECT does.
+    /// Enter in the code's field joins with it, and in the direct connection's address connects, as CONNECT does.
     fn submitted(&mut self, shell: &mut Shell, id: &str, index: i32) {
         match id {
-            "code" => self.activate(shell, "join", index),
-            "spectate.code" => self.activate(shell, "spectate.join", index),
+            "rooms.code" => self.activate(shell, "rooms.join-code", index),
             "direct.address" => self.activate(shell, "direct.connect", index),
             _ => {}
         }
@@ -2155,17 +2164,16 @@ impl Screen for Play {
 
     /// The builds' part on a desktop: Right from the list goes past the overview (no control) to EDIT, or ⋯
     /// where it can't be used; Tab goes through the zones in their order, the builds (+ NEW BUILD, the list),
-    /// the chosen build (EDIT, ⋯), then the ways to play it online (HOST, the code, JOIN, DIRECT
-    /// CONNECT). (On a phone the one column is that order already.)
+    /// the chosen build (EDIT, ⋯), then the ways to play it online (HOST, ROOM LIST, DIRECT CONNECT).
     fn route(&mut self, shell: &mut Shell, action: Action) -> bool {
-        if self.part() != PlayPart::Builds || shell.scale.phone || self.naming.is_some() || self.direct.is_some() || self.boxes.is_some() {
+        if self.part() != PlayPart::Builds || shell.scale.phone || self.naming.is_some() || self.direct.is_some() || self.boxes.is_some() || self.spectate_dir.is_open() {
             return false;
         }
         let ui = shell.ui();
         match action {
             Action::Right if shell.nav.focused().is_some_and(|k| k.id == "builds") => shell.nav.focus_first(&ui, &["edit", "more"]),
             Action::NextFocus | Action::PreviousFocus => {
-                shell.nav.tab_in(&ui, action == Action::PreviousFocus, &["new", "builds", "edit", "more", "invite", "code", "join", "direct"]);
+                shell.nav.tab_in(&ui, action == Action::PreviousFocus, &["new", "builds", "edit", "more", "invite", "rooms", "direct"]);
                 true
             }
             _ => false,
@@ -2209,8 +2217,8 @@ impl Screen for Play {
             self.show_match(shell);
             return true;
         }
-        let on_field = shell.nav.focused().is_some_and(|k| k.id == "code") && !shell.nav.editing();
-        if button != shell.bindings.confirm_button() || !on_field || !matches!(self.stage, Stage::Idle | Stage::Meeting) || self.boxes.is_some() {
+        let on_field = shell.nav.focused().is_some_and(|k| k.id == "rooms.code") && !shell.nav.editing();
+        if button != shell.bindings.confirm_button() || !on_field || !self.spectate_dir.is_open() || self.boxes.is_some() {
             return false;
         }
         shell.sound.play(Cue::Pick);
@@ -2231,7 +2239,7 @@ impl Screen for Play {
         } else if self.direct.is_some() {
             self.close_direct(shell);
         } else if self.spectate_dir.is_open() {
-            self.close_spectate_browser(shell);
+            self.close_room_browser(shell);
         } else if self.watch_menu {
             if self.page != MatchPage::Menu && !self.watch_menu_direct {
                 self.set_page(shell, MatchPage::Menu);
@@ -2303,7 +2311,7 @@ impl Screen for Play {
 
     /// A save dropped on the builds is made a build.
     fn dropped(&mut self, shell: &mut Shell, path: &std::path::Path) {
-        if self.part() == PlayPart::Builds && self.naming.is_none() && self.direct.is_none() && self.boxes.is_none() {
+        if self.part() == PlayPart::Builds && self.naming.is_none() && self.direct.is_none() && self.boxes.is_none() && !self.spectate_dir.is_open() {
             self.import(shell, &[path.to_path_buf()]);
         }
     }
@@ -2345,7 +2353,7 @@ impl Screen for Play {
         let view = ui.global::<PlayView>();
         // (As the overview shows: a readable build chosen, on the builds with nothing open over them.)
         let shown = self.part() == PlayPart::Builds && !shell.scale.handheld() && view.get_chosen() >= 0 && view.get_readable();
-        let over = self.naming.is_some() || self.direct.is_some() || self.boxes.is_some();
+        let over = self.naming.is_some() || self.direct.is_some() || self.boxes.is_some() || self.spectate_dir.is_open();
         if !shown || over || view.get_sheet_span() <= 0.5 {
             return None;
         }
@@ -2394,7 +2402,7 @@ impl Screen for Play {
     fn frame(&mut self, shell: &mut Shell, now: Instant, _shown: bool) {
         tour::frame(shell, now);
         if self.spectate_dir.is_open() && self.spectate_dir.poll(now) {
-            self.show_spectate_browser(shell);
+            self.show_room_browser(shell);
         }
         if matches!(self.stage, Stage::Spectating) {
             self.poll_watching(shell, now);
@@ -2702,69 +2710,114 @@ impl Play {
         }
     }
 
-    fn open_spectate_browser(&mut self, shell: &mut Shell) {
+    fn open_room_browser(&mut self, shell: &mut Shell) {
         let Some(server) = Play::net(shell).server else {
             self.problem = Some(UserError::ServerUnreachable);
             self.refuse_or_show(shell);
             return;
         };
-        self.spectate_code = self.code.clone();
-        self.spectate_error.clear();
+        self.room_error.clear();
         self.spectate_dir.open(&server);
-        shell.nav.open_editing("spectate.", Key::new("spectate.code", 0));
-        self.show_spectate_browser(shell);
+        shell.nav.open("rooms.", Key::new("rooms.code", 0));
+        self.show_room_browser(shell);
     }
 
-    fn close_spectate_browser(&mut self, shell: &mut Shell) {
+    fn close_room_browser(&mut self, shell: &mut Shell) {
+        if !self.spectate_dir.is_open() {
+            return;
+        }
+        // Cancel an in-flight code join started from the room list when dismissing the browser.
+        if matches!(self.stage, Stage::Meeting) && self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Code(_))) {
+            self.session = None;
+            self.drop_session(shell);
+        }
         self.spectate_dir.close();
-        self.spectate_error.clear();
-        shell.nav.close("spectate.");
-        shell.ui().global::<PlayView>().set_spectate_browser(false);
-    }
-
-    fn show_spectate_browser(&self, shell: &Shell) {
+        self.room_error.clear();
+        shell.nav.close("rooms.");
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
-        view.set_spectate_browser(self.spectate_dir.is_open());
-        view.set_spectate_loading(self.spectate_dir.loading());
-        view.set_spectate_code(code_shown(&self.spectate_code).into());
-        view.set_spectate_error(self.spectate_error.as_str().into());
-        let entries: Vec<SpectateRoomEntry> = self
-            .spectate_dir
-            .rooms()
-            .iter()
+        view.set_room_browser(false);
+        view.set_room_error(Default::default());
+        view.set_room_quiet(false);
+    }
+
+    fn join_from_rooms(&mut self, shell: &mut Shell, raw_code: &str, known_game: Option<&str>) {
+        let code = code_typed(raw_code);
+        self.code = code.clone();
+        if let Some(game) = known_game.filter(|g| !g.is_empty() && shell.game() != Some(*g)) {
+            self.room_error = UserError::OtherGame { game: Shell::game_name(game) }.line(&shell.ui());
+            shell.sound.play(Cue::Refused);
+            self.show_room_browser(shell);
+            return;
+        }
+        self.room_error.clear();
+        if let Err(err) = self.connect(shell, Way::Code(code)) {
+            self.room_error = err.line(&shell.ui());
+            shell.sound.play(Cue::Refused);
+        }
+        self.show(shell);
+    }
+
+    fn show_room_browser(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        let open = self.spectate_dir.is_open();
+        view.set_room_browser(open);
+        if !open {
+            return;
+        }
+        let meeting = matches!(self.stage, Stage::Meeting) && self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Code(_)));
+        view.set_room_loading(self.spectate_dir.loading());
+        view.set_room_filter_current(self.room_filter_current);
+        view.set_room_code(code_shown(&self.code).into());
+        view.set_room_error(if !self.room_error.is_empty() {
+            self.room_error.as_str().into()
+        } else if meeting {
+            view.get_connecting()
+        } else {
+            Default::default()
+        });
+        view.set_room_quiet(self.room_error.is_empty() && meeting);
+        let current = shell.game();
+        let entries: Vec<RoomEntry> = visible_rooms(self.spectate_dir.rooms(), current, self.room_filter_current)
+            .into_iter()
             .map(|r| {
-                let p1 = if r.meta.names[0].is_empty() { "P1" } else { &r.meta.names[0] };
-                let p2 = if r.meta.names[1].is_empty() { "?" } else { &r.meta.names[1] };
-                let status = match r.meta.stage {
-                    RoomStage::Playing => "Playing",
-                    RoomStage::Loading => "Loading",
-                    RoomStage::Lobby => "Lobby",
+                let p1 = if r.meta.names[0].is_empty() { "P1" } else { r.meta.names[0].as_str() };
+                let p2 = if r.meta.names[1].is_empty() { "?" } else { r.meta.names[1].as_str() };
+                let joinable = room_is_joinable(r);
+                let stage = match r.meta.stage {
+                    RoomStage::Lobby if joinable => 0,
+                    RoomStage::Lobby => 1,
+                    RoomStage::Loading => 2,
+                    RoomStage::Playing => 3,
                 };
-                SpectateRoomEntry {
+                RoomEntry {
                     code: code_shown(&r.code).into(),
-                    game: r.meta.game.to_uppercase().into(),
+                    game: Shell::game_name(&r.meta.game).into(),
+                    same_game: current.is_some_and(|g| g == r.meta.game),
+                    host: p1.into(),
                     players: format!("{p1} vs {p2}").into(),
                     rules: r.meta.rules.as_str().into(),
-                    status: status.into(),
+                    stage,
+                    joinable,
                     spectators: r.spectators as i32,
                     delay: r.meta.delay_secs as i32,
                 }
             })
             .collect();
-        view.set_spectate_rooms(ModelRc::new(VecModel::from(entries)));
+        view.set_room_entries(ModelRc::new(VecModel::from(entries)));
     }
 
     fn start_watching(&mut self, shell: &mut Shell, raw_code: &str, known_game: Option<&str>) {
         let Some(server) = Play::net(shell).server else {
-            self.spectate_error = "Signaling server is not configured.".into();
-            self.show_spectate_browser(shell);
+            self.room_error = "Signaling server is not configured.".into();
+            self.show_room_browser(shell);
             return;
         };
         let peer = format!("watch-{:016x}", saito_rtc::random_u64());
         match WatchSession::connect(&server, raw_code, &peer) {
             Ok(watch) => {
-                self.close_spectate_browser(shell);
+                self.close_room_browser(shell);
                 self.watch_return_game = shell.game().map(str::to_string);
                 self.watching = Some(watch);
                 self.stage = Stage::Spectating;
@@ -2779,9 +2832,9 @@ impl Play {
                 self.show(shell);
             }
             Err(err) => {
-                self.spectate_error = err.detail;
+                self.room_error = err.detail;
                 shell.sound.play(Cue::Refused);
-                self.show_spectate_browser(shell);
+                self.show_room_browser(shell);
             }
         }
     }
@@ -2866,6 +2919,40 @@ impl Play {
     }
 }
 
+/// Whether a public room is currently waiting for a second player to join.
+pub(crate) fn room_is_joinable(room: &RoomSummary) -> bool {
+    room.meta.stage == RoomStage::Lobby && room.meta.names[1].trim().is_empty()
+}
+
+/// Filters and sorts public rooms for the unified Room List browser:
+/// waiting (same game) > waiting (other game) > playing > loading > full lobby,
+/// then descending spectator count and ascending room code.
+pub(crate) fn visible_rooms<'a>(rooms: &'a [RoomSummary], current_game: Option<&str>, only_current_game: bool) -> Vec<&'a RoomSummary> {
+    let mut out: Vec<&RoomSummary> = rooms
+        .iter()
+        .filter(|r| !only_current_game || current_game.is_none_or(|g| r.meta.game == g))
+        .collect();
+    out.sort_by(|a, b| {
+        let rank = |r: &RoomSummary| match (r.meta.stage, room_is_joinable(r)) {
+            (RoomStage::Lobby, true) => {
+                if current_game.is_some_and(|g| g == r.meta.game) {
+                    0
+                } else {
+                    1
+                }
+            }
+            (RoomStage::Playing, _) => 2,
+            (RoomStage::Loading, _) => 3,
+            (RoomStage::Lobby, false) => 4,
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| b.spectators.cmp(&a.spectators))
+            .then_with(|| a.code.cmp(&b.code))
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2936,6 +3023,47 @@ mod tests {
         assert_eq!(play.part(), PlayPart::Spectate);
         assert_eq!(play.view(), ("play.spectate", "watch.leave"));
         assert!(matches!(play.stage, Stage::Spectating));
+    }
+
+    fn summary(code: &str, game: &str, p1: &str, p2: &str, stage: RoomStage, spectators: u32) -> RoomSummary {
+        RoomSummary {
+            code: code.into(),
+            meta: RoomMeta {
+                visibility: Visibility::Public,
+                game: game.into(),
+                names: [p1.into(), p2.into()],
+                stage,
+                ..Default::default()
+            },
+            spectators,
+        }
+    }
+
+    #[test]
+    fn room_is_joinable_checks_stage_and_open_slot() {
+        assert!(room_is_joinable(&summary("ABC234", "exe6", "Lan", "", RoomStage::Lobby, 0)));
+        assert!(room_is_joinable(&summary("ABC234", "exe6", "Lan", "  ", RoomStage::Lobby, 0)));
+        assert!(!room_is_joinable(&summary("ABC234", "exe6", "Lan", "Chaud", RoomStage::Lobby, 0)));
+        assert!(!room_is_joinable(&summary("ABC234", "exe6", "Lan", "", RoomStage::Loading, 0)));
+        assert!(!room_is_joinable(&summary("ABC234", "exe6", "Lan", "Chaud", RoomStage::Playing, 3)));
+    }
+
+    #[test]
+    fn visible_rooms_filters_and_prioritizes() {
+        let rooms = vec![
+            summary("FULL01", "exe6", "Lan", "Chaud", RoomStage::Lobby, 2),
+            summary("PLAY01", "exe5", "Mega", "Proto", RoomStage::Playing, 1),
+            summary("PLAY02", "exe6", "A", "B", RoomStage::Playing, 5),
+            summary("WAIT05", "exe5", "Higsby", "", RoomStage::Lobby, 4),
+            summary("WAIT06", "exe6", "Mayl", "", RoomStage::Lobby, 0),
+            summary("LOAD01", "exe6", "Dex", "Yai", RoomStage::Loading, 3),
+        ];
+
+        let all_codes: Vec<&str> = visible_rooms(&rooms, Some("exe6"), false).into_iter().map(|r| r.code.as_str()).collect();
+        assert_eq!(all_codes, ["WAIT06", "WAIT05", "PLAY02", "PLAY01", "LOAD01", "FULL01"]);
+
+        let exe6_codes: Vec<&str> = visible_rooms(&rooms, Some("exe6"), true).into_iter().map(|r| r.code.as_str()).collect();
+        assert_eq!(exe6_codes, ["WAIT06", "PLAY02", "LOAD01", "FULL01"]);
     }
 }
 

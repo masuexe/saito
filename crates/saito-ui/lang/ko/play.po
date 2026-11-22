@@ -233,35 +233,44 @@ msgstr[0] "빌드 {n}개"
 msgid "Spectate"
 msgstr "관전"
 
-msgid "Spectate match"
-msgstr "대전 관전"
+msgid "Room list"
+msgstr "방 목록"
 
-msgid "Watch by room code"
-msgstr "방 코드로 관전"
+msgid "Room code"
+msgstr "방 코드"
 
-msgid "Live public matches"
-msgstr "공개 대전 목록"
+msgid "Public rooms"
+msgstr "공개 방"
+
+msgid "All games"
+msgstr "전체 게임"
 
 msgid "Refresh"
 msgstr "새로고침"
 
-msgid "Loading live matches…"
-msgstr "대전 목록 불러오는 중…"
+msgid "Loading rooms…"
+msgstr "방 목록 불러오는 중…"
 
-msgid "No public matches right now."
-msgstr "현재 공개된 대전이 없습니다."
+msgid "No public rooms right now."
+msgstr "현재 공개된 방이 없습니다."
+
+msgid "Waiting"
+msgstr "대기 중"
+
+msgid "Playing"
+msgstr "대전 중"
 
 msgid "{} watching"
 msgstr "{}명 관전 중"
 
-msgid "Spectate: Off"
-msgstr "관전: 꺼짐"
+msgid "Room: Private"
+msgstr "방: 비공개"
 
-msgid "Spectate: Code"
-msgstr "관전: 코드 전용"
+msgid "Room: Code"
+msgstr "방: 코드 전용"
 
-msgid "Spectate: Public"
-msgstr "관전: 공개"
+msgid "Room: Public"
+msgstr "방: 공개"
 
 msgid "Delay: Off"
 msgstr "지연: 꺼짐"

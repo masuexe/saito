@@ -32,13 +32,17 @@ export enum PlayPart {
     spectate,
 }
 
-// One public spectatable room in the live directory.
-export struct SpectateRoomEntry {
+// One public room in the unified room list browser.
+export struct RoomEntry {
     code: string,
     game: string,
+    same-game: bool,
+    host: string,
     players: string,
     rules: string,
-    status: string,
+    // 0 = waiting for opponent (1/2, joinable), 1 = full lobby (2/2), 2 = loading, 3 = playing
+    stage: int,
+    joinable: bool,
     spectators: int,
     delay: int,
 }
@@ -116,13 +120,11 @@ export global PlayView {
     in property <[VersionTag]> versions;
     in property <int> dialog-version;
     in property <string> version-sets;
-    // The code typed, as the app keeps it (capitals, in threes), and what the reserved line under the row says: a
-    // problem, in the error red, or quietly that a link is being made or what an import made (`message-quiet`).
-    in property <string> code;
+    // What the reserved line under the online row says (`PlayPart.builds`).
     in property <string> message;
     in property <bool> message-quiet;
     // What it says is why the chosen build can't be played (its problems, docs/design/app-ui.md §2.66): the problem's
-    // mark before it, and the code's field isn't marked.
+    // mark before it, and the control isn't marked.
     in property <bool> message-problem;
 
     // The code a box a character, where it can't be typed (a pad): open, and its six characters. `code-set` is
@@ -190,12 +192,14 @@ export global PlayView {
     in property <int> spectate-visibility: 1;
     in property <int> spectate-delay: 0;
     in property <int> spectators: 0;
-    // Public spectator browser dialog.
-    in property <bool> spectate-browser;
-    in property <[SpectateRoomEntry]> spectate-rooms;
-    in property <bool> spectate-loading;
-    in property <string> spectate-code;
-    in property <string> spectate-error;
+    // Unified room list dialog (enter a code to join/watch, or browse public rooms).
+    in property <bool> room-browser;
+    in property <[RoomEntry]> room-entries;
+    in property <bool> room-loading;
+    in property <bool> room-filter-current;
+    in property <string> room-code;
+    in property <string> room-error;
+    in property <bool> room-quiet;
     // Active spectator session (`PlayPart.spectate`).
     in property <string> watch-code;
     in property <string> watch-game;
@@ -1183,13 +1187,9 @@ export component PlayScreen inherits Page {
             }
         }
 
-        // The ways to play it online, one row of the app's controls under the overview, at its left edge: HOST, the
-        // main action's button while there is a build (what a player comes to PLAY for, the one that starts a
-        // match by itself); then JOIN's field, for an invite's code, and JOIN; and at the overview's right edge
-        // DIRECT CONNECT, a regular button, whose dialog hosts on this machine's address or joins one. On a phone
-        // HOST is the column's width and 52 tall, the field and JOIN a row under it, and DIRECT CONNECT the
-        // column's width under them. The line under them is there whether or not it says anything (with no build
-        // they say there why they can't).
+        // The ways to play online, under the overview: HOST (main action while a build exists), ROOM LIST (enter a
+        // room code to join or watch, or browse public rooms), and DIRECT CONNECT at the right edge (with the
+        // reserved message line underneath).
         Arrive {
             order: 2;
             host := Button {
@@ -1202,54 +1202,35 @@ export component PlayScreen inherits Page {
                 big: Theme.handheld;
             }
 
-            code := Field {
-                x: Theme.phone ? 0px : Theme.sideways ? root.side-x : host.x + host.width + 24px;
+            rooms-btn := Button {
+                x: Theme.phone ? 0px : Theme.sideways ? root.side-x : host.x + host.width + 16px;
                 y: Theme.phone ? host.y + host.height + 12px : Theme.sideways ? root.code-y : root.row-y;
-                // (A code's six characters in threes, in the code's type; on a phone what JOIN leaves.)
-                width: Theme.phone ? root.body-width - 8px - join.width : Theme.sideways ? root.side-width - 8px - join.width : 208px;
-                nav: "code";
-                text: PlayView.code;
-                placeholder: @tr("Invite code");
-                code: true;
-                error: PlayView.message != "" && !PlayView.message-quiet && !PlayView.message-problem;
-            }
-
-            join := Button {
-                x: code.x + code.width + 8px;
-                y: code.y;
-                nav: "join";
-                text: I18n.upper(@tr("Join"));
-            }
-
-            spectate-btn := Button {
-                x: Theme.phone ? 0px : Theme.sideways ? root.side-x : join.x + join.width + 8px;
-                y: Theme.phone ? code.y + code.height + 12px : Theme.sideways ? root.foot-y : root.row-y;
-                width: Theme.phone ? (Theme.web ? root.body-width : (root.body-width - 8px) / 2) : self.natural-width;
-                nav: "spectate";
-                text: I18n.upper(@tr("Spectate"));
+                width: Theme.phone ? root.body-width : Theme.sideways ? root.side-width : max(148px, self.natural-width);
+                nav: "rooms";
+                text: I18n.upper(@tr("Room list"));
             }
 
             // (A browser has no sockets of its own: links are WebRTC's alone, through the signaling server.)
             if !Theme.web: Button {
-                x: Theme.phone ? spectate-btn.width + 8px : root.body-width - self.width;
-                y: Theme.phone ? code.y + code.height + 12px : Theme.sideways ? root.foot-y : root.row-y;
-                width: Theme.phone ? (root.body-width - 8px) / 2 : self.natural-width;
+                x: Theme.phone ? 0px : root.body-width - self.width;
+                y: Theme.phone ? rooms-btn.y + rooms-btn.height + 12px : Theme.sideways ? root.foot-y : root.row-y;
+                width: Theme.phone ? root.body-width : self.natural-width;
                 nav: "direct";
-                // (Less than HOST and JOIN: the user, "direct connect should be deemphasized".)
+                // (Less than HOST and ROOM LIST: the user, "direct connect should be deemphasized".)
                 kind: ButtonKind.text;
                 text: I18n.upper(@tr("Direct connect"));
             }
 
             ProblemMark {
-                x: Theme.phone ? 0px : Theme.sideways ? spectate-btn.x + spectate-btn.width + 12px : root.side-x;
+                x: Theme.phone ? 0px : root.side-x;
                 y: root.line-y + (Theme.phone ? 6px : 6.5px);
                 visible: PlayView.message-problem && PlayView.message != "";
             }
 
             Note {
-                x: (Theme.phone ? 0px : Theme.sideways ? spectate-btn.x + spectate-btn.width + 12px : root.side-x) + (PlayView.message-problem ? 9px : 0px);
+                x: (Theme.phone ? 0px : root.side-x) + (PlayView.message-problem ? 9px : 0px);
                 y: root.line-y;
-                width: (Theme.phone ? root.body-width : Theme.sideways ? max(0px, (Theme.web ? root.body-width : root.body-width - 160px) - (spectate-btn.x + spectate-btn.width + 12px) - 8px) : root.side-width) - (PlayView.message-problem ? 9px : 0px);
+                width: (Theme.phone ? root.body-width : Theme.sideways ? max(0px, (Theme.web ? root.body-width : root.body-width - 160px) - root.side-x - 8px) : root.side-width) - (PlayView.message-problem ? 9px : 0px);
                 height: Theme.phone ? 40px : 18px;
                 vertical-alignment: Theme.phone ? top : center;
                 text: PlayView.message;
@@ -1488,7 +1469,7 @@ export component PlayScreen inherits Page {
                     compact: true;
                     nav: "lobby.spectate";
                     kind: ButtonKind.ghost;
-                    text: PlayView.spectate-visibility == 0 ? @tr("Spectate: Off") : PlayView.spectate-visibility == 2 ? @tr("Spectate: Public") : @tr("Spectate: Code");
+                    text: PlayView.spectate-visibility == 0 ? @tr("Room: Private") : PlayView.spectate-visibility == 2 ? @tr("Room: Public") : @tr("Room: Code");
                 }
 
                 spec-delay := Button {
@@ -2411,151 +2392,223 @@ export component PlayOverlay inherits Rectangle {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
 
-    // Public live matches browser + watch by room code.
-    if PlayView.spectate-browser: spec := DialogFrame {
-        title: @tr("Spectate match");
+    // Unified room list browser (enter a code to join/watch, or browse/join/watch public rooms).
+    if PlayView.room-browser: rooms := DialogFrame {
+        property <length> row-height: Theme.phone ? 94px : 60px;
+        property <length> row-pitch: self.row-height + 6px;
+        property <length> list-y: Theme.sideways ? 118px : Theme.phone ? 210px : 138px;
+        property <length> list-height: Theme.sideways ? 108px : Theme.phone ? 240px : 268px;
+        title: @tr("Room list");
         wide: true;
-        content-height: 372px;
+        panel-width: 640px;
+        content-height: self.list-y + self.list-height + 48px;
 
         Label {
             x: 0;
             y: 0;
-            width: spec.inner-width;
+            width: rooms.inner-width;
             height: 14px;
-            text: I18n.upper(@tr("Watch by room code"));
+            text: I18n.upper(@tr("Room code"));
         }
 
         Field {
             x: 0;
-            y: 22px;
-            width: spec.inner-width - spec-join.width - 8px;
-            nav: "spectate.code";
-            text: PlayView.spectate-code;
+            y: Theme.sideways ? 18px : 22px;
+            width: Theme.phone ? rooms.inner-width : rooms.inner-width - code-join.width - code-watch.width - 16px;
+            nav: "rooms.code";
+            text: PlayView.room-code;
             placeholder: @tr("Invite code");
             code: true;
-            error: PlayView.spectate-error != "";
+            error: PlayView.room-error != "" && !PlayView.room-quiet;
         }
 
-        spec-join := Button {
-            x: spec.inner-width - self.width;
-            y: 22px;
-            nav: "spectate.join";
-            text: I18n.upper(@tr("Watch"));
+        code-join := Button {
+            x: Theme.phone ? 0px : code-watch.x - self.width - 8px;
+            y: Theme.phone ? 70px : Theme.sideways ? 18px : 22px;
+            width: Theme.phone ? (rooms.inner-width - 8px) / 2 : max(92px, self.natural-width);
+            nav: "rooms.join-code";
+            text: I18n.upper(@tr("Join"));
             kind: ButtonKind.main;
+        }
+
+        code-watch := Button {
+            x: Theme.phone ? code-join.width + 8px : rooms.inner-width - self.width;
+            y: Theme.phone ? 70px : Theme.sideways ? 18px : 22px;
+            width: Theme.phone ? (rooms.inner-width - 8px) / 2 : max(92px, self.natural-width);
+            nav: "rooms.watch-code";
+            text: I18n.upper(@tr("Watch"));
         }
 
         Message {
             x: 0;
-            y: 66px;
-            width: spec.inner-width;
-            text: PlayView.spectate-error;
-            tone: Theme.bad;
+            y: Theme.sideways ? 60px : Theme.phone ? 114px : 66px;
+            width: rooms.inner-width;
+            text: PlayView.room-error;
+            tone: PlayView.room-quiet ? Theme.muted : Theme.bad;
         }
 
         Rule {
             x: 0;
-            y: 94px;
-            width: spec.inner-width;
+            y: Theme.sideways ? 78px : Theme.phone ? 136px : 90px;
+            width: rooms.inner-width;
 
             Rectangle { }
         }
 
         Label {
             x: 0;
-            y: 108px;
-            width: spec.inner-width - spec-refresh.width - 8px;
+            y: Theme.sideways ? 84px : Theme.phone ? 144px : 104px;
+            width: Theme.phone ? rooms.inner-width : max(0px, rooms-filter.x - 8px);
             height: 20px;
-            text: I18n.upper(@tr("Live public matches"));
+            text: I18n.upper(@tr("Public rooms"));
         }
 
-        spec-refresh := Button {
-            x: spec.inner-width - self.width;
-            y: 102px;
-            height: 30px;
+        rooms-filter := Button {
+            x: Theme.phone ? 0px : rooms-refresh.x - self.width - 8px;
+            y: Theme.phone ? 166px : Theme.sideways ? 82px : 98px;
+            width: Theme.phone ? (rooms.inner-width - 8px) / 2 : self.natural-width;
+            height: Theme.phone ? 36px : 30px;
             compact: true;
-            nav: "spectate.refresh";
+            nav: "rooms.filter";
+            kind: PlayView.room-filter-current ? ButtonKind.main : ButtonKind.ghost;
+            text: PlayView.room-filter-current ? Shell.game : I18n.upper(@tr("All games"));
+        }
+
+        rooms-refresh := Button {
+            x: Theme.phone ? rooms-filter.width + 8px : rooms.inner-width - self.width;
+            y: Theme.phone ? 166px : Theme.sideways ? 82px : 98px;
+            width: Theme.phone ? (rooms.inner-width - 8px) / 2 : self.natural-width;
+            height: Theme.phone ? 36px : 30px;
+            compact: true;
+            nav: "rooms.refresh";
             kind: ButtonKind.ghost;
             text: I18n.upper(@tr("Refresh"));
         }
 
         Rectangle {
             x: 0;
-            y: 138px;
-            width: spec.inner-width;
-            height: 176px;
+            y: rooms.list-y;
+            width: rooms.inner-width;
+            height: rooms.list-height;
 
-            if PlayView.spectate-rooms.length == 0: Note {
+            if PlayView.room-entries.length == 0: Note {
                 x: 0;
                 y: 0;
                 width: parent.width;
                 height: parent.height;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                text: PlayView.spectate-loading ? @tr("Loading live matches…") : @tr("No public matches right now.");
+                text: PlayView.room-loading ? @tr("Loading rooms…") : @tr("No public rooms right now.");
                 color: Theme.muted;
             }
 
-            if PlayView.spectate-rooms.length > 0: ListView {
+            if PlayView.room-entries.length > 0: rooms-scroll := ScrollPage {
                 width: parent.width;
                 height: parent.height;
-                count: PlayView.spectate-rooms.length;
-                row-height: 48px;
-                nav: "spectate.room";
-                for entry[i] in PlayView.spectate-rooms: Rectangle {
-                    y: i * 48px;
-                    width: parent.width;
-                    height: 46px;
-                    property <bool> hot: Nav.id == "spectate.room" && Nav.index == i;
+                nav: "rooms.list.";
+                content-height: max(0px, PlayView.room-entries.length * rooms.row-pitch - 6px);
+                for entry[i] in PlayView.room-entries: Rectangle {
+                    x: 0;
+                    y: i * rooms.row-pitch;
+                    width: rooms-scroll.view-width;
+                    height: rooms.row-height;
+                    property <length> actions-w: Theme.phone ? 12px : (entry.joinable ? row-join.width + row-watch.width + 26px : row-watch.width + 18px);
+                    property <string> stage-text: entry.stage == 0 ? @tr("Waiting") : entry.stage == 2 ? @tr("Loading") : entry.stage == 3 ? @tr("Playing") : @tr("Lobby");
 
-                    RowBack {
-                        chosen: parent.hot;
-                        hover: row-touch.has-hover;
+                    Rectangle {
+                        background: Theme.inset;
+                        border-width: 1px;
+                        border-color: entry.joinable && entry.same-game ? Theme.line : Theme.line.with-alpha(0.65);
+                    }
+
+                    // Left status bar: green for joinable waiting room, cyan for playing, dim otherwise.
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: 3px;
+                        height: parent.height;
+                        background: entry.joinable ? Theme.good : entry.stage == 3 ? Theme.cursor : Theme.dim;
                     }
 
                     Value {
                         x: 12px;
                         y: 6px;
-                        width: parent.width - 140px;
-                        height: 18px;
-                        text: entry.players;
+                        width: max(0px, parent.width - self.x - parent.actions-w - stage-lbl.width - 8px);
+                        height: 22px;
+                        text: entry.joinable ? entry.host : entry.players;
                         font-size: 14px;
                     }
 
-                    Note {
-                        x: 12px;
-                        y: 25px;
-                        width: parent.width - 140px;
-                        height: 16px;
-                        text: "\{entry.game} · \{entry.code} · \{entry.status}";
-                        color: Theme.muted;
+                    stage-lbl := Label {
+                        x: parent.width - parent.actions-w - self.width - (Theme.phone ? 0px : 8px);
+                        y: 6px;
+                        width: min(88px, self.preferred-width);
+                        height: 22px;
+                        horizontal-alignment: right;
+                        text: I18n.upper(parent.stage-text);
+                        color: entry.joinable ? Theme.good : entry.stage == 3 ? Theme.cursor : Theme.muted;
                         font-size: 11px;
                     }
 
                     Note {
-                        x: parent.width - 122px;
-                        y: 6px;
-                        width: 110px;
-                        height: 34px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        text: entry.delay > 0 ? @tr("{} · {}s", entry.spectators, entry.delay) : @tr("{} watching", entry.spectators);
-                        color: Theme.dim;
-                        font-size: 12px;
+                        x: 12px;
+                        y: 29px;
+                        width: max(0px, parent.width - self.x - parent.actions-w - spec-lbl.width - 8px);
+                        height: 18px;
+                        text: entry.rules != "" ? "\{entry.game} · \{entry.code} · \{entry.rules}" : "\{entry.game} · \{entry.code}";
+                        color: entry.same-game ? Theme.text : Theme.muted;
+                        font-size: 11px;
+                        wrap: no-wrap;
+                        overflow: elide;
                     }
 
-                    row-touch := RowTouch {
-                        nav: "spectate.room";
+                    spec-lbl := Note {
+                        x: parent.width - parent.actions-w - self.width - (Theme.phone ? 0px : 8px);
+                        y: 29px;
+                        width: min(96px, self.preferred-width);
+                        height: 18px;
+                        horizontal-alignment: right;
+                        text: entry.delay > 0 ? @tr("{} · {}s", entry.spectators, entry.delay) : @tr("{} watching", entry.spectators);
+                        color: Theme.dim;
+                        font-size: 11px;
+                        wrap: no-wrap;
+                        overflow: elide;
+                    }
+
+                    row-join := Button {
+                        x: 12px;
+                        y: Theme.phone ? 52px : 14px;
+                        width: Theme.phone ? (parent.width - 32px) / 2 : max(80px, self.natural-width);
+                        height: Theme.phone ? 34px : 32px;
+                        compact: true;
+                        visible: entry.joinable;
+                        enabled: entry.joinable;
+                        nav: "rooms.list.join";
                         nav-index: i;
+                        kind: entry.same-game ? ButtonKind.main : ButtonKind.normal;
+                        text: I18n.upper(@tr("Join"));
+                    }
+
+                    row-watch := Button {
+                        x: Theme.phone ? (entry.joinable ? row-join.x + row-join.width + 8px : 12px) : parent.width - self.width - 10px;
+                        y: Theme.phone ? 52px : 14px;
+                        width: Theme.phone ? (entry.joinable ? (parent.width - 32px) / 2 : parent.width - 24px) : max(80px, self.natural-width);
+                        height: Theme.phone ? 34px : 32px;
+                        compact: true;
+                        nav: "rooms.list.watch";
+                        nav-index: i;
+                        kind: entry.joinable ? ButtonKind.ghost : ButtonKind.normal;
+                        text: I18n.upper(@tr("Watch"));
                     }
                 }
             }
         }
 
         Button {
-            x: spec.inner-width - self.width;
-            y: 324px;
-            nav: "spectate.close";
-            text: I18n.upper(@tr("Cancel"));
+            x: rooms.inner-width - self.width;
+            y: rooms.list-y + rooms.list-height + 8px;
+            nav: "rooms.close";
+            text: I18n.upper(@tr("Close"));
             kind: ButtonKind.ghost;
         }
     }

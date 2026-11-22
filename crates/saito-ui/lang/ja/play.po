@@ -233,35 +233,44 @@ msgstr[1] "構築 {n}件"
 msgid "Spectate"
 msgstr "観戦"
 
-msgid "Spectate match"
-msgstr "対戦を観戦"
+msgid "Room list"
+msgstr "ルーム一覧"
 
-msgid "Watch by room code"
-msgstr "ルームコードで観戦"
+msgid "Room code"
+msgstr "ルームコード"
 
-msgid "Live public matches"
-msgstr "公開中の対戦一覧"
+msgid "Public rooms"
+msgstr "公開ルーム"
+
+msgid "All games"
+msgstr "すべて"
 
 msgid "Refresh"
 msgstr "更新"
 
-msgid "Loading live matches…"
-msgstr "対戦一覧を読み込み中…"
+msgid "Loading rooms…"
+msgstr "ルーム一覧を読み込み中…"
 
-msgid "No public matches right now."
-msgstr "公開中の対戦はありません。"
+msgid "No public rooms right now."
+msgstr "公開中のルームはありません。"
+
+msgid "Waiting"
+msgstr "対戦待ち"
+
+msgid "Playing"
+msgstr "対戦中"
 
 msgid "{} watching"
 msgstr "{}人観戦中"
 
-msgid "Spectate: Off"
-msgstr "観戦：オフ"
+msgid "Room: Private"
+msgstr "ルーム：非公開"
 
-msgid "Spectate: Code"
-msgstr "観戦：コードのみ"
+msgid "Room: Code"
+msgstr "ルーム：コードのみ"
 
-msgid "Spectate: Public"
-msgstr "観戦：公開"
+msgid "Room: Public"
+msgstr "ルーム：公開"
 
 msgid "Delay: Off"
 msgstr "遅延：オフ"

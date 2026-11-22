@@ -629,15 +629,16 @@ impl DirectoryClient {
         }
     }
 
-    /// Returns `true` when the room list changed.
+    /// Returns `true` when the room list or loading state changed.
     pub fn poll(&mut self, now: Instant) -> bool {
         let Some(dir) = &mut self.dir else { return false };
+        let was_loading = self.loading;
         let mut changed = false;
         loop {
             match dir.poll(now) {
                 Ok(Some(rooms)) => {
                     self.loading = false;
-                    if self.rooms != rooms {
+                    if was_loading || self.rooms != rooms {
                         self.rooms = rooms;
                         changed = true;
                     }
@@ -646,6 +647,9 @@ impl DirectoryClient {
                 Err(err) => {
                     crate::errors::log("spectate directory", &err);
                     self.loading = false;
+                    if was_loading {
+                        changed = true;
+                    }
                     break;
                 }
             }

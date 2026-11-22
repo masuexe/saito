@@ -646,18 +646,21 @@ pub fn steps(add: &mut dyn FnMut(u64, Step), shot: &dyn Fn(&mut dyn FnMut(u64, S
         add(SETTLE, pointer_on(""));
         add(SETTLE, step(|app| app.shell.nav.show_cursor(true, false)));
     }
-    add(SETTLE, focus("code", 0));
+    // Room list browser (enter a code to join/watch, or browse public rooms); a code no match has, then boxes.
+    add(SETTLE, press("rooms"));
+    reach(add, |_, ui| ui.global::<PlayView>().get_room_browser());
+    add(SETTLE, focus("rooms.code", 0));
     // A code typed, in small letters with a space, as the field keeps it; a code no match has.
     add(SETTLE, act(Action::Confirm));
     add(SETTLE, typed("zz9 zz"));
     shot(add, "play-code", Pair::None);
     add(SETTLE, typed("zz9 zz9"));
     add(SETTLE, act(Action::Confirm));
-    add(SETTLE, press("join"));
-    reach(add, |_, ui| !ui.global::<PlayView>().get_message_quiet());
+    add(SETTLE, press("rooms.join-code"));
+    reach(add, |_, ui| !ui.global::<PlayView>().get_room_error().is_empty() && !ui.global::<PlayView>().get_room_quiet());
     shot(add, "play-no-match", Pair::None);
     // The code's six boxes, as a pad's confirm on the field opens them: the focus a box along.
-    add(SETTLE, focus("code", 0));
+    add(SETTLE, focus("rooms.code", 0));
     add(SETTLE, step(|app| app.with_screen(ScreenId::Play, |s, shell| {
         let confirm = shell.bindings.confirm_button();
         s.button(shell, confirm);
@@ -667,6 +670,7 @@ pub fn steps(add: &mut dyn FnMut(u64, Step), shot: &dyn Fn(&mut dyn FnMut(u64, S
     shot(add, "play-code-boxes-focus", Pair::Second);
     add(SETTLE, act(Action::Down));
     shot(add, "play-code-boxes-changed", Pair::None);
+    add(SETTLE, act(Action::Back));
     add(SETTLE, act(Action::Back));
     // A build that can't be used says so.
     // (The list's row under the cursor; on a phone, the box's sheet's.)
@@ -967,11 +971,13 @@ pub fn steps(add: &mut dyn FnMut(u64, Step), shot: &dyn Fn(&mut dyn FnMut(u64, S
     // in the lobby.
     add(SETTLE, step(|app| come(app, Comes::Inviting)));
     reach(add, |_, _| peer_code().is_some());
-    add(SETTLE, focus("code", 0));
+    add(SETTLE, press("rooms"));
+    reach(add, |_, ui| ui.global::<PlayView>().get_room_browser());
+    add(SETTLE, focus("rooms.code", 0));
     add(SETTLE, act(Action::Confirm));
     add(SETTLE, step(|app| app.input(crate::shell::NavInput::Edited(peer_code().unwrap_or_default().to_lowercase()))));
     add(SETTLE, act(Action::Confirm));
-    add(SETTLE, press("join"));
+    add(SETTLE, press("rooms.join-code"));
     reach(add, |_, ui| part(ui) == PlayPart::Lobby && ui.global::<PlayView>().get_their_present());
     add(SETTLE, focus("lobby.ready", 0));
     shot(add, "play-lobby-joined", Pair::None);
