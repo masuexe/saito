@@ -568,6 +568,15 @@ local rules: Rules = {
             party.validate(side, problem)
             return out
         end,
+        -- What is wrong with a side's setup as a player's build, beside what `validate` says of any setup: dark
+        -- MegaMan's base HP cap (./save).
+        build_check = function(side: number): { SetupProblem }
+            local out: { SetupProblem } = {}
+            save.build_check(side, function(p: SetupProblem)
+                table.insert(out, p)
+            end)
+            return out
+        end,
     },
     -- Its rule sections (each a plain table, which the engine reads by its schema) and its roles.
     banners = require("@self/banners"),

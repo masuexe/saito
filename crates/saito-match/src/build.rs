@@ -582,17 +582,21 @@ impl Builds {
     }
 
     /// The legal customizable base HP range `(min, max)` for `side`, if the game
-    /// exposes base HP editing for `side`'s navi (EXE4 and EXE5 MegaMan: 1..=1000;
-    /// None for EXE5 team navis and EXE6).
+    /// exposes base HP editing for `side`'s navi (EXE4 and EXE5 MegaMan: 1..=1000
+    /// for Light, 1..=997 for Dark since reaching Dark requires at least 3 dark
+    /// chip uses; None for EXE5 team navis and EXE6).
     pub fn base_hp_range(&self, content: &Content, side: &Side) -> Option<(u16, u16)> {
         let hp_fact = content.defs.fact_name(PlayerFact::BaseHp)?;
-        if !self.choices_of(content, side).iter().any(|c| c.facts().contains(&hp_fact)) {
-            return None;
-        }
-        let max = match facts::Facts::defaults(content).get(content, hp_fact) {
+        let choice = self.choices_of(content, side).into_iter().find(|c| c.facts().contains(&hp_fact))?;
+        let preset_max = self
+            .preset_of(content, side, &choice.id)
+            .and_then(|p| p.set.field(hp_fact).int())
+            .filter(|n| (1..=u16::MAX as i64).contains(n))
+            .map(|n| n as u16);
+        let max = preset_max.unwrap_or_else(|| match facts::Facts::defaults(content).get(content, hp_fact) {
             Some(Stated::Number(n) | Stated::Optional(Some(n))) if (1..=u16::MAX as i64).contains(&n) => n as u16,
             _ => 1000,
-        };
+        });
         Some((1, max))
     }
 
@@ -625,7 +629,8 @@ impl Builds {
 
     /// Put `side` on preset `preset` of choice `choice`: its facts, set
     /// together. If the user has already customized base HP away from the
-    /// choice's preset defaults, switching presets preserves that custom base HP.
+    /// choice's preset defaults, switching presets preserves that custom base HP
+    /// (clamped to the target preset's legal upper bound, e.g. 997 for Dark).
     pub fn take_preset(&self, content: &Content, side: &mut Side, choice: &str, preset: &str) -> Result<(), String> {
         let c = self.choice(choice).ok_or_else(|| format!("{} has no choice {choice:?}", self.game))?;
         if !self.offers(content, side, c) {
@@ -635,7 +640,7 @@ impl Builds {
             let known: Vec<&str> = c.presets.iter().map(|p| p.id.as_str()).collect();
             format!("{choice} has no preset {preset:?} (its are {})", known.join(", "))
         })?;
-        let preserved_hp = self.base_hp_range(content, side).and_then(|(min, max)| {
+        let preserved_hp = self.base_hp_range(content, side).and_then(|(min, _)| {
             let hp_fact = content.defs.fact_name(PlayerFact::BaseHp)?;
             if !c.facts().contains(&hp_fact) {
                 return None;
@@ -644,8 +649,9 @@ impl Builds {
                 Some(Stated::Number(n) | Stated::Optional(Some(n))) => n,
                 _ => return None,
             };
-            if cur >= min as i64 && cur <= max as i64 && !Self::is_preset_base_hp(c, hp_fact, cur) {
-                Some((hp_fact, cur))
+            let target_max = p.set.field(hp_fact).int().unwrap_or(1000);
+            if cur >= min as i64 && !Self::is_preset_base_hp(c, hp_fact, cur) {
+                Some((hp_fact, cur.min(target_max)))
             } else {
                 None
             }
@@ -663,10 +669,11 @@ impl Builds {
     /// save is settled: each choice it has, on the preset it is on
     /// ([`Builds::preset_of`]: a value that is neither preset's takes the
     /// one on its side of the game's line), with every fact that preset
-    /// sets — while preserving a valid custom base HP (`1..=max`) if `side`
-    /// already states one; and each choice its navi has none of, with its
-    /// facts back at the rules' defaults. The presets that changed the side,
-    /// for an import to say which it took.
+    /// sets — while preserving a valid custom base HP (`1..=preset_max`, e.g.
+    /// 1..=1000 for Light and 1..=997 for Dark) if `side` already states one;
+    /// and each choice its navi has none of, with its facts back at the rules'
+    /// defaults. The presets that changed the side, for an import to say which
+    /// it took.
     pub fn settle(&self, content: &Content, side: &mut Side) -> Vec<Taken> {
         let mut taken = Vec::new();
         for c in &self.choices {
@@ -2300,8 +2307,9 @@ mod tests {
 
     /// A build read from a file or made from a save whose light/dark value
     /// is neither preset's takes the preset on its side of the game's line
-    /// (EXE5's 470, EXE4's 500), preserving any valid custom base HP (1..=1000)
-    /// while falling back to the preset's default HP when invalid (e.g. 0).
+    /// (EXE5's 470, EXE4's 500), preserving any valid custom base HP for that
+    /// preset (1..=1000 for Light, 1..=997 for Dark) while falling back to the
+    /// preset's default HP when out of range (e.g. 0 or 1000 on Dark).
     #[test]
     fn a_value_between_takes_its_side_of_the_line() {
         for (content, game, line, dark) in [(exe5_content(), "exe5", 470, (0, 997)), (exe4_content(), "exe4", 500, (460, 997))] {
@@ -2315,11 +2323,16 @@ mod tests {
                 (on, taken, number(&content, &side, "karma").unwrap(), number(&content, &side, "hp").unwrap())
             };
             let took = |preset: &str, was: i64| vec![Taken { choice: "light_dark".into(), preset: preset.into(), was: Some(was) }];
-            assert_eq!(settled(line - 1), (Some("dark".into()), took("dark", line - 1), dark.0, 1000), "{game}");
+            assert_eq!(settled(line - 1), (Some("dark".into()), took("dark", line - 1), dark.0, dark.1), "{game}");
             assert_eq!(settled(line), (Some("light".into()), took("light", line), 1000, 1000), "{game}");
-            assert_eq!(settled(100), (Some("dark".into()), took("dark", 100), dark.0, 1000), "{game}");
+            assert_eq!(settled(100), (Some("dark".into()), took("dark", 100), dark.0, dark.1), "{game}");
             // A preset's own value: nothing to take.
             assert_eq!(settled(1000), (Some("light".into()), Vec::new(), 1000, 1000), "{game}");
+            // A dark value with a light HP (1000 > 997) settles to the dark preset's 997.
+            let mut mixed = new.clone();
+            mixed.set_fact(&content, "karma", &[Fact::Value(Value::Int(dark.0))]).unwrap();
+            assert_eq!(builds.settle(&content, &mut mixed), took("dark", dark.0), "{game}");
+            assert_eq!(number(&content, &mixed, "hp"), Some(dark.1), "{game}");
             // An invalid HP (0, e.g. from an empty save) falls back to the preset's default HP.
             let mut invalid_hp = new.clone();
             invalid_hp.set_fact(&content, "karma", &[Fact::Value(Value::Int(dark.0))]).unwrap();
@@ -2335,9 +2348,11 @@ mod tests {
         }
     }
 
-    /// EXE4 and EXE5 MegaMan builds allow customizing base HP in 1..=1000;
-    /// custom HP survives `as_built`/`settle` and Light/Dark preset switches,
-    /// while EXE5 team navis and EXE6 do not offer custom base HP.
+    /// EXE4 and EXE5 MegaMan builds allow customizing base HP in 1..=1000 for
+    /// Light and 1..=997 for Dark (reaching Dark requires at least 3 dark chips);
+    /// custom HP survives `as_built`/`settle` and Light/Dark preset switches
+    /// (clamped to 997 when switching to Dark), while EXE5 team navis and EXE6
+    /// do not offer custom base HP.
     #[test]
     fn base_hp_can_be_customized_for_exe4_and_exe5_megaman() {
         for (content, game) in [(exe4_content(), "exe4"), (exe5_content(), "exe5")] {
@@ -2348,7 +2363,7 @@ mod tests {
             assert!(builds.set_base_hp(&content, &mut side, 0).is_err(), "{game}");
             assert!(builds.set_base_hp(&content, &mut side, 1001).is_err(), "{game}");
 
-            for hp in [1u16, 500, 760, 1000] {
+            for hp in [1u16, 500, 760, 999, 1000] {
                 builds.set_base_hp(&content, &mut side, hp).unwrap();
                 assert_eq!(builds.base_hp(&content, &side), Some(hp), "{game}");
                 assert_eq!(builds.as_built(&content, &mut side), Vec::<String>::new(), "{game}");
@@ -2357,19 +2372,30 @@ mod tests {
                 assert_eq!(checked.stats().map(|s| s.max_base_hp), Some(hp), "{game} hp={hp}");
             }
 
-            // Custom HP (not 1000 or 997) is preserved across Light <-> Dark preset switches.
-            builds.set_base_hp(&content, &mut side, 620).unwrap();
+            // Light 999 -> switching to Dark clamps custom HP to Dark's max 997.
+            builds.set_base_hp(&content, &mut side, 999).unwrap();
             builds.take_preset(&content, &mut side, "light_dark", "dark").unwrap();
-            assert_eq!(builds.base_hp(&content, &side), Some(620), "{game}");
+            assert_eq!(builds.base_hp_range(&content, &side), Some((1, 997)), "{game}");
+            assert_eq!(builds.base_hp(&content, &side), Some(997), "{game}");
+            assert!(builds.set_base_hp(&content, &mut side, 998).is_err(), "{game} dark hp=998");
+            assert!(builds.set_base_hp(&content, &mut side, 1000).is_err(), "{game} dark hp=1000");
+
+            // Custom HP <= 997 is preserved across Light <-> Dark preset switches.
+            builds.set_base_hp(&content, &mut side, 620).unwrap();
             builds.take_preset(&content, &mut side, "light_dark", "light").unwrap();
             assert_eq!(builds.base_hp(&content, &side), Some(620), "{game}");
+            builds.take_preset(&content, &mut side, "light_dark", "dark").unwrap();
+            assert_eq!(builds.base_hp(&content, &side), Some(620), "{game}");
 
-            // Validation rejects out-of-range HP directly on the side.
+            // Validation rejects out-of-range HP directly on the side (including 998 on Dark).
             let mut bad = side.clone();
             bad.set_fact(&content, "hp", &[Fact::Value(Value::Int(0))]).unwrap();
             assert!(Checked::of(&content, game, &bad).problems.iter().any(|p| p.field.as_deref() == Some("hp")), "{game} hp=0");
+            bad.set_fact(&content, "hp", &[Fact::Value(Value::Int(998))]).unwrap();
+            assert!(Checked::of(&content, game, &bad).problems.iter().any(|p| p.field.as_deref() == Some("hp")), "{game} dark hp=998");
+            builds.take_preset(&content, &mut bad, "light_dark", "light").unwrap();
             bad.set_fact(&content, "hp", &[Fact::Value(Value::Int(1001))]).unwrap();
-            assert!(Checked::of(&content, game, &bad).problems.iter().any(|p| p.field.as_deref() == Some("hp")), "{game} hp=1001");
+            assert!(Checked::of(&content, game, &bad).problems.iter().any(|p| p.field.as_deref() == Some("hp")), "{game} light hp=1001");
         }
 
         // EXE5 team navi has no customizable base HP.

@@ -64,8 +64,11 @@ local function round_setup(side: number)
 end
 
 -- What a save brings at its highest, which a setup that says nothing has (the rules' `setup_defaults`): the base
--- HP (HP Memories to their last) and the Regular memory (RegUps to theirs).
+-- HP (HP Memories to their last: 1000, or 997 for a dark MegaMan who used at least 3 dark chips to reach karma < 470)
+-- and the Regular memory (RegUps to theirs).
 local MAX_HP = 1000
+local DARK_MAX_HP = 997
+local DARK_KARMA_BELOW = 470
 local MAX_REG_UP = 50
 
 -- `validate`'s part: the navi's level and the base HP as what the save brings allows: a team navi's level, its
@@ -117,9 +120,30 @@ local function validate(side: number, problem: (p: SetupProblem) -> ())
     end
 end
 
+-- `build_check`'s part: a dark MegaMan (karma < 470) must have used at least 3 dark chips, so base HP is at most 997.
+local function build_check(side: number, problem: (p: SetupProblem) -> ())
+    local setup = rules.setup_of(side)
+    local navi: NaviDef? = setup.navi
+    if navi == nil or navi.forms == nil then
+        return
+    end
+    local karma: number = (setup :: any).karma or 500
+    if karma < DARK_KARMA_BELOW and setup.hp > DARK_MAX_HP and setup.hp <= MAX_HP then
+        problem({
+            kind = "range",
+            field = "hp",
+            value = setup.hp,
+            least = 1,
+            most = DARK_MAX_HP,
+            text = string.format("hp %d: dark MegaMan's HP is 1 to %d", setup.hp, DARK_MAX_HP),
+        })
+    end
+end
+
 return {
     round_setup = round_setup,
     validate = validate,
+    build_check = build_check,
     MAX_HP = MAX_HP,
     MAX_REG_UP = MAX_REG_UP,
 }
