@@ -47,13 +47,15 @@ pub struct Enhancements {
     pub fill: bool,
     /// Soften sudden full-screen white flashes in battle.
     pub reduce_flashes: bool,
+    /// Hide the "200" number part drawn on LifeAura barriers.
+    pub hide_aura_number: bool,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
@@ -91,6 +93,7 @@ impl std::str::FromStr for Enhancements {
                 "motion" => e.motion = true,
                 "fill" => e.fill = true,
                 "reduce-flashes" | "reduce_flashes" => e.reduce_flashes = true,
+                "hide-aura-number" | "hide_aura_number" => e.hide_aura_number = true,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
         }
@@ -652,7 +655,7 @@ impl Renderer {
         let mut list = SpriteList::default();
         // (On a screen of both, what either player sees.)
         let viewers: Vec<u8> = seats.iter().map(|s| s.side).collect();
-        self.sprite_drawn = objects::queue_objects(b, &graphics, &view, &viewers, &mut list, &mut self.problems, !draw);
+        self.sprite_drawn = objects::queue_objects(b, &graphics, &view, &viewers, &mut list, &mut self.problems, !draw, self.enhancements.hide_aura_number);
         let mut targets = Vec::new();
         let mut raw_column: Option<(u8, Rect)> = None;
         for (k, &seat) in seats.iter().enumerate() {
@@ -1123,5 +1126,76 @@ mod tests {
         }
         let center = out_1x[80 * WIDTH + 100];
         assert!((center & 0xFF) > ((center >> 16) & 0xFF) && center != white, "inner pixel should blend blue");
+    }
+
+    #[test]
+    fn hide_aura_number_enhancement_parses_and_culls_part_6() {
+        use saito_assets::{SpriteFrame, SpriteSheet, Tiles};
+
+        assert!(!Enhancements::NONE.hide_aura_number);
+        assert!(!Enhancements::ALL.hide_aura_number);
+        assert_eq!("hide-aura-number".parse::<Enhancements>(), Ok(Enhancements { hide_aura_number: true, ..Enhancements::NONE }));
+        assert_eq!("hide_aura_number".parse::<Enhancements>(), Ok(Enhancements { hide_aura_number: true, ..Enhancements::NONE }));
+
+        let content = testing::content();
+        let aura_id = testing::sprite_named(&content, "aura");
+        let barrier_id = testing::sprite_named(&content, "barrier");
+        let numbers = testing::asset_numbers(&content);
+        let aura_num = testing::sprite_number(&content, aura_id);
+        let barrier_num = testing::sprite_number(&content, barrier_id);
+        let kind = (0..content.defs.kinds.len() as u16)
+            .map(saito_content_api::KindHandle)
+            .find(|&k| saito_content_api::keys::local(&content.defs.kind(k).key) == "barrier-visual")
+            .expect("barrier-visual kind in test content");
+
+        let make_sheet = |category: u8, index: u8| -> SpriteSheet {
+            let parts: Vec<saito_assets::SpritePart> = (0..7)
+                .map(|i| saito_assets::SpritePart {
+                    x: if i == 6 { 77 } else { 0 },
+                    y: 0,
+                    width: 8,
+                    height: 8,
+                    ..saito_assets::SpritePart::default()
+                })
+                .collect();
+            SpriteSheet {
+                category,
+                index,
+                tilesets: vec![Tiles { pixels: vec![1; 4 * Tiles::TILE] }],
+                palette_sets: vec![vec![[0x7FFF; 16]]],
+                part_lists: vec![parts],
+                animations: vec![vec![SpriteFrame::default()]],
+            }
+        };
+        let mut sprites = vec![make_sheet(aura_num.category, aura_num.index), make_sheet(barrier_num.category, barrier_num.index)];
+        sprites.sort_by_key(|s| (s.category, s.index));
+        let assets = Arc::new(Bundle { sprites, ..Bundle::default() });
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+
+        let setup = || {
+            let mut s = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&content));
+            testing::on(&mut s, &content);
+            s
+        };
+        let queue_for = |sprite_id: saito_battle::content::SpriteId, hide: bool| -> Vec<SpritePart<'_>> {
+            let mut b = Battle::new(setup(), Arc::clone(&content));
+            let r = saito_battle::kinds::spawn(&mut b, kind, saito_content_api::SpawnAt::AfterCurrent, Default::default(), [0; 4]).unwrap();
+            let o = b.objects.get_mut(r);
+            o.flags = (o.flags & !saito_battle::object::flags::NO_SPRITE_UPDATE) | saito_battle::object::flags::VISIBLE;
+            b.objects.sprite_mut(r).load(sprite_id);
+            let mut list = SpriteList::default();
+            let mut problems = Problems::default();
+            objects::queue_objects(&b, &graphics, &View::default(), &[0], &mut list, &mut problems, false, hide);
+            list.into_parts()
+        };
+
+        let aura_shown = queue_for(aura_id, false);
+        let aura_hidden = queue_for(aura_id, true);
+        let barrier_hidden = queue_for(barrier_id, true);
+        // Projecting at (0, 0, 0) puts screen anchor at (120, 80); part 6 has x = 77 -> screen x = 197.
+        assert!(aura_shown.iter().any(|p| p.x == 120 + 77), "part 6 shown when hide_aura_number is false");
+        assert!(!aura_hidden.iter().any(|p| p.x == 120 + 77), "part 6 hidden on aura when hide_aura_number is true");
+        assert_eq!(aura_hidden.len() + 1, aura_shown.len());
+        assert!(barrier_hidden.iter().any(|p| p.x == 120 + 77), "non-aura barriers keep all parts");
     }
 }

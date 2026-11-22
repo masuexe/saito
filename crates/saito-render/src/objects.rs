@@ -493,6 +493,7 @@ pub fn queue_objects<'a>(
     list: &mut SpriteList<'a>,
     problems: &mut Problems,
     lookups_only: bool,
+    hide_aura_number: bool,
 ) -> SpriteDrawn {
     let mut draw = SpriteDraw::new(b.game_rules().effects.sprite_budget, b.round.mode_copy);
     for pool in Pool::ALL {
@@ -573,6 +574,12 @@ pub fn queue_objects<'a>(
                 continue;
             }
             mask &= !look.hidden_parts;
+            if hide_aura_number
+                && b.local_kind_key(r) == "barrier-visual"
+                && crate::graphics::name(&b.content, saito_content_api::AssetKind::Sprite, id.0) == Some("aura")
+            {
+                mask &= !0x0200_0000;
+            }
 
             let palette = if look.white {
                 WHITE

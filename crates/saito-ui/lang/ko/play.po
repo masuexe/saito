@@ -297,3 +297,6 @@ msgstr "관전으로 돌아가기"
 
 msgid "Reduce flashes"
 msgstr "깜빡임 감소"
+
+msgid "Hide aura number"
+msgstr "드림오라 숫자 숨기기"

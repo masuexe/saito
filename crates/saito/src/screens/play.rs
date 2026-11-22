@@ -1978,7 +1978,7 @@ impl Screen for Play {
             "menu.set.language" => settings::pick_language(shell, id),
             "menu.set.picture" => settings::pick_picture_size(shell, id),
             "menu.set.fullscreen" => self.set_full_screen(shell, !shell.settings.full_screen),
-            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+            "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, None);
             }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, !shell.settings.keyboard_only_custom),
@@ -2028,7 +2028,7 @@ impl Screen for Play {
             }
             "menu.set.fullscreen" => self.set_full_screen(shell, by > 0),
             // (Enhanced is the first of the two.)
-            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+            "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, Some(by > 0));
             }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, by > 0),
@@ -2061,7 +2061,7 @@ impl Screen for Play {
                 self.show_match(shell);
             }
             "menu.set.fullscreen" => self.set_full_screen(shell, choice == 1),
-            "menu.set.reduce-flashes" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
+            "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" => {
                 self.set_enhancement(shell, id, Some(choice == 1));
             }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, choice == 1),

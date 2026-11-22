@@ -28,6 +28,7 @@ export global SettingsView {
     in property <bool> hide-landscape-status-bar;
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
+    in property <bool> hide-aura-number;
     in property <bool> check-updates;
     in property <bool> can-update;
     in property <string> update-note;
@@ -402,6 +403,25 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.reduce-flashes ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: aura-number-row.height;
+                    aura-number-row := SettingLabel {
+                        label: @tr("Hide aura number");
+                        note: @tr("Hide the 200 number on LifeAura.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.hide-aura-number";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.hide-aura-number ? 1 : 0;
                     }
                 }
 

@@ -53,6 +53,8 @@ pub struct Settings {
     pub fill_window: bool,
     /// Soften sudden full-screen white flashes in battle (photosensitive accessibility).
     pub reduce_flashes: bool,
+    /// Hide the "200" number on LifeAura barriers.
+    pub hide_aura_number: bool,
     /// 0 to 100.
     pub music: u32,
     pub effects: u32,
@@ -89,6 +91,7 @@ impl Default for Settings {
             smooth_motion: true,
             fill_window: true,
             reduce_flashes: false,
+            hide_aura_number: false,
             music: 80,
             effects: 100,
             input_delay: saito_frontend::netplay::DEFAULT_INPUT_DELAY,
@@ -110,12 +113,13 @@ impl Settings {
             motion: self.smooth_motion,
             fill: self.fill_window,
             reduce_flashes: self.reduce_flashes,
+            hide_aura_number: self.hide_aura_number,
         }
     }
 
     pub fn set_enhancements(&mut self, e: saito_frontend::game::Enhancements) {
-        (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes) =
-            (e.text, e.hud, e.motion, e.fill, e.reduce_flashes);
+        (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number) =
+            (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number);
     }
 }
 
@@ -243,6 +247,13 @@ mod tests {
         assert!(other.landscape_touch_pad, "default landscape touch pad on");
         assert!(!other.hide_landscape_status_bar, "default landscape status bar visible");
         assert!(!other.keyboard_only_custom, "default mouse custom selection enabled");
+        assert!(!other.hide_aura_number, "default LifeAura number visible");
+        let mut toggled = Settings { hide_aura_number: true, ..Settings::default() };
+        assert!(toggled.enhancements().hide_aura_number);
+        let toggled_toml = toml::to_string(&toggled).unwrap();
+        assert_eq!(toml::from_str::<Settings>(&toggled_toml).unwrap(), toggled);
+        toggled.set_enhancements(saito_frontend::game::Enhancements::NONE);
+        assert!(!toggled.hide_aura_number);
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");
         assert_eq!(clean_signaling_server("  ws://127.0.0.1:8787\n "), "ws://127.0.0.1:8787");

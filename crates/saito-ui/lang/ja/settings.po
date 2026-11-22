@@ -90,6 +90,12 @@ msgstr "フラッシュ軽減"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "バトル中の激しい白画面フラッシュを抑えます。"
 
+msgid "Hide aura number"
+msgstr "ドリームオーラの数値非表示"
+
+msgid "Hide the 200 number on LifeAura."
+msgstr "ドリームオーラの「200」表示を隠します。"
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せます。"
 

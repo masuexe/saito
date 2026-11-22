@@ -1410,3 +1410,42 @@ fn a_deleted_navis_emotion_swing_goes_on() {
         step(&mut b, false);
     }
 }
+
+/// A barrier visual's sprite (`content/exelib/barriers/visual.luau`, LifeAura's
+/// `"200"` digits among them) keeps `look.hflip` equal to each console's
+/// `view.mirror` (`false` on console 0, `true` on console 1) so `look.hflip ^
+/// view.mirror == false` on both screens in EXE4, EXE5, and EXE6.
+#[test]
+fn life_aura_visual_stays_unflipped_on_both_consoles() {
+    for (content, game, card) in [
+        (exe4_content(), "exe4", "078-first-life-aura"),
+        (exe5_content(), "exe5", "life-virus"),
+        (exe6_content(), "exe6", "famous-custom"),
+    ] {
+        for side in [0usize, 1usize] {
+            let mut m = crate::pick::live(&content, game, 3, None).unwrap();
+            let cards = crate::testing::patch_cards(&content, game, card);
+            m.sides[side].set_fact(&content, "navi", &[Fact::Value(Value::Def(Registry::Navi, crate::ids::navi(&content, game, "megaman").unwrap().0))]).unwrap();
+            m.sides[side].set_fact(&content, "patch_cards", &cards).unwrap();
+            let mut b = saito_battle::Battle::new(m.round(&content, 0x5EED), content.clone());
+            let mut checked = false;
+            for _ in 0..120 {
+                b.tick(&Default::default(), Default::default());
+                let visuals: Vec<_> = b
+                    .objects
+                    .in_order()
+                    .filter(|&r| b.local_kind_key(r) == "barrier-visual" && b.objects.sprite(r).id.is_some())
+                    .collect();
+                if let Some(&r) = visuals.first() {
+                    let look0 = b.look_for(r, 0);
+                    let look1 = b.look_for(r, 1);
+                    assert!(!look0.hflip, "{game} side {side}: console 0 look.hflip must be false");
+                    assert!(look1.hflip, "{game} side {side}: console 1 look.hflip must be true (cancels view.mirror)");
+                    checked = true;
+                    break;
+                }
+            }
+            assert!(checked, "{game} side {side}: LifeAura barrier-visual never initialized");
+        }
+    }
+}

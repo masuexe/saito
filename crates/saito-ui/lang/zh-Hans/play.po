@@ -297,3 +297,6 @@ msgstr "返回观战"
 
 msgid "Reduce flashes"
 msgstr "防爆闪模式"
+
+msgid "Hide aura number"
+msgstr "隐藏梦罩数字"

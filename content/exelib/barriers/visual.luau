@@ -250,7 +250,8 @@ function visual.make(spec: Spec): Visual
         else
             sprite.hidden_parts = look.hidden_parts
         end
-        -- (sub_8002EAC: its parts keep their own facing; drawn only.)
+        -- Keep the barrier visual's parts (such as LifeAura's "200" digits) unflipped on both consoles (`view.mirror XOR look.hflip = false`).
+        looks.by_console(sprite, "hflip", false, true)
         battle.play_sound(b.sound)
         me:set_lifecycle("update")
         tick(me)

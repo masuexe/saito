@@ -35,7 +35,7 @@ const SIZES: u32 = 8;
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" => 4,
@@ -52,6 +52,7 @@ fn enhancement<'a>(e: &'a mut Enhancements, id: &str) -> Option<&'a mut bool> {
         "smooth" => &mut e.motion,
         "fill" => &mut e.fill,
         "reduce-flashes" => &mut e.reduce_flashes,
+        "hide-aura-number" => &mut e.hide_aura_number,
         _ => return None,
     })
 }
@@ -84,6 +85,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_hide_landscape_status_bar(s.hide_landscape_status_bar);
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
+    view.set_hide_aura_number(s.hide_aura_number);
     view.set_check_updates(s.check_updates);
     view.set_can_update(saito_updater::supported());
     view.set_keyboard_only_custom(s.keyboard_only_custom);
@@ -374,7 +376,7 @@ impl Screen for Settings {
                 shell.games.download(true);
                 shell.check_updates_now(true);
             }
-            "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, None),
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
             "set.keyboard-only" => {
@@ -409,7 +411,7 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, by > 0),
             "set.updates" => self.set_check_updates(shell, by > 0),
-            "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(by > 0)),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(by > 0)),
             "set.music" => self.set_levels(shell, (shell.settings.music as i32 + 5 * by).clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => {
                 self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32);
@@ -449,7 +451,7 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, choice == 1),
             "set.updates" => self.set_check_updates(shell, choice == 1),
-            "set.reduce-flashes" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
             "set.keyboard-only" => {

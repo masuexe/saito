@@ -1847,8 +1847,8 @@ export component MatchMenu inherits MenuOverlay {
             width: root.inner-width + 12px;
             height: max(0px, root.inner-height - 52px);
             nav: "menu.set.";
-            content-height: (PlayView.watch-menu ? 10 : 12) * settings-page.pitch;
-            for label[i] in [@tr("Language"), @tr("Picture size"), @tr("Full screen"), @tr("Reduce flashes"), @tr("Sharp text"), @tr("Sharp HUD"), @tr("Smooth motion"), @tr("Fill the window"), @tr("Music"), @tr("Sound effects")]: Value {
+            content-height: (PlayView.watch-menu ? 11 : 13) * settings-page.pitch;
+            for label[i] in [@tr("Language"), @tr("Picture size"), @tr("Full screen"), @tr("Reduce flashes"), @tr("Hide aura number"), @tr("Sharp text"), @tr("Sharp HUD"), @tr("Smooth motion"), @tr("Fill the window"), @tr("Music"), @tr("Sound effects")]: Value {
                 x: 0;
                 y: i * settings-page.pitch;
                 width: settings-page.label-width;
@@ -1858,7 +1858,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Value {
                 x: 0;
-                y: 10 * settings-page.pitch;
+                y: 11 * settings-page.pitch;
                 width: settings-page.label-width;
                 height: settings-page.label-height;
                 visible: !PlayView.watch-menu;
@@ -1867,7 +1867,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Value {
                 x: 0;
-                y: 11 * settings-page.pitch;
+                y: 12 * settings-page.pitch;
                 width: settings-page.label-width;
                 height: settings-page.label-height;
                 visible: !PlayView.watch-menu;
@@ -1911,6 +1911,15 @@ export component MatchMenu inherits MenuOverlay {
             Seg {
                 x: settings-page.control-x;
                 y: 4 * settings-page.pitch + settings-page.below + 4px;
+                nav: "menu.set.hide-aura-number";
+                first: I18n.upper(@tr("Off"));
+                second: I18n.upper(@tr("On"));
+                chosen: SettingsView.hide-aura-number ? 1 : 0;
+            }
+
+            Seg {
+                x: settings-page.control-x;
+                y: 5 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.text";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1919,7 +1928,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 5 * settings-page.pitch + settings-page.below + 4px;
+                y: 6 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.hud";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1928,7 +1937,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 6 * settings-page.pitch + settings-page.below + 4px;
+                y: 7 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.smooth";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1937,7 +1946,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 7 * settings-page.pitch + settings-page.below + 4px;
+                y: 8 * settings-page.pitch + settings-page.below + 4px;
                 nav: "menu.set.fill";
                 first: I18n.upper(@tr("Off"));
                 second: I18n.upper(@tr("On"));
@@ -1946,7 +1955,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Slider {
                 x: settings-page.control-x;
-                y: 8 * settings-page.pitch + settings-page.below + 2px;
+                y: 9 * settings-page.pitch + settings-page.below + 2px;
                 width: settings-page.control-width;
                 nav: "menu.set.music";
                 value: PlayView.music;
@@ -1954,7 +1963,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Slider {
                 x: settings-page.control-x;
-                y: 9 * settings-page.pitch + settings-page.below + 2px;
+                y: 10 * settings-page.pitch + settings-page.below + 2px;
                 width: settings-page.control-width;
                 nav: "menu.set.effects";
                 value: PlayView.effects;
@@ -1962,7 +1971,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Stepper {
                 x: Theme.phone ? 0px : root.inner-width - self.width;
-                y: 10 * settings-page.pitch + settings-page.below + 4px;
+                y: 11 * settings-page.pitch + settings-page.below + 4px;
                 visible: !PlayView.watch-menu;
                 enabled: !PlayView.watch-menu;
                 nav: "menu.set.delay";
@@ -1973,7 +1982,7 @@ export component MatchMenu inherits MenuOverlay {
 
             Seg {
                 x: settings-page.control-x;
-                y: 11 * settings-page.pitch + settings-page.below + 4px;
+                y: 12 * settings-page.pitch + settings-page.below + 4px;
                 visible: !PlayView.watch-menu;
                 enabled: !PlayView.watch-menu;
                 nav: "menu.set.keyboard-only";
