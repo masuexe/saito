@@ -1496,3 +1496,71 @@ fn exe5_wind_and_fan_do_not_strip_barriers_but_nrthwind_does() {
     assert_ne!(run_chip("fan"), 0, "EXE5 Fan must not strip LifeAura");
     assert_eq!(run_chip("nrthwind"), 0, "EXE5 NrthWind must still strip LifeAura");
 }
+
+/// S-072: In EXE5, if evil MegaMan triggers Dark Soul survival (`dark-survival`)
+/// while guarding (e.g. Guard1 / Shield / Reflect), `dark-survival` interrupts the
+/// guard action and drops the shield visual; it must also clear `f1::GUARD` so
+/// MegaMan does not retain an invisible permanent "shield body" after Dark Soul ends.
+#[test]
+fn exe5_dark_survival_clears_guard_flag() {
+    use saito_battle::collision::f1;
+    use saito_battle::input::{PlayerTick, keys};
+
+    let content = exe5_content();
+    let mut m = parse(&content, &exe5(&TANGO_EXE5, ""), &exe5(&TANGO_EXE5, "")).unwrap();
+    let guard1 = crate::ids::chip(&content, "exe5", "guard1").unwrap();
+    m.sides[0].set_fact(&content, "karma", &number(0)).unwrap();
+
+    let mut setup = m.round(&content, 0x5EED);
+    setup.custom_screen_limit = Some(1);
+    let mut b = saito_battle::Battle::new(setup, content.clone());
+    fight(&mut b);
+
+    let p0 = b.player(0).expect("side 0 navi");
+    let c0 = b.objects.get(p0).collision.expect("side 0 collision");
+    assert_eq!(saito_battle::kinds::player::emotion_name(&b, 0), "evil");
+
+    // Put Guard1 in hand and raise it.
+    b.hands[0].cursor = 0;
+    b.hands[0].ids[0] = Some(guard1);
+    let mut guarding = false;
+    for t in 0..20 {
+        let input = if t == 0 {
+            [PlayerTick { held: keys::A, ..Default::default() }, Default::default()]
+        } else {
+            Default::default()
+        };
+        b.tick(&input, Default::default());
+        if b.collision.get(c0).f1 & f1::GUARD != 0 {
+            guarding = true;
+            break;
+        }
+    }
+    assert!(guarding, "Guard1 should set f1::GUARD on evil MegaMan");
+
+    // Place a poison panel under evil MegaMan at 1 HP while guarding so HP drains to 0
+    // through the guard and triggers `dark-survival` (`volley`), interrupting `guard1/action`.
+    let poison = content.rules().panels.named("poison").expect("EXE5 poison panel");
+    let pos = b.objects.get(p0).panel;
+    b.set_panel_type(pos.x, pos.y, poison);
+    b.objects.get_mut(p0).hp = 1;
+
+    let mut entered_survival = false;
+    for _ in 0..30 {
+        let a = b.actors.get(b.objects.get(p0).actor.unwrap());
+        if let saito_battle::kinds::player::NaviAction::Content(h) = a.navi_action
+            && content.defs.action(h).key == "dark-survival"
+        {
+            entered_survival = true;
+            assert_eq!(
+                b.collision.get(c0).f1 & f1::GUARD,
+                0,
+                "dark-survival must clear f1::GUARD when interrupting a guard action"
+            );
+            break;
+        }
+        b.tick(&Default::default(), Default::default());
+    }
+    assert!(entered_survival, "lethal damage on evil MegaMan should trigger dark-survival");
+    assert_eq!(b.objects.get(p0).hp, 1, "dark-survival should hold MegaMan at 1 HP");
+}

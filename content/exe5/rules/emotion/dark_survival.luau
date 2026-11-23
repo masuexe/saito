@@ -101,9 +101,12 @@ local function fade_out(me: Object)
         flash(me)
         battle.play_sound(FLASH_SOUND)
         -- Not moving, flinching, paralyzed, sliding or dragged, nor asked to slide or be dragged (flags 0x101C40,
-        -- 0x110; +0x1F).
+        -- 0x110; +0x1F). Also clear guard: in the original ROM (0x080EFE48), interrupting a guard action into
+        -- dark-survival drops the shield visual without clearing f1::GUARD, leaving an invisible permanent
+        -- "shield body" after Dark Soul ends (S-072).
         stop_moving(me)
         me:set_status("drag", false)
+        me:set_status("guard", false)
         me:set_request("drag", false)
         me:set_animation(0)
         me.related1 = nil
