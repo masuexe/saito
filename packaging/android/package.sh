@@ -109,4 +109,15 @@ rm -f "$out/gradle/outputs/apk/release/saito-release.apk"
     -Psaito.debuggable="${SAITO_ANDROID_DEBUGGABLE:-}"
 apk=$out/saito-android.apk
 cp "$out/gradle/outputs/apk/release/saito-release.apk" "$apk"
+apksigner=$(ls -1 "$sdk"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1 || true)
+if [ -n "$apksigner" ]; then
+    verify_out=$("$apksigner" verify --verbose "$apk")
+    for scheme in "v1 scheme" "v2 scheme" "v3 scheme"; do
+        grep -q "Verified using $scheme.*: true" <<<"$verify_out" || {
+            echo "APK is missing $scheme signature:" >&2
+            echo "$verify_out" >&2
+            exit 1
+        }
+    done
+fi
 echo "$apk"

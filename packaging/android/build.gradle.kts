@@ -51,6 +51,11 @@ android {
             storePassword = setting("saito.keystorePassword")
             keyAlias = setting("saito.keyAlias")
             keyPassword = setting("saito.keystorePassword")
+            // Enable V1 (JAR) + V2 + V3 together: with minSdk 26 AGP otherwise signs with V2 alone, which some OEM
+            // package installers (e.g. ColorOS) reject as missing a signature file.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
