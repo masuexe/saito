@@ -219,6 +219,12 @@ msgstr "ID"
 msgid "Count"
 msgstr "数量"
 
+msgid "Ascending"
+msgstr "正向排序"
+
+msgid "Descending"
+msgstr "反向排序"
+
 # Over the library while a row of the build's is dragged there: let go, it is taken out.
 msgid "Drop to remove"
 msgstr "松开即可移除"

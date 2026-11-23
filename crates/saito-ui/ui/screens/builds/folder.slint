@@ -113,6 +113,7 @@ export global FolderView {
     in property <bool> descending;
     out property <[string]> sorts: [@tr("Library order"), @tr("Name"), @tr("Code"), @tr("MB"), @tr("Element"), @tr("sort" => "Attack")];
     out property <[string]> folder-sorts: [@tr("ID"), @tr("Code"), @tr("Name"), @tr("sort" => "Attack"), @tr("Element"), @tr("MB"), @tr("Count")];
+    out property <[string]> folder-directions: [@tr("Ascending"), @tr("Descending")];
     // The row that was refused, counted: it shakes.
     in property <int> refused: -1;
     in property <int> refused-seq;

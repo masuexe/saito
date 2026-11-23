@@ -219,6 +219,12 @@ msgstr "ID"
 msgid "Count"
 msgstr "수량"
 
+msgid "Ascending"
+msgstr "오름차순"
+
+msgid "Descending"
+msgstr "내림차순"
+
 # Over the library while a row of the build's is dragged there: let go, it is taken out.
 msgid "Drop to remove"
 msgstr "놓아서 빼기"

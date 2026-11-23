@@ -219,6 +219,12 @@ msgstr "ID"
 msgid "Count"
 msgstr "枚数"
 
+msgid "Ascending"
+msgstr "昇順"
+
+msgid "Descending"
+msgstr "降順"
+
 # Over the library while a row of the build's is dragged there: let go, it is taken out.
 msgid "Drop to remove"
 msgstr "ドロップで外す"

@@ -86,6 +86,7 @@ pub struct Folder {
     search: String,
     sort: usize,
     folder_sort: usize,
+    folder_descending: bool,
     descending: bool,
     /// The library's chips, and its rows as sorted and searched.
     chips: Vec<ChipInfo>,
@@ -618,9 +619,17 @@ impl Folder {
     }
 
     fn sort_folder(&mut self, shell: &mut Shell, draft: &mut Draft, choice: usize) {
-        let choice = choice.min(FOLDER_SORTS.len() - 1);
-        self.folder_sort = choice;
-        let mode = FOLDER_SORTS[choice];
+        if choice < FOLDER_SORTS.len() {
+            self.folder_sort = choice;
+        } else if choice == FOLDER_SORTS.len() {
+            self.folder_descending = false;
+        } else if choice == FOLDER_SORTS.len() + 1 {
+            self.folder_descending = true;
+        } else {
+            return;
+        }
+        let mode = FOLDER_SORTS[self.folder_sort];
+        let descending = self.folder_descending;
         let content = draft.content().clone();
         let before = draft.side().folder(&content);
         let mut counts: HashMap<ChipHandle, usize> = HashMap::new();
@@ -639,14 +648,22 @@ impl Folder {
             let rank = draft.kit.order.chip_rank(saito_match::ids::local(key));
             (rank.is_none(), rank, key)
         };
-        let cmp = |a: FolderChip, b: FolderChip| match mode {
-            FolderSort::Id => lib_key(a.id).cmp(&lib_key(b.id)).then_with(|| a.code.0.cmp(&b.code.0)),
-            FolderSort::Code => a.code.0.cmp(&b.code.0).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))),
-            FolderSort::Name => names[&a.id].cmp(&names[&b.id]).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
-            FolderSort::Attack => content.chip(b.id).damage.cmp(&content.chip(a.id).damage).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
-            FolderSort::Element => content.chip(a.id).family.cmp(&content.chip(b.id).family).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
-            FolderSort::Mb => content.chip(a.id).mb.cmp(&content.chip(b.id).mb).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
-            FolderSort::Count => counts[&b.id].cmp(&counts[&a.id]).then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+        let cmp = |a: FolderChip, b: FolderChip| {
+            let primary = match mode {
+                FolderSort::Id => lib_key(a.id).cmp(&lib_key(b.id)),
+                FolderSort::Code => a.code.0.cmp(&b.code.0),
+                FolderSort::Name => names[&a.id].cmp(&names[&b.id]),
+                FolderSort::Attack => content.chip(b.id).damage.cmp(&content.chip(a.id).damage),
+                FolderSort::Element => content.chip(a.id).family.cmp(&content.chip(b.id).family),
+                FolderSort::Mb => content.chip(a.id).mb.cmp(&content.chip(b.id).mb),
+                FolderSort::Count => counts[&b.id].cmp(&counts[&a.id]),
+            };
+            let primary = if descending { primary.reverse() } else { primary };
+            match mode {
+                FolderSort::Id => primary.then_with(|| a.code.0.cmp(&b.code.0)),
+                FolderSort::Code => primary.then_with(|| lib_key(a.id).cmp(&lib_key(b.id))),
+                _ => primary.then_with(|| lib_key(a.id).cmp(&lib_key(b.id))).then_with(|| a.code.0.cmp(&b.code.0)),
+            }
         };
         match edit::sort_folder(&before, cmp) {
             Some((after, new_pos)) => {
@@ -754,8 +771,30 @@ impl Tab for Folder {
                 if draft.side().folder(draft.content()).chips().count() <= 1 {
                     return shell.sound.play(Cue::Refused);
                 }
-                let options = view.get_folder_sorts().iter().map(|s| s.to_string()).collect();
-                shell.pick(id, 0, options, self.folder_sort);
+                let mut rows: Vec<(String, saito_ui::PickMark)> = view
+                    .get_folder_sorts()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        (
+                            s.to_string(),
+                            saito_ui::PickMark { check: i == self.folder_sort, dim: false, line: false, value: Default::default() },
+                        )
+                    })
+                    .collect();
+                for (i, label) in view.get_folder_directions().iter().enumerate() {
+                    let is_desc = i == 1;
+                    rows.push((
+                        label.to_string(),
+                        saito_ui::PickMark {
+                            check: self.folder_descending == is_desc,
+                            dim: false,
+                            line: i == 0,
+                            value: Default::default(),
+                        },
+                    ));
+                }
+                shell.pick_marked(id, 0, &crate::nav::Key::new(id, 0), rows);
             }
             "clear" => {
                 let empty = draft.side().folder(draft.content()).chips().next().is_none();
