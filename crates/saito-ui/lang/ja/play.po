@@ -310,6 +310,9 @@ msgstr "フラッシュ軽減"
 msgid "Hide aura number"
 msgstr "ドリームオーラの数値非表示"
 
+msgid "HD chip art"
+msgstr "高解像度チップ画像"
+
 # ---- Stage & BGM preset dialog ----
 
 msgid "Stage & BGM"

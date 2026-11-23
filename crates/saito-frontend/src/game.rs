@@ -198,7 +198,10 @@ impl ContentLoaded {
         let failed = |report: Report| LoadError { what: Failed::Assets { game: name.clone() }, report };
         let extracted = recipe.and_then(|recipe| saito_content::load::assets(&content, &recipe, roms));
         let own = match extracted {
-            Ok(own) => own,
+            Ok(mut own) => {
+                own.attach_hd_chip_art(roms);
+                own
+            }
             Err(e) => {
                 report.error(format!("{name}'s ROMs"), e.to_string());
                 return Err(failed(report));

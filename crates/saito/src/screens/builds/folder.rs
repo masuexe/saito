@@ -341,7 +341,7 @@ impl Folder {
             }
             ChipDetail {
                 there: true,
-                art: kit.pictures.art(chip.id),
+                art: kit.pictures.art(chip.id, shell.settings.hd_chip_art),
                 name: words.names.chip(chip.id).into(),
                 kind: kind(record.class),
                 code: chip.code.letter().to_string().into(),

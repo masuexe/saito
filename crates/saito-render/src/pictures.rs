@@ -49,12 +49,67 @@ pub fn chip_icon(graphics: &Graphics, c: &Content, chip: ChipHandle) -> Option<I
     image(tiles, 2, 2, palette)
 }
 
+/// Crop height (pixels) of the artwork region inside Legacy Collection Vol. 2's 512×551 chip PNGs
+/// (removing the 119px bottom element/attack bar).
+pub const HD_CHIP_ART_CROP_HEIGHT: u32 = 432;
+
+/// Decode a single Legacy Collection Vol. 2 chip artwork PNG from `archive` at `(offset, size)`,
+/// cropping off the bottom element/attack bar to keep the 512×432 artwork as RGBA8.
+pub fn decode_hd_chip_art(archive: &std::path::Path, offset: u64, size: u32) -> Option<Image> {
+    use std::io::{Read, Seek, SeekFrom};
+    if size == 0 || size > 16 * 1024 * 1024 {
+        return None;
+    }
+    let mut file = std::fs::File::open(archive).ok()?;
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut raw = vec![0u8; size as usize];
+    file.read_exact(&mut raw).ok()?;
+    decode_hd_chip_art_bytes(&raw)
+}
+
+/// Decode raw PNG bytes of a Legacy Collection chip artwork, cropping to [`HD_CHIP_ART_CROP_HEIGHT`].
+pub fn decode_hd_chip_art_bytes(png_bytes: &[u8]) -> Option<Image> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let bytes = &buf[..info.buffer_size()];
+    let w = info.width;
+    let h = info.height.min(HD_CHIP_ART_CROP_HEIGHT);
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => bytes.get(..(w * h * 4) as usize)?.to_vec(),
+        png::ColorType::Rgb => {
+            let src = bytes.get(..(w * h * 3) as usize)?;
+            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            for px in src.chunks_exact(3) {
+                out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
+            }
+            out
+        }
+        _ => return None,
+    };
+    Some(Image { width: w, height: h, rgba })
+}
+
 /// A chip's 56x48 picture in the chip window, in its definition's
 /// `art_palette` where it has one (a chip whose palette no ROM holds), else
 /// its own.
 pub fn chip_art(graphics: &Graphics, c: &Content, chip: ChipHandle) -> Option<Image> {
     let art = crate::lookups::chip_art(graphics, c, chip, &mut Problems::default())?;
     image(&art.picture.tiles, 7, 6, &c.chip(chip).art_palette.unwrap_or(art.picture.palette))
+}
+
+/// Like [`chip_art`], preferring the Legacy Collection HD artwork when `hd` is true and available,
+/// falling back to the original 56x48 ROM picture otherwise.
+pub fn chip_art_with_hd(graphics: &Graphics, c: &Content, chip: ChipHandle, hd: bool) -> Option<Image> {
+    if hd {
+        let key = saito_content_api::keys::local(&c.defs.chip(chip).key);
+        if let Some(img) = graphics.hd_chip_art(key) {
+            return Some((*img).clone());
+        }
+    }
+    chip_art(graphics, c, chip)
 }
 
 /// The palette a chip family's element icon is drawn in: the icons' with
@@ -138,4 +193,34 @@ pub fn face(graphics: &Graphics, c: &Content, form: saito_content_api::FormHandl
     let (_, face) = crate::lookups::form_face(graphics, c, form, emotion, variant, &mut Problems::default());
     let (tiles, palettes) = face?;
     image(tiles, 4, 2, palettes.first()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_hd_chip_art_crops_bottom_bar() {
+        let (w, h) = (2u32, 551u32);
+        let mut raw = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            let color = if y < HD_CHIP_ART_CROP_HEIGHT { [200u8, 100, 50] } else { [40, 40, 40] };
+            for _ in 0..w {
+                raw.extend_from_slice(&color);
+            }
+        }
+        let mut png_bytes = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut png_bytes, w, h);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().unwrap();
+            writer.write_image_data(&raw).unwrap();
+        }
+        let img = decode_hd_chip_art_bytes(&png_bytes).expect("decodes HD PNG");
+        assert_eq!((img.width, img.height), (w, HD_CHIP_ART_CROP_HEIGHT));
+        assert_eq!(img.rgba.len(), (w * HD_CHIP_ART_CROP_HEIGHT * 4) as usize);
+        assert_eq!(&img.rgba[..4], &[200, 100, 50, 255]);
+        assert_eq!(&img.rgba[img.rgba.len() - 4..], &[200, 100, 50, 255]);
+    }
 }

@@ -69,6 +69,13 @@ impl Install {
             (!archives.is_empty()).then_some(Install { data, archives })
         })
     }
+
+    /// Path to Legacy Collection Vol. 2's `launcher/data/vol2.dat` beside `<install>/exe/data`, if present.
+    pub fn vol2_dat(&self) -> Option<PathBuf> {
+        let root = self.data.parent()?.parent()?;
+        let candidate = root.join("launcher").join("data").join("vol2.dat");
+        candidate.is_file().then_some(candidate)
+    }
 }
 
 /// Where a game's ROMs are read from.
@@ -227,6 +234,14 @@ impl RomSource {
     pub fn copies(&self, codes: &[String]) -> Result<Vec<(String, Vec<u8>)>, Error> {
         let roms = self.find(codes).unwrap_or_else(|(_, found)| found);
         roms.iter().map(|rom| Ok((format!("{}.zip", rom.code), copy_of(rom)?))).collect()
+    }
+
+    /// Path to Legacy Collection Vol. 2's `launcher/data/vol2.dat` if this source is a collection install.
+    pub fn vol2_dat(&self) -> Option<PathBuf> {
+        match self {
+            RomSource::Collection(install) => install.vol2_dat(),
+            _ => None,
+        }
     }
 
     /// Every ROM `recipe` declares, read whole into a set for it ([`Recipe::extract`]). An error names the ROMs

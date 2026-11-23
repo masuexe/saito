@@ -158,17 +158,20 @@ pub fn set_backgrounds(first: &saito_battle::setup::RoundSetup) -> Vec<Backgroun
 /// one, so it borrows from nobody (a host keeps a renderer wherever it keeps
 /// its state, and several renderers share the same graphics); what a frame
 /// draws from is a [`Graphics`] over them ([`GameGraphics::view`]).
+type HdArtCache = Mutex<std::collections::HashMap<String, Option<Arc<crate::pictures::Image>>>>;
+
 #[derive(Clone)]
 pub struct GameGraphics {
     bundle: Arc<Bundle>,
     others: Arc<OtherBackgrounds>,
     numbers: Arc<AssetNumbers>,
+    hd_art: Arc<HdArtCache>,
 }
 
 impl GameGraphics {
     /// The game's graphics `bundle`: every asset is its.
     pub fn new(bundle: Arc<Bundle>) -> GameGraphics {
-        GameGraphics { bundle, others: Default::default(), numbers: Default::default() }
+        GameGraphics { bundle, others: Default::default(), numbers: Default::default(), hd_art: Default::default() }
     }
 
     /// The drawings (`Bundle::drawings`), each once; the chatbox's
@@ -231,7 +234,7 @@ impl GameGraphics {
 
     /// What a frame draws from.
     pub fn view(&self) -> Graphics<'_> {
-        Graphics { bundle: &self.bundle, others: &self.others, numbers: &self.numbers, version: None }
+        Graphics { bundle: &self.bundle, others: &self.others, numbers: &self.numbers, version: None, hd_art: Some(&self.hd_art) }
     }
 }
 
@@ -256,12 +259,13 @@ pub struct Graphics<'a> {
     /// another version's shows that version's ROM's art, which this console
     /// draws otherwise (`ChipArt::version`).
     version: Option<&'static str>,
+    hd_art: Option<&'a HdArtCache>,
 }
 
 impl<'a> Graphics<'a> {
     /// The graphics `bundle`: every asset is its.
     pub fn of(bundle: &'a Bundle) -> Graphics<'a> {
-        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None }
+        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None, hd_art: None }
     }
 
     /// These graphics, with other games' backgrounds beside them.
@@ -305,6 +309,30 @@ impl<'a> Graphics<'a> {
     /// A chip's picture, under its key in the game's graphics.
     pub fn chip_art(&self, key: &str) -> Option<&'a saito_assets::ChipArt> {
         self.bundle.custom.chip_art(saito_content_api::keys::local(key))
+    }
+
+    /// A chip's Legacy Collection HD picture (512×432 RGBA8), decoded on demand from `vol2.dat`
+    /// and cached in memory; `None` if unavailable or not in the collection.
+    pub fn hd_chip_art(&self, key: &str) -> Option<Arc<crate::pictures::Image>> {
+        let index = self.bundle.custom.hd_chip_art.as_ref()?;
+        let local = saito_content_api::keys::local(key);
+        if let Some(cache) = self.hd_art
+            && let Ok(guard) = cache.lock()
+            && let Some(cached) = guard.get(local)
+        {
+            return cached.clone();
+        }
+        let decoded = index
+            .entries
+            .get(local)
+            .and_then(|&(off, sz)| crate::pictures::decode_hd_chip_art(&index.archive, off, sz))
+            .map(Arc::new);
+        if let Some(cache) = self.hd_art
+            && let Ok(mut guard) = cache.lock()
+        {
+            guard.insert(local.to_string(), decoded.clone());
+        }
+        decoded
     }
 
     /// Sprite `id`'s sheet.

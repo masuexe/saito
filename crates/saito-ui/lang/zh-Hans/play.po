@@ -310,6 +310,9 @@ msgstr "防爆闪模式"
 msgid "Hide aura number"
 msgstr "隐藏梦罩数字"
 
+msgid "HD chip art"
+msgstr "高清卡图"
+
 # ---- Stage & BGM preset dialog ----
 
 msgid "Stage & BGM"

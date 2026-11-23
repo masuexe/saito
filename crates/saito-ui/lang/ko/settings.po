@@ -100,6 +100,12 @@ msgstr "드림오라의 200 숫자를 숨깁니다."
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
 
+msgid "HD chip art"
+msgstr "HD 칩 일러스트"
+
+msgid "Use Legacy Collection high-resolution chip artwork when available."
+msgstr "사용 가능한 경우 레거시 컬렉션 고해상도 칩 일러스트를 사용합니다."
+
 msgid "Music"
 msgstr "배경음"
 

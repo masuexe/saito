@@ -99,6 +99,12 @@ msgstr "ドリームオーラの「200」表示を隠します。"
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せます。"
 
+msgid "HD chip art"
+msgstr "高解像度チップ画像"
+
+msgid "Use Legacy Collection high-resolution chip artwork when available."
+msgstr "利用可能な場合、アドバンスドコレクションの高解像度チップ画像を使用します。"
+
 msgid "Music"
 msgstr "BGM"
 

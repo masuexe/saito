@@ -41,6 +41,7 @@ export global SettingsView {
     in property <bool> sharp-hud;
     in property <bool> smooth-motion;
     in property <bool> fill-window;
+    in property <bool> hd-chip-art;
     in property <int> music;
     in property <int> effects;
     in property <int> input-delay;
@@ -523,6 +524,25 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.fill-window ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: hd-art-row.height;
+                    hd-art-row := SettingLabel {
+                        label: @tr("HD chip art");
+                        note: @tr("Use Legacy Collection high-resolution chip artwork when available.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.hd-chip-art";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.hd-chip-art ? 1 : 0;
                     }
                 }
 

@@ -19,6 +19,7 @@
 
 mod elements;
 mod gfx;
+pub mod hd_art;
 pub mod letters;
 mod names;
 mod recipe;
@@ -120,6 +121,15 @@ pub struct Extraction {
     /// What extraction noticed that isn't wrong enough to fail it.
     pub warnings: Vec<String>,
     names: AssetNames,
+}
+
+impl Extraction {
+    /// Index official Legacy Collection Vol. 2 HD chip artwork from `roms`'s `vol2.dat` if available.
+    pub fn attach_hd_chip_art(&mut self, roms: &RomSource) {
+        if let Some(vol2) = roms.vol2_dat() {
+            self.graphics.custom.hd_chip_art = hd_art::index_from_vol2(&vol2, &self.game, &self.names.chips);
+        }
+    }
 }
 
 /// A range of a ROM an extraction read ([`Recipe::extract_recording_reads`]).

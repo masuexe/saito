@@ -1088,6 +1088,10 @@ impl TextRenderer {
     }
 
     fn draw_item(&mut self, item: &TextItem, depth: &[u32], place: &Placement, frame: &FrameMap, out: &mut [u32], out_w: usize) {
+        if let Some(img) = &item.raster {
+            self.draw_raster(item, img, depth, place, frame, out, out_w);
+            return;
+        }
         let layout = if item.fitted.is_some() { Layout::default() } else { self.layout(&item.text, item.role, item.rect.w).clone() };
         if let Some(d) = &item.drawn {
             self.draw_drawn(item, d, depth, place, frame, out, out_w);
@@ -1133,6 +1137,131 @@ impl TextRenderer {
         let fades = item.fades;
         let faded = |rgb: u32| if fades == [Fade::None, Fade::None] { rgb } else { fade_rgb(fade_rgb(rgb, fades[0]), fades[1]) };
         target.blit(&image, (ox, oy), bounds, faded);
+    }
+
+    /// Draw a high-resolution RGBA raster (such as Legacy Collection HD chip artwork) into `item.rect` +
+    /// `item.fine` at the output's resolution, using area averaging when downscaling and bilinear filtering
+    /// when upscaling.
+    fn draw_raster(&self, item: &TextItem, img: &crate::pictures::Image, depth: &[u32], place: &Placement, frame: &FrameMap, out: &mut [u32], out_w: usize) {
+        if img.width == 0 || img.height == 0 || item.rect.w <= 0 || item.rect.h <= 0 {
+            return;
+        }
+        let s = place.scale;
+        let clip = item.clip.intersect(frame.rect());
+        if clip.is_empty() {
+            return;
+        }
+        let (fine_x, fine_y) = (item.fine.0 as f32 / 65536.0, item.fine.1 as f32 / 65536.0);
+        let rx0 = place.x as f32 + s * (item.rect.x as f32 + fine_x);
+        let ry0 = place.y as f32 + s * (item.rect.y as f32 + fine_y);
+        let rw = s * item.rect.w as f32;
+        let rh = s * item.rect.h as f32;
+        if rw <= 0.0 || rh <= 0.0 {
+            return;
+        }
+        let x0 = (rx0.floor() as i32).max(place.x + (clip.x as f32 * s).floor() as i32 - 1);
+        let y0 = (ry0.floor() as i32).max(place.y + (clip.y as f32 * s).floor() as i32 - 1);
+        let x1 = ((rx0 + rw).ceil() as i32).min(place.x + ((clip.x + clip.w) as f32 * s).ceil() as i32 + 1);
+        let y1 = ((ry0 + rh).ceil() as i32).min(place.y + ((clip.y + clip.h) as f32 * s).ceil() as i32 + 1);
+        let mut target = Target { depth, frame, out, out_w, clip, key: item.depth };
+        let fades = item.fades;
+        let has_fade = fades != [Fade::None, Fade::None];
+        let (sw, sh) = (img.width as usize, img.height as usize);
+        let (swf, shf) = (sw as f32, sh as f32);
+        let downscale = rw < swf || rh < shf;
+        let rgba = &img.rgba;
+        for y in y0..y1 {
+            let Some(fy) = target.row(y) else { continue };
+            let v_center = (y as f32 + 0.5 - ry0) / rh;
+            if !(0.0..=1.0).contains(&v_center) {
+                continue;
+            }
+            if downscale {
+                let sy0 = ((y as f32 - ry0) / rh * shf).clamp(0.0, shf);
+                let sy1 = ((y as f32 + 1.0 - ry0) / rh * shf).clamp(0.0, shf);
+                if sy1 <= sy0 {
+                    continue;
+                }
+                let iy0 = (sy0.floor() as usize).min(sh - 1);
+                let iy1 = (sy1.ceil() as usize).clamp(iy0 + 1, sh);
+                for x in x0..x1 {
+                    let Some(fx) = target.column(x) else { continue };
+                    let u_center = (x as f32 + 0.5 - rx0) / rw;
+                    if !(0.0..=1.0).contains(&u_center) {
+                        continue;
+                    }
+                    let sx0 = ((x as f32 - rx0) / rw * swf).clamp(0.0, swf);
+                    let sx1 = ((x as f32 + 1.0 - rx0) / rw * swf).clamp(0.0, swf);
+                    if sx1 <= sx0 {
+                        continue;
+                    }
+                    let ix0 = (sx0.floor() as usize).min(sw - 1);
+                    let ix1 = (sx1.ceil() as usize).clamp(ix0 + 1, sw);
+                    let (mut r, mut g, mut b, mut a, mut area) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+                    for iy in iy0..iy1 {
+                        let wy = ((iy + 1) as f32).min(sy1) - (iy as f32).max(sy0);
+                        let row = iy * sw * 4;
+                        for ix in ix0..ix1 {
+                            let wx = ((ix + 1) as f32).min(sx1) - (ix as f32).max(sx0);
+                            let w = wx * wy;
+                            let idx = row + ix * 4;
+                            r += rgba[idx] as f32 * w;
+                            g += rgba[idx + 1] as f32 * w;
+                            b += rgba[idx + 2] as f32 * w;
+                            a += rgba[idx + 3] as f32 * w;
+                            area += w;
+                        }
+                    }
+                    if area <= 0.0 {
+                        continue;
+                    }
+                    let inv = 1.0 / area;
+                    let alpha = (a * inv + 0.5).min(255.0) as u8;
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let mut rgb = (((r * inv + 0.5).min(255.0) as u32) << 16)
+                        | (((g * inv + 0.5).min(255.0) as u32) << 8)
+                        | ((b * inv + 0.5).min(255.0) as u32);
+                    if has_fade {
+                        rgb = fade_rgb(fade_rgb(rgb, fades[0]), fades[1]);
+                    }
+                    target.blend_at(x, y, (fx, fy), rgb, alpha);
+                }
+            } else {
+                let sy = (v_center * shf - 0.5).clamp(0.0, (sh - 1) as f32);
+                let iy0 = sy.floor() as usize;
+                let iy1 = (iy0 + 1).min(sh - 1);
+                let ty = sy - iy0 as f32;
+                let row0 = iy0 * sw * 4;
+                let row1 = iy1 * sw * 4;
+                for x in x0..x1 {
+                    let Some(fx) = target.column(x) else { continue };
+                    let u_center = (x as f32 + 0.5 - rx0) / rw;
+                    if !(0.0..=1.0).contains(&u_center) {
+                        continue;
+                    }
+                    let sx = (u_center * swf - 0.5).clamp(0.0, (sw - 1) as f32);
+                    let ix0 = sx.floor() as usize;
+                    let ix1 = (ix0 + 1).min(sw - 1);
+                    let tx = sx - ix0 as f32;
+                    let (i00, i10, i01, i11) = (row0 + ix0 * 4, row0 + ix1 * 4, row1 + ix0 * 4, row1 + ix1 * 4);
+                    let (w00, w10, w01, w11) = ((1.0 - tx) * (1.0 - ty), tx * (1.0 - ty), (1.0 - tx) * ty, tx * ty);
+                    let sample = |c: usize| -> u32 {
+                        (rgba[i00 + c] as f32 * w00 + rgba[i10 + c] as f32 * w10 + rgba[i01 + c] as f32 * w01 + rgba[i11 + c] as f32 * w11 + 0.5) as u32
+                    };
+                    let alpha = sample(3).min(255) as u8;
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let mut rgb = (sample(0).min(255) << 16) | (sample(1).min(255) << 8) | sample(2).min(255);
+                    if has_fade {
+                        rgb = fade_rgb(fade_rgb(rgb, fades[0]), fades[1]);
+                    }
+                    target.blend_at(x, y, (fx, fy), rgb, alpha);
+                }
+            }
+        }
     }
 
     /// A text item painted at the output's scale where `place` puts it,
@@ -2194,5 +2323,40 @@ mod tests {
             crate::present::present(&frame, Some(&mut r), &mut out, w, h);
             assert_eq!(r.made().glyphs, made, "{scale}x");
         }
+    }
+
+    #[test]
+    fn raster_item_draws_scaled_image_into_rect_with_fade() {
+        let mut r = renderer();
+        let img = std::sync::Arc::new(crate::pictures::Image {
+            width: 4,
+            height: 4,
+            rgba: [240u8, 80, 40, 255].repeat(16),
+        });
+        let mut item = TextItem::raster(img, Rect::new(10, 12, 8, 6));
+        item.depth = 0;
+        let frame = crate::render::Frame {
+            pixels: vec![0; WIDTH * HEIGHT],
+            depth: vec![u32::MAX; WIDTH * HEIGHT],
+            text: vec![item.clone()],
+            glide: None,
+            ..crate::render::Frame::default()
+        };
+        let (w, h) = (WIDTH * 2, HEIGHT * 2);
+        let mut out = vec![0u32; w * h];
+        crate::present::present(&frame, Some(&mut r), &mut out, w, h);
+        // Inside rect (10..18, 12..18) at 2x -> (20..36, 24..36)
+        assert_eq!(out[24 * w + 20], 0xF05028);
+        assert_eq!(out[35 * w + 35], 0xF05028);
+        // Outside rect stays black
+        assert_eq!(out[23 * w + 20], 0);
+        assert_eq!(out[24 * w + 19], 0);
+
+        // With Fade::Black(8) (half brightness)
+        item.fades = [Fade::Black(8), Fade::None];
+        let faded_frame = crate::render::Frame { text: vec![item], ..frame };
+        let mut faded_out = vec![0u32; w * h];
+        crate::present::present(&faded_frame, Some(&mut r), &mut faded_out, w, h);
+        assert_eq!(faded_out[24 * w + 20], fade_rgb(0xF05028, Fade::Black(8)));
     }
 }

@@ -49,21 +49,23 @@ pub struct Enhancements {
     pub reduce_flashes: bool,
     /// Hide the "200" number part drawn on LifeAura barriers.
     pub hide_aura_number: bool,
+    /// Use Legacy Collection Vol. 2 high-resolution chip artwork where available.
+    pub hd_chip_art: bool,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, hd_chip_art: false };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, hd_chip_art: false };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
     /// Whether the frame has anything finer than its own pixels to draw
-    /// (text, shapes, motion between them), so is worth presenting at more
+    /// (text, shapes, motion between them, or HD chip art), so is worth presenting at more
     /// than one output pixel a frame pixel.
     pub fn fine(self) -> bool {
-        self.text || self.hud || self.motion
+        self.text || self.hud || self.motion || self.hd_chip_art
     }
 
     /// Whether the vector font is wanted: for the text, and for the HUD's
@@ -94,6 +96,7 @@ impl std::str::FromStr for Enhancements {
                 "fill" => e.fill = true,
                 "reduce-flashes" | "reduce_flashes" => e.reduce_flashes = true,
                 "hide-aura-number" | "hide_aura_number" => e.hide_aura_number = true,
+                "hd-chip-art" | "hd_chip_art" => e.hd_chip_art = true,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
         }

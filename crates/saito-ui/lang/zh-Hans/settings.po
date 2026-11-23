@@ -100,6 +100,12 @@ msgstr "隐藏梦幻护罩上的 200 数字。"
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"
 
+msgid "HD chip art"
+msgstr "高清卡图"
+
+msgid "Use Legacy Collection high-resolution chip artwork when available."
+msgstr "可用时使用合集版高清芯片卡图。"
+
 msgid "Music"
 msgstr "音乐"
 

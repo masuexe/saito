@@ -325,7 +325,7 @@ impl AutoBattle {
             };
             ChipDetail {
                 there: true,
-                art: draft.kit.pictures.art(chip),
+                art: draft.kit.pictures.art(chip, shell.settings.hd_chip_art),
                 name: words.names.chip(chip).into(),
                 kind: kind(record.class),
                 description: description.into(),

@@ -10,7 +10,7 @@ use saito_match::build::Face;
 use saito_render::graphics::GameGraphics;
 use saito_render::pictures::{self, Image};
 use slint::{Rgba8Pixel, SharedPixelBuffer};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -20,6 +20,7 @@ pub struct Pictures {
     graphics: GameGraphics,
     icons: RefCell<HashMap<ChipHandle, slint::Image>>,
     art: RefCell<HashMap<ChipHandle, slint::Image>>,
+    hd_art: Cell<bool>,
     elements: RefCell<HashMap<ChipFamily, slint::Image>>,
     faces: RefCell<HashMap<FormHandle, slint::Image>>,
     navis: RefCell<HashMap<NaviHandle, slint::Image>>,
@@ -53,6 +54,7 @@ impl Pictures {
             graphics,
             icons: Default::default(),
             art: Default::default(),
+            hd_art: Cell::new(false),
             elements: Default::default(),
             faces: Default::default(),
             navis: Default::default(),
@@ -65,13 +67,17 @@ impl Pictures {
         kept(&self.icons, chip, || pictures::chip_icon(&self.graphics.view(), self.ready.content(), chip))
     }
 
-    /// A chip's 56x48 picture. A Program Advance has none (what its game's graphics hold in the place of one is no
-    /// picture of it): an empty image.
-    pub fn art(&self, chip: ChipHandle) -> slint::Image {
+    /// A chip's picture (Legacy Collection HD when `hd` is true and available, else the 56x48 ROM art). A Program
+    /// Advance has none (what its game's graphics hold in the place of one is no picture of it): an empty image.
+    pub fn art(&self, chip: ChipHandle, hd: bool) -> slint::Image {
         if self.ready.content().chip(chip).class == ChipClass::ProgramAdvance {
             return slint::Image::default();
         }
-        kept(&self.art, chip, || pictures::chip_art(&self.graphics.view(), self.ready.content(), chip))
+        if self.hd_art.get() != hd {
+            self.art.borrow_mut().clear();
+            self.hd_art.set(hd);
+        }
+        kept(&self.art, chip, || pictures::chip_art_with_hd(&self.graphics.view(), self.ready.content(), chip, hd))
     }
 
     /// A chip's element icon: its family's, as the game's chip window shows it. A Program Advance has no element: an

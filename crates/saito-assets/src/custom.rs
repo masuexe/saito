@@ -52,6 +52,15 @@ pub struct Emblem {
     pub palette: Palette,
 }
 
+/// On-demand index into Battle Network Legacy Collection Vol. 2's `launcher/data/vol2.dat`
+/// for official high-resolution (512×432 cropped) chip artwork, keyed by local chip key.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HdChipArtIndex {
+    pub archive: std::path::PathBuf,
+    /// Local chip key -> `(byte offset, byte length)` of the PNG entry inside `archive`.
+    pub entries: std::collections::BTreeMap<String, (u64, u32)>,
+}
+
 /// A chip's picture, under its chip's key.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChipArt {
@@ -336,6 +345,8 @@ pub struct CustomScreen {
     pub other_palette: Palette,
     // ---- The chip window.
     pub chip_art: Vec<ChipArt>,
+    /// Optional on-demand index into Legacy Collection Vol. 2's `vol2.dat` for official HD chip art.
+    pub hd_chip_art: Option<HdChipArtIndex>,
     pub pictures: SlotPictures,
     /// Chip codes as 8x16 glyphs (A..Z, '*', then one no chip has).
     pub codes: Tiles,

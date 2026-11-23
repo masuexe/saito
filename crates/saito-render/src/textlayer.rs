@@ -114,6 +114,9 @@ pub struct TextItem {
     /// game's shapes: `crate::shapes`), filled at the output's resolution
     /// in its box: a banner's bar, a box, a window's frame.
     pub drawn: Option<Drawn>,
+    /// An optional high-resolution RGBA8 raster overlay (e.g. Legacy Collection HD chip art),
+    /// bilinearly scaled into `rect` at the output's resolution with depth, clip, and fades.
+    pub raster: Option<std::sync::Arc<crate::pictures::Image>>,
     /// How far past its box the item truly is, 16.16 frame pixels right and
     /// down: a sprite's true place between the frame's pixels
     /// (`objects::Fine`, the smooth motion).
@@ -133,7 +136,7 @@ impl TextItem {
     /// Whether it is a string in a font's glyphs (a name, a line), not the
     /// sharp HUD's: a lettering, a number in the numbers' font or a drawing.
     pub fn is_string(&self) -> bool {
-        !matches!(self.role, Role::Lettering(_)) && self.drawn.is_none() && self.fitted.is_none()
+        !matches!(self.role, Role::Lettering(_)) && self.drawn.is_none() && self.fitted.is_none() && self.raster.is_none()
     }
 
     pub fn new(text: impl Into<String>, role: Role, rect: Rect, face: u16, shadow: Option<u16>) -> TextItem {
@@ -152,11 +155,17 @@ impl TextItem {
             shown: None,
             ink: None,
             drawn: None,
+            raster: None,
             fine: (0, 0),
             fitted: None,
             slant: 0,
             anchor: Anchor::CENTER,
         }
+    }
+
+    /// A high-resolution RGBA8 raster overlay fitted into `rect`.
+    pub fn raster(image: std::sync::Arc<crate::pictures::Image>, rect: Rect) -> TextItem {
+        TextItem { raster: Some(image), ..TextItem::new(String::new(), Role::Cell, rect, 0, None) }
     }
 
     /// A number in the numbers' font (`numbers`), its characters' boxes
@@ -266,6 +275,8 @@ pub struct TextSink<'f> {
     /// The game-style lettering goes to the text layer too (the sharp
     /// HUD's: [`TextSink::takes_lettering`]).
     lettering: bool,
+    /// Legacy Collection HD chip art overlays are drawn in the chip window.
+    hd_chip_art: bool,
     /// Where the items pushed keep to in a frame larger than the original's
     /// (`TextItem::anchor`).
     pub anchor: Anchor,
@@ -276,7 +287,23 @@ impl<'f> TextSink<'f> {
     /// the sharp HUD's, where there is a font.
     pub fn new(enhancements: Enhancements, font: Option<&'f VectorFont>) -> TextSink<'f> {
         let (sharp, lettering) = (enhancements.text && font.is_some(), enhancements.hud && font.is_some());
-        TextSink { sharp, font, measure: None, pixels: None, items: Vec::new(), next_tag: 0, strings: Default::default(), lettering, anchor: Anchor::CENTER }
+        TextSink {
+            sharp,
+            font,
+            measure: None,
+            pixels: None,
+            items: Vec::new(),
+            next_tag: 0,
+            strings: Default::default(),
+            lettering,
+            hd_chip_art: enhancements.hd_chip_art,
+            anchor: Anchor::CENTER,
+        }
+    }
+
+    /// Whether Legacy Collection HD chip art overlays should be queued in the chip window.
+    pub fn draws_hd_chip_art(&self) -> bool {
+        self.hd_chip_art
     }
 
     /// Whether the strings are laid out for the text layer (the sharp text,

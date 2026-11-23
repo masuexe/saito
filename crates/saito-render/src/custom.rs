@@ -895,6 +895,8 @@ struct Window {
     /// its top left: `help_items`), its letters taken off its tiles.
     help: Option<(String, Option<HelpLetters>)>,
     help_lines: Vec<TextItem>,
+    /// Optional Legacy Collection HD chip art (512×432 RGBA8) to overlay on the 56×48 chip picture box.
+    hd_art: Option<std::sync::Arc<crate::pictures::Image>>,
     /// The damage's digits' words, with the sharp HUD (their cells blank).
     damage: Option<String>,
     /// With the sharp HUD, the window's labels it shows (`letter_labels`):
@@ -1111,6 +1113,7 @@ impl Window {
             advance_names: Vec::new(),
             help: None,
             help_lines: Vec::new(),
+            hd_art: None,
             damage: None,
             labels: Vec::new(),
             codes: Vec::new(),
@@ -1881,7 +1884,11 @@ impl Window {
                 Some(a) if a.version.as_deref().is_some_and(|g| g != console_version) => Some(crate::lookups::OTHER_VERSIONS_ART),
                 _ => None,
             };
-            let what = format!("chip:{}", saito_content_api::keys::local(&v.b.content.defs.chip(c).key));
+            let local = saito_content_api::keys::local(&v.b.content.defs.chip(c).key);
+            if !beast_out && text.draws_hd_chip_art() {
+                self.hd_art = v.graphics.hd_chip_art(local);
+            }
+            let what = format!("chip:{local}");
             if art.is_some() && problems.wants(&what) {
                 self.picture_mark = Some(what);
             }
@@ -2431,6 +2438,16 @@ impl Window {
             let rect = item.rect.offset(x, 8 * block.row as i32);
             text.push(Plane::Hud, TextItem { rect, clip, past_ranged, ..item.clone() });
         }
+    }
+
+    /// The Legacy Collection HD chip artwork overlaid on the chip picture box when enabled and present.
+    fn hd_art_item(&self, text: &mut TextSink, place: Placement) {
+        let Some(img) = &self.hd_art else { return };
+        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
+        let past_ranged = block.palette & 15 >= 14;
+        let rect = Rect::new(x, 8 * block.row as i32, 8 * block.w as i32, 8 * block.h as i32);
+        text.push(Plane::Hud, TextItem { clip, past_ranged, ..TextItem::raster(img.clone(), rect) });
     }
 
     /// The damage's digits in the numbers' font (the sharp HUD's:
@@ -3156,6 +3173,7 @@ pub fn draw<'a>(
     w.shape_items(text, place);
     w.name_item(text, place);
     w.help_items(text, place);
+    w.hd_art_item(text, place);
     w.damage_item(&v, text, place);
     w.label_items(text, place);
     if let Some((r, p)) = &panel {
@@ -3169,6 +3187,7 @@ pub fn draw<'a>(
         p.shape_items(text, place);
         p.name_item(text, place);
         p.help_items(text, place);
+        p.hd_art_item(text, place);
         p.damage_item(&v, text, place);
         p.label_items(text, place);
         text.rework_since(items, |_, item| {

@@ -310,6 +310,9 @@ msgstr "깜빡임 감소"
 msgid "Hide aura number"
 msgstr "드림오라 숫자 숨기기"
 
+msgid "HD chip art"
+msgstr "HD 칩 일러스트"
+
 # ---- Stage & BGM preset dialog ----
 
 msgid "Stage & BGM"
