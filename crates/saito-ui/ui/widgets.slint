@@ -1090,7 +1090,6 @@ export component Field inherits Rectangle {
     out property <bool> focused: hit.focused;
     out property <bool> editing: hit.focused && Nav.editing;
     property <int> seq: Nav.edit-seq;
-    property <length> scroll;
     property <string> family: root.heading ? Theme.display : root.code ? Theme.mono : Theme.body;
     property <length> face: root.heading ? (Theme.handheld ? 16px : 20px) : root.code ? 16px : 14px;
     property <int> weight: root.heading ? Theme.display-bold : root.code ? 700 : 400;
@@ -1136,16 +1135,26 @@ export component Field inherits Rectangle {
         overflow: elide;
     }
 
-    // The edit itself: clipped at the padding, moved to keep the caret in view.
-    Rectangle {
+    // The edit itself: clipped at the padding, horizontally pannable by touch on handheld when the text
+    // overflows the field, and auto-scrolled with edge margin so tapping near either edge reveals hidden text.
+    flick := Flickable {
+        property <length> scroll-margin: min(32px, self.width / 4);
         x: 12px;
+        y: 0px;
         width: parent.width - 24px;
-        clip: true;
+        height: parent.height;
+        visible: root.editing && !Theme.web;
+        content-width: input.width;
+        content-height: self.height;
+        interactive: Theme.handheld && input.width > self.width;
+        mouse-drag-pan-enabled: false;
         // (In a browser the edit is an HTML input laid over the field, for the input method: this one is hidden, and
         // so is the text while it is edited. The app's page::text_entry.)
         input := TextInput {
-            x: min(0px, max(parent.width - self.width, root.scroll));
-            width: max(parent.width, self.preferred-width + 2px);
+            x: 0px;
+            y: 0px;
+            width: max(flick.width, self.preferred-width + 4px);
+            height: flick.height;
             visible: root.editing && !Theme.web;
             enabled: root.editing && !Theme.web;
             color: Theme.text;
@@ -1166,15 +1175,16 @@ export component Field inherits Rectangle {
                     self.text = root.text;
                     self.set-selection-offsets(100000, 100000);
                 }
+                flick.content-x = min(0px, max(flick.width - self.width, flick.content-x));
             }
             accepted => {
                 Nav.edit-done(root.nav, root.nav-index, self.text);
             }
             cursor-position-changed(at) => {
-                if at.x + root.scroll < 0px {
-                    root.scroll = -at.x;
-                } else if at.x + root.scroll > parent.width - 2px {
-                    root.scroll = parent.width - 2px - at.x;
+                if at.x + flick.content-x < flick.scroll-margin {
+                    flick.content-x = min(0px, flick.scroll-margin - at.x);
+                } else if at.x + flick.content-x > flick.width - flick.scroll-margin {
+                    flick.content-x = max(flick.width - self.width, flick.width - flick.scroll-margin - at.x);
                 }
             }
         }
@@ -1184,7 +1194,7 @@ export component Field inherits Rectangle {
     changed seq => {
         if hit.focused && Nav.editing {
             Nav.edit-began(root.nav, root.nav-index, root.text);
-            root.scroll = 0px;
+            flick.content-x = 0px;
             input.text = Nav.edit-seed == "" ? root.text : Nav.edit-seed;
             if !Theme.web {
                 input.focus();
@@ -1207,6 +1217,7 @@ export component Field inherits Rectangle {
         if root.editing && input.text != root.text {
             input.text = root.text;
             input.set-selection-offsets(100000, 100000);
+            flick.content-x = min(0px, max(flick.width - input.width, flick.content-x));
         }
     }
     // (In a browser the input laid over the field is told what the app kept of each change it heard, whether or not
