@@ -94,6 +94,10 @@ block.UNRECORDABLE = {
     "gigacan3", "h-burst", "magshok1", "magshok2", "magshok3", "bodygrd", "poisphar", "pdriver",
 }
 
+-- In EXE4, MegaMan must use DarkSword during the ShadeMan story battle to progress,
+-- so DarkSword is always present in the standard ABD pool unless all 24 standard slots are full.
+block.REQUIRED_IF_STANDARD_UNFILLED = "drksword"
+
 -- `validate`'s part: the places' (@exelib/auto_battle/places) plus no place holding 0 (EXE4's AI has no test of 0
 -- and plays its chip table's record 0, which is no chip; souls' chips are already rejected by `places.validate` as
 -- unobtainable special chips).

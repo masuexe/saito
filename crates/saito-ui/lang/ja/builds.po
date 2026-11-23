@@ -697,3 +697,6 @@ msgstr "不正ABDデータ：原作では通常ABDに記録できません"
 msgid "Already placed"
 msgstr "配置済み"
 
+
+msgid "Illegal ABD data: {} is required in Standard unless all Standard slots are full"
+msgstr "不正ABDデータ：スタンダード枠が埋まっていない場合は{}が必須です"

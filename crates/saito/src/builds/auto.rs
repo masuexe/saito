@@ -67,17 +67,31 @@ impl List {
 }
 
 /// The block's lists, as the game's module states them, together with any
-/// chips that cannot be legitimately recorded in ABD in the original game.
+/// chips that cannot be legitimately recorded in ABD in the original game,
+/// and any chip required in the `standard` list when its slots are not full.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
     pub lists: Vec<List>,
     pub unrecordable: BTreeSet<ChipHandle>,
+    pub required_if_standard_unfilled: Option<ChipHandle>,
 }
 
 impl Layout {
     /// Whether `chip` cannot be legitimately recorded in ABD in the original game.
     pub fn is_unrecordable(&self, chip: ChipHandle) -> bool {
         self.unrecordable.contains(&chip)
+    }
+
+    /// Returns the chip required in the `standard` list when its slots are not all filled
+    /// (EXE4's `DrkSword`), if it is currently absent from `standard` in `data`.
+    pub fn missing_required_standard(&self, data: &AutoBattle) -> Option<ChipHandle> {
+        let required = self.required_if_standard_unfilled?;
+        let std_list = self.lists.iter().find(|l| l.name == "standard")?;
+        if std_list.places().all(|p| data.places[p] != Entry::Empty) {
+            return None;
+        }
+        let present = std_list.places().any(|p| data.places[p] == Entry::Chip(required));
+        (!present).then_some(required)
     }
 
     /// The layout `block` (the game's module, as data) states, where it is
@@ -98,8 +112,8 @@ impl Layout {
             return None;
         }
         let mut unrecordable = BTreeSet::new();
+        let game = content.game();
         if let Data::List(keys) = d.field("UNRECORDABLE") {
-            let game = content.game();
             for entry in keys {
                 if let Some(key) = entry.str()
                     && let Some(chip) = saito_match::ids::chip(content, game, key)
@@ -108,9 +122,19 @@ impl Layout {
                 }
             }
         }
+        let required_if_standard_unfilled = d
+            .field("REQUIRED_IF_STANDARD_UNFILLED")
+            .str()
+            .and_then(|key| saito_match::ids::chip(content, game, key));
         let items = match d.field("LISTS") {
             Data::List(items) => items.as_slice(),
-            Data::Nil => return Some(Layout { lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any, unique: false }], unrecordable }),
+            Data::Nil => {
+                return Some(Layout {
+                    lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any, unique: false }],
+                    unrecordable,
+                    required_if_standard_unfilled,
+                });
+            }
             _ => return None,
         };
         let mut lists = Vec::new();
@@ -138,7 +162,7 @@ impl Layout {
             }
             next += l.len;
         }
-        (next == PLACES).then_some(Layout { lists, unrecordable })
+        (next == PLACES).then_some(Layout { lists, unrecordable, required_if_standard_unfilled })
     }
 
     /// The list place `place` (from 0) is in.
@@ -440,6 +464,24 @@ mod tests {
         let cannon = ids::chip(&four, "exe4", "cannon").unwrap();
         assert!(update(&four, &mut m.sides[0], Edit::Put(5, cannon)));
         assert_eq!(AutoBattle::of_side(&four, &m.sides[0]).places[5], Entry::Chip(cannon));
+
+        // S-063: EXE4 requires DarkSword in Standard (places 3..27) unless all 24 Standard slots are full.
+        let drksword = ids::chip(&four, "exe4", "drksword").unwrap();
+        assert_eq!(layout.required_if_standard_unfilled, None, "EXE5 has no required DarkSword rule");
+        assert_eq!(layout4.required_if_standard_unfilled, Some(drksword));
+        let mut data = AutoBattle::default();
+        assert_eq!(layout4.missing_required_standard(&data), Some(drksword), "empty ABD warns");
+        data.places[0] = Entry::Chip(drksword);
+        assert_eq!(layout4.missing_required_standard(&data), Some(drksword), "first-list DarkSword does not satisfy standard list");
+        data.places[3] = Entry::Chip(cannon);
+        assert_eq!(layout4.missing_required_standard(&data), Some(drksword), "partial standard without DarkSword warns");
+        data.places[10] = Entry::Chip(drksword);
+        assert_eq!(layout4.missing_required_standard(&data), None, "partial standard with DarkSword is valid");
+        for p in 3..27 {
+            data.places[p] = Entry::Chip(cannon);
+        }
+        assert_eq!(layout4.missing_required_standard(&data), None, "all 24 standard slots filled without DarkSword is valid");
+        assert_eq!(layout.missing_required_standard(&AutoBattle::default()), None, "EXE5 never warns");
     }
 
     #[test]

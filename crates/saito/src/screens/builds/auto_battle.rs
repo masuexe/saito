@@ -158,6 +158,17 @@ impl AutoBattle {
         view.set_filled(self.editable.iter().filter(|&&p| data.places[p] != Entry::Empty).count() as i32);
         view.set_places(self.editable.len() as i32);
         view.set_problems(draft.pane_line(shell, &[auto::PLACES_FIELD.to_string()], false).into());
+        view.set_warning(AutoBattle::data_warning(shell, draft, &data));
+    }
+
+    /// Non-blocking ABD-wide warning (e.g., EXE4 missing DarkSword when Standard slots are not full).
+    fn data_warning(shell: &Shell, draft: &Draft, data: &Data) -> slint::SharedString {
+        let Some(chip) = draft.kit.auto_layout().and_then(|l| l.missing_required_standard(data)) else {
+            return Default::default();
+        };
+        let ui = shell.ui();
+        let view = ui.global::<AutoBattleView>();
+        draft.with_words(shell, |words| view.invoke_missing_required_standard(words.names.chip(chip).into()))
     }
 
     /// The library's rows, as sorted and searched: of the chips the place being filled can hold.
@@ -291,10 +302,13 @@ impl AutoBattle {
         };
         let ui = shell.ui();
         let say = ui.global::<BuildWords>();
+        let data_warn = AutoBattle::data_warning(shell, draft, &data);
         let detail = draft.with_words(shell, |words| {
             // (Why what was asked of the place wasn't done: the strip's refusal, said before what is against it.)
             let problem = notice.unwrap_or_default();
-            let Some(chip) = chip else { return ChipDetail { problem: problem.into(), fault: fault.into(), ..Default::default() } };
+            let Some(chip) = chip else {
+                return ChipDetail { problem: problem.into(), fault: fault.into(), warning: data_warn.clone(), ..Default::default() };
+            };
             let record = content.chip(chip);
             let dark = record.flags.has(saito_battle::content::ChipFlags::DARK);
             let mut facts = vec![say.invoke_class(kind(record.class), dark), say.invoke_megabytes(record.mb as i32)];
@@ -307,7 +321,7 @@ impl AutoBattle {
             let warning = if draft.kit.auto_layout().is_some_and(|l| l.is_unrecordable(chip)) {
                 ui.global::<AutoBattleView>().invoke_illegal_detail()
             } else {
-                Default::default()
+                data_warn.clone()
             };
             ChipDetail {
                 there: true,

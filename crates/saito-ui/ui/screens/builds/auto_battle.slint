@@ -53,6 +53,8 @@ export global AutoBattleView {
     // phone's line over the places (docs/design/app-ui.md §2.66; a desktop's strip says them of the place it describes).
     // A place a problem is about has its name red.
     in property <string> problems;
+    // Non-blocking ABD-wide illegal data warning (e.g., EXE4 missing DarkSword when Standard slots are not full).
+    in property <string> warning;
     out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
     // Where the place a chip just went into is (its column and row), counted: it flashes.
     in property <int> landed-column;
@@ -88,6 +90,9 @@ export global AutoBattleView {
     }
     public pure function illegal-detail() -> string {
         return @tr("Illegal ABD data: cannot be recorded normally in the original game");
+    }
+    public pure function missing-required-standard(chip: string) -> string {
+        return @tr("Illegal ABD data: {} is required in Standard unless all Standard slots are full", chip);
     }
     public pure function already-placed() -> string {
         return @tr("Already placed");
@@ -469,6 +474,22 @@ export component AutoBattleTab inherits Rectangle {
         width: max(0px, clear.x + clear.pad - 12px - self.x);
         visible: Theme.handheld;
         text: AutoBattleView.problems;
+    }
+
+    // (Non-blocking ABD-wide illegal data warning in the places header / phone lead line.)
+    Text {
+        x: Theme.phone ? 0px : places-title.x + places-title.preferred-width + 12px;
+        y: Theme.phone ? 0px : Theme.sideways ? clear.y : root.pane-y;
+        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        height: Theme.phone ? root.phone-lead : Theme.sideways ? clear.height : 44px;
+        visible: AutoBattleView.warning != "" && (!Theme.handheld || AutoBattleView.problems == "");
+        text: AutoBattleView.warning;
+        color: Theme.warn;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: 500;
+        vertical-alignment: center;
+        overflow: elide;
     }
 
     page := ScrollPage {

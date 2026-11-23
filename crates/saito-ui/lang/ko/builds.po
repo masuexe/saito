@@ -678,3 +678,6 @@ msgstr "불법 ABD 데이터: 원작에서 정상적으로 ABD에 기록할 수 
 
 msgid "Already placed"
 msgstr "이미 배치됨"
+
+msgid "Illegal ABD data: {} is required in Standard unless all Standard slots are full"
+msgstr "불법 ABD 데이터: 스탠다드 슬롯이 가득 차지 않은 경우 {}가 필요합니다"
