@@ -264,3 +264,9 @@ msgstr "最新バージョンです。"
 
 msgid "Couldn't check for updates."
 msgstr "更新を確認できませんでした。"
+
+msgid "Auto-upload replays"
+msgstr "リプレイの自動アップロード"
+
+msgid "Automatically upload finished online replays to the server's Recent Replays feed. Off by default."
+msgstr "オンライン対戦終了後、リプレイをサーバーの「最近のリプレイ」に自動アップロードします。初期設定はオフです。"

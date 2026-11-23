@@ -351,6 +351,8 @@ pub struct Play {
     stage_config: stage::StageConfig,
     stage_loaded: bool,
     stage_dialog: bool,
+    /// Local replay file currently being recorded for the active online set, plus its final outcome once finished.
+    recorded_replay: Option<(std::path::PathBuf, Option<crate::replays::feed::UploadOutcome>)>,
 }
 
 impl Default for Play {
@@ -395,6 +397,7 @@ impl Default for Play {
             stage_config: stage::StageConfig::default(),
             stage_loaded: false,
             stage_dialog: false,
+            recorded_replay: None,
         }
     }
 }
@@ -629,6 +632,7 @@ impl Play {
                 shell.end_battle();
             }
         }
+        self.maybe_upload_replay(shell);
         self.stage = Stage::Idle;
         // (What was being done about the other player's content is the link's: a later one starts anew.)
         self.switch = None;
@@ -901,6 +905,7 @@ impl Play {
         if shell.battle.as_ref().is_some_and(|b| b.owner == ScreenId::Play) {
             shell.end_battle();
         }
+        self.maybe_upload_replay(shell);
         if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
             lobby.reopen();
         }
@@ -927,6 +932,20 @@ impl Play {
         };
         let Some(b) = shell.battle.as_ref() else { return false };
         let (wins, losses) = b.stage.player.battle().wins_for(b.viewer);
+        // Record side 0's (P1's) perspective outcome for auto-uploading finished online replays.
+        if let Some((_, recorded_outcome)) = self.recorded_replay.as_mut() {
+            let (p1_wins, p2_wins) = b.stage.player.battle().wins_for(0);
+            let res_str = match (result, b.viewer) {
+                (BattleResult::Won, 0) | (BattleResult::Lost, 1) => "p1",
+                (BattleResult::Lost, 0) | (BattleResult::Won, 1) => "p2",
+                (BattleResult::Drawn, _) => "draw",
+                _ => "unfinished",
+            };
+            *recorded_outcome = Some(crate::replays::feed::UploadOutcome {
+                score: [p1_wins as u32, p2_wins as u32],
+                result: res_str,
+            });
+        }
         let time = b.stage.player.ticks() as f64 / FRAME_RATE;
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
@@ -1684,20 +1703,38 @@ impl Play {
 /// A recorder of the match the lobby agreed, to a new file in the replays folder: its info is the agreement's
 /// (an online match, from this player's side, by the names the lobby had, open setups where they were
 /// agreed). None if the file can't be made (why is in the log).
-fn recorder(content: &std::sync::Arc<saito_battle::Content>, agreed: &Agreement, game: &str) -> Option<Recorder> {
+fn recorder(content: &std::sync::Arc<saito_battle::Content>, agreed: &Agreement, game: &str) -> Option<(Recorder, std::path::PathBuf)> {
     let dir = crate::paths::replays();
-    let made = (|| -> Result<Recorder, String> {
+    let made = (|| -> Result<(Recorder, std::path::PathBuf), String> {
         saito_files::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let when = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let stamp = chrono::DateTime::from_timestamp(when as i64, 0).map(|t| t.with_timezone(&chrono::Local).format("%Y%m%d-%H%M%S").to_string()).unwrap_or_default();
         let path = dir.join(format!("{stamp}-{game}.{}", saito_frontend::replay::EXTENSION));
         let file = saito_files::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Recorder::of_agreement(Box::new(std::io::BufWriter::new(file)), content, agreed, when)
+        let rec = Recorder::of_agreement(Box::new(std::io::BufWriter::new(file)), content, agreed, when)?;
+        Ok((rec, path))
     })();
     made.map_err(|why| crate::errors::log("making a match's replay file", &why)).ok()
 }
 
 impl Play {
+    /// Upload the just-finished online replay in the background when opt-in auto-upload is enabled.
+    /// Must be called after `shell.end_battle()` so the recording file has been flushed and closed.
+    fn maybe_upload_replay(&mut self, shell: &Shell) {
+        let Some((path, Some(outcome))) = self.recorded_replay.take() else { return };
+        if !shell.settings.auto_upload_replays || shell.still {
+            return;
+        }
+        let Some(base) = crate::replays::feed::server_http_base(&shell.settings.signaling_server) else {
+            return;
+        };
+        let _ = slint::spawn_local(async move {
+            if let Err(why) = crate::replays::feed::upload_file(&base, &path, outcome).await {
+                crate::errors::log("auto-uploading replay", &why);
+            }
+        });
+    }
+
     /// The other player's content, where it isn't this side's.
     ///
     /// Its hash isn't this side's (`Lobby::their_content`): both play the newer revision. This side's revision is
@@ -2658,13 +2695,17 @@ impl Screen for Play {
             // The match begins: it is recorded from its first tick, by its agreement.
             (BattleEvent::Started, Stage::Loading { .. }) => {
                 self.stage = Stage::Match { result: None };
+                self.recorded_replay = None;
                 // (Not in the screenshot pass, which keeps nothing, unless it is told where the replays go.)
                 if (!shell.still || std::env::var_os("SAITO_REPLAYS").is_some())
                     && let (Some(agreed), Some((game, ready)), Some(b)) = (&self.agreed, shell.ready(), shell.battle.as_mut())
-                    && let Some(recorder) = recorder(ready.content(), agreed, &game)
-                    && let Err(why) = b.stage.player.record(recorder)
+                    && let Some((recorder, path)) = recorder(ready.content(), agreed, &game)
                 {
-                    crate::errors::log("recording the match", &why);
+                    if let Err(why) = b.stage.player.record(recorder) {
+                        crate::errors::log("recording the match", &why);
+                    } else {
+                        self.recorded_replay = Some((path, None));
+                    }
                 }
                 if let (Some(host), Some(agreed), Some((_, ready)), Some(b)) =
                     (&mut self.host_spectate, &self.agreed, shell.ready(), shell.battle.as_mut())

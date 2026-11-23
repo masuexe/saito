@@ -78,7 +78,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => 1,
         "set.music" | "set.effects" => 2,
-        "set.delay" | "set.server" => 3,
+        "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
@@ -140,6 +140,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_input_delay(s.input_delay as i32);
     view.set_signaling_server(s.signaling_server.as_str().into());
     view.set_default_signaling_server(DEFAULT_SIGNAL_SERVER.into());
+    view.set_auto_upload_replays(s.auto_upload_replays);
     view.set_data_folder(crate::paths::data().display().to_string().into());
     view.set_can_send_nearby(saito_nearby::can_offer() && shell.games.rom_source().is_some());
     binding.show(shell);
@@ -435,6 +436,11 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, !shell.reduces_motion()),
             "set.updates" => self.set_check_updates(shell, !shell.settings.check_updates),
+            "set.auto-upload" => {
+                shell.settings.auto_upload_replays = !shell.settings.auto_upload_replays;
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.check-now" => {
                 shell.games.download(true);
                 shell.check_updates_now(true);
@@ -476,6 +482,11 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, by > 0),
             "set.updates" => self.set_check_updates(shell, by > 0),
+            "set.auto-upload" => {
+                shell.settings.auto_upload_replays = by > 0;
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(by > 0)),
             "set.music" => self.set_levels(shell, (shell.settings.music as i32 + 5 * by).clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => {
@@ -517,6 +528,11 @@ impl Screen for Settings {
             }
             "set.motion" => self.set_reduce_motion(shell, choice == 1),
             "set.updates" => self.set_check_updates(shell, choice == 1),
+            "set.auto-upload" => {
+                shell.settings.auto_upload_replays = choice == 1;
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),

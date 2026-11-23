@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
+import { ReplayStore } from "./replays.js";
 
 /**
  * Standalone saito signaling server (v1), protocol-compatible with
@@ -138,6 +139,19 @@ const TURN_URLS = (process.env.TURN_URLS ?? "")
 	.split(/[\s,]+/)
 	.filter(Boolean);
 const TURN_SECRET = process.env.TURN_SECRET ?? "";
+const REPLAYS_DIR = process.env.REPLAYS_DIR ?? "/data/replays";
+const REPLAYS_MAX_AGE_DAYS = Number(process.env.REPLAYS_MAX_AGE_DAYS ?? "7");
+const REPLAYS_MAX_COUNT = Number(process.env.REPLAYS_MAX_COUNT ?? "200");
+const REPLAYS_MAX_BYTES = Number(process.env.REPLAYS_MAX_BYTES ?? String(512 * 1024));
+const REPLAYS_UPLOAD_LIMIT_PER_MINUTE = Number(process.env.REPLAYS_UPLOAD_LIMIT_PER_MINUTE ?? "10");
+
+const replayStore = new ReplayStore({
+	dir: REPLAYS_DIR,
+	maxAgeDays: REPLAYS_MAX_AGE_DAYS,
+	maxCount: REPLAYS_MAX_COUNT,
+	maxBytes: REPLAYS_MAX_BYTES,
+	uploadLimitPerMinute: REPLAYS_UPLOAD_LIMIT_PER_MINUTE,
+});
 
 const rooms = new Map<string, RoomState>();
 const metaBySocket = new WeakMap<WebSocket, PeerMeta>();
@@ -463,7 +477,7 @@ setInterval(() => {
 	}
 }, 100).unref();
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 	if (url.pathname === "/health") {
 		res.writeHead(200, { "Content-Type": "text/plain" });
@@ -478,6 +492,9 @@ const server = http.createServer((req, res) => {
 			"Cache-Control": "no-store",
 		});
 		res.end(req.method === "HEAD" ? undefined : body);
+		return;
+	}
+	if (await replayStore.handleHttp(req, res, url, clientIp(req))) {
 		return;
 	}
 	const invite = url.pathname.match(/^\/rooms(?:\/([^/]*))?\/?$/);
@@ -984,5 +1001,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(PORT, HOST, () => {
-	console.log(`saito-signal listening on ${HOST}:${PORT} (STUN=${STUN_URLS.join(",")}, TURN=${TURN_URLS.join(",") || "disabled"})`);
+	console.log(
+		`saito-signal listening on ${HOST}:${PORT} (STUN=${STUN_URLS.join(",")}, TURN=${TURN_URLS.join(",") || "disabled"}, REPLAYS=${replayStore.isEnabled() ? REPLAYS_DIR : "disabled"})`,
+	);
 });

@@ -13,6 +13,7 @@
 //! as the menu shows, then handed out one after another.
 
 pub mod cache;
+pub mod feed;
 
 use cache::{Cache, Id};
 use saito_battle::Content;

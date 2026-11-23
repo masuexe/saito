@@ -313,3 +313,25 @@ msgstr "v{} で記録 · 元の対戦と異なる場合があります"
 msgid "Recorded on v{} · exact replay kernel"
 msgstr "v{} で記録 · 正確な過去バージョンコアで再生"
 
+
+# Recent Replays feed tab
+msgid "Recent"
+msgstr "最近のリプレイ"
+
+msgid "Loading..."
+msgstr "読み込み中…"
+
+msgid "Downloading..."
+msgstr "ダウンロード中…"
+
+msgid "Save locally"
+msgstr "ローカルに保存"
+
+msgid "Saved"
+msgstr "保存済み"
+
+msgid "Loading recent replays..."
+msgstr "最近のリプレイを読み込み中…"
+
+msgid "No recent replays on the server yet."
+msgstr "サーバーに最近のリプレイはまだありません。"

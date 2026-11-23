@@ -312,3 +312,25 @@ msgstr "录制于 v{} · 回放可能与原对局存在差异"
 msgid "Recorded on v{} · exact replay kernel"
 msgstr "录制于 v{} · 精确历史内核回放"
 
+
+# Recent Replays feed tab
+msgid "Recent"
+msgstr "近日录像"
+
+msgid "Loading..."
+msgstr "加载中…"
+
+msgid "Downloading..."
+msgstr "下载中…"
+
+msgid "Save locally"
+msgstr "保存到本地"
+
+msgid "Saved"
+msgstr "已保存"
+
+msgid "Loading recent replays..."
+msgstr "正在加载近日录像…"
+
+msgid "No recent replays on the server yet."
+msgstr "服务器上暂时还没有近日录像。"

@@ -46,6 +46,7 @@ export global SettingsView {
     in property <int> input-delay;
     in property <string> signaling-server;
     in property <string> default-signaling-server;
+    in property <bool> auto-upload-replays;
     // Each action's key and pad button, by their names, in the actions' order.
     in property <[string]> keys;
     in property <[PadBinding]> buttons;
@@ -602,6 +603,25 @@ component SettingsPage inherits Page {
                         nav: "set.server";
                         text: SettingsView.signaling-server;
                         placeholder: SettingsView.default-signaling-server;
+                    }
+                }
+
+                Rectangle {
+                    height: row-auto-upload.height;
+                    row-auto-upload := SettingLabel {
+                        label: @tr("Auto-upload replays");
+                        note: @tr("Automatically upload finished online replays to the server's Recent Replays feed. Off by default.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.auto-upload";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.auto-upload-replays ? 1 : 0;
                     }
                 }
 

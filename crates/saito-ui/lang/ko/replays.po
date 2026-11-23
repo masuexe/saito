@@ -301,3 +301,25 @@ msgstr "v{}에서 기록 · 원래 대전과 다를 수 있습니다"
 
 msgid "Recorded on v{} · exact replay kernel"
 msgstr "v{}에서 기록 · 정확한 구버전 코어로 재생"
+
+# Recent Replays feed tab
+msgid "Recent"
+msgstr "최근 리플레이"
+
+msgid "Loading..."
+msgstr "불러오는 중…"
+
+msgid "Downloading..."
+msgstr "다운로드 중…"
+
+msgid "Save locally"
+msgstr "로컬에 저장"
+
+msgid "Saved"
+msgstr "저장됨"
+
+msgid "Loading recent replays..."
+msgstr "최근 리플레이를 불러오는 중…"
+
+msgid "No recent replays on the server yet."
+msgstr "서버에 최근 리플레이가 아직 없습니다."

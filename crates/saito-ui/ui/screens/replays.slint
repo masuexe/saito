@@ -51,8 +51,16 @@ export global ReplaysView {
     in property <bool> kinds;
     in property <int> kind;
     in property <string> search;
-    // The tab shown: 0 the replays, 1 the play queue (docs/design/app-ui.md §2.91).
+    // The tab shown: 0 the replays, 1 the recent replays feed, 2 the play queue (docs/design/app-ui.md §2.91).
     in property <int> tab;
+
+    // ---- The Recent Replays feed (server-hosted recent matches) ----
+    in property <[ReplayRow]> feed;
+    in property <int> feed-chosen: -1;
+    in property <bool> feed-loading;
+    in property <bool> feed-downloading;
+    in property <string> feed-status;
+    in property <bool> feed-saved;
 
     // ---- The play queue: the Queue tab's list, and the viewer's while it plays ----
     // Its entries as the list's rows (a missing one's `reason` says so), and the one chosen in the Queue tab.
@@ -661,52 +669,77 @@ component DetailPanel inherits Rectangle {
         enabled: ReplaysView.tab == 0 && ReplaysView.selected;
     }
 
+    // (A recent feed replay's: WATCH (downloads if needed), and SAVE LOCALLY.)
+    feed-watch := Button {
+        x: root.pad;
+        y: root.beside ? root.row-1 : root.buttons-y;
+        width: root.beside ? root.inner : self.natural-width;
+        height: root.beside ? 44px : 40px;
+        visible: ReplaysView.tab == 1;
+        nav: "feed-watch";
+        text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
+        kind: ButtonKind.main;
+        enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading;
+    }
+
+    Button {
+        x: root.beside ? root.pad : feed-watch.x + feed-watch.width + 12px;
+        y: root.beside ? root.row-2 : root.buttons-y;
+        width: root.beside ? root.inner : self.natural-width;
+        visible: ReplaysView.tab == 1;
+        nav: "feed-save";
+        text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
+        enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
+    }
+
     // (A queue entry's: WATCH FROM HERE, MOVE UP and MOVE DOWN; apart, REMOVE, which leaves its file be.)
     watch-from := Button {
         x: root.pad;
         y: root.beside ? root.row-1 : root.buttons-y;
         width: root.beside ? root.inner - 2 * (40px + 12px) : self.natural-width;
         height: root.beside ? 44px : 40px;
-        visible: ReplaysView.tab == 1;
+        visible: ReplaysView.tab == 2;
         nav: "watch-from";
         text: I18n.upper(@tr("Watch from here"));
         kind: ButtonKind.main;
-        enabled: ReplaysView.tab == 1 && ReplaysView.playable;
+        enabled: ReplaysView.tab == 2 && ReplaysView.playable;
     }
 
     move-up := IconButton {
         x: watch-from.x + watch-from.width + 12px;
         y: watch-from.y;
-        visible: ReplaysView.tab == 1;
+        visible: ReplaysView.tab == 2;
         nav: "move-up";
         icon: "M 8 3 L 13.5 11 L 2.5 11 Z";
-        enabled: ReplaysView.tab == 1 && ReplaysView.queue-chosen > 0;
+        enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen > 0;
     }
 
     IconButton {
         x: move-up.x + move-up.width + 12px;
         y: watch-from.y;
-        visible: ReplaysView.tab == 1;
+        visible: ReplaysView.tab == 2;
         nav: "move-down";
         icon: "M 2.5 5 L 13.5 5 L 8 13 Z";
-        enabled: ReplaysView.tab == 1 && ReplaysView.queue-chosen >= 0 && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
+        enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen >= 0 && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
     }
 
     Button {
         x: root.beside ? root.pad : parent.width - 16px - self.width;
         y: root.beside ? root.row-2 : parent.height - 56px;
         width: root.beside ? root.inner : self.natural-width;
-        visible: ReplaysView.tab == 1;
+        visible: ReplaysView.tab == 2;
         nav: "remove";
         text: I18n.upper(@tr("Remove"));
         kind: ButtonKind.ghost;
-        enabled: ReplaysView.tab == 1 && ReplaysView.selected;
+        enabled: ReplaysView.tab == 2 && ReplaysView.selected;
     }
 }
 
 // The same on a phone: a sheet from the bottom, opened by a tap on a row. Its controls' names begin `sheet.`.
 component DetailSheet inherits Rectangle {
-    property <bool> queue: ReplaysView.tab == 1;
+    property <bool> local: ReplaysView.tab == 0;
+    property <bool> recent: ReplaysView.tab == 1;
+    property <bool> queue: ReplaysView.tab == 2;
     property <length> inner: self.width - 32px;
     property <length> still-height: self.inner * 2 / 3;
     property <length> notice-room: ReplaysView.reason == "" && ReplaysView.notice != "" ? 36px : 0px;
@@ -759,60 +792,80 @@ component DetailSheet inherits Rectangle {
             height: 112px + root.notice-room;
         }
 
-        // (A replay's actions, or in the Queue tab the entry's: the other's are hidden and passed by. WATCH has its
-        // arrow at its right, as beside the list.)
+        // (A replay's actions, or in the Recent / Queue tab their own: the others are hidden and passed by.)
         Button {
             x: 16px;
             y: root.still-height + 148px + root.notice-room;
             width: root.inner - 42px;
-            visible: !root.queue;
+            visible: root.local;
             nav: "sheet.watch";
             text: I18n.upper(@tr("Watch"));
             kind: ButtonKind.main;
             square: true;
-            enabled: !root.queue && ReplaysView.playable;
+            enabled: root.local && ReplaysView.playable;
         }
 
         IconButton {
             x: 16px + root.inner - self.width;
             y: root.still-height + 148px + root.notice-room;
-            visible: !root.queue;
+            visible: root.local;
             nav: "sheet.watch-more";
             icon: Signs.arrow;
             main: true;
-            enabled: !root.queue && ReplaysView.playable;
+            enabled: root.local && ReplaysView.playable;
         }
 
         Button {
             x: 16px;
             y: root.still-height + 196px + root.notice-room;
             width: root.inner;
-            visible: !root.queue;
+            visible: root.local;
             nav: "sheet.export";
             text: I18n.upper(@tr("verb" => "Export video"));
-            enabled: !root.queue && ReplaysView.playable;
+            enabled: root.local && ReplaysView.playable;
         }
 
         Button {
             x: 16px;
             y: root.still-height + 244px + root.notice-room;
             width: root.inner;
-            visible: !root.queue;
+            visible: root.local;
             nav: "sheet.file";
             text: ReplaysView.file-word;
-            enabled: !root.queue;
+            enabled: root.local;
         }
 
         Button {
             x: 16px;
             y: root.still-height + 292px + root.notice-room;
             width: root.inner;
-            visible: !root.queue;
+            visible: root.local;
             nav: "sheet.delete";
             text: I18n.upper(@tr("Delete"));
             kind: ButtonKind.ghost;
             danger: true;
-            enabled: !root.queue;
+            enabled: root.local;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 148px + root.notice-room;
+            width: root.inner;
+            visible: root.recent;
+            nav: "sheet.feed-watch";
+            text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
+            kind: ButtonKind.main;
+            enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading;
+        }
+
+        Button {
+            x: 16px;
+            y: root.still-height + 196px + root.notice-room;
+            width: root.inner;
+            visible: root.recent;
+            nav: "sheet.feed-save";
+            text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
+            enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
         }
 
         Button {
@@ -863,22 +916,29 @@ component DetailSheet inherits Rectangle {
 // replay chosen beside it. The Replays tab has the search and the filter over its list; the Queue tab WATCH (from
 // its start) and CLEAR over the queue. The other tab's parts are hidden and passed by.
 component ListPage inherits Page {
-    property <bool> queue: ReplaysView.tab == 1;
+    property <bool> local: ReplaysView.tab == 0;
+    property <bool> recent: ReplaysView.tab == 1;
+    property <bool> queue: ReplaysView.tab == 2;
     // (On a phone held sideways, docs/design/app-ui.md §2.103: the tabs in the header's row after the title, the list
     // at the left and the replay's panel beside it.)
     property <length> list-width: Theme.phone ? self.body-width : Theme.sideways ? (self.body-width - 12px) / 2 + 24px : 600px;
     // (The tabs, then the filter at the search's right; on a phone under it.)
     property <length> top: Theme.sideways ? 0px : 52px;
     property <length> filter-room: ReplaysView.kinds && !Theme.phone ? (Theme.sideways ? kind.width + 8px : 232px) : 0px;
-    property <length> list-top: root.top + (ReplaysView.kinds && Theme.phone && !root.queue ? 96px : 52px);
+    property <length> list-top: root.top + (ReplaysView.kinds && Theme.phone && root.local ? 96px : 52px);
     title: I18n.upper(@tr("Replays"));
     back: I18n.upper(@tr("Menu"));
-    status: !ReplaysView.listed ? "" : root.queue ? ReplaysView.replay-count(ReplaysView.queue.length) : ReplaysView.replay-count(ReplaysView.count);
-    hints: !root.queue ? [
+    status: root.recent ? ReplaysView.replay-count(ReplaysView.feed.length) : !ReplaysView.listed ? "" : root.queue ? ReplaysView.replay-count(ReplaysView.queue.length) : ReplaysView.replay-count(ReplaysView.count);
+    hints: root.local ? [
         { key: "↑↓", pad: PadButton.move, text: @tr("Move") },
         { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Watch") },
         { key: "E", pad: PadButton.north, text: @tr("Export") },
         { key: "Del", pad: Shell.pad-delete, text: @tr("Delete") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Change game") },
+    ] : root.recent ? [
+        { key: "↑↓", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Watch") },
         { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
         { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Change game") },
     ] : [
@@ -897,7 +957,14 @@ component ListPage inherits Page {
             headed: Theme.sideways;
             nav: "tab";
             // (The Queue tab only while the queue holds something.)
-            tabs: ReplaysView.queue.length > 0 ? [{ text: I18n.upper(@tr("Replays")), enabled: true, flagged: false }, { text: I18n.upper(@tr("Queue")), enabled: true, flagged: false }] : [{ text: I18n.upper(@tr("Replays")), enabled: true, flagged: false }];
+            tabs: ReplaysView.queue.length > 0 ? [
+                { text: I18n.upper(@tr("Replays")), enabled: true, flagged: false },
+                { text: I18n.upper(@tr("Recent")), enabled: true, flagged: false },
+                { text: I18n.upper(@tr("Queue")), enabled: true, flagged: false },
+            ] : [
+                { text: I18n.upper(@tr("Replays")), enabled: true, flagged: false },
+                { text: I18n.upper(@tr("Recent")), enabled: true, flagged: false },
+            ];
             chosen: ReplaysView.tab;
         }
 
@@ -905,8 +972,8 @@ component ListPage inherits Page {
             x: 0;
             y: root.top;
             width: root.list-width - root.filter-room;
-            visible: !root.queue;
-            enabled: !root.queue;
+            visible: root.local;
+            enabled: root.local;
             nav: "search";
             text: ReplaysView.search;
             placeholder: @tr("Search by opponent");
@@ -916,12 +983,60 @@ component ListPage inherits Page {
         kind := Seg {
             x: Theme.phone ? 0px : root.list-width - self.width;
             y: root.top + (Theme.phone ? 50px : 2px);
-            visible: ReplaysView.kinds && !root.queue;
-            enabled: ReplaysView.kinds && !root.queue;
+            visible: ReplaysView.kinds && root.local;
+            enabled: ReplaysView.kinds && root.local;
             nav: "kind";
             first: I18n.upper(@tr("All"));
             second: I18n.upper(@tr("Online"));
             chosen: ReplaysView.kind;
+        }
+
+        // The Recent tab's bar: REFRESH.
+        HorizontalLayout {
+            x: 0;
+            y: root.top;
+            width: root.list-width;
+            height: 40px;
+            spacing: 12px;
+            alignment: start;
+            visible: root.recent;
+            Button {
+                nav: "feed-refresh";
+                text: ReplaysView.feed-loading ? I18n.upper(@tr("Loading...")) : I18n.upper(@tr("Refresh"));
+                enabled: root.recent && !ReplaysView.feed-loading;
+            }
+        }
+
+        feed-list := ListView {
+            x: 0;
+            y: root.list-top;
+            width: root.list-width;
+            height: root.body-height - root.list-top;
+            visible: root.recent;
+            nav: "feed";
+            count: root.recent ? ReplaysView.feed.length : 0;
+            chosen: ReplaysView.feed-chosen;
+            for slot in feed-list.shown: ReplayRowView {
+                property <int> at: feed-list.first + slot;
+                x: 0;
+                y: self.at * feed-list.pitch;
+                width: feed-list.row-width;
+                height: feed-list.row-height;
+                replay: ReplaysView.feed[self.at];
+                nav: feed-list.nav;
+                nav-index: self.at;
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
+            }
+        }
+
+        Note {
+            x: 12px;
+            y: root.list-top;
+            width: root.list-width - 24px;
+            height: 44px;
+            visible: root.recent && ReplaysView.feed.length == 0;
+            text: ReplaysView.feed-loading ? @tr("Loading recent replays...") : ReplaysView.feed-status != "" ? ReplaysView.feed-status : @tr("No recent replays on the server yet.");
         }
 
         // The Queue tab's: WATCH, from the first entry that plays; and CLEAR, which asks.
@@ -986,9 +1101,9 @@ component ListPage inherits Page {
             y: root.list-top;
             width: root.list-width;
             height: root.body-height - root.list-top;
-            visible: !root.queue;
+            visible: root.local;
             nav: "list";
-            count: root.queue ? 0 : ReplaysView.rows.length;
+            count: root.local ? ReplaysView.rows.length : 0;
             chosen: ReplaysView.chosen;
             for slot in list.shown: ReplayRowView {
                 property <int> at: list.first + slot;
@@ -1009,7 +1124,7 @@ component ListPage inherits Page {
             y: root.list-top;
             width: root.list-width - 24px;
             height: 44px;
-            visible: !root.queue;
+            visible: root.local;
             text: !ReplaysView.listed || ReplaysView.rows.length > 0 ? "" : (ReplaysView.count == 0 ? @tr("No replays yet. Every online match is recorded.") : @tr("No replays found."));
         }
     }

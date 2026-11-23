@@ -24,6 +24,43 @@ pub async fn get(url: &str, limit: u64) -> Result<Vec<u8>, String> {
     get_reporting(url, limit, |_| {}).await
 }
 
+/// POST a JSON `body` to `url`, reading at most `limit` bytes of the response body.
+pub async fn post_json(url: &str, body: Vec<u8>, limit: u64) -> Result<Vec<u8>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let client = client(CONNECT_WAIT, READ_WAIT)?;
+    #[cfg(target_arch = "wasm32")]
+    let client = client()?;
+    post_json_with(&client, url, body, limit).await
+}
+
+async fn post_json_with(client: &reqwest::Client, url: &str, body: Vec<u8>, limit: u64) -> Result<Vec<u8>, String> {
+    use futures_util::StreamExt;
+    let said = |e: reqwest::Error| format!("{url}: {e}");
+    let response = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(said)?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("{url}: {status}"));
+    }
+    if response.content_length().is_some_and(|n| n > limit) {
+        return Err(format!("{url}: over {limit} bytes"));
+    }
+    let mut out = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        out.extend_from_slice(&chunk.map_err(said)?);
+        if out.len() as u64 > limit {
+            return Err(format!("{url}: over {limit} bytes"));
+        }
+    }
+    Ok(out)
+}
+
 /// [`get`], telling `progress` how many bytes of the body have come as they come (a download's bar).
 pub async fn get_reporting(url: &str, limit: u64, progress: impl FnMut(u64)) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]

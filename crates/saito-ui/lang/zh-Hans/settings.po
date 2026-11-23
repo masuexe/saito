@@ -263,3 +263,9 @@ msgstr "当前已是最新版本。"
 
 msgid "Couldn't check for updates."
 msgstr "无法检查更新。"
+
+msgid "Auto-upload replays"
+msgstr "自动上传对战录像"
+
+msgid "Automatically upload finished online replays to the server's Recent Replays feed. Off by default."
+msgstr "联机对战结束后自动上传录像至服务器，用于「近日录像」浏览。默认关闭，随时可关。"

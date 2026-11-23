@@ -98,6 +98,54 @@ fn set_autoplay(shell: &mut Shell, on: bool) {
     shell.ui().global::<ReplaysView>().set_autoplay(on);
 }
 
+/// The list tabs: 0 local replays, 1 server recent replays feed, 2 play queue.
+const TAB_REPLAYS: u8 = 0;
+const TAB_RECENT: u8 = 1;
+const TAB_QUEUE: u8 = 2;
+
+/// What an async Recent Replays download should do once the `.saito` file lands in the cache.
+#[derive(Clone)]
+enum FeedDownloadGoal {
+    Watch,
+    Save(crate::replays::feed::FeedItem),
+}
+
+/// Completed async results for the Recent Replays feed.
+#[derive(Default)]
+struct FeedArrivals {
+    list: Option<(String, Result<Vec<crate::replays::feed::FeedItem>, String>)>,
+    download: Option<(String, FeedDownloadGoal, Result<PathBuf, String>)>,
+}
+
+/// Client state for the Recent Replays tab.
+struct FeedState {
+    items: Vec<crate::replays::feed::FeedItem>,
+    model: Rc<VecModel<ReplayRow>>,
+    chosen: usize,
+    game: Option<String>,
+    loading: bool,
+    downloading: bool,
+    status: String,
+    saved_ids: HashSet<String>,
+    arrivals: Rc<RefCell<FeedArrivals>>,
+}
+
+impl Default for FeedState {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            model: Rc::new(VecModel::default()),
+            chosen: 0,
+            game: None,
+            loading: false,
+            downloading: false,
+            status: String::new(),
+            saved_ids: HashSet::new(),
+            arrivals: Rc::new(RefCell::new(FeedArrivals::default())),
+        }
+    }
+}
+
 /// The viewer's popup of what is up next in the queue: its scope (`Nav::open`), its rows, its width on a desktop,
 /// the most rows it shows at once (more scroll), and the room over its rows (NEXT and Autoplay next, and the
 /// heading).
@@ -270,8 +318,10 @@ pub struct Replays {
     env_game_asked: bool,
     /// The app is kept awake for this screen (`Shell::stay_awake`): a replay plays, or a video is being made.
     awake: bool,
-    /// The Queue tab is shown in place of the replays.
-    queue_tab: bool,
+    /// Active list tab: `TAB_REPLAYS` (0), `TAB_RECENT` (1), or `TAB_QUEUE` (2).
+    tab: u8,
+    /// State for the Recent Replays feed tab.
+    feed: FeedState,
     /// Each game's play queue, while the app runs; the selected game's rows (each entry's: a missing one's says
     /// so), and the entry chosen in the Queue tab (and its path: the replay shown beside the queue).
     queues: HashMap<String, Queue>,
@@ -296,7 +346,11 @@ pub struct Replays {
 impl Replays {
     /// The replay shown beside the list: the one chosen, or in the Queue tab the entry chosen.
     fn shown_path(&self) -> Option<&PathBuf> {
-        if self.queue_tab { self.queue_path.as_ref() } else { self.selected.as_ref() }
+        match self.tab {
+            TAB_QUEUE => self.queue_path.as_ref(),
+            TAB_REPLAYS => self.selected.as_ref(),
+            _ => None,
+        }
     }
 
     /// The entry of the replay shown beside the list (none for a queue entry whose file is gone).
@@ -761,20 +815,178 @@ impl Replays {
         view.set_queue_chosen(if paths.is_empty() { -1 } else { self.queue_chosen as i32 });
     }
 
-    /// The Replays tab (`queue` false) or the Queue tab, the focus on its list.
-    fn set_tab(&mut self, shell: &mut Shell, queue: bool) {
-        if self.queue_tab == queue {
+    /// Switch between Replays (0), Recent (1), and Queue (2) tabs.
+    fn set_tab(&mut self, shell: &mut Shell, tab: u8) {
+        let tab = if tab == TAB_QUEUE && self.queue_rows.is_empty() { TAB_REPLAYS } else { tab.min(TAB_QUEUE) };
+        if self.tab == tab {
             return;
         }
         self.close_sheet(shell);
-        self.queue_tab = queue;
-        shell.ui().global::<ReplaysView>().set_tab(queue as i32);
+        self.tab = tab;
+        shell.ui().global::<ReplaysView>().set_tab(tab as i32);
+        if tab == TAB_RECENT {
+            let game = shell.game().map(str::to_string);
+            if game.is_some() && self.feed.game != game && !self.feed.loading {
+                self.refresh_feed(shell);
+            }
+            self.fill_feed(shell);
+            self.show_selected(shell);
+            shell.nav.focus(if self.feed.items.is_empty() { "feed-refresh" } else { "feed" }, if self.feed.items.is_empty() { 0 } else { self.feed.chosen as i32 });
+            return;
+        }
         self.fill(shell);
-        if queue {
-            shell.nav.focus(if self.queue_rows.is_empty() { "tab" } else { "queue" }, if self.queue_rows.is_empty() { 1 } else { self.queue_chosen as i32 });
+        if tab == TAB_QUEUE {
+            shell.nav.focus(if self.queue_rows.is_empty() { "tab" } else { "queue" }, if self.queue_rows.is_empty() { TAB_QUEUE as i32 } else { self.queue_chosen as i32 });
         } else {
             let at = self.selected.as_ref().and_then(|path| self.rows.iter().position(|&i| self.library.entries[i].path == *path)).unwrap_or(0);
             shell.nav.focus("list", at as i32);
+        }
+    }
+
+    /// Fetch the Recent Replays list for the currently selected game from the signaling server.
+    fn refresh_feed(&mut self, shell: &mut Shell) {
+        let Some(game) = shell.game().map(str::to_string) else { return };
+        let Some(base) = crate::replays::feed::server_http_base(&shell.settings.signaling_server) else {
+            self.feed.loading = false;
+            self.feed.status = "No signaling server configured.".into();
+            self.fill_feed(shell);
+            return;
+        };
+        self.feed.loading = true;
+        self.feed.status.clear();
+        self.feed.game = Some(game.clone());
+        let arrivals = self.feed.arrivals.clone();
+        let ui = shell.ui();
+        let view = ui.global::<ReplaysView>();
+        view.set_feed_loading(true);
+        view.set_feed_status(Default::default());
+        let _ = slint::spawn_local(async move {
+            let res = crate::replays::feed::fetch_list(&base, &game, 50).await;
+            arrivals.borrow_mut().list = Some((game, res));
+        });
+    }
+
+    /// Populate the Recent Replays list UI model from `self.feed.items`.
+    fn fill_feed(&mut self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<ReplaysView>();
+        let mut rows = Vec::with_capacity(self.feed.items.len());
+        for item in &self.feed.items {
+            let when = played(&view, item.played_at);
+            let p1 = if item.names[0].trim().is_empty() { view.get_p1().to_string() } else { item.names[0].clone() };
+            let p2 = if item.names[1].trim().is_empty() { view.get_p2().to_string() } else { item.names[1].clone() };
+            let versus = view.invoke_versus(p1.into(), p2.into());
+            let score_text = if item.score[0] > 0 || item.score[1] > 0 {
+                format!("{}–{}", item.score[0], item.score[1])
+            } else {
+                String::new()
+            };
+            rows.push(ReplayRow {
+                day: when.day.into(),
+                time: when.time.into(),
+                opponent: versus,
+                score: score_text.into(),
+                tone: 0,
+                length: clock(time_of(item.ticks as u64), false).into(),
+                reason: Default::default(),
+            });
+        }
+        self.feed.model.set_vec(rows);
+        view.set_feed(ModelRc::from(self.feed.model.clone()));
+        self.feed.chosen = self.feed.chosen.min(self.feed.items.len().saturating_sub(1));
+        view.set_feed_chosen(if self.feed.items.is_empty() { -1 } else { self.feed.chosen as i32 });
+        view.set_feed_loading(self.feed.loading);
+        view.set_feed_downloading(self.feed.downloading);
+        view.set_feed_status(self.feed.status.as_str().into());
+    }
+
+    /// Download (or use cached) the selected Recent Replay, then watch or save it locally.
+    fn start_feed_action(&mut self, shell: &mut Shell, goal: FeedDownloadGoal) {
+        let Some(item) = self.feed.items.get(self.feed.chosen).cloned() else { return };
+        if self.feed.downloading {
+            return;
+        }
+        let Some(base) = crate::replays::feed::server_http_base(&shell.settings.signaling_server) else {
+            shell.sound.play(Cue::Refused);
+            return;
+        };
+        self.feed.downloading = true;
+        self.feed.status.clear();
+        let ui = shell.ui();
+        let view = ui.global::<ReplaysView>();
+        view.set_feed_downloading(true);
+        view.set_feed_status(Default::default());
+        let id = item.id.clone();
+        let arrivals = self.feed.arrivals.clone();
+        let _ = slint::spawn_local(async move {
+            let res = crate::replays::feed::download_replay(&base, &id).await;
+            arrivals.borrow_mut().download = Some((id, goal, res));
+        });
+    }
+
+    /// Poll completed async Recent Replays list / download requests.
+    fn poll_feed(&mut self, shell: &mut Shell) {
+        let (list, download) = {
+            let mut a = self.feed.arrivals.borrow_mut();
+            (a.list.take(), a.download.take())
+        };
+        if let Some((game, res)) = list {
+            if self.feed.game.as_deref() == Some(game.as_str()) {
+                self.feed.loading = false;
+                match res {
+                    Ok(items) => {
+                        self.feed.items = items;
+                        self.feed.status.clear();
+                    }
+                    Err(why) => {
+                        crate::errors::log("fetching recent replays", &why);
+                        self.feed.items.clear();
+                        self.feed.status = why;
+                    }
+                }
+                self.fill_feed(shell);
+                if self.tab == TAB_RECENT {
+                    self.show_selected(shell);
+                }
+            }
+        }
+        if let Some((id, goal, res)) = download {
+            self.feed.downloading = false;
+            shell.ui().global::<ReplaysView>().set_feed_downloading(false);
+            match res {
+                Ok(path) => match goal {
+                    FeedDownloadGoal::Watch => {
+                        self.close_sheet(shell);
+                        self.queued = false;
+                        self.watch(shell, &path, None, false);
+                    }
+                    FeedDownloadGoal::Save(item) => match crate::replays::feed::save_to_local(&path, &item) {
+                        Ok(_) => {
+                            self.feed.saved_ids.insert(id);
+                            shell.sound.play(Cue::Pick);
+                            self.library.list(&crate::replays::folder());
+                            if self.tab == TAB_RECENT {
+                                self.show_selected(shell);
+                            }
+                        }
+                        Err(why) => {
+                            crate::errors::log("saving recent replay", &why);
+                            self.feed.status = why;
+                            if self.tab == TAB_RECENT {
+                                self.show_selected(shell);
+                            }
+                        }
+                    },
+                },
+                Err(why) => {
+                    crate::errors::log("downloading recent replay", &why);
+                    self.feed.status = why;
+                    shell.sound.play(Cue::Refused);
+                    if self.tab == TAB_RECENT {
+                        self.show_selected(shell);
+                    }
+                }
+            }
         }
     }
 
@@ -782,9 +994,48 @@ impl Replays {
     fn show_selected(&mut self, shell: &mut Shell) {
         let ui = shell.ui();
         let view = ui.global::<ReplaysView>();
+        if self.tab == TAB_RECENT {
+            let Some(item) = self.feed.items.get(self.feed.chosen) else {
+                view.set_selected(false);
+                view.set_playable(false);
+                view.set_still(false);
+                view.set_notice(Default::default());
+                view.set_notice_exact(false);
+                view.set_feed_saved(false);
+                return;
+            };
+            let when = played(&view, item.played_at);
+            let p1 = if item.names[0].trim().is_empty() { view.get_p1().to_string() } else { item.names[0].clone() };
+            let p2 = if item.names[1].trim().is_empty() { view.get_p2().to_string() } else { item.names[1].clone() };
+            view.set_selected(true);
+            view.set_playable(true);
+            view.set_still(false);
+            view.set_left_name(p1.into());
+            view.set_right_name(p2.into());
+            view.set_played(format!("{} · {}", when.full, when.time).into());
+            let score_text = if item.score[0] > 0 || item.score[1] > 0 {
+                format!("{}–{}", item.score[0], item.score[1])
+            } else {
+                String::new()
+            };
+            view.set_result(score_text.into());
+            view.set_result_tone(0);
+            view.set_length(clock(time_of(item.ticks as u64), false).into());
+            view.set_reason(Default::default());
+            let kb = (item.size.max(1024) as f64 / 1024.0).round() as u64;
+            let notice = if !self.feed.status.is_empty() {
+                self.feed.status.clone()
+            } else {
+                format!("{} · {kb} KB", item.engine)
+            };
+            view.set_notice(notice.into());
+            view.set_notice_exact(self.feed.status.is_empty());
+            view.set_feed_saved(self.feed.saved_ids.contains(&item.id));
+            return;
+        }
         let (Some(entry), Some((game, ready))) = (self.selected().cloned(), shell.ready()) else {
             // (A queue entry whose file is gone: its file's name, and that it is missing.)
-            let missing = self.shown_path().filter(|_| self.queue_tab).map(|p| file_name(p));
+            let missing = self.shown_path().filter(|_| self.tab == TAB_QUEUE).map(|p| file_name(p));
             view.set_selected(missing.is_some());
             view.set_playable(false);
             view.set_still(false);
@@ -907,7 +1158,7 @@ impl Replays {
             // (The queue's rows of those played out too, and the panel if it shows one of them.)
             if played.iter().any(|path| self.queue(shell).is_some_and(|q| q.paths.contains(path))) {
                 self.fill_queue(shell);
-                if self.queue_tab {
+                if self.tab == TAB_QUEUE {
                     self.show_selected(shell);
                 }
             }
@@ -923,7 +1174,7 @@ impl Replays {
         let hash = self.hash(ready.content());
         let row = self.row(shell, &game, &entry, hash);
         self.model.set_row_data(at, row);
-        if !self.queue_tab && self.selected.as_deref() == Some(path) {
+        if self.tab == TAB_REPLAYS && self.selected.as_deref() == Some(path) {
             self.show_selected(shell);
         }
     }
@@ -1054,15 +1305,17 @@ impl Replays {
         // (The replay played is the one selected, the cursor on its row, where it is listed: the user, "when exiting
         // a replay, it should highlight the replay that was played instead of moving the cursor to the start". The
         // Queue tab keeps its own.)
-        if !self.queue_tab {
+        if self.tab == TAB_REPLAYS {
             self.selected = Some(played);
         }
         self.still.surface.refresh();
         self.fill(shell);
-        if !self.queue_tab
+        if self.tab == TAB_REPLAYS
             && let Some(at) = self.selected.as_ref().and_then(|path| self.rows.iter().position(|&i| self.library.entries[i].path == *path))
         {
             shell.nav.focus("list", at as i32);
+        } else if self.tab == TAB_RECENT && !self.feed.items.is_empty() {
+            shell.nav.focus("feed", self.feed.chosen as i32);
         }
     }
 
@@ -1178,7 +1431,7 @@ impl Replays {
     /// The selected replay added to the queue: at its end, or (`first`) at its start, what plays next. Its
     /// opponent's name flies from `from` (its row, or the button pressed) to the Queue tab.
     fn enqueue(&mut self, shell: &mut Shell, first: bool, from: (&str, i32)) {
-        let Some(path) = self.selected.clone().filter(|_| !self.queue_tab && self.playable(shell)) else { return shell.sound.play(Cue::Refused) };
+        let Some(path) = self.selected.clone().filter(|_| self.tab == TAB_REPLAYS && self.playable(shell)) else { return shell.sound.play(Cue::Refused) };
         let Some(queue) = self.queue_mut(shell) else { return };
         if first {
             queue.add_first(&path);
@@ -1189,7 +1442,7 @@ impl Replays {
         let row = self.rows.iter().position(|&i| self.library.entries[i].path == path).and_then(|at| self.model.row_data(at));
         let text = row.map(|r| r.opponent.to_string()).filter(|o| !o.is_empty()).unwrap_or_else(|| file_name(&path));
         shell.sound.play(Cue::Pick);
-        shell.fly(from, ("tab", 1), slint::Image::default(), &text);
+        shell.fly(from, ("tab", TAB_QUEUE as i32), slint::Image::default(), &text);
     }
 
     /// The Queue tab's chosen entry moved up (`by` -1) or down (refused at an end); the cursor goes with it where it
@@ -1219,7 +1472,7 @@ impl Replays {
         self.show_selected(shell);
         if empty {
             self.close_sheet(shell);
-            self.set_tab(shell, false);
+            self.set_tab(shell, TAB_REPLAYS);
         } else if shell.nav.focused().is_some_and(|k| k.id == "queue") {
             shell.nav.focus("queue", self.queue_chosen as i32);
         }
@@ -1249,11 +1502,12 @@ impl Replays {
     fn menu_actions(&self, shell: &Shell) -> Vec<MenuAction> {
         use MenuAction::*;
         let plays = shell.ui().global::<ReplaysView>().get_playable();
-        match (self.queue_tab, plays) {
-            (false, true) => vec![Watch, AddToQueue, AddToStart, Export, ShowFile, Delete],
-            (false, false) => vec![ShowFile, Delete],
-            (true, true) => vec![WatchFromHere, MoveUp, MoveDown, Remove],
-            (true, false) => vec![MoveUp, MoveDown, Remove],
+        match (self.tab, plays) {
+            (TAB_REPLAYS, true) => vec![Watch, AddToQueue, AddToStart, Export, ShowFile, Delete],
+            (TAB_REPLAYS, false) => vec![ShowFile, Delete],
+            (TAB_QUEUE, true) => vec![WatchFromHere, MoveUp, MoveDown, Remove],
+            (TAB_QUEUE, false) => vec![MoveUp, MoveDown, Remove],
+            _ => Vec::new(),
         }
     }
 
@@ -1288,7 +1542,7 @@ impl Replays {
 
     /// WATCH's arrow (a phone's sheet's, `sheet`): the other ways to watch the selected replay, under the two.
     fn open_watch_menu(&mut self, shell: &mut Shell, sheet: bool) {
-        if !self.playable(shell) || self.queue_tab {
+        if !self.playable(shell) || self.tab != TAB_REPLAYS {
             return shell.sound.play(Cue::Refused);
         }
         let ui = shell.ui();
@@ -1300,8 +1554,8 @@ impl Replays {
 
     /// A choice of the menu, by its place in it (a name flies from the row it was opened on).
     fn menu_chosen(&mut self, shell: &mut Shell, choice: i32) {
-        let from = match (self.queue_tab, self.selected.as_ref()) {
-            (false, Some(path)) => self.rows.iter().position(|&i| self.library.entries[i].path == *path).map_or(("watch", 0), |at| ("list", at as i32)),
+        let from = match (self.tab, self.selected.as_ref()) {
+            (TAB_REPLAYS, Some(path)) => self.rows.iter().position(|&i| self.library.entries[i].path == *path).map_or(("watch", 0), |at| ("list", at as i32)),
             _ => ("watch", 0),
         };
         match usize::try_from(choice).ok().and_then(|at| self.menu_actions(shell).get(at).copied()) {
@@ -1444,13 +1698,20 @@ impl Replays {
     /// The actions of the panel beside the list, or of a phone's sheet: the replay's, or the queue entry's.
     fn act(&mut self, shell: &mut Shell, what: &str) {
         match what {
+            "feed-watch" => return self.start_feed_action(shell, FeedDownloadGoal::Watch),
+            "feed-save" => {
+                if let Some(item) = self.feed.items.get(self.feed.chosen).cloned() {
+                    self.start_feed_action(shell, FeedDownloadGoal::Save(item));
+                }
+                return;
+            }
             "watch-from" => return self.watch_queue(shell, self.queue_chosen),
             "move-up" => return self.move_entry(shell, -1),
             "move-down" => return self.move_entry(shell, 1),
             "remove" => return self.remove_entry(shell),
             _ => {}
         }
-        let Some(path) = self.selected.clone().filter(|_| !self.queue_tab) else { return };
+        let Some(path) = self.selected.clone().filter(|_| self.tab == TAB_REPLAYS) else { return };
         match what {
             // (WATCH watches the one replay: the queue is made ahead of time.)
             "watch" => {
@@ -1542,13 +1803,20 @@ impl Screen for Replays {
             return;
         }
         shell.ui().global::<ReplaysView>().set_watching(false);
-        shell.ui().global::<ReplaysView>().set_tab(self.queue_tab as i32);
+        shell.ui().global::<ReplaysView>().set_tab(self.tab as i32);
         if !shell.scale.phone {
             self.close_sheet(shell);
         }
         // The folder, listed again: a match just recorded is there. (What playing out gave is kept between runs.)
         self.library.cache.get_or_insert_with(crate::replays::cache_file);
         self.library.list(&crate::replays::folder());
+        if self.tab == TAB_RECENT {
+            let game = shell.game().map(str::to_string);
+            if game.is_some() && self.feed.game != game && !self.feed.loading {
+                self.refresh_feed(shell);
+            }
+            self.fill_feed(shell);
+        }
         self.fill(shell);
     }
 
@@ -1627,7 +1895,22 @@ impl Screen for Replays {
                     shell.sound.play(Cue::Refused);
                 }
             }
-            "tab" => self.set_tab(shell, index == 1),
+            "tab" => self.set_tab(shell, index.clamp(0, TAB_QUEUE as i32) as u8),
+            "feed-refresh" => self.refresh_feed(shell),
+            "feed" => {
+                self.feed.chosen = index.max(0) as usize;
+                self.fill_feed(shell);
+                self.show_selected(shell);
+                if shell.scale.phone {
+                    if self.feed.chosen < self.feed.items.len() && !self.sheet {
+                        self.sheet = true;
+                        shell.ui().global::<ReplaysView>().set_detail(true);
+                        shell.nav.open("sheet.", crate::nav::Key::new("sheet.feed-watch", 0));
+                    }
+                } else if !shell.nav.pointing() {
+                    self.start_feed_action(shell, FeedDownloadGoal::Watch);
+                }
+            }
             "watch-queue" => self.watch_queue(shell, 0),
             "clear" => self.ask_clear(shell),
             // (An entry of the queue: chosen, as a replay of the list is; Enter watches the queue from it.)
@@ -1767,6 +2050,15 @@ impl Screen for Replays {
         if self.watching.is_some() {
             return;
         }
+        if id == "feed" {
+            let at = index.max(0) as usize;
+            if at != self.feed.chosen && at < self.feed.items.len() {
+                self.feed.chosen = at;
+                self.fill_feed(shell);
+                self.show_selected(shell);
+            }
+            return;
+        }
         if id == "queue" {
             let at = index.max(0) as usize;
             if at != self.queue_chosen && at < self.queue_rows.len() {
@@ -1797,6 +2089,7 @@ impl Screen for Replays {
         }
         match list.as_deref() {
             Some("list") => shell.nav.focus_first(&shell.ui(), &["watch", "watch-more", "export", "file", "delete"]),
+            Some("feed") => shell.nav.focus_first(&shell.ui(), &["feed-watch", "feed-save"]),
             Some("queue") => shell.nav.focus_first(&shell.ui(), &["watch-from", "move-up", "move-down", "remove"]),
             _ => false,
         }
@@ -1810,7 +2103,7 @@ impl Screen for Replays {
         }
         if self.watching.is_none() {
             // E exports the selected replay (but in the search, where it is a letter).
-            if key.code == KeyCode::KeyE && !self.queue_tab && !shell.nav.on_field() && !key.repeat {
+            if key.code == KeyCode::KeyE && self.tab == TAB_REPLAYS && !shell.nav.on_field() && !key.repeat {
                 if self.playable(shell) {
                     self.act(shell, "export");
                 } else {
@@ -1877,9 +2170,9 @@ impl Screen for Replays {
         }
         match action {
             // (In the Queue tab Delete takes the entry out of the queue: its file stays.)
-            Action::Delete if self.queue_tab => self.remove_entry(shell),
-            Action::Delete if !shell.nav.on_field() && self.selected.is_some() => self.ask_delete(shell),
-            Action::Alternate if !self.queue_tab && self.playable(shell) => self.act(shell, "export"),
+            Action::Delete if self.tab == TAB_QUEUE => self.remove_entry(shell),
+            Action::Delete if self.tab == TAB_REPLAYS && !shell.nav.on_field() && self.selected.is_some() => self.ask_delete(shell),
+            Action::Alternate if self.tab == TAB_REPLAYS && self.playable(shell) => self.act(shell, "export"),
             _ => return false,
         }
         true
@@ -1950,9 +2243,9 @@ impl Screen for Replays {
             }
             self.stop_watching(shell);
             // (The queue played out: no Queue tab to come back to.)
-            if self.queue_tab && self.queue_rows.is_empty() {
-                self.set_tab(shell, false);
-            } else if self.queue_tab {
+            if self.tab == TAB_QUEUE && self.queue_rows.is_empty() {
+                self.set_tab(shell, TAB_REPLAYS);
+            } else if self.tab == TAB_QUEUE {
                 shell.nav.focus("queue", self.queue_chosen as i32);
             }
             return true;
@@ -1973,7 +2266,7 @@ impl Screen for Replays {
             self.close_sheet(shell);
             self.fill_queue(shell);
             self.show_selected(shell);
-            self.set_tab(shell, false);
+            self.set_tab(shell, TAB_REPLAYS);
             return;
         }
         if tag != "delete" || choice != 1 {
@@ -2025,6 +2318,7 @@ impl Screen for Replays {
             self.answer_env(shell);
         }
         self.take_found(shell, shown);
+        self.poll_feed(shell);
         // (The content a replay was made on, where it isn't the game's own: on its way.)
         if shell.ready().is_some() {
             let listing = shown && self.watching.is_none() && !shell.loading_battle();

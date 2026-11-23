@@ -170,6 +170,9 @@ pub struct Settings {
     pub input_delay: u32,
     /// Custom signaling server URL (`ws://...` or `wss://...`); empty uses `DEFAULT_SIGNAL_SERVER`.
     pub signaling_server: String,
+    /// Automatically upload completed online match replays to the signaling server's recent-replays feed.
+    /// Off by default (opt-in).
+    pub auto_upload_replays: bool,
     /// The folder the player chose the Legacy Collection's install in, where Steam doesn't list it (docs/app.md
     /// §17); none: Steam's alone.
     pub legacy_collection: Option<std::path::PathBuf>,
@@ -206,6 +209,7 @@ impl Default for Settings {
             effects: 100,
             input_delay: saito_frontend::netplay::DEFAULT_INPUT_DELAY,
             signaling_server: String::new(),
+            auto_upload_replays: false,
             keys: BTreeMap::new(),
             legacy_collection: None,
             pad: BTreeMap::new(),

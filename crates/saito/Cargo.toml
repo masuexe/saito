@@ -30,8 +30,8 @@ saito-frontend = { path = "../saito-frontend" }
 saito-training = { path = "../saito-training", features = ["live"], optional = true }
 # The games' content indexes (`contents.rs`) and the AI network's (`screens/practice/weights.rs`), JSON.
 serde_json = "1"
-# The SHA-256 a downloaded network is checked by (`screens/practice/weights.rs`).
-sha2 = { version = "0.10", optional = true }
+# The SHA-256 used for downloaded AI weights (`screens/practice/weights.rs`) and replay feed deduplication (`replays/feed.rs`).
+sha2 = "0.10"
 saito-battle = { path = "../saito-battle" }
 saito-render = { path = "../saito-render" }
 saito-content = { path = "../saito-content" }
@@ -168,7 +168,7 @@ tour = ["dep:png", "saito-signaling/testing"]
 # (docs/design/training-ai.md §10), downloaded from the saito-ai repository when Fights is first picked (or
 # `SAITO_AI_WEIGHTS`'s file). Off by default: a build without it offers the dummy's other Actions alone.
 # `cargo run -p saito --features ai`.
-ai = ["dep:saito-training", "dep:sha2"]
+ai = ["dep:saito-training"]
 
 [build-dependencies]
 # What the app is built from, for its About screen (build.rs: `cargo metadata`'s JSON).
