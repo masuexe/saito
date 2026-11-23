@@ -184,6 +184,12 @@ pub struct Clients {
     direct: Option<reqwest::Client>,
 }
 
+/// HTTP status codes from a proxy request that warrant retrying directly (proxy auth/gateway errors or
+/// shared-node rate limiting such as GitHub's 403/429).
+pub(crate) fn should_fallback_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 403 | 407 | 429 | 502 | 503 | 504)
+}
+
 impl Clients {
     pub fn new() -> Result<Clients, String> {
         #[cfg(any(desktop, target_os = "android"))]
@@ -209,7 +215,19 @@ impl Clients {
             }
         };
         match build(&self.primary).send().await {
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                if let Some(direct) = &self.direct
+                    && should_fallback_status(resp.status())
+                {
+                    log::warn!("updater request via proxy returned {}; retrying direct", resp.status());
+                    if let Ok(direct_resp) = build(direct).send().await
+                        && direct_resp.status().is_success()
+                    {
+                        return Ok(direct_resp);
+                    }
+                }
+                Ok(resp)
+            }
             Err(first) => {
                 if let Some(direct) = &self.direct {
                     log::warn!("updater request via proxy failed ({first}); retrying direct");
@@ -366,5 +384,15 @@ HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settin
 }
 ";
         assert_eq!(parse_macos_proxy(disabled), None);
+    }
+
+    #[test]
+    fn proxy_fallback_triggers_on_rate_limit_and_gateway_statuses() {
+        for code in [403, 407, 429, 502, 503, 504] {
+            assert!(should_fallback_status(reqwest::StatusCode::from_u16(code).unwrap()), "{code}");
+        }
+        for code in [200, 302, 404, 500] {
+            assert!(!should_fallback_status(reqwest::StatusCode::from_u16(code).unwrap()), "{code}");
+        }
     }
 }

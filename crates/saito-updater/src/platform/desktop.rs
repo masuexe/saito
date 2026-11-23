@@ -2,9 +2,12 @@
 //! GitHub releases ([`crate::Releases`]), on its system's and architecture's channel ([`options`]). A build run from
 //! the repository isn't installed: its manager returns `NotInstalled`, and asks nothing.
 //!
-//! Instead of `velopack::sources::GithubSource` (which lists multiple releases and opens separate `ureq` connections
-//! without system HTTP(S) proxy support), [`LatestGithubSource`] queries `/releases/latest` once via `crate::http`
-//! (pooled `reqwest` + `rustls` + desktop system proxy) and reads only the latest release's `releases.<channel>.json`.
+//! Instead of `velopack::sources::GithubSource` (which lists multiple releases via `api.github.com` and opens
+//! separate `ureq` connections without system HTTP(S) proxy support), [`LatestGithubSource`] fetches
+//! `releases.<channel>.json` and release packages directly via `https://github.com/{owner}/{repo}/releases/latest/download/...`
+//! using `crate::http` (pooled `reqwest` + `rustls` + desktop system proxy with direct fallback), avoiding
+//! `api.github.com`'s strict 60 req/hr unauthenticated IP rate limit and falling back to the GitHub API only if
+//! direct download fails.
 
 use crate::{Releases, Told};
 use serde::Deserialize;
@@ -87,17 +90,23 @@ impl UpdateSource for LatestGithubSource {
         let feed_name = format!("releases.{channel}.json").to_ascii_lowercase();
         Self::with_runtime(async {
             let clients = crate::http::Clients::new()?;
-            let url = match self.fetch_assets(&clients).await {
-                Ok(assets) => match assets.get(&feed_name) {
-                    Some(url) => url.clone(),
-                    None => return Ok(VelopackAssetFeed { Assets: Vec::new() }),
-                },
-                Err(api_err) => {
-                    log::warn!("github API release feed lookup failed ({api_err}); falling back to direct latest download");
-                    self.releases.latest_download(&feed_name)
+            // Prefer GitHub's direct `/releases/latest/download/<feed>` URL: single hop, no `api.github.com`
+            // 60 req/hr unauthenticated rate limit (common on shared VPN/proxy nodes).
+            let direct_url = self.releases.latest_download(&feed_name);
+            let bytes = match clients.get_bytes(&direct_url, MAX_FEED).await {
+                Ok(bytes) => bytes,
+                Err(direct_err) => {
+                    log::warn!("direct release feed download failed ({direct_err}); falling back to GitHub API");
+                    let assets = self
+                        .fetch_assets(&clients)
+                        .await
+                        .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
+                    let Some(url) = assets.get(&feed_name) else {
+                        return Ok(VelopackAssetFeed { Assets: Vec::new() });
+                    };
+                    clients.get_bytes(url, MAX_FEED).await?
                 }
             };
-            let bytes = clients.get_bytes(&url, MAX_FEED).await?;
             serde_json::from_slice(&bytes).map_err(|e| format!("parsing {feed_name}: {e}"))
         })
     }
@@ -107,27 +116,36 @@ impl UpdateSource for LatestGithubSource {
         let size = asset.Size;
         Self::with_runtime(async {
             let clients = crate::http::Clients::new()?;
-            let cached = self.assets.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
-            let url = match cached {
-                Some(url) => url,
-                None => match self.fetch_assets(&clients).await {
-                    Ok(assets) => assets
+            let primary_url = self
+                .assets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| self.releases.latest_download(&asset.FileName));
+            let send_pct = |pct| {
+                if let Some(tx) = &progress_sender {
+                    let _ = tx.send(pct);
+                }
+            };
+            match clients.download_to_file(&primary_url, local_file, size, send_pct).await {
+                Ok(()) => Ok(()),
+                Err(direct_err) => {
+                    log::warn!("direct release asset download failed ({direct_err}); falling back to GitHub API");
+                    let assets = self
+                        .fetch_assets(&clients)
+                        .await
+                        .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
+                    let url = assets
                         .get(&key)
                         .cloned()
-                        .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?,
-                    Err(api_err) => {
-                        log::warn!("github API asset lookup failed ({api_err}); falling back to direct latest download");
-                        self.releases.latest_download(&asset.FileName)
+                        .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?;
+                    if url == primary_url {
+                        return Err(direct_err);
                     }
-                },
-            };
-            clients
-                .download_to_file(&url, local_file, size, |pct| {
-                    if let Some(tx) = &progress_sender {
-                        let _ = tx.send(pct);
-                    }
-                })
-                .await
+                    clients.download_to_file(&url, local_file, size, send_pct).await
+                }
+            }
         })
     }
 }
