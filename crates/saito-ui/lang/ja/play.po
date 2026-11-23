@@ -378,3 +378,28 @@ msgstr "アドコレ版"
 
 msgid "DS"
 msgstr "DS版"
+
+msgctxt "spectate"
+msgid "Watch"
+msgstr "観戦"
+
+msgid "Enter a room code."
+msgstr "ルームコードを入力してください。"
+
+msgid "Host disabled spectating."
+msgstr "ホストが観戦を無効にしました。"
+
+msgid "Host closed the room."
+msgstr "ホストがルームを閉じました。"
+
+msgid "Waiting in lobby…"
+msgstr "ロビーで待機中…"
+
+msgid "Loading match…"
+msgstr "対戦を読み込み中…"
+
+msgid "Match in progress…"
+msgstr "対戦中…"
+
+msgid "{} is not installed."
+msgstr "{} がインストールされていません。"

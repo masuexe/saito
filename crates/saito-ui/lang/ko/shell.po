@@ -472,3 +472,9 @@ msgstr "업데이트를 설치할 수 없습니다. 다음 실행 시 다시 시
 
 msgid "The update couldn't be installed. It's tried again next start. Details are in the log file."
 msgstr "업데이트를 설치할 수 없습니다. 다음 실행 시 다시 시도합니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "Spectating is disabled for this room."
+msgstr "이 방은 관전이 비활성화되어 있습니다."
+
+msgid "Spectating is disabled"
+msgstr "관전이 비활성화되었습니다"

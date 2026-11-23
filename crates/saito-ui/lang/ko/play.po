@@ -378,3 +378,28 @@ msgstr "레거시 컬렉션"
 
 msgid "DS"
 msgstr "DS판"
+
+msgctxt "spectate"
+msgid "Watch"
+msgstr "관전"
+
+msgid "Enter a room code."
+msgstr "방 코드를 입력하세요."
+
+msgid "Host disabled spectating."
+msgstr "호스트가 관전을 비활성화했습니다."
+
+msgid "Host closed the room."
+msgstr "호스트가 방을 닫았습니다."
+
+msgid "Waiting in lobby…"
+msgstr "로비에서 대기 중…"
+
+msgid "Loading match…"
+msgstr "대전 불러오는 중…"
+
+msgid "Match in progress…"
+msgstr "대전 진행 중…"
+
+msgid "{} is not installed."
+msgstr "{}이(가) 설치되어 있지 않습니다."

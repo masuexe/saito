@@ -3049,6 +3049,12 @@ impl Play {
     fn join_from_rooms(&mut self, shell: &mut Shell, raw_code: &str, known_game: Option<&str>) {
         let code = code_typed(raw_code);
         self.code = code.clone();
+        if code.is_empty() {
+            self.room_error = shell.ui().global::<PlayView>().get_enter_room_code().into();
+            shell.sound.play(Cue::Refused);
+            self.show_room_browser(shell);
+            return;
+        }
         if let Some(game) = known_game.filter(|g| !g.is_empty() && shell.game() != Some(*g)) {
             self.room_error = UserError::OtherGame { game: Shell::game_name(game) }.line(&shell.ui());
             shell.sound.play(Cue::Refused);
@@ -3114,13 +3120,22 @@ impl Play {
     }
 
     fn start_watching(&mut self, shell: &mut Shell, raw_code: &str, known_game: Option<&str>) {
+        let code = code_typed(raw_code);
+        self.code = code.clone();
+        if code.is_empty() {
+            self.room_error = shell.ui().global::<PlayView>().get_enter_room_code().into();
+            shell.sound.play(Cue::Refused);
+            self.show_room_browser(shell);
+            return;
+        }
         let Some(server) = Play::net(shell).server else {
-            self.room_error = "Signaling server is not configured.".into();
+            self.room_error = UserError::ServerUnreachable.line(&shell.ui());
+            shell.sound.play(Cue::Refused);
             self.show_room_browser(shell);
             return;
         };
         let peer = format!("watch-{:016x}", saito_rtc::random_u64());
-        match WatchSession::connect(&server, raw_code, &peer) {
+        match WatchSession::connect(&server, &code, &peer) {
             Ok(watch) => {
                 self.close_room_browser(shell);
                 self.watch_return_game = shell.game().map(str::to_string);
@@ -3137,7 +3152,7 @@ impl Play {
                 self.show(shell);
             }
             Err(err) => {
-                self.room_error = err.detail;
+                self.room_error = UserError::of_signaling("watching a room", &err).line(&shell.ui());
                 shell.sound.play(Cue::Refused);
                 self.show_room_browser(shell);
             }
@@ -3156,15 +3171,20 @@ impl Play {
                 self.sync_watch_view(shell);
             }
             WatchUpdate::Closed(reason) => {
-                let notice = if reason == "disabled" {
-                    "Host disabled spectating.".to_string()
+                let ui = shell.ui();
+                let view = ui.global::<PlayView>();
+                let notice: String = if reason == "disabled" {
+                    view.get_watch_disabled().into()
                 } else {
-                    "Host closed the room.".to_string()
+                    view.get_watch_room_closed().into()
                 };
                 self.stop_watching(shell, Some(notice));
             }
             WatchUpdate::Failed(err) => {
-                self.stop_watching(shell, Some(err.detail));
+                let user_err = UserError::of_signaling("watching a room", &err);
+                self.stop_watching(shell, None);
+                self.problem = Some(user_err);
+                self.show(shell);
             }
         }
     }
@@ -3180,17 +3200,17 @@ impl Play {
             view.set_watch_game(room.meta.game.to_uppercase().into());
             view.set_watch_players(format!("{p1} vs {p2}").into());
             let stage_text = match room.meta.stage {
-                RoomStage::Lobby => "Waiting in lobby…",
-                RoomStage::Loading => "Loading match…",
-                RoomStage::Playing => "Match in progress…",
+                RoomStage::Lobby => view.get_watch_stage_lobby(),
+                RoomStage::Loading => view.get_watch_stage_loading(),
+                RoomStage::Playing => view.get_watch_stage_playing(),
             };
-            view.set_watch_stage(stage_text.into());
+            view.set_watch_stage(stage_text);
             view.set_watch_spectators(room.spectators as i32);
             view.set_watch_delay(room.meta.delay_secs as i32);
         } else {
             view.set_watch_game(Default::default());
             view.set_watch_players(Default::default());
-            view.set_watch_stage("Connecting…".into());
+            view.set_watch_stage(view.get_connecting());
             view.set_watch_spectators(0);
             view.set_watch_delay(0);
         }

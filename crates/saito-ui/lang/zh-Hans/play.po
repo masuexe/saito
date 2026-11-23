@@ -378,3 +378,28 @@ msgstr "合集版"
 
 msgid "DS"
 msgstr "NDS 版"
+
+msgctxt "spectate"
+msgid "Watch"
+msgstr "观战"
+
+msgid "Enter a room code."
+msgstr "请输入房间码。"
+
+msgid "Host disabled spectating."
+msgstr "房主已关闭观战。"
+
+msgid "Host closed the room."
+msgstr "房主已关闭房间。"
+
+msgid "Waiting in lobby…"
+msgstr "房间等待中…"
+
+msgid "Loading match…"
+msgstr "对战加载中…"
+
+msgid "Match in progress…"
+msgstr "对战进行中…"
+
+msgid "{} is not installed."
+msgstr "未安装 {}。"

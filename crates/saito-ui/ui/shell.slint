@@ -404,6 +404,7 @@ export enum ErrorKind {
     app-too-old,
     no-such-match,
     match-full,
+    spectating-disabled,
     version-mismatch,
     other-game,
     build-unusable,
@@ -530,6 +531,9 @@ export global Errors {
         if kind == ErrorKind.match-full {
             return @tr("That match is full.");
         }
+        if kind == ErrorKind.spectating-disabled {
+            return @tr("Spectating is disabled for this room.");
+        }
         if kind == ErrorKind.version-mismatch {
             return @tr("Your opponent has a different version of saito. You both need the latest.");
         }
@@ -643,6 +647,9 @@ export global Errors {
         if kind == ErrorKind.match-full {
             return @tr("That match is full");
         }
+        if kind == ErrorKind.spectating-disabled {
+            return @tr("Spectating is disabled");
+        }
         if kind == ErrorKind.version-mismatch {
             return @tr("Different versions");
         }
@@ -737,6 +744,9 @@ export global Errors {
             return "";
         }
         if kind == ErrorKind.match-full {
+            return "";
+        }
+        if kind == ErrorKind.spectating-disabled {
             return "";
         }
         if kind == ErrorKind.version-mismatch {

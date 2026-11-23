@@ -559,14 +559,16 @@ impl WatchSession {
         let raw = match base64_decode(header_b64) {
             Ok(b) => b,
             Err(why) => {
-                self.problem = Some(format!("invalid stream header: {why}"));
+                crate::errors::log("decoding spectate stream header", &why);
+                self.problem = Some(crate::errors::UserError::ReplayDamaged.line(&shell.ui()));
                 return;
             }
         };
         let header = match Header::read(&raw) {
             Ok(h) => h,
             Err(why) => {
-                self.problem = Some(format!("incompatible stream header: {why}"));
+                crate::errors::log("reading spectate stream header", &why);
+                self.problem = Some(crate::errors::UserError::VersionMismatch.line(&shell.ui()));
                 return;
             }
         };
@@ -596,7 +598,12 @@ impl WatchSession {
         if shell.games.playable().iter().any(|g| g == game) {
             shell.select_game(game);
         } else {
-            self.problem = Some(format!("game '{game}' is not installed"));
+            let ui = shell.ui();
+            self.problem = Some(
+                slint::ComponentHandle::global::<saito_ui::PlayView>(&ui)
+                    .invoke_watch_game_missing(Shell::game_name(game).into())
+                    .into(),
+            );
         }
         false
     }
@@ -654,7 +661,7 @@ impl WatchSession {
                 true
             }
             Err(refused) => {
-                self.problem = Some(refused.to_string());
+                self.problem = Some(crate::errors::UserError::of_refusal("watching a match", &refused).line(&shell.ui()));
                 false
             }
         }

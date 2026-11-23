@@ -297,6 +297,15 @@ export global PlayView {
     }
     out property <string> stop-practice: I18n.upper(@tr("Stop practice"));
     out property <string> stage-random: @tr("Random");
+    out property <string> enter-room-code: @tr("Enter a room code.");
+    out property <string> watch-disabled: @tr("Host disabled spectating.");
+    out property <string> watch-room-closed: @tr("Host closed the room.");
+    out property <string> watch-stage-lobby: @tr("Waiting in lobby…");
+    out property <string> watch-stage-loading: @tr("Loading match…");
+    out property <string> watch-stage-playing: @tr("Match in progress…");
+    public pure function watch-game-missing(game: string) -> string {
+        return @tr("{} is not installed.", game);
+    }
 }
 
 // ---- The builds ------------------------------------------------------------------------------------------
@@ -973,6 +982,317 @@ component ConnectionFacts inherits Rectangle {
     }
 }
 
+// The lobby content shared by desktop/landscape (full `Page` body) and portrait phone (inside a `ScrollPage` so
+// lower controls stay above Android's virtual navigation bar and remain reachable on compact screens, S-061).
+component LobbyBody inherits Rectangle {
+    in property <length> viewport-height;
+    property <length> vs-width: Theme.sideways ? 54px : 80px;
+    property <length> place-width: Theme.phone ? self.width : Theme.sideways ? (self.width - self.vs-width) / 2 : 480px;
+    property <length> place-height: Theme.phone ? 126px : Theme.sideways ? 94px : 320px;
+    property <length> lobby-top: Theme.handheld ? 0px : (self.viewport-height - 548px) / 2;
+    property <length> lobby-left: (self.width - 2 * self.place-width - self.vs-width) / 2;
+    property <length> their-x: Theme.phone ? 0px : self.lobby-left + self.place-width + self.vs-width;
+    property <length> their-y: Theme.phone ? self.place-height + 8px : self.lobby-top;
+    property <length> facts-top: Theme.phone ? 2 * self.place-height + 20px : Theme.sideways ? self.place-height + 8px : self.lobby-top + self.place-height + 24px;
+    property <length> buttons-top: Theme.phone ? self.facts-top + 308px : Theme.sideways ? self.viewport-height - 52px : self.facts-top + 124px;
+    out property <length> portrait-height: pills.y + pills.height + 42px;
+
+    // The other player's card slides in as they join.
+    joined := Tween {
+        held: !PlayView.their-present;
+    }
+
+    Arrive {
+        order: 0;
+        if !PlayView.waiting || Theme.handheld: LobbyCard {
+            x: Theme.phone ? 0px : root.lobby-left;
+            y: root.lobby-top;
+            width: root.place-width;
+            height: root.place-height;
+            role: PlayView.you;
+            name: Shell.player;
+            build: PlayView.card;
+            side: 1;
+            ready: PlayView.ready;
+            ready-seq: PlayView.ready-seq;
+            marked: !PlayView.waiting;
+        }
+
+        // The wait's practice battle, at twice the battle's size, in this player's place.
+        if PlayView.waiting && !Theme.handheld: Rectangle {
+            x: root.lobby-left;
+            y: root.lobby-top;
+            width: root.place-width;
+            height: root.place-height;
+            Picture {
+                x: 0;
+                y: 0;
+                width: root.place-width;
+                height: root.place-height;
+                ground: Theme.inset;
+            }
+
+            Rectangle {
+                x: 12px;
+                y: parent.height - 34px;
+                width: practice.preferred-width + 16px;
+                height: 22px;
+                background: Theme.shade;
+                practice := Text {
+                    text: I18n.upper(@tr("Practice"));
+                    color: Theme.text;
+                    font-family: Theme.display;
+                    font-size: 11px;
+                    font-weight: Theme.display-bold;
+                    letter-spacing: Theme.label-tracking;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Text {
+            x: root.lobby-left + root.place-width;
+            y: root.lobby-top;
+            width: root.vs-width;
+            height: root.place-height;
+            visible: !Theme.phone;
+            text: @tr("VS");
+            color: Theme.dim;
+            font-family: Theme.display;
+            font-size: 28px;
+            font-weight: Theme.display-bold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if PlayView.waiting: WaitCard {
+            x: root.their-x;
+            y: root.their-y;
+            width: root.place-width;
+            height: root.place-height;
+        }
+    }
+
+    Rectangle {
+        x: (1 - joined.t) * 56px;
+        opacity: joined.t;
+        visible: PlayView.their-present;
+        LobbyCard {
+            x: root.their-x;
+            y: root.their-y;
+            width: root.place-width;
+            height: root.place-height;
+            role: PlayView.opponent;
+            name: PlayView.their-name;
+            side: 2;
+            ready: PlayView.their-ready;
+            ready-seq: PlayView.their-ready-seq;
+        }
+    }
+
+    // The match's settings, and apart from them this player's own: each group named over it on a desktop;
+    // on a phone a line each, the player's own under a name of their own.
+    Arrive {
+        order: 1;
+        Label {
+            x: match-facts.x;
+            y: root.facts-top;
+            width: match-facts.width;
+            height: 14px;
+            visible: !Theme.phone;
+            text: I18n.upper(@tr("Match settings"));
+        }
+
+        match-facts := MatchFacts {
+            x: Theme.phone ? 0px : Theme.sideways ? 0px : (root.width - self.natural-width - 24px - connection.natural-width) / 2;
+            y: Theme.phone ? root.facts-top : root.facts-top + 22px;
+            width: Theme.phone ? root.width : Theme.sideways ? max(self.natural-width, root.width) : self.natural-width;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+
+        Label {
+            x: connection.x;
+            y: Theme.phone ? match-facts.y + match-facts.height + 12px : Theme.sideways ? match-facts.y + match-facts.height + 8px : root.facts-top;
+            width: Theme.phone ? root.width : connection.width;
+            height: 14px;
+            text: I18n.upper(@tr("Your connection"));
+        }
+
+        connection := ConnectionFacts {
+            x: Theme.phone ? 0px : Theme.sideways ? 0px : match-facts.x + match-facts.width + 24px;
+            y: Theme.phone ? match-facts.y + match-facts.height + 32px : Theme.sideways ? root.viewport-height - self.height : match-facts.y;
+            width: Theme.phone ? root.width : self.natural-width;
+
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
+    }
+
+    Arrive {
+        order: 2;
+        // With the other player: READY, CHANGE BUILD and LEAVE. (On a phone READY the column's width, the
+        // other two half of it each under it; held sideways the three beside the connection, READY taking what
+        // the other two leave, each 52 tall.)
+        ready := Button {
+            x: Theme.phone ? 0px : Theme.sideways ? (connection.width + 14px) : (root.width - self.width - change.width - leave.width - 24px) / 2;
+            y: root.buttons-top;
+            width: Theme.phone ? root.width : Theme.sideways ? root.width - (connection.width + 14px) - change.width - leave.width - 16px : 184px;
+            visible: !PlayView.waiting;
+            enabled: !PlayView.waiting;
+            nav: "lobby.ready";
+            text: PlayView.ready ? I18n.upper(@tr("Not ready")) : I18n.upper(@tr("Ready"));
+            kind: ButtonKind.main;
+            big: Theme.handheld;
+        }
+
+        change := Button {
+            x: Theme.phone ? 0px : ready.x + ready.width + (Theme.sideways ? 8px : 12px);
+            y: Theme.phone ? root.buttons-top + 60px : root.buttons-top;
+            width: Theme.phone ? (root.width - 8px) / 2 : self.natural-width;
+            visible: !PlayView.waiting;
+            enabled: !PlayView.waiting;
+            nav: "lobby.change";
+            text: I18n.upper(@tr("Change build"));
+            big: Theme.sideways;
+        }
+
+        leave := Button {
+            x: Theme.phone ? change.width + 8px : change.x + change.width + (Theme.sideways ? 8px : 12px);
+            y: change.y;
+            width: Theme.phone ? (root.width - 8px) / 2 : self.natural-width;
+            visible: !PlayView.waiting;
+            enabled: !PlayView.waiting;
+            nav: "lobby.leave";
+            text: I18n.upper(@tr("Leave"));
+            kind: ButtonKind.ghost;
+            big: Theme.sideways;
+        }
+
+        // While the host waits: the way out, CANCEL INVITE (STOP HOSTING), as the practice menu has it in
+        // EXIT's place; on a phone PRACTICE before it, which starts the practice battle filling the window (held
+        // sideways the two in READY's row).
+        train := Button {
+            x: Theme.sideways ? (connection.width + 14px) : 0px;
+            y: root.buttons-top;
+            width: Theme.sideways ? root.width - (connection.width + 14px) - cancel.width - 8px : root.width;
+            visible: PlayView.waiting && Theme.handheld;
+            enabled: PlayView.waiting && Theme.handheld;
+            nav: "wait.train";
+            text: I18n.upper(@tr("Practice"));
+            kind: ButtonKind.main;
+            big: true;
+        }
+
+        cancel := Button {
+            x: Theme.phone ? 0px : Theme.sideways ? root.width - self.width : (root.width - self.width) / 2;
+            y: Theme.phone ? root.buttons-top + 60px : root.buttons-top;
+            width: Theme.phone ? root.width : self.natural-width;
+            visible: PlayView.waiting;
+            enabled: PlayView.waiting;
+            nav: "wait.cancel";
+            text: PlayView.wait-exit(PlayView.invite-direct);
+            kind: ButtonKind.ghost;
+            big: Theme.sideways;
+        }
+
+        // Client-local Stage & BGM mode + EXE6 Random Battle / EXE4-5 Dark Soul AI + host spectator controls.
+        pills := Rectangle {
+            property <bool> show-spec: PlayView.host && !PlayView.invite-direct;
+            property <bool> show-random: PlayView.random-supported;
+            property <bool> show-abd: PlayView.abd-supported;
+            property <length> gap: Theme.sideways ? 6px : 10px;
+            property <length> row-w: stage-btn.width
+                + (self.show-random ? self.gap + random-btn.width : 0px)
+                + (self.show-abd ? self.gap + abd-btn.width : 0px)
+                + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
+            property <length> top-w: stage-btn.width
+                + (self.show-random ? self.gap + random-btn.width : 0px)
+                + (self.show-abd ? self.gap + abd-btn.width : 0px);
+            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd) && self.top-w > self.width;
+            property <length> extra-w: (self.show-random ? random-btn.width : 0px)
+                + (self.show-random && self.show-abd ? self.gap : 0px)
+                + (self.show-abd ? abd-btn.width : 0px);
+            property <length> spec-row-y: self.wrap-top ? 80px : 40px;
+            property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
+            x: Theme.sideways ? (connection.width + 14px) : 0px;
+            y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 108px : 92px);
+            width: Theme.sideways ? root.width - (connection.width + 14px) : root.width;
+            height: Theme.phone ? (self.show-spec ? self.spec-row-y + 34px : self.wrap-top ? 74px : 36px) : Theme.sideways ? 30px : 36px;
+
+            stage-btn := Button {
+                x: Theme.phone ? (parent.wrap-top ? (parent.width - self.width) / 2 : (parent.width - parent.top-w) / 2) : (parent.width - parent.row-w) / 2;
+                y: 0;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                nav: "lobby.stage";
+                kind: ButtonKind.ghost;
+                text: @tr("Stage & BGM: {}", PlayView.stage-mode == 1 ? @tr("stage mode" => "Full random") : PlayView.stage-mode == 2 ? @tr("stage mode" => "Escalating") : PlayView.stage-mode == 3 ? @tr("stage mode" => "Custom") : @tr("stage mode" => "Default"));
+            }
+
+            random-btn := Button {
+                x: parent.wrap-top ? (parent.width - parent.extra-w) / 2 : stage-btn.x + stage-btn.width + parent.gap;
+                y: parent.wrap-top ? 40px : 0px;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-random;
+                enabled: parent.show-random && PlayView.host;
+                nav: parent.show-random && PlayView.host ? "lobby.random-battle" : "";
+                kind: PlayView.random-rank > 0 ? ButtonKind.normal : ButtonKind.ghost;
+                text: @tr("Random Battle: {}", PlayView.random-rank == 1 ? @tr("Rank 1") : PlayView.random-rank == 2 ? @tr("Rank 2") : PlayView.random-rank == 3 ? @tr("Rank 3") : @tr("Off"));
+            }
+
+            abd-btn := Button {
+                x: parent.wrap-top ? (parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - self.width) / 2) : (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                y: parent.wrap-top ? 40px : 0px;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-abd;
+                enabled: parent.show-abd && PlayView.host;
+                nav: parent.show-abd && PlayView.host ? "lobby.abd-mode" : "";
+                kind: PlayView.abd-mode > 0 ? ButtonKind.normal : ButtonKind.ghost;
+                text: @tr("Dark Soul AI: {}", PlayView.abd-mode == 1 ? @tr("Legacy Collection") : PlayView.abd-mode == 2 ? @tr("DS") : @tr("Original"));
+            }
+
+            spec-vis := Button {
+                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                y: Theme.phone ? parent.spec-row-y : 0px;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-spec;
+                enabled: parent.show-spec;
+                nav: "lobby.spectate";
+                kind: ButtonKind.ghost;
+                text: PlayView.spectate-visibility == 0 ? @tr("Room: Private") : PlayView.spectate-visibility == 2 ? @tr("Room: Public") : @tr("Room: Code");
+            }
+
+            spec-delay := Button {
+                x: spec-vis.x + spec-vis.width + parent.gap;
+                y: spec-vis.y;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-spec;
+                enabled: parent.show-spec && PlayView.spectate-visibility != 0;
+                nav: "lobby.spectate-delay";
+                kind: ButtonKind.ghost;
+                text: PlayView.spectate-delay == 0 ? @tr("Delay: Off") : @tr("Delay: {}s", PlayView.spectate-delay);
+            }
+        }
+
+        // The reserved line: who is waited for, that the link is being made again, why the match before
+        // ended, or what keeps this player's build from being played.
+        Message {
+            x: Theme.sideways ? (connection.width + 14px) : 0px;
+            y: Theme.sideways ? root.buttons-top - 22px : Theme.phone ? pills.y + pills.height + 10px : root.buttons-top + 56px;
+            width: Theme.sideways ? root.width - (connection.width + 14px) : root.width;
+            text: PlayView.note == LobbyNote.reconnecting ? @tr("Reconnecting {} s", PlayView.note-seconds) : PlayView.note == LobbyNote.unusable ? PlayView.note-problem : PlayView.note-error != "" ? PlayView.note-error : PlayView.note == LobbyNote.you ? @tr("Waiting for you to ready up.") : PlayView.note == LobbyNote.them ? @tr("Waiting for your opponent to ready up.") : "";
+            tone: PlayView.note-error != "" || PlayView.note == LobbyNote.reconnecting || PlayView.note == LobbyNote.unusable ? Theme.bad : Theme.muted;
+            mark: PlayView.note == LobbyNote.unusable;
+            horizontal-alignment: center;
+        }
+    }
+}
+
 // ---- The screen ------------------------------------------------------------------------------------------
 
 export component PlayScreen inherits Page {
@@ -1018,20 +1338,6 @@ export component PlayScreen inherits Page {
     property <length> more-width: 40px;
     property <bool> none: PlayView.builds.length == 0;
     property <bool> usable: PlayView.chosen >= 0 && !root.none && PlayView.readable;
-    // The lobby (from the moment an invite is out): the two places, the settings, the buttons, the line. A
-    // desktop's places are as tall as the wait's practice battle at twice the battle's size (480 by 320), 80
-    // apart (VS between them); a phone's are cards, one over the other. Held sideways (docs/design/app-ui.md §2.103)
-    // the cards are side by side, 94 tall, 54 apart (VS between them); the match's settings under them in one row; and
-    // at the foot this player's connection with the buttons beside it, 52 tall, the reserved line over them.
-    property <length> vs-width: Theme.sideways ? 54px : 80px;
-    property <length> place-width: Theme.phone ? self.body-width : Theme.sideways ? (self.body-width - self.vs-width) / 2 : 480px;
-    property <length> place-height: Theme.phone ? 126px : Theme.sideways ? 94px : 320px;
-    property <length> lobby-top: Theme.handheld ? 0px : (self.body-height - 548px) / 2;
-    property <length> lobby-left: (self.body-width - 2 * self.place-width - self.vs-width) / 2;
-    property <length> their-x: Theme.phone ? 0px : self.lobby-left + self.place-width + self.vs-width;
-    property <length> their-y: Theme.phone ? self.place-height + 8px : self.lobby-top;
-    property <length> facts-top: Theme.phone ? 2 * self.place-height + 20px : Theme.sideways ? self.place-height + 8px : self.lobby-top + self.place-height + 24px;
-    property <length> buttons-top: Theme.phone ? self.facts-top + 308px : Theme.sideways ? self.body-height - 52px : self.facts-top + 124px;
     title: PlayView.part == PlayPart.spectate ? I18n.upper(@tr("Spectate")) : PlayView.part == PlayPart.lobby ? I18n.upper(@tr("Lobby")) : I18n.upper(@tr("Play"));
     back: PlayView.part == PlayPart.builds ? I18n.upper(@tr("Menu")) : I18n.upper(@tr("Play"));
     hints: PlayView.part == PlayPart.spectate ? [] : PlayView.part == PlayPart.lobby ? (PlayView.waiting ? root.hints-waiting : root.hints-lobby) : root.hints-builds;
@@ -1267,299 +1573,28 @@ export component PlayScreen inherits Page {
     // invite's code (`WaitCard`), the player's own the practice battle (on a phone their card, the battle asked for
     // with PRACTICE, filling the window), and the buttons are the way out alone; the match's settings are the
     // host's to set already (the user: "the host should be able to change settings before the joiner joins").
-    if PlayView.part == PlayPart.lobby: Rectangle {
+    if PlayView.part == PlayPart.lobby && !Theme.phone: LobbyBody {
         x: 0;
         y: 0;
         width: root.body-width;
         height: root.body-height;
-        // The other player's card slides in as they join.
-        joined := Tween {
-            held: !PlayView.their-present;
-        }
+        viewport-height: root.body-height;
+    }
 
-        Arrive {
-            order: 0;
-            if !PlayView.waiting || Theme.handheld: LobbyCard {
-                x: Theme.phone ? 0px : root.lobby-left;
-                y: root.lobby-top;
-                width: root.place-width;
-                height: root.place-height;
-                role: PlayView.you;
-                name: Shell.player;
-                build: PlayView.card;
-                side: 1;
-                ready: PlayView.ready;
-                ready-seq: PlayView.ready-seq;
-                marked: !PlayView.waiting;
-            }
+    if PlayView.part == PlayPart.lobby && Theme.phone: lobby-scroll := ScrollPage {
+        x: 0;
+        y: 0;
+        width: root.body-width;
+        height: root.body-height;
+        nav: "lobby.";
+        content-height: lobby-body.portrait-height;
 
-            // The wait's practice battle, at twice the battle's size, in this player's place.
-            if PlayView.waiting && !Theme.handheld: Rectangle {
-                x: root.lobby-left;
-                y: root.lobby-top;
-                width: root.place-width;
-                height: root.place-height;
-                Picture {
-                    x: 0;
-                    y: 0;
-                    width: root.place-width;
-                    height: root.place-height;
-                    ground: Theme.inset;
-                }
-
-                Rectangle {
-                    x: 12px;
-                    y: parent.height - 34px;
-                    width: practice.preferred-width + 16px;
-                    height: 22px;
-                    background: Theme.shade;
-                    practice := Text {
-                        text: I18n.upper(@tr("Practice"));
-                        color: Theme.text;
-                        font-family: Theme.display;
-                        font-size: 11px;
-                        font-weight: Theme.display-bold;
-                        letter-spacing: Theme.label-tracking;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            Text {
-                x: root.lobby-left + root.place-width;
-                y: root.lobby-top;
-                width: root.vs-width;
-                height: root.place-height;
-                visible: !Theme.phone;
-                text: @tr("VS");
-                color: Theme.dim;
-                font-family: Theme.display;
-                font-size: 28px;
-                font-weight: Theme.display-bold;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-
-            if PlayView.waiting: WaitCard {
-                x: root.their-x;
-                y: root.their-y;
-                width: root.place-width;
-                height: root.place-height;
-            }
-        }
-
-        Rectangle {
-            x: (1 - joined.t) * 56px;
-            opacity: joined.t;
-            visible: PlayView.their-present;
-            LobbyCard {
-                x: root.their-x;
-                y: root.their-y;
-                width: root.place-width;
-                height: root.place-height;
-                role: PlayView.opponent;
-                name: PlayView.their-name;
-                side: 2;
-                ready: PlayView.their-ready;
-                ready-seq: PlayView.their-ready-seq;
-            }
-        }
-
-        // The match's settings, and apart from them this player's own: each group named over it on a desktop;
-        // on a phone a line each, the player's own under a name of their own.
-        Arrive {
-            order: 1;
-            Label {
-                x: match-facts.x;
-                y: root.facts-top;
-                width: match-facts.width;
-                height: 14px;
-                visible: !Theme.phone;
-                text: I18n.upper(@tr("Match settings"));
-            }
-
-            match-facts := MatchFacts {
-                x: Theme.phone ? 0px : Theme.sideways ? 0px : (root.body-width - self.natural-width - 24px - connection.natural-width) / 2;
-                y: Theme.phone ? root.facts-top : root.facts-top + 22px;
-                width: Theme.phone ? root.body-width : Theme.sideways ? max(self.natural-width, root.body-width) : self.natural-width;
-
-                Rectangle { }  // (Copied in: docs/app.md §14.)
-            }
-
-            Label {
-                x: connection.x;
-                y: Theme.phone ? match-facts.y + match-facts.height + 12px : Theme.sideways ? match-facts.y + match-facts.height + 8px : root.facts-top;
-                width: Theme.phone ? root.body-width : connection.width;
-                height: 14px;
-                text: I18n.upper(@tr("Your connection"));
-            }
-
-            connection := ConnectionFacts {
-                x: Theme.phone ? 0px : Theme.sideways ? 0px : match-facts.x + match-facts.width + 24px;
-                y: Theme.phone ? match-facts.y + match-facts.height + 32px : Theme.sideways ? root.body-height - self.height : match-facts.y;
-                width: Theme.phone ? root.body-width : self.natural-width;
-
-                Rectangle { }  // (Copied in: docs/app.md §14.)
-            }
-        }
-
-        Arrive {
-            order: 2;
-            // With the other player: READY, CHANGE BUILD and LEAVE. (On a phone READY the column's width, the
-            // other two half of it each under it; held sideways the three beside the connection, READY taking what
-            // the other two leave, each 52 tall.)
-            ready := Button {
-                x: Theme.phone ? 0px : Theme.sideways ? (connection.width + 14px) : (root.body-width - self.width - change.width - leave.width - 24px) / 2;
-                y: root.buttons-top;
-                width: Theme.phone ? root.body-width : Theme.sideways ? root.body-width - (connection.width + 14px) - change.width - leave.width - 16px : 184px;
-                visible: !PlayView.waiting;
-                enabled: !PlayView.waiting;
-                nav: "lobby.ready";
-                text: PlayView.ready ? I18n.upper(@tr("Not ready")) : I18n.upper(@tr("Ready"));
-                kind: ButtonKind.main;
-                big: Theme.handheld;
-            }
-
-            change := Button {
-                x: Theme.phone ? 0px : ready.x + ready.width + (Theme.sideways ? 8px : 12px);
-                y: Theme.phone ? root.buttons-top + 60px : root.buttons-top;
-                width: Theme.phone ? (root.body-width - 8px) / 2 : self.natural-width;
-                visible: !PlayView.waiting;
-                enabled: !PlayView.waiting;
-                nav: "lobby.change";
-                text: I18n.upper(@tr("Change build"));
-                big: Theme.sideways;
-            }
-
-            leave := Button {
-                x: Theme.phone ? change.width + 8px : change.x + change.width + (Theme.sideways ? 8px : 12px);
-                y: change.y;
-                width: Theme.phone ? (root.body-width - 8px) / 2 : self.natural-width;
-                visible: !PlayView.waiting;
-                enabled: !PlayView.waiting;
-                nav: "lobby.leave";
-                text: I18n.upper(@tr("Leave"));
-                kind: ButtonKind.ghost;
-                big: Theme.sideways;
-            }
-
-            // While the host waits: the way out, CANCEL INVITE (STOP HOSTING), as the practice menu has it in
-            // EXIT's place; on a phone PRACTICE before it, which starts the practice battle filling the window (held
-            // sideways the two in READY's row).
-            train := Button {
-                x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: root.buttons-top;
-                width: Theme.sideways ? root.body-width - (connection.width + 14px) - cancel.width - 8px : root.body-width;
-                visible: PlayView.waiting && Theme.handheld;
-                enabled: PlayView.waiting && Theme.handheld;
-                nav: "wait.train";
-                text: I18n.upper(@tr("Practice"));
-                kind: ButtonKind.main;
-                big: true;
-            }
-
-            cancel := Button {
-                x: Theme.phone ? 0px : Theme.sideways ? root.body-width - self.width : (root.body-width - self.width) / 2;
-                y: Theme.phone ? root.buttons-top + 60px : root.buttons-top;
-                width: Theme.phone ? root.body-width : self.natural-width;
-                visible: PlayView.waiting;
-                enabled: PlayView.waiting;
-                nav: "wait.cancel";
-                text: PlayView.wait-exit(PlayView.invite-direct);
-                kind: ButtonKind.ghost;
-                big: Theme.sideways;
-            }
-
-            // Client-local Stage & BGM mode + EXE6 Random Battle / EXE4-5 Dark Soul AI + host spectator controls.
-            Rectangle {
-                property <bool> show-spec: PlayView.host && !PlayView.invite-direct;
-                property <bool> show-random: PlayView.random-supported;
-                property <bool> show-abd: PlayView.abd-supported;
-                property <length> gap: Theme.sideways ? 6px : 10px;
-                property <length> row-w: stage-btn.width
-                    + (self.show-random ? self.gap + random-btn.width : 0px)
-                    + (self.show-abd ? self.gap + abd-btn.width : 0px)
-                    + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
-                property <length> top-w: stage-btn.width
-                    + (self.show-random ? self.gap + random-btn.width : 0px)
-                    + (self.show-abd ? self.gap + abd-btn.width : 0px);
-                property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
-                x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 108px : 92px);
-                width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
-                height: Theme.phone ? (self.show-spec ? 74px : 36px) : Theme.sideways ? 30px : 36px;
-
-                stage-btn := Button {
-                    x: Theme.phone ? (parent.width - parent.top-w) / 2 : (parent.width - parent.row-w) / 2;
-                    y: 0;
-                    height: Theme.sideways ? 28px : 34px;
-                    compact: true;
-                    nav: "lobby.stage";
-                    kind: ButtonKind.ghost;
-                    text: @tr("Stage & BGM: {}", PlayView.stage-mode == 1 ? @tr("stage mode" => "Full random") : PlayView.stage-mode == 2 ? @tr("stage mode" => "Escalating") : PlayView.stage-mode == 3 ? @tr("stage mode" => "Custom") : @tr("stage mode" => "Default"));
-                }
-
-                random-btn := Button {
-                    x: stage-btn.x + stage-btn.width + parent.gap;
-                    y: 0;
-                    height: Theme.sideways ? 28px : 34px;
-                    compact: true;
-                    visible: parent.show-random;
-                    enabled: parent.show-random && PlayView.host;
-                    nav: parent.show-random && PlayView.host ? "lobby.random-battle" : "";
-                    kind: PlayView.random-rank > 0 ? ButtonKind.normal : ButtonKind.ghost;
-                    text: @tr("Random Battle: {}", PlayView.random-rank == 1 ? @tr("Rank 1") : PlayView.random-rank == 2 ? @tr("Rank 2") : PlayView.random-rank == 3 ? @tr("Rank 3") : @tr("Off"));
-                }
-
-                abd-btn := Button {
-                    x: (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                    y: 0;
-                    height: Theme.sideways ? 28px : 34px;
-                    compact: true;
-                    visible: parent.show-abd;
-                    enabled: parent.show-abd && PlayView.host;
-                    nav: parent.show-abd && PlayView.host ? "lobby.abd-mode" : "";
-                    kind: PlayView.abd-mode > 0 ? ButtonKind.normal : ButtonKind.ghost;
-                    text: @tr("Dark Soul AI: {}", PlayView.abd-mode == 1 ? @tr("Legacy Collection") : PlayView.abd-mode == 2 ? @tr("DS") : @tr("Original"));
-                }
-
-                spec-vis := Button {
-                    x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                    y: Theme.phone ? 40px : 0px;
-                    height: Theme.sideways ? 28px : 34px;
-                    compact: true;
-                    visible: parent.show-spec;
-                    enabled: parent.show-spec;
-                    nav: "lobby.spectate";
-                    kind: ButtonKind.ghost;
-                    text: PlayView.spectate-visibility == 0 ? @tr("Room: Private") : PlayView.spectate-visibility == 2 ? @tr("Room: Public") : @tr("Room: Code");
-                }
-
-                spec-delay := Button {
-                    x: spec-vis.x + spec-vis.width + parent.gap;
-                    y: spec-vis.y;
-                    height: Theme.sideways ? 28px : 34px;
-                    compact: true;
-                    visible: parent.show-spec;
-                    enabled: parent.show-spec && PlayView.spectate-visibility != 0;
-                    nav: "lobby.spectate-delay";
-                    kind: ButtonKind.ghost;
-                    text: PlayView.spectate-delay == 0 ? @tr("Delay: Off") : @tr("Delay: {}s", PlayView.spectate-delay);
-                }
-            }
-
-            // The reserved line: who is waited for, that the link is being made again, why the match before
-            // ended, or what keeps this player's build from being played.
-            Message {
-                x: Theme.sideways ? (connection.width + 14px) : 0px;
-                y: Theme.sideways ? root.buttons-top - 22px : root.buttons-top + (Theme.phone ? (PlayView.host && !PlayView.invite-direct ? 188px : 150px) : 56px);
-                width: Theme.sideways ? root.body-width - (connection.width + 14px) : root.body-width;
-                text: PlayView.note == LobbyNote.reconnecting ? @tr("Reconnecting {} s", PlayView.note-seconds) : PlayView.note == LobbyNote.unusable ? PlayView.note-problem : PlayView.note-error != "" ? PlayView.note-error : PlayView.note == LobbyNote.you ? @tr("Waiting for you to ready up.") : PlayView.note == LobbyNote.them ? @tr("Waiting for your opponent to ready up.") : "";
-                tone: PlayView.note-error != "" || PlayView.note == LobbyNote.reconnecting || PlayView.note == LobbyNote.unusable ? Theme.bad : Theme.muted;
-                mark: PlayView.note == LobbyNote.unusable;
-                horizontal-alignment: center;
-            }
+        lobby-body := LobbyBody {
+            x: 0;
+            y: 0;
+            width: lobby-scroll.view-width;
+            height: self.portrait-height;
+            viewport-height: root.body-height;
         }
     }
 
@@ -2501,7 +2536,7 @@ export component PlayOverlay inherits Rectangle {
             y: Theme.phone ? 70px : Theme.sideways ? 18px : 22px;
             width: Theme.phone ? (rooms.inner-width - 8px) / 2 : max(92px, self.natural-width);
             nav: "rooms.watch-code";
-            text: I18n.upper(@tr("Watch"));
+            text: I18n.upper(@tr("spectate" => "Watch"));
         }
 
         Message {
@@ -2641,7 +2676,7 @@ export component PlayOverlay inherits Rectangle {
                     }
 
                     row-join := Button {
-                        x: 12px;
+                        x: Theme.phone ? 12px : parent.width - row-watch.width - self.width - 18px;
                         y: Theme.phone ? 52px : 14px;
                         width: Theme.phone ? (parent.width - 32px) / 2 : max(80px, self.natural-width);
                         height: Theme.phone ? 34px : 32px;
@@ -2663,7 +2698,7 @@ export component PlayOverlay inherits Rectangle {
                         nav: "rooms.list.watch";
                         nav-index: i;
                         kind: entry.joinable ? ButtonKind.ghost : ButtonKind.normal;
-                        text: I18n.upper(@tr("Watch"));
+                        text: I18n.upper(@tr("spectate" => "Watch"));
                     }
                 }
             }

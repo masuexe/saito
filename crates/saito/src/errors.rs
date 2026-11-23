@@ -27,6 +27,8 @@ pub enum UserError {
     NoSuchMatch,
     /// The match already has two players.
     MatchFull,
+    /// Spectating is disabled for this room.
+    SpectatingDisabled,
     /// The two apps (or their packs) differ.
     VersionMismatch,
     /// The opponent chose another game: `game` is theirs, as shown (EXE5).
@@ -98,6 +100,7 @@ impl UserError {
             UserError::AppTooOld => (ErrorKind::AppTooOld, ""),
             UserError::NoSuchMatch => (ErrorKind::NoSuchMatch, ""),
             UserError::MatchFull => (ErrorKind::MatchFull, ""),
+            UserError::SpectatingDisabled => (ErrorKind::SpectatingDisabled, ""),
             UserError::VersionMismatch => (ErrorKind::VersionMismatch, ""),
             UserError::OtherGame { game } => (ErrorKind::OtherGame, game),
             UserError::BuildUnusable { reason: Some(reason) } => (ErrorKind::BuildUnusable, reason),
@@ -157,6 +160,21 @@ impl UserError {
             K::CantConnect => UserError::CantConnect,
             K::ConnectionLost => UserError::ConnectionLost,
             K::Internal => UserError::Other,
+        }
+    }
+
+    /// A signaling error (saito-signaling's, e.g. while joining or spectating a room): its detail to the log,
+    /// its kind as the player reads it.
+    pub fn of_signaling(doing: &str, error: &saito_signaling::Error) -> UserError {
+        use saito_signaling::{ErrorKind as K, Refusal as R};
+        log(doing, &error.detail);
+        match error.kind {
+            K::Unreachable => UserError::ServerUnreachable,
+            K::Refused(R::NotFound) => UserError::NoSuchMatch,
+            K::Refused(R::Full) => UserError::MatchFull,
+            K::Refused(R::Version) => UserError::AppTooOld,
+            K::Refused(R::Disabled) => UserError::SpectatingDisabled,
+            K::Refused(R::BadRequest | R::Busy | R::Unknown) | K::Broken => UserError::Other,
         }
     }
 
@@ -325,5 +343,13 @@ mod tests {
         assert_eq!(UserError::of_export(&saito_video::Error::NoFfmpeg(std::io::ErrorKind::NotFound.into())), Some(UserError::NoFfmpeg));
         assert_eq!(UserError::of_stop(StopReason::Finished), None);
         assert_eq!(UserError::of_stop(StopReason::OpponentLeft), Some(UserError::OpponentLeft));
+        use saito_signaling::{Error as SigError, ErrorKind as SK, Refusal as SR};
+        let sig = |kind| UserError::of_signaling("testing", &SigError { kind, detail: "raw detail".into() });
+        assert_eq!(sig(SK::Unreachable), UserError::ServerUnreachable);
+        assert_eq!(sig(SK::Refused(SR::NotFound)), UserError::NoSuchMatch);
+        assert_eq!(sig(SK::Refused(SR::Full)), UserError::MatchFull);
+        assert_eq!(sig(SK::Refused(SR::Version)), UserError::AppTooOld);
+        assert_eq!(sig(SK::Refused(SR::Disabled)), UserError::SpectatingDisabled);
+        assert_eq!(sig(SK::Broken), UserError::Other);
     }
 }

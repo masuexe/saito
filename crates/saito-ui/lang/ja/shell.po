@@ -447,3 +447,9 @@ msgstr "アップデートをインストールできませんでした。次回
 
 msgid "The update couldn't be installed. It's tried again next start. Details are in the log file."
 msgstr "アップデートをインストールできませんでした。次回起動時に再試行します。詳細はログファイルにあります。"
+
+msgid "Spectating is disabled for this room."
+msgstr "このルームは観戦が無効です。"
+
+msgid "Spectating is disabled"
+msgstr "観戦が無効です"
