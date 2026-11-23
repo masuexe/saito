@@ -11,11 +11,13 @@ use serde::Deserialize;
 pub struct Found {
     /// The release's version (its tag's, without the `v`).
     pub version: String,
-    /// Where the APK is downloaded from.
+    /// Primary URL where the APK is downloaded from (mirror when available, otherwise GitHub).
     pub url: String,
+    /// Optional fallback download URL (e.g. GitHub tag download when `url` points to a mirror).
+    pub fallback_url: Option<String>,
     /// The APK's size, in bytes (0 if unknown before GET).
     pub size: u64,
-    /// The APK's SHA-256, as GitHub says it (in hexadecimal, lowercase).
+    /// The APK's SHA-256, in hexadecimal (lowercase).
     pub sha256: String,
 }
 
@@ -24,6 +26,64 @@ impl Found {
     pub fn version(&self) -> &str {
         &self.version
     }
+}
+
+/// Lightweight Android release manifest served at `<mirror>/latest/android.json`.
+#[derive(Deserialize)]
+struct MirrorAndroidManifest {
+    tag: String,
+    version: String,
+    apk_name: String,
+    apk_url: String,
+    #[serde(default)]
+    size: u64,
+    sha256: String,
+}
+
+fn normalize_sha256(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let hex = trimmed.strip_prefix("sha256:").or_else(|| trimmed.strip_prefix("SHA256:")).unwrap_or(trimmed).trim();
+    let lower = hex.to_ascii_lowercase();
+    (lower.len() == 64 && lower.bytes().all(|b| b.is_ascii_hexdigit())).then_some(lower)
+}
+
+/// Parse a mirror's `<mirror>/latest/android.json` manifest against `installed`.
+/// Validates version, APK filename, download URL, and 64-hex-char SHA-256 digest; attaches the
+/// corresponding GitHub tag download URL as `fallback_url` so download can also fall back cleanly.
+pub fn parse_mirror_android(json: &[u8], installed: &str, releases: &Releases) -> Result<Option<Found>, String> {
+    let manifest: MirrorAndroidManifest =
+        serde_json::from_slice(json).map_err(|e| format!("the mirror's android.json: {e}"))?;
+    let tag = manifest.tag.trim();
+    let version = manifest.version.trim();
+    if tag.is_empty() || version.is_empty() {
+        return Err("the mirror's android.json has an empty tag or version".into());
+    }
+    let tag_version = tag.strip_prefix('v').unwrap_or(tag);
+    if tag_version != version {
+        return Err(format!("the mirror's android.json tag {tag} does not match version {version}"));
+    }
+    if !is_newer_tag(tag, installed)? {
+        return Ok(None);
+    }
+    let apk_name = manifest.apk_name.trim();
+    if apk_name.is_empty() || apk_name.contains('/') || !apk_name.to_ascii_lowercase().ends_with(".apk") {
+        return Err(format!("the mirror's android.json has an invalid apk_name {apk_name:?}"));
+    }
+    let apk_url = manifest.apk_url.trim();
+    if !(apk_url.starts_with("https://") || apk_url.starts_with("http://")) {
+        return Err(format!("the mirror's android.json has an invalid apk_url {apk_url:?}"));
+    }
+    let sha256 = normalize_sha256(&manifest.sha256)
+        .ok_or_else(|| format!("the mirror's android.json for {tag} has an invalid SHA-256"))?;
+    let github_fallback = releases.tag_download(tag, apk_name);
+    let fallback_url = (github_fallback != apk_url).then_some(github_fallback);
+    Ok(Some(Found {
+        version: version.to_owned(),
+        url: apk_url.to_owned(),
+        fallback_url,
+        size: manifest.size,
+        sha256,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -84,7 +144,13 @@ pub fn newer(json: &[u8], installed: &str) -> Result<Option<Found>, String> {
     }
     let sha256 = apk.digest.as_deref().and_then(|d| d.strip_prefix("sha256:"));
     let sha256 = sha256.ok_or_else(|| format!("{tag}'s {} has no SHA-256", apk.name))?.to_ascii_lowercase();
-    Ok(Some(Found { version: version.to_owned(), url: apk.browser_download_url, size: apk.size, sha256 }))
+    Ok(Some(Found {
+        version: version.to_owned(),
+        url: apk.browser_download_url,
+        fallback_url: None,
+        size: apk.size,
+        sha256,
+    }))
 }
 
 /// Parse GitHub's `https://github.com/{owner}/{repo}/releases/expanded_assets/{tag}` HTML fragment for
@@ -113,9 +179,77 @@ pub fn parse_expanded_assets(html: &str, tag: &str, releases: &Releases) -> Resu
     Ok(Found {
         version,
         url: releases.tag_download(tag, apk_name),
+        fallback_url: None,
         size: 0,
         sha256,
     })
+}
+
+/// The most of the release's JSON/HTML read (its assets and its notes: some tens of kilobytes).
+#[cfg(any(android, desktop))]
+const MAX_RELEASE: u64 = 1 << 20;
+
+/// Check `releases` for an Android APK newer than `installed`:
+/// tries the configured mirror (`<mirror>/latest/android.json`) first in a single request,
+/// falling back to GitHub (`web_latest` -> tag API / `expanded_assets`, then `api.github.com`).
+#[cfg(any(android, desktop))]
+pub async fn check_android_releases(
+    clients: &crate::http::Clients,
+    releases: &Releases,
+    installed: &str,
+) -> Result<Option<Found>, String> {
+    if let Some(mirror_url) = releases.mirror_android_manifest() {
+        match clients
+            .get_bytes(&mirror_url, MAX_RELEASE)
+            .await
+            .and_then(|json| parse_mirror_android(&json, installed, releases))
+        {
+            Ok(found) => return Ok(found),
+            Err(mirror_err) => {
+                log::warn!("mirror android release check failed ({mirror_err}); falling back to GitHub");
+            }
+        }
+    }
+    match fetch_web_latest(clients, releases, installed).await {
+        Ok(found) => Ok(found),
+        Err(web_err) => {
+            log::warn!("github web release check failed ({web_err}); falling back to GitHub API");
+            let json = clients
+                .get_bytes(&releases.latest(), MAX_RELEASE)
+                .await
+                .map_err(|api_err| format!("{api_err} (web: {web_err})"))?;
+            newer(&json, installed)
+        }
+    }
+}
+
+#[cfg(any(android, desktop))]
+async fn fetch_web_latest(
+    clients: &crate::http::Clients,
+    releases: &Releases,
+    installed: &str,
+) -> Result<Option<Found>, String> {
+    let web_json = clients
+        .get_bytes_with_accept(&releases.web_latest(), Some("application/json"), MAX_RELEASE)
+        .await?;
+    let tag = parse_web_latest_tag(&web_json)?;
+    if !is_newer_tag(&tag, installed)? {
+        return Ok(None);
+    }
+    match clients.get_bytes(&releases.release_by_tag(&tag), MAX_RELEASE).await {
+        Ok(json) => match newer(&json, installed) {
+            Ok(found) => return Ok(found),
+            Err(api_err) => log::warn!("github tag API parse failed ({api_err}); falling back to expanded_assets"),
+        },
+        Err(api_err) => log::warn!("github tag API failed ({api_err}); falling back to expanded_assets"),
+    }
+    let html_bytes = clients.get_bytes(&releases.expanded_assets(&tag), MAX_RELEASE).await?;
+    let html = String::from_utf8_lossy(&html_bytes);
+    let mut found = parse_expanded_assets(&html, &tag, releases)?;
+    if let Some(len) = clients.head_content_length(&found.url).await {
+        found.size = len;
+    }
+    Ok(Some(found))
 }
 
 /// Extract a 64-hex-char SHA-256 digest for `asset_name` from a GitHub `<clipboard-copy ...>` tag.
@@ -178,6 +312,7 @@ mod tests {
             Some(Found {
                 version: "0.21.0".into(),
                 url: "https://github.com/masuexe/saito/releases/download/v0.21.0/saito-android.apk".into(),
+                fallback_url: None,
                 size: 97_122_818,
                 sha256: SUM.into(),
             })
@@ -256,9 +391,155 @@ mod tests {
             Found {
                 version: "0.5.0".into(),
                 url: "https://github.com/masuexe/saito/releases/download/v0.5.0/saito-android.apk".into(),
+                fallback_url: None,
                 size: 0,
                 sha256: sum.into(),
             }
         );
+    }
+
+    #[test]
+    fn parses_mirror_android_manifest_and_validates_fields() {
+        let releases = Releases::github("masuexe", "saito").with_mirror("https://releases.saito.exessrhub.top");
+        let manifest = serde_json::json!({
+            "tag": "v0.5.0",
+            "version": "0.5.0",
+            "apk_name": "saito-android.apk",
+            "apk_url": "https://releases.saito.exessrhub.top/v0.5.0/saito-android.apk",
+            "size": 97_122_818u64,
+            "sha256": format!("sha256:{}", SUM.to_ascii_uppercase()),
+        })
+        .to_string();
+
+        let found = parse_mirror_android(manifest.as_bytes(), "0.4.9", &releases).unwrap();
+        assert_eq!(
+            found,
+            Some(Found {
+                version: "0.5.0".into(),
+                url: "https://releases.saito.exessrhub.top/v0.5.0/saito-android.apk".into(),
+                fallback_url: Some("https://github.com/masuexe/saito/releases/download/v0.5.0/saito-android.apk".into()),
+                size: 97_122_818,
+                sha256: SUM.into(),
+            })
+        );
+        assert_eq!(parse_mirror_android(manifest.as_bytes(), "0.5.0", &releases).unwrap(), None);
+
+        // Missing/invalid SHA-256 must fail (never downgrade security).
+        let bad_sha = serde_json::json!({
+            "tag": "v0.5.0",
+            "version": "0.5.0",
+            "apk_name": "saito-android.apk",
+            "apk_url": "https://releases.saito.exessrhub.top/v0.5.0/saito-android.apk",
+            "size": 100u64,
+            "sha256": "not-a-sha256",
+        })
+        .to_string();
+        assert!(parse_mirror_android(bad_sha.as_bytes(), "0.4.9", &releases).is_err());
+
+        // Mismatched tag/version must fail.
+        let mismatch = serde_json::json!({
+            "tag": "v0.5.0",
+            "version": "0.5.1",
+            "apk_name": "saito-android.apk",
+            "apk_url": "https://releases.saito.exessrhub.top/v0.5.0/saito-android.apk",
+            "size": 100u64,
+            "sha256": SUM,
+        })
+        .to_string();
+        assert!(parse_mirror_android(mismatch.as_bytes(), "0.4.9", &releases).is_err());
+
+        // Invalid apk_url or apk_name must fail.
+        let bad_url = serde_json::json!({
+            "tag": "v0.5.0",
+            "version": "0.5.0",
+            "apk_name": "saito-android.apk",
+            "apk_url": "file:///tmp/evil.apk",
+            "size": 100u64,
+            "sha256": SUM,
+        })
+        .to_string();
+        assert!(parse_mirror_android(bad_url.as_bytes(), "0.4.9", &releases).is_err());
+    }
+
+    #[cfg(any(android, desktop))]
+    fn spawn_http_server(routes: Vec<(String, u16, Vec<u8>)>) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| p == path)
+                    .map(|(_, s, b)| (*s, b.as_slice()))
+                    .unwrap_or((404, b"not found"));
+                let reason = match status {
+                    200 => "OK",
+                    404 => "Not Found",
+                    503 => "Service Unavailable",
+                    _ => "Error",
+                };
+                let header = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[cfg(any(android, desktop))]
+    #[test]
+    fn android_check_prefers_mirror_and_falls_back_to_github() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let clients = crate::http::Clients::direct_for_test().unwrap();
+
+        // 1. Mirror succeeds in a single request.
+        let mirror_manifest = serde_json::json!({
+            "tag": "v0.6.0",
+            "version": "0.6.0",
+            "apk_name": "saito-android.apk",
+            "apk_url": "https://releases.saito.exessrhub.top/v0.6.0/saito-android.apk",
+            "size": 1234u64,
+            "sha256": SUM,
+        })
+        .to_string()
+        .into_bytes();
+        let mirror_ok = spawn_http_server(vec![("/latest/android.json".into(), 200, mirror_manifest)]);
+        let gh_unused = spawn_http_server(vec![]);
+        let releases = Releases::github("masuexe", "saito")
+            .with_mirror(&mirror_ok)
+            .with_github_bases(&gh_unused, &gh_unused);
+        let found = rt.block_on(check_android_releases(&clients, &releases, "0.5.0")).unwrap().unwrap();
+        assert_eq!(found.version, "0.6.0");
+        assert_eq!(found.url, "https://releases.saito.exessrhub.top/v0.6.0/saito-android.apk");
+        assert_eq!(
+            found.fallback_url.as_deref(),
+            Some(format!("{gh_unused}/masuexe/saito/releases/download/v0.6.0/saito-android.apk").as_str())
+        );
+
+        // 2. Mirror returns 503 -> automatically falls back to GitHub web_latest + release_by_tag.
+        let mirror_down = spawn_http_server(vec![("/latest/android.json".into(), 503, b"unavailable".to_vec())]);
+        let gh_web_latest = br#"{"tag_name":"v0.6.1"}"#.to_vec();
+        let gh_tag_api = with_apk("v0.6.1");
+        let gh_ok = spawn_http_server(vec![
+            ("/masuexe/saito/releases/latest".into(), 200, gh_web_latest),
+            ("/repos/masuexe/saito/releases/tags/v0.6.1".into(), 200, gh_tag_api),
+        ]);
+        let releases = Releases::github("masuexe", "saito")
+            .with_mirror(&mirror_down)
+            .with_github_bases(&gh_ok, &gh_ok);
+        let found = rt.block_on(check_android_releases(&clients, &releases, "0.5.0")).unwrap().unwrap();
+        assert_eq!(found.version, "0.6.1");
+        assert_eq!(found.url, "https://github.com/masuexe/saito/releases/download/v0.6.1/saito-android.apk");
+        assert_eq!(found.sha256, SUM);
     }
 }

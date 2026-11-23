@@ -206,6 +206,11 @@ impl Clients {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn direct_for_test() -> Result<Clients, String> {
+        Ok(Clients { primary: build_client(None)?, direct: None })
+    }
+
     async fn send_get(&self, url: &str, accept: Option<&str>) -> Result<reqwest::Response, String> {
         let build = |c: &reqwest::Client| {
             let req = c.get(url);

@@ -466,3 +466,81 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      # Mirror desktop Velopack feeds/packages and Android APK + lightweight android.json to Cloudflare R2
+      # for direct domestic access without a proxy. Skipped gracefully when R2 secrets are not configured.
+      - name: Sync update mirror to Cloudflare R2
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_URL: https://releases.saito.exessrhub.top
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: "true"
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          if [ -z "$R2_ENDPOINT" ] || [ -z "$R2_BUCKET" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::notice::R2 secrets not fully configured; skipping Cloudflare R2 update mirror sync."
+            exit 0
+          fi
+
+          python3 -I - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          apk = Path("releases/saito-android.apk")
+          tag = os.environ["TAG"]
+          version = os.environ["VERSION"]
+          public_url = os.environ["R2_PUBLIC_URL"].rstrip("/")
+
+          h = hashlib.sha256()
+          with apk.open("rb") as f:
+              for chunk in iter(lambda: f.read(1 << 20), b""):
+                  h.update(chunk)
+
+          manifest = {
+              "tag": tag,
+              "version": version,
+              "apk_name": apk.name,
+              "apk_url": f"{public_url}/{tag}/{apk.name}",
+              "size": apk.stat().st_size,
+              "sha256": h.hexdigest(),
+          }
+          Path("releases/android.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+          # 1. Upload immutable versioned packages first so manifests never reference missing files.
+          shopt -s nullglob
+          for pkg in releases/*.nupkg; do
+            name=$(basename "$pkg")
+            aws s3 cp "$pkg" "s3://$R2_BUCKET/latest/$name" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --content-type "application/octet-stream" \
+              --cache-control "public, max-age=31536000, immutable"
+          done
+
+          aws s3 cp "releases/saito-android.apk" "s3://$R2_BUCKET/$TAG/saito-android.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive" \
+            --cache-control "public, max-age=31536000, immutable"
+
+          # 2. Upload mutable latest manifests last with no-cache.
+          for channel in win-x64 win-arm64 macos-arm64 macos-x64 linux-x64 linux-arm64; do
+            feed="releases/releases.${channel}.json"
+            if [ -f "$feed" ]; then
+              aws s3 cp "$feed" "s3://$R2_BUCKET/latest/releases.${channel}.json" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --content-type "application/json" \
+                --cache-control "no-cache, max-age=0"
+            fi
+          done
+
+          aws s3 cp "releases/android.json" "s3://$R2_BUCKET/latest/android.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, max-age=0"

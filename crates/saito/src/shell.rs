@@ -1276,9 +1276,12 @@ impl App {
             still,
             probe_motion: false,
             stay_awake: false,
-            // (saito's releases: GitHub's masuexe/saito, its desktop packages and its APK.)
-            updates: saito_updater::Updater::new(saito_updater::Releases::github("masuexe", "saito"))
-                .with_current_version(env!("CARGO_PKG_VERSION")),
+            // (saito's releases: Cloudflare R2 mirror first, falling back to GitHub's masuexe/saito.)
+            updates: saito_updater::Updater::new(
+                saito_updater::Releases::github("masuexe", "saito")
+                    .with_mirror("https://releases.saito.exessrhub.top"),
+            )
+            .with_current_version(env!("CARGO_PKG_VERSION")),
             manual_update: false,
             awake: None,
             drawing: true,

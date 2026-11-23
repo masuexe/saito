@@ -27,65 +27,151 @@ pub fn supported() -> bool {
     cfg!(any(desktop, android))
 }
 
+/// Environment variable overriding the optional release mirror base URL (e.g. for local testing).
+/// Set to an empty string, `"none"`, or `"off"` to disable the mirror and force GitHub fallback.
+pub const MIRROR_ENV: &str = "SAITO_UPDATE_MIRROR";
+
+/// Normalize a mirror base URL: trim whitespace and strip trailing slashes.
+/// Returns `None` if empty or explicitly disabled (`"none"` / `"off"`).
+fn normalize_mirror(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") || trimmed.eq_ignore_ascii_case("off") {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 /// Where an app's releases are published: a GitHub repository whose releases carry the desktop's Velopack packages
-/// (each system's and architecture's channel) and Android's APK. The app names its own ([`Updater::new`]).
+/// (each system's and architecture's channel) and Android's APK, with an optional direct mirror checked first.
+/// The app names its own ([`Updater::new`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Releases {
     owner: String,
     repo: String,
+    mirror: Option<String>,
+    #[cfg(test)]
+    github_web_base: Option<String>,
+    #[cfg(test)]
+    github_api_base: Option<String>,
 }
 
 impl Releases {
     /// The releases of the GitHub repository `owner`/`repo`.
     pub fn github(owner: &str, repo: &str) -> Releases {
-        Releases { owner: owner.to_owned(), repo: repo.to_owned() }
+        Releases {
+            owner: owner.to_owned(),
+            repo: repo.to_owned(),
+            mirror: None,
+            #[cfg(test)]
+            github_web_base: None,
+            #[cfg(test)]
+            github_api_base: None,
+        }
     }
 
-    #[cfg_attr(not(android), allow(dead_code))]
+    /// Configure an optional HTTP(S) mirror base URL (e.g. Cloudflare R2 custom domain) to try before GitHub.
+    pub fn with_mirror(mut self, base_url: impl AsRef<str>) -> Releases {
+        self.mirror = normalize_mirror(base_url.as_ref());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_github_bases(mut self, web_base: &str, api_base: &str) -> Releases {
+        self.github_web_base = Some(web_base.trim_end_matches('/').to_owned());
+        self.github_api_base = Some(api_base.trim_end_matches('/').to_owned());
+        self
+    }
+
+    /// Resolve the effective mirror base URL, applying an optional environment override.
+    pub(crate) fn resolve_mirror(&self, env_override: Option<&str>) -> Option<String> {
+        match env_override {
+            Some(raw) => normalize_mirror(raw),
+            None => self.mirror.clone(),
+        }
+    }
+
+    /// Effective mirror base URL, honoring [`MIRROR_ENV`] when set.
+    pub fn mirror_base(&self) -> Option<String> {
+        self.resolve_mirror(std::env::var(MIRROR_ENV).ok().as_deref())
+    }
+
+    /// Mirror URL for an asset under `<mirror>/latest/<asset>`.
+    #[cfg_attr(not(any(desktop, android, test)), allow(dead_code))]
+    pub(crate) fn mirror_latest(&self, asset: &str) -> Option<String> {
+        let base = self.mirror_base()?;
+        Some(format!("{base}/latest/{}", asset.trim_start_matches('/')))
+    }
+
+    /// Mirror URL for the lightweight Android release manifest (`<mirror>/latest/android.json`).
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
+    pub(crate) fn mirror_android_manifest(&self) -> Option<String> {
+        self.mirror_latest("android.json")
+    }
+
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn owner(&self) -> &str {
         &self.owner
     }
 
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn repo(&self) -> &str {
         &self.repo
     }
 
+    #[cfg_attr(not(any(desktop, android, test)), allow(dead_code))]
+    fn github_web(&self) -> &str {
+        #[cfg(test)]
+        if let Some(base) = &self.github_web_base {
+            return base;
+        }
+        "https://github.com"
+    }
+
+    #[cfg_attr(not(any(desktop, android, test)), allow(dead_code))]
+    fn github_api(&self) -> &str {
+        #[cfg(test)]
+        if let Some(base) = &self.github_api_base {
+            return base;
+        }
+        "https://api.github.com"
+    }
+
     /// GitHub's API for its newest published release.
-    #[cfg_attr(not(any(desktop, android)), allow(dead_code))]
+    #[cfg_attr(not(any(desktop, android, test)), allow(dead_code))]
     pub(crate) fn latest(&self) -> String {
-        format!("https://api.github.com/repos/{}/{}/releases/latest", self.owner, self.repo)
+        format!("{}/repos/{}/{}/releases/latest", self.github_api(), self.owner, self.repo)
     }
 
     /// GitHub's web endpoint for its newest release (returns tiny JSON with `Accept: application/json`,
     /// avoiding `api.github.com`'s strict 60 req/hr unauthenticated IP rate limit).
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn web_latest(&self) -> String {
-        format!("https://github.com/{}/{}/releases/latest", self.owner, self.repo)
+        format!("{}/{}/{}/releases/latest", self.github_web(), self.owner, self.repo)
     }
 
     /// GitHub's API for a specific release tag.
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn release_by_tag(&self, tag: &str) -> String {
-        format!("https://api.github.com/repos/{}/{}/releases/tags/{tag}", self.owner, self.repo)
+        format!("{}/repos/{}/{}/releases/tags/{tag}", self.github_api(), self.owner, self.repo)
     }
 
     /// GitHub's web fragment listing a release's assets and SHA-256 digests without hitting `api.github.com`.
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn expanded_assets(&self, tag: &str) -> String {
-        format!("https://github.com/{}/{}/releases/expanded_assets/{tag}", self.owner, self.repo)
+        format!("{}/{}/{}/releases/expanded_assets/{tag}", self.github_web(), self.owner, self.repo)
     }
 
     /// Direct download URL for an asset in the latest published release.
-    #[cfg_attr(not(desktop), allow(dead_code))]
+    #[cfg_attr(not(any(desktop, test)), allow(dead_code))]
     pub(crate) fn latest_download(&self, asset: &str) -> String {
-        format!("https://github.com/{}/{}/releases/latest/download/{asset}", self.owner, self.repo)
+        format!("{}/{}/{}/releases/latest/download/{asset}", self.github_web(), self.owner, self.repo)
     }
 
     /// Direct download URL for an asset in a specific release tag.
-    #[cfg_attr(not(android), allow(dead_code))]
+    #[cfg_attr(not(any(android, test)), allow(dead_code))]
     pub(crate) fn tag_download(&self, tag: &str, asset: &str) -> String {
-        format!("https://github.com/{}/{}/releases/download/{tag}/{asset}", self.owner, self.repo)
+        format!("{}/{}/{}/releases/download/{tag}/{asset}", self.github_web(), self.owner, self.repo)
     }
 }
 
@@ -373,5 +459,35 @@ mod tests {
         assert!(updater.check_now());
         updater.tell.send(Told::UpToDate).unwrap();
         assert_eq!(updater.poll(), Status::UpToDate);
+    }
+
+    #[test]
+    fn mirror_urls_normalize_trailing_slashes_and_env_overrides() {
+        let releases = Releases::github("masuexe", "saito").with_mirror(" https://releases.saito.exessrhub.top/// ");
+        assert_eq!(releases.resolve_mirror(None).as_deref(), Some("https://releases.saito.exessrhub.top"));
+        assert_eq!(
+            releases.resolve_mirror(Some("http://127.0.0.1:8080/mirror/")).as_deref(),
+            Some("http://127.0.0.1:8080/mirror")
+        );
+        assert_eq!(releases.resolve_mirror(Some("")), None);
+        assert_eq!(releases.resolve_mirror(Some("none")), None);
+        assert_eq!(releases.resolve_mirror(Some("OFF")), None);
+
+        // When SAITO_UPDATE_MIRROR is not set in the test environment, mirror_latest / mirror_android_manifest use the configured mirror.
+        if std::env::var(MIRROR_ENV).is_err() {
+            assert_eq!(
+                releases.mirror_latest("releases.win-x64.json").as_deref(),
+                Some("https://releases.saito.exessrhub.top/latest/releases.win-x64.json")
+            );
+            assert_eq!(
+                releases.mirror_latest("/saito-0.4.2-win-x64-full.nupkg").as_deref(),
+                Some("https://releases.saito.exessrhub.top/latest/saito-0.4.2-win-x64-full.nupkg")
+            );
+            assert_eq!(
+                releases.mirror_android_manifest().as_deref(),
+                Some("https://releases.saito.exessrhub.top/latest/android.json")
+            );
+            assert_eq!(Releases::github("masuexe", "saito").mirror_android_manifest(), None);
+        }
     }
 }
