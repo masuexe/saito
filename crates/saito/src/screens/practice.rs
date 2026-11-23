@@ -177,6 +177,7 @@ struct Kept {
     options: Options,
     place: [usize; 2],
     dummys: Option<String>,
+    music: crate::music::Music,
 }
 
 /// A visit to Practice: from the build editor's PRACTICE until Practice is left other than by the menu's EDIT. The editor is part of it: the menu's EDIT goes there, and its Back comes back.
@@ -490,15 +491,12 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
 /// The menu's rows shown with the dummy's Action `in_fight`: [`ROWS`], but for the Level (with Fights alone),
 /// for the Dummy's build and its EDIT where the session offers no builds (`builds`), and beside a waiting invite
 /// (`beside`, the user: "practice menu in the matchmaking waiting screen should be the same as the usual
-/// practice menu") for two rows that would do nothing there or drop the wait: the Music, its music being the
-/// menus' (the user: "in the waiting for opponent screen, it really shouldn't let you change the music because
-/// it does nothing"), and EDIT, whose editor would leave the screen that holds the invite (Play leaves its link
+/// practice menu") for EDIT alone, whose editor would leave the screen that holds the invite (Play leaves its link
 /// as it is hidden).
 fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: bool, abd_supported: bool) -> Vec<PracticeOption> {
     ROWS.into_iter()
         .filter(|o| match o {
             PracticeOption::Level => in_fight == InFight::Ai,
-            PracticeOption::Music => !beside,
             PracticeOption::DummysBuild => builds,
             PracticeOption::EditDummy => builds && !beside,
             PracticeOption::RandomBattle => random_supported,
@@ -626,6 +624,9 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
     }
     if let Some(k) = &kept {
         (start.opponent, start.level, start.options) = (k.opponent, k.level, k.options);
+        shell.set_battle_music(&k.music);
+    } else if start.from.is_some() {
+        shell.set_battle_music(&crate::music::Music::Background);
     }
     let Some(ready) = shell.games.ready(&start.game) else {
         crate::errors::log("starting practice", &format_args!("{} isn't ready", start.game));
@@ -769,8 +770,8 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         recorder: None,
         cards,
         full: start.full,
-        // (Practice's own plays the pick; the session beside a waiting invite leaves the menus' music on.)
-        music: if start.from.is_none() { crate::battle::BattleMusic::Picked } else { crate::battle::BattleMusic::None },
+        // Both standalone and room-waiting practice play the picked/background battle music (S-060).
+        music: crate::battle::BattleMusic::Picked,
         gate: None,
         presentation: None,
     });
@@ -792,8 +793,11 @@ fn set_of(content: &std::sync::Arc<saito_battle::Content>, m: &Match, seed: u32)
 /// invite canceled): what its menu was left at is forgotten.
 pub fn end(shell: &mut Shell) {
     shell.practice.waiting = None;
-    if shell.practice.session.take().is_none() {
+    let Some(ended) = shell.practice.session.take() else {
         return;
+    };
+    if ended.from.is_some() {
+        shell.set_battle_music(&crate::music::Music::Background);
     }
     if shell.loading_of(ScreenId::Practice) {
         shell.cancel_loading();
@@ -806,12 +810,12 @@ pub fn end(shell: &mut Shell) {
 
 /// End the practice session another screen started for a while, its wait going on (a phone's STOP PRACTICE):
 /// its next session in the same wait starts where its menu was left (the Dummy's build, the dummy's Action and
-/// Level, the place and the battle's options).
+/// Level, the place, the music, and the battle's options).
 pub fn stop(shell: &mut Shell) {
     let kept = shell.practice.session.as_ref().and_then(|s| {
         let (from, _) = s.from?;
         let dummys = s.builds.get(s.dummys).map(|p| p.build.name.clone());
-        Some(Kept { from, opponent: s.opponent, level: s.level, options: s.options, place: s.place, dummys })
+        Some(Kept { from, opponent: s.opponent, level: s.level, options: s.options, place: s.place, dummys, music: shell.battle_music() })
     });
     end(shell);
     shell.practice.waiting = kept;
@@ -1690,8 +1694,10 @@ impl Screen for Practice {
         if open && let Some(session) = shell.practice.session.as_ref() {
             tell_rows(shell, session, &[PracticeOption::InputDelay]);
         }
-        // A screen other than Practice and Builds ends the visit.
-        shell.practice.visit.shown(shell.screen());
+        // A screen other than Practice and Builds ends the visit (except while a waiting practice session is running on it).
+        if !shell.practice.session.as_ref().is_some_and(|s| s.from.is_some()) {
+            shell.practice.visit.shown(shell.screen());
+        }
         // The places' pictures made since the last frame: in the grid open, and the rows of the ones chosen.
         if shell.practice.thumbs.poll()
             && let Some(session) = shell.practice.session.as_ref()
@@ -1831,10 +1837,11 @@ mod tests {
         assert!(shown_rows(InFight::StandsStill, false, true, true, false).contains(&PracticeOption::RandomBattle), "EXE6 shows Random Battle");
         assert!(!shown_rows(InFight::StandsStill, false, true, true, false).contains(&PracticeOption::AbdMode), "EXE6 hides Dark Soul AI");
         assert!(shown_rows(InFight::StandsStill, false, true, false, true).contains(&PracticeOption::AbdMode), "EXE4/EXE5 show Dark Soul AI");
-        // Beside a waiting invite the usual menu, but for its Music and EDIT.
+        // Beside a waiting invite the usual menu, including Music, but for EDIT (which would leave the waiting room).
         let beside = shown_rows(InFight::StandsStill, true, true, true, true);
-        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true, true, true).into_iter().filter(|o| !matches!(o, PracticeOption::Music | PracticeOption::EditDummy)).collect();
+        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true, true, true).into_iter().filter(|o| !matches!(o, PracticeOption::EditDummy)).collect();
         assert_eq!(beside, usual, "beside a waiting invite");
+        assert!(beside.contains(&PracticeOption::Music));
         assert!(beside.contains(&PracticeOption::DummysBuild));
         assert_eq!(shown_rows(InFight::StandsStill, false, false, true, true).len(), none - 2, "no builds offered: no Dummy's build, no EDIT");
         assert_eq!(under(InFight::MovesAround), (none, Some(PracticeOption::Stage)));
