@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -40,7 +41,18 @@ object SaitoUpdater {
 
     /** The system's HTTP(S) proxy URL (e.g. "http://host:port"), or null if none is configured. */
     @JvmStatic
-    fun httpProxy(): String? {
+    fun httpProxy(activity: Activity): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching {
+                val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val proxy = cm?.defaultProxy
+                val host = proxy?.host?.trim().orEmpty()
+                val port = proxy?.port ?: -1
+                if (host.isNotEmpty() && port > 0) {
+                    return "http://$host:$port"
+                }
+            }
+        }
         val httpsHost = System.getProperty("https.proxyHost")?.trim().orEmpty()
         if (httpsHost.isNotEmpty()) {
             val port = System.getProperty("https.proxyPort")?.trim().orEmpty()

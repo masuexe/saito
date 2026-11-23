@@ -16,7 +16,7 @@ impl Found {
 pub fn startup() {}
 
 /// Nothing to ask.
-pub fn check(_releases: &Releases, _tell: Sender<Told>) -> bool {
+pub fn check(_releases: &Releases, _fallback_version: Option<&str>, _tell: Sender<Told>) -> bool {
     false
 }
 

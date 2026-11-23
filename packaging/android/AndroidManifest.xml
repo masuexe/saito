@@ -7,8 +7,9 @@
      is AppCompat's, whose theme it takes. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Local network multicast/discovery (saito-nearby's NsdManager & MulticastLock). -->
+    <!-- Local network multicast/discovery (saito-nearby's NsdManager & MulticastLock) and updater proxy lookup. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- The app's update (crates/saito-updater/src/platform/android.rs): the release's APK installed over the app by the

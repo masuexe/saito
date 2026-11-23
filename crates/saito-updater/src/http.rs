@@ -8,7 +8,7 @@ use std::sync::Once;
 use std::time::Duration;
 
 /// How long connecting and reading may wait before failing cleanly.
-pub const CONNECT_WAIT: Duration = Duration::from_secs(10);
+pub const CONNECT_WAIT: Duration = Duration::from_secs(8);
 pub const READ_WAIT: Duration = Duration::from_secs(30);
 
 /// Normalize an HTTP(S) proxy entry into a URL accepted by `reqwest::Proxy::all`.
@@ -156,81 +156,158 @@ fn resolve_http_proxy() -> Option<String> {
     None
 }
 
-/// Build an async `reqwest::Client` configured with rustls's ring provider, `saito` User-Agent, timeouts, and any
-/// active desktop or Android HTTP(S) proxy.
-pub fn client() -> Result<reqwest::Client, String> {
+fn install_tls() {
     static PROVIDER: Once = Once::new();
     PROVIDER.call_once(|| drop(rustls::crypto::ring::default_provider().install_default()));
+}
+
+fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
+    install_tls();
     let mut builder = reqwest::Client::builder().user_agent("saito").connect_timeout(CONNECT_WAIT).read_timeout(READ_WAIT);
-    #[cfg(any(desktop, target_os = "android"))]
-    if let Some(proxy_url) = resolve_http_proxy() {
-        match reqwest::Proxy::all(&proxy_url) {
-            Ok(proxy) => builder = builder.proxy(proxy),
-            Err(why) => log::warn!("ignoring invalid updater HTTP proxy {proxy_url:?}: {why}"),
-        }
+    match proxy {
+        Some(proxy_url) => match reqwest::Proxy::all(proxy_url) {
+            Ok(p) => builder = builder.proxy(p),
+            Err(why) => {
+                log::warn!("ignoring invalid updater HTTP proxy {proxy_url:?}: {why}");
+                builder = builder.no_proxy();
+            }
+        },
+        None => builder = builder.no_proxy(),
     }
     builder.build().map_err(|e| format!("an HTTP client: {e}"))
 }
 
-/// GET `url`, enforcing `limit` bytes and handing each chunk plus cumulative bytes read to `take`.
-pub async fn get_streaming(client: &reqwest::Client, url: &str, limit: u64, mut take: impl FnMut(&[u8], u64) -> Result<(), String>) -> Result<(), String> {
-    let said = |e: reqwest::Error| format!("{url}: {e}");
-    let response = client.get(url).send().await.map_err(said)?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("{url}: {status}"));
-    }
-    if response.content_length().is_some_and(|n| n > limit) {
-        return Err(format!("{url}: over {limit} bytes"));
-    }
-    let mut got = 0u64;
-    let mut pieces = response.bytes_stream();
-    while let Some(piece) = pieces.next().await {
-        let piece = piece.map_err(said)?;
-        got += piece.len() as u64;
-        if got > limit {
-            return Err(format!("{url}: over {limit} bytes"));
+/// HTTP client pair: tries any configured system HTTP(S) proxy first and automatically falls back
+/// to a direct `.no_proxy()` client if the proxy fails at the transport layer (e.g. stale or unreachable proxy).
+pub struct Clients {
+    primary: reqwest::Client,
+    direct: Option<reqwest::Client>,
+}
+
+impl Clients {
+    pub fn new() -> Result<Clients, String> {
+        #[cfg(any(desktop, target_os = "android"))]
+        let proxy = resolve_http_proxy();
+        #[cfg(not(any(desktop, target_os = "android")))]
+        let proxy: Option<String> = None;
+
+        if let Some(proxy_url) = proxy {
+            let primary = build_client(Some(&proxy_url))?;
+            let direct = build_client(None).ok();
+            Ok(Clients { primary, direct })
+        } else {
+            Ok(Clients { primary: build_client(None)?, direct: None })
         }
-        take(&piece, got)?;
     }
-    Ok(())
-}
 
-/// GET `url` into memory, up to `limit` bytes.
-pub async fn get_bytes(client: &reqwest::Client, url: &str, limit: u64) -> Result<Vec<u8>, String> {
-    let mut body = Vec::new();
-    get_streaming(client, url, limit, |piece, _| {
-        body.extend_from_slice(piece);
-        Ok(())
-    })
-    .await?;
-    Ok(body)
-}
-
-/// Download `url` directly to `path`, reporting integer percentages (0..=100) using `total_hint` when set.
-#[cfg_attr(target_os = "android", allow(dead_code))]
-pub async fn download_to_file(client: &reqwest::Client, url: &str, path: &Path, total_hint: u64, mut progress_pct: impl FnMut(i16)) -> Result<(), String> {
-    let written = |e: std::io::Error| format!("{}: {e}", path.display());
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let mut file = std::fs::File::create(path).map_err(written)?;
-    let mut last_pct = 0i16;
-    let limit = if total_hint > 0 { total_hint.saturating_mul(2).max(512 << 20) } else { 512 << 20 };
-    get_streaming(client, url, limit, |piece, got| {
-        file.write_all(piece).map_err(written)?;
-        if total_hint > 0 {
-            let pct = ((got.saturating_mul(100) / total_hint).min(100)) as i16;
-            if pct != last_pct {
-                last_pct = pct;
-                progress_pct(pct);
+    async fn send_get(&self, url: &str, accept: Option<&str>) -> Result<reqwest::Response, String> {
+        let build = |c: &reqwest::Client| {
+            let req = c.get(url);
+            match accept {
+                Some(header) => req.header(reqwest::header::ACCEPT, header),
+                None => req,
+            }
+        };
+        match build(&self.primary).send().await {
+            Ok(resp) => Ok(resp),
+            Err(first) => {
+                if let Some(direct) = &self.direct {
+                    log::warn!("updater request via proxy failed ({first}); retrying direct");
+                    build(direct).send().await.map_err(|e| format!("{url}: {e} (proxy: {first})"))
+                } else {
+                    Err(format!("{url}: {first}"))
+                }
             }
         }
+    }
+
+    /// GET `url` with an optional `Accept` header, enforcing `limit` bytes and handing each chunk,
+    /// cumulative bytes read, and response `Content-Length` (if known) to `take`.
+    pub async fn get_streaming(
+        &self,
+        url: &str,
+        accept: Option<&str>,
+        limit: u64,
+        mut take: impl FnMut(&[u8], u64, Option<u64>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let said = |e: reqwest::Error| format!("{url}: {e}");
+        let response = self.send_get(url, accept).await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("{url}: {status}"));
+        }
+        let total = response.content_length();
+        if total.is_some_and(|n| n > limit) {
+            return Err(format!("{url}: over {limit} bytes"));
+        }
+        let mut got = 0u64;
+        let mut pieces = response.bytes_stream();
+        while let Some(piece) = pieces.next().await {
+            let piece = piece.map_err(said)?;
+            got += piece.len() as u64;
+            if got > limit {
+                return Err(format!("{url}: over {limit} bytes"));
+            }
+            take(&piece, got, total)?;
+        }
         Ok(())
-    })
-    .await?;
-    file.flush().map_err(written)?;
-    Ok(())
+    }
+
+    /// GET `url` into memory, up to `limit` bytes.
+    pub async fn get_bytes(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+        self.get_bytes_with_accept(url, None, limit).await
+    }
+
+    /// GET `url` with an optional `Accept` header into memory, up to `limit` bytes.
+    pub async fn get_bytes_with_accept(&self, url: &str, accept: Option<&str>, limit: u64) -> Result<Vec<u8>, String> {
+        let mut body = Vec::new();
+        self.get_streaming(url, accept, limit, |piece, _, _| {
+            body.extend_from_slice(piece);
+            Ok(())
+        })
+        .await?;
+        Ok(body)
+    }
+
+    /// Best-effort `HEAD` request to obtain `Content-Length` without downloading the body.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub async fn head_content_length(&self, url: &str) -> Option<u64> {
+        let resp = match self.primary.head(url).send().await {
+            Ok(r) => r,
+            Err(_) => self.direct.as_ref()?.head(url).send().await.ok()?,
+        };
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.content_length()
+    }
+
+    /// Download `url` directly to `path`, reporting integer percentages (0..=100) using `total_hint` when set.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    pub async fn download_to_file(&self, url: &str, path: &Path, total_hint: u64, mut progress_pct: impl FnMut(i16)) -> Result<(), String> {
+        let written = |e: std::io::Error| format!("{}: {e}", path.display());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let mut file = std::fs::File::create(path).map_err(written)?;
+        let mut last_pct = 0i16;
+        let limit = if total_hint > 0 { total_hint.saturating_mul(2).max(512 << 20) } else { 512 << 20 };
+        self.get_streaming(url, None, limit, |piece, got, content_len| {
+            file.write_all(piece).map_err(written)?;
+            let total = if total_hint > 0 { total_hint } else { content_len.unwrap_or(0) };
+            if total > 0 {
+                let pct = ((got.saturating_mul(100) / total).min(100)) as i16;
+                if pct != last_pct {
+                    last_pct = pct;
+                    progress_pct(pct);
+                }
+            }
+            Ok(())
+        })
+        .await?;
+        file.flush().map_err(written)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

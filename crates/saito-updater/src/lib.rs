@@ -12,6 +12,8 @@
 //! Each system is a module (`src/platform.rs`). Unsafe code is Android's JNI alone (`src/platform/android.rs`).
 #![deny(unsafe_code)]
 
+#[cfg(any(android, test))]
+mod android_release;
 #[cfg(any(desktop, android))]
 mod http;
 mod platform;
@@ -39,15 +41,56 @@ impl Releases {
         Releases { owner: owner.to_owned(), repo: repo.to_owned() }
     }
 
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn repo(&self) -> &str {
+        &self.repo
+    }
+
     /// GitHub's API for its newest published release.
     #[cfg_attr(not(any(desktop, android)), allow(dead_code))]
     pub(crate) fn latest(&self) -> String {
         format!("https://api.github.com/repos/{}/{}/releases/latest", self.owner, self.repo)
     }
+
+    /// GitHub's web endpoint for its newest release (returns tiny JSON with `Accept: application/json`,
+    /// avoiding `api.github.com`'s strict 60 req/hr unauthenticated IP rate limit).
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn web_latest(&self) -> String {
+        format!("https://github.com/{}/{}/releases/latest", self.owner, self.repo)
+    }
+
+    /// GitHub's API for a specific release tag.
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn release_by_tag(&self, tag: &str) -> String {
+        format!("https://api.github.com/repos/{}/{}/releases/tags/{tag}", self.owner, self.repo)
+    }
+
+    /// GitHub's web fragment listing a release's assets and SHA-256 digests without hitting `api.github.com`.
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn expanded_assets(&self, tag: &str) -> String {
+        format!("https://github.com/{}/{}/releases/expanded_assets/{tag}", self.owner, self.repo)
+    }
+
+    /// Direct download URL for an asset in the latest published release.
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    pub(crate) fn latest_download(&self, asset: &str) -> String {
+        format!("https://github.com/{}/{}/releases/latest/download/{asset}", self.owner, self.repo)
+    }
+
+    /// Direct download URL for an asset in a specific release tag.
+    #[cfg_attr(not(android), allow(dead_code))]
+    pub(crate) fn tag_download(&self, tag: &str, asset: &str) -> String {
+        format!("https://github.com/{}/{}/releases/download/{tag}/{asset}", self.owner, self.repo)
+    }
 }
 
 /// How long the releases are waited on for their answer.
-pub const CHECK_WAIT: Duration = Duration::from_secs(12);
+pub const CHECK_WAIT: Duration = Duration::from_secs(20);
 
 /// Run first thing in the app's `main`: on the desktop Velopack's hook, which, run by its installer or its updater,
 /// does its part and ends the process there; elsewhere nothing.
@@ -105,6 +148,7 @@ enum PollOutcome {
 /// The app's update: one an app, asked as it starts or manually from Settings.
 pub struct Updater {
     releases: Releases,
+    current_version: Option<String>,
     stage: Stage,
     explicit: bool,
     tell: Sender<Told>,
@@ -128,7 +172,13 @@ impl Updater {
     /// The updater of an app published as `releases`.
     pub fn new(releases: Releases) -> Updater {
         let (tell, heard) = mpsc::channel();
-        Updater { releases, stage: Stage::Idle, explicit: false, tell, heard }
+        Updater { releases, current_version: None, stage: Stage::Idle, explicit: false, tell, heard }
+    }
+
+    /// Provide the compiled-in app version as a fallback when platform version lookup fails (e.g., Android JNI).
+    pub fn with_current_version(mut self, version: impl Into<String>) -> Updater {
+        self.current_version = Some(version.into());
+        self
     }
 
     /// Ask the releases whether a newer one is out: once, as the app starts. Where the system has no updater nothing
@@ -139,17 +189,26 @@ impl Updater {
         }
         self.explicit = false;
         // (Only a system with an updater asks, and keeps the time: a browser's `Instant` has none.)
-        self.stage = if system::check(&self.releases, self.tell.clone()) { Stage::Checking(Instant::now()) } else { Stage::Settled };
+        self.stage = if system::check(&self.releases, self.current_version.as_deref(), self.tell.clone()) {
+            Stage::Checking(Instant::now())
+        } else {
+            Stage::Settled
+        };
     }
 
     /// Ask the releases right now whether a newer one is out, even if checked earlier this session.
-    /// Returns `false` if this target has no updater or a check/update is already active.
+    /// If a silent startup check is already in progress, promotes it to an explicit check so the caller
+    /// receives its result. Returns `false` if this target has no updater or a download/install is active.
     pub fn check_now(&mut self) -> bool {
+        if matches!(self.stage, Stage::Checking(_)) {
+            self.explicit = true;
+            return true;
+        }
         if !matches!(self.stage, Stage::Idle | Stage::Settled) {
             return false;
         }
         self.explicit = true;
-        if system::check(&self.releases, self.tell.clone()) {
+        if system::check(&self.releases, self.current_version.as_deref(), self.tell.clone()) {
             self.stage = Stage::Checking(Instant::now());
             true
         } else {
@@ -304,5 +363,15 @@ mod tests {
         updater.tell.send(Told::UpToDate).unwrap();
         assert_eq!(updater.poll(), Status::UpToDate);
         assert_eq!(updater.poll(), Status::Idle);
+    }
+
+    #[test]
+    fn check_now_promotes_in_flight_silent_check() {
+        let mut updater = Updater::new(Releases::github("masuexe", "saito"));
+        updater.stage = Stage::Checking(Instant::now());
+        updater.explicit = false;
+        assert!(updater.check_now());
+        updater.tell.send(Told::UpToDate).unwrap();
+        assert_eq!(updater.poll(), Status::UpToDate);
     }
 }

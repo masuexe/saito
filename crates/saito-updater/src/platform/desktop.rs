@@ -52,16 +52,16 @@ pub(crate) fn parse_latest_release_assets(json: &[u8]) -> Result<HashMap<String,
     Ok(release.assets.into_iter().map(|a| (a.name.to_ascii_lowercase(), a.browser_download_url)).collect())
 }
 
-/// Fast single-release GitHub source backed by `crate::http` (pooled HTTPS + system proxy).
+/// Fast single-release GitHub source backed by `crate::http` (pooled HTTPS + system proxy + direct fallback).
 struct LatestGithubSource {
-    latest_api_url: String,
+    releases: Releases,
     assets: Mutex<HashMap<String, String>>,
 }
 
 impl LatestGithubSource {
-    fn new(latest_api_url: &str) -> LatestGithubSource {
+    fn new(releases: Releases) -> LatestGithubSource {
         LatestGithubSource {
-            latest_api_url: latest_api_url.to_owned(),
+            releases,
             assets: Mutex::new(HashMap::new()),
         }
     }
@@ -74,8 +74,8 @@ impl LatestGithubSource {
         runtime.block_on(work).map_err(velopack::Error::Other)
     }
 
-    async fn fetch_assets(&self, client: &reqwest::Client) -> Result<HashMap<String, String>, String> {
-        let json = crate::http::get_bytes(client, &self.latest_api_url, MAX_RELEASE).await?;
+    async fn fetch_assets(&self, clients: &crate::http::Clients) -> Result<HashMap<String, String>, String> {
+        let json = clients.get_bytes(&self.releases.latest(), MAX_RELEASE).await?;
         let map = parse_latest_release_assets(&json)?;
         *self.assets.lock().unwrap_or_else(|e| e.into_inner()) = map.clone();
         Ok(map)
@@ -86,12 +86,18 @@ impl UpdateSource for LatestGithubSource {
     fn get_release_feed(&self, channel: &str, _app: &velopack::bundle::Manifest, _staged_user_id: &str) -> Result<VelopackAssetFeed, velopack::Error> {
         let feed_name = format!("releases.{channel}.json").to_ascii_lowercase();
         Self::with_runtime(async {
-            let client = crate::http::client()?;
-            let assets = self.fetch_assets(&client).await?;
-            let Some(url) = assets.get(&feed_name) else {
-                return Ok(VelopackAssetFeed { Assets: Vec::new() });
+            let clients = crate::http::Clients::new()?;
+            let url = match self.fetch_assets(&clients).await {
+                Ok(assets) => match assets.get(&feed_name) {
+                    Some(url) => url.clone(),
+                    None => return Ok(VelopackAssetFeed { Assets: Vec::new() }),
+                },
+                Err(api_err) => {
+                    log::warn!("github API release feed lookup failed ({api_err}); falling back to direct latest download");
+                    self.releases.latest_download(&feed_name)
+                }
             };
-            let bytes = crate::http::get_bytes(&client, url, MAX_FEED).await?;
+            let bytes = clients.get_bytes(&url, MAX_FEED).await?;
             serde_json::from_slice(&bytes).map_err(|e| format!("parsing {feed_name}: {e}"))
         })
     }
@@ -100,23 +106,28 @@ impl UpdateSource for LatestGithubSource {
         let key = asset.FileName.to_ascii_lowercase();
         let size = asset.Size;
         Self::with_runtime(async {
-            let client = crate::http::client()?;
+            let clients = crate::http::Clients::new()?;
             let cached = self.assets.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
             let url = match cached {
                 Some(url) => url,
-                None => self
-                    .fetch_assets(&client)
-                    .await?
-                    .get(&key)
-                    .cloned()
-                    .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?,
+                None => match self.fetch_assets(&clients).await {
+                    Ok(assets) => assets
+                        .get(&key)
+                        .cloned()
+                        .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?,
+                    Err(api_err) => {
+                        log::warn!("github API asset lookup failed ({api_err}); falling back to direct latest download");
+                        self.releases.latest_download(&asset.FileName)
+                    }
+                },
             };
-            crate::http::download_to_file(&client, &url, local_file, size, |pct| {
-                if let Some(tx) = &progress_sender {
-                    let _ = tx.send(pct);
-                }
-            })
-            .await
+            clients
+                .download_to_file(&url, local_file, size, |pct| {
+                    if let Some(tx) = &progress_sender {
+                        let _ = tx.send(pct);
+                    }
+                })
+                .await
         })
     }
 }
@@ -124,7 +135,7 @@ impl UpdateSource for LatestGithubSource {
 /// The installed app's update manager, of `releases`.
 fn manager(releases: &Releases) -> Result<UpdateManager, velopack::Error> {
     let options = options(std::env::consts::OS, std::env::consts::ARCH);
-    UpdateManager::new(LatestGithubSource::new(&releases.latest()), Some(options), None)
+    UpdateManager::new(LatestGithubSource::new(releases.clone()), Some(options), None)
 }
 
 /// The channel the app asks for its updates on, whatever channel its package was made on (`vpk pack --channel`,
@@ -148,7 +159,7 @@ fn options(os: &str, arch: &str) -> UpdateOptions {
 }
 
 /// Ask the releases on a thread (always: whether the app is installed is the thread's to find out).
-pub fn check(releases: &Releases, tell: Sender<Told>) -> bool {
+pub fn check(releases: &Releases, _fallback_version: Option<&str>, tell: Sender<Told>) -> bool {
     let releases = releases.clone();
     std::thread::spawn(move || {
         let told = match manager(&releases) {
