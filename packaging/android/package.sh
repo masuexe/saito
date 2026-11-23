@@ -109,9 +109,23 @@ rm -f "$out/gradle/outputs/apk/release/saito-release.apk"
     -Psaito.debuggable="${SAITO_ANDROID_DEBUGGABLE:-}"
 apk=$out/saito-android.apk
 cp "$out/gradle/outputs/apk/release/saito-release.apk" "$apk"
-apksigner=$(ls -1 "$sdk"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1 || true)
-if [ -n "$apksigner" ]; then
-    verify_out=$("$apksigner" verify --verbose "$apk")
+build_tools=$(ls -1d "$sdk"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+apksigner=$build_tools/apksigner
+zipalign=$build_tools/zipalign
+if [ -x "$apksigner" ]; then
+    # AGP skips V1 (JAR) signing whenever minSdk >= 24 even with enableV1Signing = true. Re-sign with
+    # --min-sdk-version 23 so V1 + V2 + V3 are all written for OEM installers (e.g. ColorOS) that check META-INF.
+    "$apksigner" sign \
+        --ks "$keystore" \
+        --ks-pass "pass:$password" \
+        --ks-key-alias "$alias" \
+        --key-pass "pass:$password" \
+        --v1-signing-enabled true \
+        --v2-signing-enabled true \
+        --v3-signing-enabled true \
+        --min-sdk-version 23 \
+        "$apk"
+    verify_out=$("$apksigner" verify --verbose --min-sdk-version 23 "$apk")
     for scheme in "v1 scheme" "v2 scheme" "v3 scheme"; do
         grep -q "Verified using $scheme.*: true" <<<"$verify_out" || {
             echo "APK is missing $scheme signature:" >&2
@@ -119,5 +133,8 @@ if [ -n "$apksigner" ]; then
             exit 1
         }
     done
+fi
+if [ -x "$zipalign" ]; then
+    "$zipalign" -c -P 16 4 "$apk" >/dev/null
 fi
 echo "$apk"
