@@ -356,17 +356,15 @@ impl Player {
     fn drag_context(&self, side: u8) -> crate::pointer::DragContext {
         use saito_battle::custom::{Phase, SlotKind, SlotState, layer::{Sub, is_locked_first_pick}};
 
-        if !self.drag_enabled {
-            return crate::pointer::DragContext::default();
-        }
         let Some(p) = self.session.battle.presented(side) else {
             return crate::pointer::DragContext::default();
         };
         let Some(layer) = self.session.driver.layers()[side as usize & 1] else {
             return crate::pointer::DragContext::default();
         };
-        if p.screen.phase != Phase::Choosing || !matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. }) {
-            return crate::pointer::DragContext::default();
+        let hidden = p.screen.phase == Phase::Choosing && layer.hidden().is_some();
+        if !self.drag_enabled || p.screen.phase != Phase::Choosing || !matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. }) {
+            return crate::pointer::DragContext { hidden, ..crate::pointer::DragContext::default() };
         }
         let mut draggable_slots: u16 = 0;
         let mut capsule_slots: u16 = 0;
@@ -406,6 +404,7 @@ impl Player {
         }
         crate::pointer::DragContext {
             enabled: true,
+            hidden: false,
             picks: p.screen.selection().len() as u8,
             locked_first: is_locked_first_pick(p.screen, p.folder, &p.view),
             draggable_slots,
