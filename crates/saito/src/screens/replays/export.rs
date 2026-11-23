@@ -86,6 +86,8 @@ pub struct Export {
     ready: Option<std::rc::Rc<crate::games::Ready>>,
     /// The compatibility mode the replay is played under.
     compat: Compat,
+    /// Sandboxed historical WASM simulation kernel context, when exporting a legacy replay via kernel.
+    wasm: Option<crate::replays::WasmContext>,
     /// The replay's file, and what it says of itself.
     replay: PathBuf,
     summary: Summary,
@@ -195,10 +197,21 @@ pub fn game_for_thread(shell: &Shell, ready: &crate::games::Ready, sound: bool) 
 impl Export {
     /// Begin the export mode for the replay at `replay`, shown from `side` (`both`: both consoles on one screen),
     /// the whole match chosen, the sides as the viewer shows them.
-    pub fn open(shell: &mut Shell, replay: &Path, summary: &Summary, side: u8, both: bool, ready: Option<std::rc::Rc<crate::games::Ready>>, compat: Compat) -> Export {
+    #[allow(clippy::too_many_arguments)]
+    pub fn open(
+        shell: &mut Shell,
+        replay: &Path,
+        summary: &Summary,
+        side: u8,
+        both: bool,
+        ready: Option<std::rc::Rc<crate::games::Ready>>,
+        compat: Compat,
+        wasm: Option<crate::replays::WasmContext>,
+    ) -> Export {
         let mut export = Export {
             ready,
             compat,
+            wasm,
             replay: replay.to_path_buf(),
             summary: summary.clone(),
             size: FIRST_SIZE,
@@ -525,21 +538,62 @@ impl Export {
         let options = Options { scale: SIZES[self.size], view: Some(self.side), sides, part, titles };
         let (stop, shared) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(Shared::default())));
         let (stopped, told) = (stop.clone(), shared.clone());
-        let compat = self.compat;
-        let work = move || {
-            let mut progress = |progress| {
-                share(&told).progress = Some(progress);
-                if stopped.load(Ordering::Relaxed) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+        let started = if let Some(ctx) = self.wasm.clone()
+            && let Some(roms) = shell.games.rom_source().cloned()
+        {
+            let replay_bytes = match saito_files::read(&self.replay) {
+                Ok(b) => b,
+                Err(why) => {
+                    crate::errors::log(&doing, &why);
+                    return self.fail(shell, UserError::ExportFailed);
+                }
             };
-            // (Whole: the file kept, its head first. Canceled or failed: let go, nothing of it left.)
-            // (`saito_video::export`, its viewer with the backgrounds' music.)
-            let result = saito_frontend::viewer::Viewer::open_with_compat(&game, &replay, options.view, music, compat)
-                .map_err(saito_video::Error::Replay)
-                .and_then(|mut viewer| saito_video::write_mp4(&mut viewer, &options, to, &mut progress))
+            let lang = shell.i18n.code.to_string();
+            let enhancements = shell.settings.enhancements();
+            let work = move || {
+                let mut progress = |progress| {
+                    share(&told).progress = Some(progress);
+                    if stopped.load(Ordering::Relaxed) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+                };
+                let result = crate::kernels::open_viewer(
+                    &ctx.kernel,
+                    &ctx.game,
+                    &ctx.content_dir,
+                    &ctx.pool,
+                    &roms,
+                    options.view,
+                    &lang,
+                    enhancements,
+                    true,
+                    &replay_bytes,
+                )
+                .map_err(|why| saito_video::Error::Replay(saito_frontend::replay::Refused::BadMatch(why)))
+                .and_then(|viewer| {
+                    let mut adapted = WasmPixelViewer(viewer);
+                    saito_video::write_mp4_pixels(&mut adapted, &options, to, &mut progress)
+                })
                 .and_then(|made| made.body.finish(made.head).map_err(saito_video::Error::Disk));
-            share(&told).done = Some(result);
+                share(&told).done = Some(result);
+            };
+            saito_threads::spawn("export-wasm", work)
+        } else {
+            let compat = self.compat;
+            let work = move || {
+                let mut progress = |progress| {
+                    share(&told).progress = Some(progress);
+                    if stopped.load(Ordering::Relaxed) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+                };
+                // (Whole: the file kept, its head first. Canceled or failed: let go, nothing of it left.)
+                // (`saito_video::export`, its viewer with the backgrounds' music.)
+                let result = saito_frontend::viewer::Viewer::open_with_compat(&game, &replay, options.view, music, compat)
+                    .map_err(saito_video::Error::Replay)
+                    .and_then(|mut viewer| saito_video::write_mp4(&mut viewer, &options, to, &mut progress))
+                    .and_then(|made| made.body.finish(made.head).map_err(saito_video::Error::Disk));
+                share(&told).done = Some(result);
+            };
+            saito_threads::spawn("export", work)
         };
-        match saito_threads::spawn("export", work) {
+        match started {
             Ok(()) => {
                 self.running = Some(Running { stop, shared });
                 self.state = ExportState::Running;
@@ -604,6 +658,32 @@ impl Export {
         }
         shell.nav.focus(if self.state == ExportState::Done { "export.cancel" } else { "export.go" }, 0);
     }
+}
+
+/// Adapter exposing a [`saito_sim_host::WasmViewer`] to `saito_video::write_mp4_pixels`.
+struct WasmPixelViewer(saito_sim_host::WasmViewer);
+
+impl saito_video::PixelViewer for WasmPixelViewer {
+    fn rounds(&self) -> &[u32] { self.0.rounds() }
+    fn length(&self) -> u32 { self.0.length() }
+    fn round_at(&self, tick: u32) -> u32 { self.0.round_at(tick) }
+    fn view(&self) -> u8 { self.0.view() }
+    fn has_sound(&self) -> bool { self.0.has_sound() }
+    fn info(&self) -> &saito_frontend::replay::Info { self.0.info() }
+    fn position(&self) -> u32 { self.0.position() }
+    fn indexed(&self) -> u32 { self.0.indexed() }
+    fn stopped(&self) -> Option<&str> { self.0.stopped() }
+    fn set_view(&mut self, side: u8) -> bool { self.0.set_view(side) }
+    fn set_both(&mut self, both: bool) { self.0.set_both(both) }
+    fn set_paused(&mut self, paused: bool) { self.0.set_paused(paused) }
+    fn set_speed(&mut self, speed: saito_frontend::viewer::Speed) { self.0.set_speed(speed) }
+    fn index(&mut self, ticks: u32) -> bool { self.0.index(ticks) }
+    fn seek(&mut self, tick: u32) { self.0.seek(tick) }
+    fn step_forward(&mut self) -> bool { self.0.step_forward() }
+    fn present(&mut self, buffer: &mut [u32], width: usize, height: usize) { self.0.present(buffer, width, height) }
+    fn present_view(&mut self, side: u8, buffer: &mut [u32], width: usize, height: usize) { self.0.present_view(side, buffer, width, height) }
+    fn take_samples(&mut self, out: &mut Vec<[f32; 2]>) { self.0.take_samples(out) }
+    fn take_samples_of(&mut self, side: u8, out: &mut Vec<[f32; 2]>) { self.0.take_samples_of(side, out) }
 }
 
 /// Ask the player where to save the video, in the system's dialog, starting from where it is to go.

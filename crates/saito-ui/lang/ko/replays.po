@@ -298,3 +298,6 @@ msgstr "v{}에서 기록 · 호환 모드로 재생"
 
 msgid "Recorded on v{} · playback may differ from original"
 msgstr "v{}에서 기록 · 원래 대전과 다를 수 있습니다"
+
+msgid "Recorded on v{} · exact replay kernel"
+msgstr "v{}에서 기록 · 정확한 구버전 코어로 재생"

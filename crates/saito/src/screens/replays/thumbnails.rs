@@ -164,6 +164,23 @@ impl Thumbnails {
         Thumbnails { asks, drawn, cache: Cache::new(CACHE_BYTES), hovered: None, asked: None, last_ask: None, shown: None, ended: started.is_err() }
     }
 
+    /// Start the preview thread using a sandboxed historical WASM simulation kernel.
+    pub fn start_wasm(
+        ctx: crate::replays::WasmContext,
+        roms: saito_extract::RomSource,
+        lang: String,
+        enhancements: saito_frontend::game::Enhancements,
+        path: PathBuf,
+    ) -> Thumbnails {
+        let (asks, asked) = mpsc::channel();
+        let (done, drawn) = mpsc::channel();
+        let started = saito_threads::spawn("previews-wasm", move || work_wasm(ctx, roms, lang, enhancements, path, asked, done));
+        if let Err(why) = &started {
+            crate::errors::log("starting the bar's previews", why);
+        }
+        Thumbnails { asks, drawn, cache: Cache::new(CACHE_BYTES), hovered: None, asked: None, last_ask: None, shown: None, ended: started.is_err() }
+    }
+
     /// The pointer is over the bar at `bucket`'s time, or (none) left it.
     pub fn hover(&mut self, bucket: Option<Bucket>) {
         self.hovered = bucket;
@@ -270,6 +287,71 @@ fn work(game: Loaded, path: PathBuf, compat: Compat, asks: Receiver<Ask>, drawn:
         });
         if let Err(panic) = drew {
             return crate::errors::log(&doing, &format_args!("the engine stopped at tick {}: {}", ask.tick, saito_frontend::session::panic_message(panic.as_ref())));
+        }
+        if drawn.send(Drawn { bucket: ask.bucket, pixels }).is_err() {
+            return;
+        }
+    }
+}
+
+fn work_wasm(
+    ctx: crate::replays::WasmContext,
+    roms: saito_extract::RomSource,
+    lang: String,
+    enhancements: saito_frontend::game::Enhancements,
+    path: PathBuf,
+    asks: Receiver<Ask>,
+    drawn: Sender<Drawn>,
+) {
+    let doing = format!("previewing {}", path.display());
+    let bytes = match saito_files::read(&path) {
+        Ok(bytes) => bytes,
+        Err(why) => return crate::errors::log(&doing, &why),
+    };
+    let mut viewer = match crate::kernels::open_viewer(
+        &ctx.kernel,
+        &ctx.game,
+        &ctx.content_dir,
+        &ctx.pool,
+        &roms,
+        None,
+        &lang,
+        enhancements,
+        false,
+        &bytes,
+    ) {
+        Ok(viewer) => viewer,
+        Err(why) => return crate::errors::log(&doing, &why),
+    };
+    viewer.set_paused(true);
+    let mut whole = false;
+    loop {
+        let ask = if whole {
+            match asks.recv() {
+                Ok(ask) => ask,
+                Err(_) => return,
+            }
+        } else {
+            match asks.try_recv() {
+                Ok(ask) => ask,
+                Err(TryRecvError::Empty) => {
+                    whole = viewer.index(INDEX_SLICE);
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => return,
+            }
+        };
+        let ask = asks.try_iter().last().unwrap_or(ask);
+        let density = ask.bucket.density.max(1) as usize;
+        let (w, h) = (WIDTH * density, HEIGHT * density);
+        let mut pixels = vec![0u32; w * h];
+        viewer.seek(ask.tick);
+        if ask.bucket.both {
+            viewer.set_view(ask.bucket.side);
+            viewer.set_both(true);
+            viewer.present(&mut pixels, w, h);
+        } else {
+            viewer.present_view(ask.bucket.side, &mut pixels, w, h);
         }
         if drawn.send(Drawn { bucket: ask.bucket, pixels }).is_err() {
             return;

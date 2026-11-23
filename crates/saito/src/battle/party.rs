@@ -98,6 +98,39 @@ impl PartyState {
         self.shown = Some(hud.clone());
         Some(hud)
     }
+
+    /// Build a [`PartyHud`] from a version-independent [`saito_sim_abi::PartySnapshot`] (for WASM kernel replays).
+    pub fn hud_from_snapshot(&mut self, snap: Option<&saito_sim_abi::PartySnapshot>, faces: impl Fn(&str) -> slint::Image) -> Option<PartyHud> {
+        let hud = match snap {
+            None => PartyHud::default(),
+            Some(v) => {
+                let members: Vec<PartyMember> = v
+                    .members
+                    .iter()
+                    .map(|m| PartyMember { face: faces(&m.navi_key), hp: m.hp as i32, max_hp: m.max_hp as i32 })
+                    .collect();
+                let mut others = (0..members.len() as i32).filter(|&i| i != v.active as i32);
+                let left = others.next().unwrap_or(-1);
+                let right = others.next().unwrap_or(-1);
+                PartyHud {
+                    shown: true,
+                    members: ModelRc::new(VecModel::from(members)),
+                    active: v.active as i32,
+                    left,
+                    right,
+                    switches: v.switches as i32,
+                    limit: v.limit.map_or(v.switches as i32, |l| l as i32),
+                    left_key: Default::default(),
+                    right_key: Default::default(),
+                }
+            }
+        };
+        if self.shown.as_ref().is_some_and(|s| same(s, &hud)) {
+            return None;
+        }
+        self.shown = Some(hud.clone());
+        Some(hud)
+    }
 }
 
 /// Whether two of what the window shows are alike (an image's own pixels aren't compared: a navi's face is its).

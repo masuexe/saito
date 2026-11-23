@@ -23,6 +23,7 @@ mod guard;
 mod haptics;
 mod http;
 mod input;
+mod kernels;
 mod lang;
 mod lifecycle;
 mod look;

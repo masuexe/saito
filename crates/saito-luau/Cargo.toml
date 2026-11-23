@@ -9,8 +9,8 @@ description = "Luau runtime for exe6 battle content: stateless scripts over the 
 saito-content-api = { path = "../saito-content-api" }
 mlua = { version = "0.12.2", features = ["luau"] }
 
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-# build.rs supplies Luau and its C++ runtime on this target.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# build.rs supplies Luau and its C++ runtime on wasm32-unknown-unknown and wasm32-wasip1.
 mlua-sys = { version = "=0.13.0", features = ["luau", "external"] }
 
 [build-dependencies]

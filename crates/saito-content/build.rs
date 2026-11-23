@@ -103,7 +103,8 @@ fn main() {
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     let embed = std::env::var_os("SAITO_PACKAGED").is_some()
-        || std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+        || (std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32")
+            && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("unknown"));
 
     if !embed {
         std::fs::write(out_dir.join("bundled.rs"), "pub const BUNDLED: &[(&str, BundleId, &[u8])] = &[];\n")

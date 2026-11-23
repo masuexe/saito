@@ -506,6 +506,119 @@ pub fn write_mp4<W: Write>(viewer: &mut Viewer, options: &Options, to: W, progre
     play(viewer, options, progress, |video, audio, info| Mp4::start(video, audio, info, to))?.finish()
 }
 
+/// A replay viewer that directly produces presented `0x00RRGGBB` pixel frames and 32768 Hz stereo audio
+/// (used for exporting replays played inside a sandboxed historical WASM simulation kernel).
+pub trait PixelViewer {
+    fn rounds(&self) -> &[u32];
+    fn length(&self) -> u32;
+    fn round_at(&self, tick: u32) -> u32;
+    fn view(&self) -> u8;
+    fn has_sound(&self) -> bool;
+    fn info(&self) -> &ReplayInfo;
+    fn position(&self) -> u32;
+    fn indexed(&self) -> u32;
+    fn stopped(&self) -> Option<&str>;
+    fn set_view(&mut self, side: u8) -> bool;
+    fn set_both(&mut self, both: bool);
+    fn set_paused(&mut self, paused: bool);
+    fn set_speed(&mut self, speed: Speed);
+    fn index(&mut self, ticks: u32) -> bool;
+    fn seek(&mut self, tick: u32);
+    fn step_forward(&mut self) -> bool;
+    fn present(&mut self, buffer: &mut [u32], width: usize, height: usize);
+    fn present_view(&mut self, side: u8, buffer: &mut [u32], width: usize, height: usize);
+    fn take_samples(&mut self, out: &mut Vec<[f32; 2]>);
+    fn take_samples_of(&mut self, side: u8, out: &mut Vec<[f32; 2]>);
+}
+
+/// Write a replay played through a [`PixelViewer`] (such as a WASM simulation kernel viewer) as an MP4.
+pub fn write_mp4_pixels<V: PixelViewer, W: Write>(viewer: &mut V, options: &Options, to: W, progress: OnProgress) -> Result<Made<W>, Error> {
+    let Options { scale, view, sides, ref part, ref titles } = *options;
+    if !(1..=MOST_SCALE).contains(&scale) {
+        return Err(Error::Scale(scale));
+    }
+    let ticks = part.ticks(viewer.rounds(), viewer.length())?;
+    if let Some(view) = view {
+        viewer.set_view(view);
+    }
+    viewer.set_both(sides == Sides::Both);
+    let rounds_count = viewer.rounds().len() as u32;
+    let mut at = Progress { written: 0, of: ticks.end - ticks.start, round: viewer.round_at(ticks.start), rounds: rounds_count };
+    let mut tell = |at: Progress| if progress(at).is_break() { Err(Error::Canceled) } else { Ok(()) };
+    tell(at)?;
+    viewer.set_paused(true);
+    viewer.set_speed(Speed::Normal);
+    while viewer.indexed() < ticks.start && !viewer.index(REACH_SLICE) {
+        tell(at)?;
+    }
+    viewer.seek(ticks.start);
+    let stopped = |v: &V| Error::Stopped { tick: v.position(), why: v.stopped().unwrap_or("the replay ends there").to_string() };
+    if viewer.position() != ticks.start {
+        return Err(stopped(viewer));
+    }
+    let (width, height) = (WIDTH * scale as usize, HEIGHT * scale as usize);
+    let video = Video { width: (width * sides.count()) as u32, height: height as u32, frame_time: TICK_SECONDS };
+    let shown_arr = [viewer.view(), viewer.view() ^ 1];
+    let shown = &shown_arr[..sides.count()];
+    let audio = viewer.has_sound().then_some(Audio { sample_rate: resample::RATE, tracks: shown.len() });
+    let mut resamplers: Vec<Resampler> = audio.map(|a| (0..a.tracks).map(|_| Resampler::new(saito_audio::SAMPLE_RATE)).collect()).unwrap_or_default();
+    let track_titles = match sides {
+        Sides::Both => vec![titles.both(viewer.view(), viewer.info())],
+        _ => shown.iter().map(|&side| titles.side(side, viewer.info())).collect(),
+    };
+    let info = Info { titles: if audio.is_some() { track_titles } else { Vec::new() }, chapters: chapters(viewer.rounds(), &ticks, titles) };
+    let mut stream = Mp4::start(video, audio, &info, to)?;
+    let mut pictures: Vec<Vec<u32>> = vec![vec![0u32; width * height]; sides.count()];
+    let mut nv12 = Vec::new();
+    for tick in ticks.clone() {
+        let round = viewer.round_at(tick);
+        if !viewer.step_forward() {
+            return Err(stopped(viewer));
+        }
+        let sound: Vec<Vec<[f32; 2]>> = match sides {
+            Sides::Both => {
+                viewer.present(&mut pictures[0], width, height);
+                let mut heard = Vec::new();
+                viewer.take_samples(&mut heard);
+                vec![heard]
+            }
+            _ => {
+                for (&side, pic) in shown.iter().zip(&mut pictures) {
+                    viewer.present_view(side, pic, width, height);
+                }
+                shown
+                    .iter()
+                    .map(|&side| {
+                        let mut heard = Vec::new();
+                        viewer.take_samples_of(side, &mut heard);
+                        heard
+                    })
+                    .collect()
+            }
+        };
+        let last = tick + 1 == ticks.end;
+        let resampled: Vec<Vec<[f32; 2]>> = sound
+            .iter()
+            .zip(&mut resamplers)
+            .map(|(heard, r)| {
+                let mut made = r.push(heard);
+                if last {
+                    made.extend(r.finish());
+                }
+                made
+            })
+            .collect();
+        let slices: Vec<&[u32]> = pictures.iter().map(Vec::as_slice).collect();
+        yuv::nv12(&slices, width, height, &mut nv12);
+        let tracks: Vec<&[[f32; 2]]> = resampled.iter().map(Vec::as_slice).collect();
+        nv12 = stream.frame(nv12, &tracks)?;
+        at.round = round;
+        at.written += 1;
+        tell(at)?;
+    }
+    stream.finish()
+}
+
 /// An MP4 being made: the frames to the platform's codecs, what they make made the MP4's ([`assemble`]) and muxed
 /// into the file as it comes.
 struct Mp4<W: Write> {

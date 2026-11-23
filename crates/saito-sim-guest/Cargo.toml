@@ -1,0 +1,20 @@
+[package]
+name = "saito-sim-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sandboxed WASM guest simulation kernel for exact historical replay playback (saito-sim-<line>.wasm)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+saito-sim-abi = { path = "../saito-sim-abi" }
+saito-battle = { path = "../saito-battle" }
+saito-content = { path = "../saito-content" }
+saito-extract = { path = "../saito-extract" }
+saito-frontend = { path = "../saito-frontend" }
+saito-match = { path = "../saito-match" }
+saito-render = { path = "../saito-render" }
+saito-replay = { path = "../saito-replay" }
+serde_json = "1"

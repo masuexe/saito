@@ -86,6 +86,11 @@ pub fn has_catalog() -> bool {
     contents().catalog.is_some()
 }
 
+/// The historical simulation kernels index URL advertised by the catalog as last read, if any.
+pub fn kernels_url() -> Option<String> {
+    saito_threads::lock(&contents().read).ok()?.catalog.as_ref()?.kernels.clone().filter(|u| !u.is_empty())
+}
+
 /// Game `game`'s content directory, if there is content of it: development's, else its newest bundle of the line.
 pub fn dir(game: &str) -> Option<PathBuf> {
     let c = contents();
@@ -594,7 +599,7 @@ mod tests {
         index("exe6", vec![entry(one.id, 0x6A, 1, gz.len(), format!("{url}/exe6/bundles/{}.tar.gz", one.id))]);
         index("exe5", Vec::new());
         let games = [("exe5", "exe5"), ("exe6", "exe6")].map(|(g, at)| (g.to_string(), format!("{url}/{at}/index.json")));
-        put("catalog.json", serde_json::to_string(&Catalog { games: games.into(), ai: None }).unwrap().as_bytes());
+        put("catalog.json", serde_json::to_string(&Catalog { games: games.into(), ai: None, kernels: None }).unwrap().as_bytes());
         let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
         runtime.block_on(async {
             assert_eq!(contents.fetch_catalog().await.unwrap(), ["exe5", "exe6"]);
@@ -648,7 +653,7 @@ mod tests {
         put(&format!("exe6/{}.tar.gz", bundle.id), &gz);
         let entry = Published { id: bundle.id, content_hash: hash, revision: 1, packs: bundle.manifest.packs.clone(), date: "2026-10-26".into(), size: gz.len() as u64, url: Some(format!("{url}/exe6/{}.tar.gz", bundle.id)) };
         put("exe6/index.json", serde_json::to_string(&Index { game: "exe6".into(), lines: [(line().to_string(), vec![entry])].into() }).unwrap().as_bytes());
-        put("catalog.json", serde_json::to_string(&Catalog { games: [("exe6".to_string(), format!("{url}/exe6/index.json"))].into(), ai: None }).unwrap().as_bytes());
+        put("catalog.json", serde_json::to_string(&Catalog { games: [("exe6".to_string(), format!("{url}/exe6/index.json"))].into(), ai: None, kernels: None }).unwrap().as_bytes());
         let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
         runtime.block_on(async {
             contents.fetch_catalog().await.unwrap();
@@ -706,7 +711,7 @@ mod tests {
             let url = serve(dir.path().to_path_buf());
             let site = Site { dir, url };
             let games = games.iter().map(|g| (g.to_string(), format!("{}/{g}/index.json", site.url))).collect();
-            site.put("catalog.json", serde_json::to_string(&Catalog { games, ai: None }).unwrap().as_bytes());
+            site.put("catalog.json", serde_json::to_string(&Catalog { games, ai: None, kernels: None }).unwrap().as_bytes());
             site
         }
 

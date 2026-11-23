@@ -123,6 +123,9 @@ pub struct Catalog {
     /// The saito-ai repository's site's `index.json`: the network the practice dummy that fights plays.
     #[serde(default)]
     pub ai: Option<String>,
+    /// Optional index URL for historical WASM replay simulation kernels (`kernels/index.json`).
+    #[serde(default)]
+    pub kernels: Option<String>,
 }
 
 /// A game's site's `index.json`: its published bundles by engine line, each line's in publish order. (Fields an

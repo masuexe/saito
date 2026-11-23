@@ -2345,7 +2345,7 @@ impl App {
         // before one).
         let silent = |m: crate::battle::BattleMusic| m == crate::battle::BattleMusic::None;
         let in_battle = self.shell.battle.as_ref().is_some_and(|b| !silent(b.music))
-            || self.shell.loading.as_ref().is_some_and(|l| !silent(l.start.music))
+            || self.shell.loading.as_ref().is_some_and(|l| !silent(l.music()))
             || (ticks.is_some() && !self.shell.battle.as_ref().is_some_and(|b| silent(b.music)));
         self.shell.sound.want_music(!in_battle && self.shell.ready().is_some());
         self.shell.sound.frame(now, ticks, &mut samples);

@@ -310,3 +310,6 @@ msgstr "v{} で記録 · 互換モードで再生"
 msgid "Recorded on v{} · playback may differ from original"
 msgstr "v{} で記録 · 元の対戦と異なる場合があります"
 
+msgid "Recorded on v{} · exact replay kernel"
+msgstr "v{} で記録 · 正確な過去バージョンコアで再生"
+

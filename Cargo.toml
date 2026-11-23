@@ -31,6 +31,15 @@ debug = false
 [profile.release]
 debug = 1
 
+# Sandboxed historical WASM simulation kernels (`saito-sim-<line>.wasm`): stripped and LTO-optimized for
+# compact distribution and fast Wasmtime/Pulley64 compilation.
+[profile.sim-kernel]
+inherits = "release"
+debug = false
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+
 [patch.crates-io]
 # Supply the file API stubs that stock mlua needs on bare Wasm.
 libc = { path = "crates/saito-luau/wasm/libc" }

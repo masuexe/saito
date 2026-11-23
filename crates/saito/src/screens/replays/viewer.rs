@@ -35,13 +35,15 @@ use super::indexing::{Indexing, Taken};
 use super::thumbnails::{Bucket, Thumbnails};
 use super::{clock, name, played};
 use crate::nav::Key;
+use crate::replays::WasmContext;
 use crate::shell::Shell;
 use crate::sound::Cue;
 use crate::stage::Surface;
 use saito_match::Side;
 use saito_frontend::player::{FRAME_RATE, TICK_SECONDS, tick_at, time_of};
-use saito_frontend::replay::Compat;
+use saito_frontend::replay::{Compat, Info};
 use saito_frontend::viewer::{KEYFRAME_EVERY, ROUND_START_GRACE, Speed, Viewer};
+use saito_sim_host::WasmViewer;
 use saito_ui::{PickMark, ReplaysView};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::path::{Path, PathBuf};
@@ -171,6 +173,227 @@ fn add(to: &mut (Duration, u32, Duration), took: Duration) {
     to.2 = to.2.max(took);
 }
 
+/// A replay viewer backed either by this build's native engine or by a sandboxed historical WASM kernel.
+pub enum ReplayViewer {
+    Native(Box<Viewer>),
+    Wasm(Box<WasmViewer>, WasmContext),
+}
+
+impl ReplayViewer {
+    fn is_wasm(&self) -> bool {
+        matches!(self, ReplayViewer::Wasm(..))
+    }
+
+    fn wasm_context(&self) -> Option<WasmContext> {
+        match self {
+            ReplayViewer::Native(_) => None,
+            ReplayViewer::Wasm(_, ctx) => Some(ctx.clone()),
+        }
+    }
+
+    fn compat(&self) -> Compat {
+        match self {
+            ReplayViewer::Native(v) => v.compat(),
+            ReplayViewer::Wasm(..) => Compat::Exact,
+        }
+    }
+
+    fn view(&self) -> u8 {
+        match self {
+            ReplayViewer::Native(v) => v.view(),
+            ReplayViewer::Wasm(v, _) => v.view(),
+        }
+    }
+
+    fn both(&self) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.both(),
+            ReplayViewer::Wasm(v, _) => v.both(),
+        }
+    }
+
+    fn length(&self) -> u32 {
+        match self {
+            ReplayViewer::Native(v) => v.length(),
+            ReplayViewer::Wasm(v, _) => v.length(),
+        }
+    }
+
+    fn duration(&self) -> Duration {
+        match self {
+            ReplayViewer::Native(v) => v.duration(),
+            ReplayViewer::Wasm(v, _) => v.duration(),
+        }
+    }
+
+    fn rounds(&self) -> &[u32] {
+        match self {
+            ReplayViewer::Native(v) => v.rounds(),
+            ReplayViewer::Wasm(v, _) => v.rounds(),
+        }
+    }
+
+    fn round_at(&self, tick: u32) -> u32 {
+        match self {
+            ReplayViewer::Native(v) => v.round_at(tick),
+            ReplayViewer::Wasm(v, _) => v.round_at(tick),
+        }
+    }
+
+    fn info(&self) -> &Info {
+        match self {
+            ReplayViewer::Native(v) => v.info(),
+            ReplayViewer::Wasm(v, _) => v.info(),
+        }
+    }
+
+    fn engine(&self) -> &str {
+        match self {
+            ReplayViewer::Native(v) => v.engine(),
+            ReplayViewer::Wasm(v, _) => v.engine(),
+        }
+    }
+
+    fn speed(&self) -> Speed {
+        match self {
+            ReplayViewer::Native(v) => v.speed(),
+            ReplayViewer::Wasm(v, _) => v.speed(),
+        }
+    }
+
+    fn stopped(&self) -> Option<&str> {
+        match self {
+            ReplayViewer::Native(v) => v.stopped(),
+            ReplayViewer::Wasm(v, _) => v.stopped(),
+        }
+    }
+
+    fn diverged(&self) -> Option<&str> {
+        match self {
+            ReplayViewer::Native(v) => v.diverged(),
+            ReplayViewer::Wasm(v, _) => v.diverged(),
+        }
+    }
+
+    fn paused(&self) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.paused(),
+            ReplayViewer::Wasm(v, _) => v.paused(),
+        }
+    }
+
+    fn at_end(&self) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.at_end(),
+            ReplayViewer::Wasm(v, _) => v.at_end(),
+        }
+    }
+
+    fn position(&self) -> u32 {
+        match self {
+            ReplayViewer::Native(v) => v.position(),
+            ReplayViewer::Wasm(v, _) => v.position(),
+        }
+    }
+
+    fn indexed(&self) -> u32 {
+        match self {
+            ReplayViewer::Native(v) => v.indexed(),
+            ReplayViewer::Wasm(v, _) => v.indexed(),
+        }
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        match self {
+            ReplayViewer::Native(v) => v.set_paused(paused),
+            ReplayViewer::Wasm(v, _) => v.set_paused(paused),
+        }
+    }
+
+    fn set_speed(&mut self, speed: Speed) {
+        match self {
+            ReplayViewer::Native(v) => v.set_speed(speed),
+            ReplayViewer::Wasm(v, _) => v.set_speed(speed),
+        }
+    }
+
+    fn set_view(&mut self, side: u8) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.set_view(side),
+            ReplayViewer::Wasm(v, _) => v.set_view(side),
+        }
+    }
+
+    fn set_both(&mut self, both: bool) {
+        match self {
+            ReplayViewer::Native(v) => v.set_both(both),
+            ReplayViewer::Wasm(v, _) => v.set_both(both),
+        }
+    }
+
+    fn set_sound_levels(&mut self, music: f32, effects: f32) {
+        match self {
+            ReplayViewer::Native(v) => v.set_sound_levels(music, effects),
+            ReplayViewer::Wasm(v, _) => v.set_sound_levels(music, effects),
+        }
+    }
+
+    fn seek(&mut self, tick: u32) {
+        match self {
+            ReplayViewer::Native(v) => v.seek(tick),
+            ReplayViewer::Wasm(v, _) => v.seek(tick),
+        }
+    }
+
+    fn step_forward(&mut self) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.step_forward(),
+            ReplayViewer::Wasm(v, _) => v.step_forward(),
+        }
+    }
+
+    fn step_back(&mut self) {
+        match self {
+            ReplayViewer::Native(v) => v.step_back(),
+            ReplayViewer::Wasm(v, _) => v.step_back(),
+        }
+    }
+
+    fn index(&mut self, ticks: u32) -> bool {
+        match self {
+            ReplayViewer::Native(v) => v.index(ticks),
+            ReplayViewer::Wasm(v, _) => v.index(ticks),
+        }
+    }
+
+    fn advance(&mut self, elapsed: Duration) -> u32 {
+        match self {
+            ReplayViewer::Native(v) => v.advance(elapsed),
+            ReplayViewer::Wasm(v, _) => v.advance(elapsed),
+        }
+    }
+
+    fn take_samples(&mut self, out: &mut Vec<[f32; 2]>) {
+        match self {
+            ReplayViewer::Native(v) => v.take_samples(out),
+            ReplayViewer::Wasm(v, _) => v.take_samples(out),
+        }
+    }
+
+    fn held_inputs(&self) -> [u16; 2] {
+        match self {
+            ReplayViewer::Native(v) => {
+                let inputs = &v.battle().inputs;
+                [inputs[0].held & 0x3FF, inputs[1].held & 0x3FF]
+            }
+            ReplayViewer::Wasm(v, _) => {
+                let h = v.held_inputs();
+                [h[0] & 0x3FF, h[1] & 0x3FF]
+            }
+        }
+    }
+}
+
 /// The index's threads: not started (the first frame starts them), their parts taken in each frame, or done with
 /// (the replay indexed whole, or the threads didn't start or ended short of its end: the index then stays where it
 /// got).
@@ -182,7 +405,7 @@ enum IndexThread {
 
 /// A replay being watched.
 pub struct Watching {
-    viewer: Box<Viewer>,
+    viewer: ReplayViewer,
     surface: Surface,
     path: PathBuf,
     last: Option<Instant>,
@@ -224,11 +447,16 @@ pub struct Watching {
 impl Watching {
     /// A viewer made ready, of the replay at `path`: playing from its start (the screenshot pass holds it
     /// still, a little way into its second round where it has one), with `overlays` on over its picture.
-    pub fn new(mut viewer: Box<Viewer>, path: PathBuf, sides: Option<(Box<[Side; 2]>, Option<saito_match::RandomRank>)>, overlays: Overlays, ready: Option<std::rc::Rc<crate::games::Ready>>) -> Watching {
+    pub fn new(mut viewer: ReplayViewer, path: PathBuf, sides: Option<(Box<[Side; 2]>, Option<saito_match::RandomRank>)>, overlays: Overlays, ready: Option<std::rc::Rc<crate::games::Ready>>) -> Watching {
         if let Some(speed) = std::env::var("SAITO_REPLAY_SPEED").ok().and_then(|s| ["half", "1", "2", "4"].iter().position(|name| *name == s)) {
             viewer.set_speed(Speed::ALL[speed]);
         }
         Watching { viewer, surface: Surface::new(), path, last: None, queue: Vec::new(), quiet: 0.0, drag: None, indexing: IndexThread::Unstarted, whole: false, told: None, stats: std::env::var_os("SAITO_PLAY_STATS").map(|_| Stats::default()), probe: Probe::of_env(), sides, builds: false, overlays, inset: Surface::new(), held: None, ended: None, thumbs: None, parties: Default::default(), party_sides: None, ready }
+    }
+
+    /// The WASM kernel context if this replay is running in a sandboxed historical simulation kernel.
+    pub fn wasm_context(&self) -> Option<WasmContext> {
+        self.viewer.wasm_context()
     }
 
     /// The game as the replay plays it, where it isn't the game's own (other content of it).
@@ -305,8 +533,16 @@ impl Watching {
     pub fn show(&mut self, shell: &mut Shell) {
         let ui = shell.ui();
         let view = ui.global::<ReplaysView>();
-        if let Some(ready) = self.ready_in(shell) {
-            self.viewer.set_language(&ready.graphics(shell.i18n.code));
+        let ready = self.ready_in(shell);
+        match &mut self.viewer {
+            ReplayViewer::Native(v) => {
+                if let Some(ready) = ready {
+                    v.set_language(&ready.graphics(shell.i18n.code));
+                }
+            }
+            ReplayViewer::Wasm(v, _) => {
+                v.set_language(shell.i18n.code);
+            }
         }
         // (Settings' Music and Sound effects: the difference between the two is the viewer's, as a battle's.)
         let (music, effects) = shell.sound.battle_levels();
@@ -350,15 +586,24 @@ impl Watching {
 
     /// Update the legacy compatibility notice badge in the viewer.
     fn show_notice(&self, view: &ReplaysView) {
+        if self.viewer.is_wasm() {
+            let engine = self.viewer.engine();
+            view.set_viewer_notice(view.invoke_legacy_kernel(engine.into()));
+            view.set_viewer_diverged(false);
+            view.set_viewer_exact_kernel(true);
+            return;
+        }
         let diverged = self.viewer.diverged().is_some();
         if self.viewer.compat() == Compat::Lenient || diverged {
             let engine = self.viewer.engine();
             let notice = if diverged { view.invoke_legacy_diverged(engine.into()) } else { view.invoke_legacy_compat(engine.into()) };
             view.set_viewer_notice(notice);
             view.set_viewer_diverged(diverged);
+            view.set_viewer_exact_kernel(false);
         } else {
             view.set_viewer_notice(Default::default());
             view.set_viewer_diverged(false);
+            view.set_viewer_exact_kernel(false);
         }
     }
 
@@ -605,8 +850,14 @@ impl Watching {
         let view = ui.global::<ReplaysView>();
         view.set_thumb_time(clock(time_of(tick as u64), true).into());
         if self.thumbs.is_none() {
-            let Some(ready) = self.ready_in(shell) else { return };
-            self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone(), self.viewer.compat()));
+            if let Some(ctx) = self.viewer.wasm_context() {
+                if let Some(roms) = shell.games.rom_source().cloned() {
+                    self.thumbs = Some(Thumbnails::start_wasm(ctx, roms, shell.i18n.code.to_string(), shell.settings.enhancements(), self.path.clone()));
+                }
+            } else {
+                let Some(ready) = self.ready_in(shell) else { return };
+                self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone(), self.viewer.compat()));
+            }
         }
         // (At the window's density, as the picture is: a whole multiple of the frame.)
         let density = ui.window().scale_factor().round().max(1.0) as u32;
@@ -740,6 +991,13 @@ impl Watching {
     /// fail? don't fallback just get rid of that path"): where the threads don't start or end short of the replay's
     /// end (each logged where it happens), the index stays where it got, and what plays is indexed as it plays.
     fn index(&mut self, shell: &Shell) {
+        if let ReplayViewer::Wasm(v, _) = &mut self.viewer {
+            if v.index(120) {
+                self.whole = true;
+            }
+            self.hold();
+            return;
+        }
         if matches!(self.indexing, IndexThread::Unstarted)
             && let Some(ready) = self.ready_in(shell)
         {
@@ -752,13 +1010,13 @@ impl Watching {
 
     /// The index goes on once started (`index`).
     fn index_on(&mut self) {
-        if let IndexThread::Going(indexing) = &mut self.indexing {
-            match indexing.take(&mut self.viewer) {
+        if let (IndexThread::Going(indexing), ReplayViewer::Native(viewer)) = (&mut self.indexing, &mut self.viewer) {
+            match indexing.take(viewer) {
                 Taken::Going => {}
                 Taken::Whole => {
                     self.whole = true;
                     if self.stats.is_some() {
-                        let (took, length) = (indexing.began.elapsed(), self.viewer.length());
+                        let (took, length) = (indexing.began.elapsed(), viewer.length());
                         eprintln!("viewer index: {length} ticks indexed on its threads in {took:.2?}, {:.0} ticks a second", length as f64 / took.as_secs_f64());
                     }
                     self.indexing = IndexThread::Done;
@@ -804,9 +1062,12 @@ impl Watching {
         let (stale, began) = (surface.stale, Instant::now());
         // (The other console's picture is of the same tick: out of date when this one is.)
         inset.stale |= stale;
-        shell.show_surface(surface, true, |size, buffer, width, height| {
-            viewer.renderer().size = size;
-            viewer.present(buffer, width, height)
+        shell.show_surface(surface, true, |size, buffer, width, height| match viewer {
+            ReplayViewer::Native(v) => {
+                v.renderer().size = size;
+                v.present(buffer, width, height)
+            }
+            ReplayViewer::Wasm(v, _) => v.present(buffer, width, height),
         });
         if self.overlays.inset {
             self.show_inset(shell);
@@ -834,10 +1095,13 @@ impl Watching {
         let other = self.viewer.view() ^ 1;
         let viewer = &mut self.viewer;
         // (The original's 240 columns: the shown console's frame is drawn as wide again after it.)
-        let Some((image, width, height)) = shell.show_inset(&mut self.inset, multiple, |size, buffer, w, h| {
-            let shown = std::mem::replace(&mut viewer.renderer().size, size);
-            viewer.present_view(other, buffer, w, h);
-            viewer.renderer().size = shown;
+        let Some((image, width, height)) = shell.show_inset(&mut self.inset, multiple, |size, buffer, w, h| match viewer {
+            ReplayViewer::Native(v) => {
+                let shown = std::mem::replace(&mut v.renderer().size, size);
+                v.present_view(other, buffer, w, h);
+                v.renderer().size = shown;
+            }
+            ReplayViewer::Wasm(v, _) => v.present_view(other, buffer, w, h),
         }) else {
             return;
         };
@@ -867,16 +1131,44 @@ impl Watching {
             view.set_other_party(Default::default());
         }
         let kit = crate::builds::kit(shell);
-        let game = kit.as_ref().map_or_else(String::new, |k| k.game.clone());
-        let faces = |n| kit.as_ref().map(|k| k.pictures.navi(n)).unwrap_or_default();
-        let battle = self.viewer.battle();
-        if let Some(hud) = self.parties[shown as usize & 1].hud(battle, &game, shown, faces, Default::default()) {
-            view.set_party(hud);
-        }
-        if self.overlays.inset
-            && let Some(hud) = self.parties[(shown ^ 1) as usize & 1].hud(battle, &game, shown ^ 1, faces, Default::default())
-        {
-            view.set_other_party(hud);
+        match &self.viewer {
+            ReplayViewer::Native(v) => {
+                let game = kit.as_ref().map_or_else(String::new, |k| k.game.clone());
+                let faces = |n| kit.as_ref().map(|k| k.pictures.navi(n)).unwrap_or_default();
+                let battle = v.battle();
+                if let Some(hud) = self.parties[shown as usize & 1].hud(battle, &game, shown, faces, Default::default()) {
+                    view.set_party(hud);
+                }
+                if self.overlays.inset
+                    && let Some(hud) = self.parties[(shown ^ 1) as usize & 1].hud(battle, &game, shown ^ 1, faces, Default::default())
+                {
+                    view.set_other_party(hud);
+                }
+            }
+            ReplayViewer::Wasm(v, _) => {
+                let faces = |key: &str| {
+                    kit.as_ref()
+                        .and_then(|k| {
+                            k.ready
+                                .content()
+                                .defs
+                                .navis
+                                .iter()
+                                .position(|n| n.key == key)
+                                .map(|idx| k.pictures.navi(saito_content_api::NaviHandle(idx as u16)))
+                        })
+                        .unwrap_or_default()
+                };
+                let parties = v.parties();
+                if let Some(hud) = self.parties[shown as usize & 1].hud_from_snapshot(parties[shown as usize & 1].as_ref(), faces) {
+                    view.set_party(hud);
+                }
+                if self.overlays.inset
+                    && let Some(hud) = self.parties[(shown ^ 1) as usize & 1].hud_from_snapshot(parties[(shown ^ 1) as usize & 1].as_ref(), faces)
+                {
+                    view.set_other_party(hud);
+                }
+            }
         }
     }
 
@@ -887,8 +1179,8 @@ impl Watching {
             return;
         }
         let shown = self.viewer.view() as usize;
-        let inputs = &self.viewer.battle().inputs;
-        let held = [inputs[shown].held & 0x3FF, inputs[shown ^ 1].held & 0x3FF];
+        let inputs = self.viewer.held_inputs();
+        let held = [inputs[shown], inputs[shown ^ 1]];
         if self.held != Some(held) {
             self.held = Some(held);
             view.set_held_shown(held[0] as i32);
@@ -999,7 +1291,7 @@ mod tests {
         let (replay, _) = recorded(&content, "exe6", 7);
         let renderer = graphics(&content, 0x001F).renderer(Enhancements::NONE, None);
         let viewer = Viewer::with(&content, &replay, None, renderer, None, None).unwrap();
-        let mut w = Watching::new(Box::new(viewer), PathBuf::new(), None, Overlays::default(), None);
+        let mut w = Watching::new(ReplayViewer::Native(Box::new(viewer)), PathBuf::new(), None, Overlays::default(), None);
         let length = w.length();
         assert!(length > 3 * KEYFRAME_EVERY, "a set of {length} ticks");
         // (Nothing is indexed yet but the start.)
@@ -1046,7 +1338,7 @@ mod tests {
             let renderer = graphics(&content, 0x001F).renderer(Enhancements::NONE, None);
             Viewer::with(&content, &replay, None, renderer, None, None).unwrap()
         };
-        let mut w = Watching::new(Box::new(open()), PathBuf::new(), None, Overlays::default(), None);
+        let mut w = Watching::new(ReplayViewer::Native(Box::new(open())), PathBuf::new(), None, Overlays::default(), None);
         let length = w.length();
         let (send, parts) = std::sync::mpsc::channel();
         w.indexing = IndexThread::Going(Indexing::of(parts));
@@ -1078,7 +1370,7 @@ mod tests {
         w.drag_to(length, true);
         assert!(w.viewer.at_end());
         // A thread that ends short: the index stays where it got.
-        let mut w = Watching::new(Box::new(open()), PathBuf::new(), None, Overlays::default(), None);
+        let mut w = Watching::new(ReplayViewer::Native(Box::new(open())), PathBuf::new(), None, Overlays::default(), None);
         let (send, parts) = std::sync::mpsc::channel();
         w.indexing = IndexThread::Going(Indexing::of(parts));
         send.send(open().index_part(KEYFRAME_EVERY + 20)).unwrap();

@@ -59,9 +59,17 @@ impl OtherGame {
     /// they are extracted or being extracted.
     pub fn want(self: &Arc<Self>) {
         let Some(extract) = saito_threads::lock(&self.extract).ok().and_then(|mut e| e.take()) else { return };
-        let other = self.clone();
-        if let Err(e) = saito_threads::spawn("other backgrounds", move || other.set(extract())) {
-            self.set(Err(format!("can't start a thread to extract them: {e}")));
+        #[cfg(target_os = "wasi")]
+        {
+            self.set(extract());
+            return;
+        }
+        #[cfg(not(target_os = "wasi"))]
+        {
+            let other = self.clone();
+            if let Err(e) = saito_threads::spawn("other backgrounds", move || other.set(extract())) {
+                self.set(Err(format!("can't start a thread to extract them: {e}")));
+            }
         }
     }
 

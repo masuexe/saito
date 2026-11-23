@@ -65,6 +65,9 @@ png = { version = "0.17", optional = true }
 saito-video = { path = "../saito-video" }
 # A replay's file: what its head names (the Replays screen's list) and its writer (the screenshot pass's replays).
 saito-replay = { path = "../saito-replay" }
+# Historical WASM simulation kernels for exact cross-version replay playback.
+saito-sim-abi = { path = "../saito-sim-abi" }
+saito-sim-host = { path = "../saito-sim-host" }
 # Netplay's link: WebRTC through a room of the signaling server.
 saito-rtc = { path = "../saito-rtc" }
 # The signaling server's room codes, as Play shows and takes them.

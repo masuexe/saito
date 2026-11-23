@@ -309,3 +309,6 @@ msgstr "录制于 v{} · 兼容模式播放"
 msgid "Recorded on v{} · playback may differ from original"
 msgstr "录制于 v{} · 回放可能与原对局存在差异"
 
+msgid "Recorded on v{} · exact replay kernel"
+msgstr "录制于 v{} · 精确历史内核回放"
+

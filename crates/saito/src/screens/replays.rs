@@ -34,11 +34,11 @@ mod queue;
 mod thumbnails;
 mod viewer;
 
-use crate::battle::{BattleEvent, BattleStart, Play};
+use crate::battle::{BattleEvent, BattleStart, Play, WasmWatch};
 use crate::errors::UserError;
 use crate::input::{Action, KeyPress};
 use crate::nav::Key;
-use crate::replays::{Entry, Found, Library, Look, Stamp};
+use crate::replays::{Entry, Found, Library, Look, Stamp, StillImage, WasmContext};
 use crate::screens::{Screen, ScreenId};
 use crate::shell::{Dialog, Shell, button};
 use crate::sound::Cue;
@@ -48,7 +48,6 @@ use queue::Queue;
 use saito_battle::{BattleResult, Content};
 use saito_frontend::player::time_of;
 use saito_frontend::replay::{Compat, ENGINE, Info, MatchKind, Outcome, Refused};
-use saito_render::Frame;
 use saito_render::vfont::TextRenderer;
 use saito_ui::{BattleKind, ButtonKind, DialogButton, ReplayRow, ReplaysView, VersusCard};
 use i_slint_backend_winit::winit::keyboard::KeyCode;
@@ -62,7 +61,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
-use viewer::{MENU, MenuItem, Overlays, Watching};
+use viewer::{MENU, MenuItem, Overlays, ReplayViewer, Watching};
 
 /// The viewer's view: its focus is remembered apart from the list's.
 const VIEWER: &str = "replays.viewer";
@@ -179,12 +178,12 @@ fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// The selected replay's still: the frame the thread made, shown in the screen's `Picture`.
+/// The selected replay's still: the frame (or WASM-rendered pixels) the thread made, shown in the screen's `Picture`.
 #[derive(Default)]
 struct Still {
     surface: Surface,
-    /// The frame, and whose it is.
-    frame: Option<(PathBuf, Box<Frame>)>,
+    /// The frame or pixels, and whose it is.
+    frame: Option<(PathBuf, StillImage)>,
     /// The sharp text's text over it.
     text: Option<TextRenderer>,
     /// The replay whose still was asked for last.
@@ -211,6 +210,8 @@ struct Arrivals {
     changed: bool,
     reread_done: HashSet<String>,
     failed: HashSet<u64>,
+    kernel_arrived: bool,
+    kernel_failed: HashSet<String>,
 }
 
 /// The other content the selected game's replays play on: where each hash's is, as found (kept until the store or
@@ -223,6 +224,8 @@ struct Elsewhere {
     arrivals: Rc<RefCell<Arrivals>>,
     downloading: HashSet<u64>,
     reread: HashSet<String>,
+    kernel_reread: bool,
+    kernel_downloading: HashSet<String>,
     wanted: Option<(String, PathBuf)>,
     was_ready: bool,
     pending: Option<(PathBuf, Option<u8>, bool)>,
@@ -463,10 +466,87 @@ impl Replays {
         }
     }
 
+    /// Return a [`WasmContext`] when a legacy replay has a different simulation version AND a matching
+    /// historical WASM kernel is stored locally (or provided via `$SAITO_KERNELS`).
+    fn wasm_context_for(&self, game: &str, head: &saito_replay::Head, content_dir: &Path) -> Option<WasmContext> {
+        if !crate::kernels::supported() || saito_replay::same_sim(&head.engine, ENGINE, game) {
+            return None;
+        }
+        let replay_line = saito_replay::line(&head.engine);
+        let stored = crate::kernels::find(replay_line)?;
+        Some(WasmContext {
+            kernel: stored.path,
+            game: game.to_string(),
+            content_dir: content_dir.to_path_buf(),
+            pool: crate::contents::pool(),
+        })
+    }
+
+    /// Trigger remote discovery / download of a historical WASM simulation kernel for `replay_line` if needed.
+    fn ask_for_kernel(&mut self, game: &str, engine: &str) {
+        if !crate::kernels::supported() || saito_replay::same_sim(engine, ENGINE, game) {
+            return;
+        }
+        let replay_line = saito_replay::line(engine);
+        if crate::kernels::find(replay_line).is_some() || self.elsewhere.arrivals.borrow().kernel_failed.contains(replay_line) {
+            return;
+        }
+        if crate::kernels::published(replay_line).is_some() {
+            self.download_kernel(replay_line);
+        } else if !self.elsewhere.kernel_reread && crate::kernels::has_index() {
+            self.reread_kernels();
+        }
+    }
+
+    fn reread_kernels(&mut self) {
+        if std::mem::replace(&mut self.elsewhere.kernel_reread, true) {
+            return;
+        }
+        let arrivals = self.elsewhere.arrivals.clone();
+        let started = slint::spawn_local(async move {
+            match crate::kernels::fetch_index().await {
+                Ok(_) => arrivals.borrow_mut().changed = true,
+                Err(why) => crate::errors::log("reading the historical simulation kernel index", &why),
+            }
+        });
+        if let Err(why) = started {
+            crate::errors::log("reading the historical simulation kernel index", &why);
+        }
+    }
+
+    fn download_kernel(&mut self, replay_line: &str) {
+        if !self.elsewhere.kernel_downloading.insert(replay_line.to_string()) {
+            return;
+        }
+        let (arrivals, line) = (self.elsewhere.arrivals.clone(), replay_line.to_string());
+        let started = slint::spawn_local(async move {
+            let doing = format!("downloading historical replay kernel for v{line}");
+            match crate::kernels::fetch_kernel(&line, |_| {}).await {
+                Ok(Some(_)) => {
+                    let mut a = arrivals.borrow_mut();
+                    a.kernel_arrived = true;
+                    a.changed = true;
+                }
+                Ok(None) => {
+                    arrivals.borrow_mut().kernel_failed.insert(line);
+                }
+                Err(why) => {
+                    crate::errors::log(&doing, &why);
+                    arrivals.borrow_mut().kernel_failed.insert(line);
+                }
+            }
+        });
+        if let Err(why) = started {
+            crate::errors::log("downloading a historical replay kernel", &why);
+            self.elsewhere.arrivals.borrow_mut().kernel_failed.insert(replay_line.to_string());
+        }
+    }
+
     /// The content replay `entry` was made on is asked for while it is selected, where it isn't the game's own:
     /// downloaded (where its index lists it), then made ready ([`Replays::follow_elsewhere`]).
     fn ask_for_content(&mut self, games: &Games, game: &str, here: u64, entry: &Entry) {
         let Ok(s) = &entry.read else { return };
+        self.ask_for_kernel(game, &s.head.engine);
         let Some((plays, _)) = self.resolve_replay(games, game, here, &s.head) else { return };
         match plays {
             Plays::Stored(dir) => {
@@ -484,7 +564,17 @@ impl Replays {
     /// asked for made ready a stretch at a time, and, once it is, the selected replay shown with it and the replay
     /// waiting to be watched watched.
     fn follow_elsewhere(&mut self, shell: &mut Shell, listing: bool) {
-        if std::mem::take(&mut self.elsewhere.arrivals.borrow_mut().changed) {
+        let (changed, kernel_arrived) = {
+            let mut a = self.elsewhere.arrivals.borrow_mut();
+            (std::mem::take(&mut a.changed), std::mem::take(&mut a.kernel_arrived))
+        };
+        if kernel_arrived {
+            self.library.clear_played();
+            self.reasons.clear();
+            self.still.frame = None;
+            self.still.asked = None;
+        }
+        if changed {
             self.elsewhere.found.clear();
             self.reasons.retain(|_, why| *why != UserError::ReplayContentMissing);
             if listing {
@@ -601,7 +691,13 @@ impl Replays {
                     continue;
                 }
                 if let Some((on, content_hash, compat)) = self.ready_for(&shell.games, game, ready, hash, entry) {
-                    self.library.play_with(entry, on.content(), content_hash, compat);
+                    if let Ok(s) = &entry.read
+                        && let Some(ctx) = self.wasm_context_for(game, &s.head, &on.loaded.game.dir)
+                    {
+                        self.library.play_wasm(entry, ctx, content_hash);
+                    } else {
+                        self.library.play_with(entry, on.content(), content_hash, compat);
+                    }
                 }
                 rows.push(self.row(shell, game, entry, hash));
                 self.rows.push(i);
@@ -643,7 +739,13 @@ impl Replays {
                 match self.library.entries.iter().find(|e| e.path == *path).cloned() {
                     Some(entry) => {
                         if let Some((on, content_hash, compat)) = self.ready_for(&shell.games, game, ready, hash, &entry) {
-                            self.library.play_with(&entry, on.content(), content_hash, compat);
+                            if let Ok(s) = &entry.read
+                                && let Some(ctx) = self.wasm_context_for(game, &s.head, &on.loaded.game.dir)
+                            {
+                                self.library.play_wasm(&entry, ctx, content_hash);
+                            } else {
+                                self.library.play_with(&entry, on.content(), content_hash, compat);
+                            }
                         }
                         rows.push(self.row(shell, game, &entry, hash));
                     }
@@ -687,6 +789,7 @@ impl Replays {
             view.set_playable(false);
             view.set_still(false);
             view.set_notice(Default::default());
+            view.set_notice_exact(false);
             if let Some(file) = missing {
                 for set in [ReplaysView::set_right_name, ReplaysView::set_played, ReplaysView::set_result, ReplaysView::set_length] {
                     set(&view, Default::default());
@@ -709,14 +812,21 @@ impl Replays {
         view.set_playable(reason.is_none() && entry.read.is_ok() && on.is_some());
         view.set_played(format!("{} · {}", when.full, when.time).into());
         view.set_reason(reason.as_ref().map(|r| r.line(&ui)).unwrap_or_default().into());
-        let notice = match (&reason, &entry.read, &on) {
-            (None, Ok(s), Some((_, _, Compat::Lenient))) => {
+        let wasm_ctx = match (&reason, &entry.read, &on) {
+            (None, Ok(s), Some((on, _, _))) => self.wasm_context_for(&game, &s.head, &on.loaded.game.dir),
+            _ => None,
+        };
+        let (notice, notice_exact) = match (&reason, &entry.read, &on, &wasm_ctx) {
+            (None, Ok(s), _, Some(_)) => (view.invoke_legacy_kernel(s.head.engine.as_str().into()), true),
+            (None, Ok(s), Some((_, _, Compat::Lenient)), None) => {
                 let diverged = matches!(self.library.played(&entry), Some(Ok(Outcome { diverged: Some(_), .. })));
-                if diverged { view.invoke_legacy_diverged(s.head.engine.as_str().into()) } else { view.invoke_legacy_compat(s.head.engine.as_str().into()) }
+                let text = if diverged { view.invoke_legacy_diverged(s.head.engine.as_str().into()) } else { view.invoke_legacy_compat(s.head.engine.as_str().into()) };
+                (text, false)
             }
-            _ => Default::default(),
+            _ => (Default::default(), false),
         };
         view.set_notice(notice);
+        view.set_notice_exact(notice_exact);
         let (mut result, mut tone, mut length) = (String::new(), 0, String::new());
         let (left, right) = match &entry.read {
             Ok(s) => {
@@ -746,9 +856,15 @@ impl Replays {
                 if !made && self.still.asked.as_ref() != Some(&entry.path) {
                     self.still.asked = Some(entry.path.clone());
                     let enhancements = shell.settings.enhancements();
-                    let font = on.loaded.font_in(shell.i18n.code).filter(|_| enhancements.wants_font());
-                    let look = Look { graphics: on.graphics(shell.i18n.code), enhancements, font };
-                    self.library.still_with(&entry, s.info.side, on.content(), look, *compat);
+                    if let Some(ctx) = wasm_ctx.clone()
+                        && let Some(roms) = shell.games.rom_source().cloned()
+                    {
+                        self.library.still_wasm(&entry, s.info.side, ctx, roms, shell.i18n.code.to_string(), enhancements);
+                    } else {
+                        let font = on.loaded.font_in(shell.i18n.code).filter(|_| enhancements.wants_font());
+                        let look = Look { graphics: on.graphics(shell.i18n.code), enhancements, font };
+                        self.library.still_with(&entry, s.info.side, on.content(), look, *compat);
+                    }
                 }
                 view.set_still(made);
             }
@@ -850,6 +966,29 @@ impl Replays {
             }
             Plays::Nowhere => return shell.fail(UserError::ReplayContentMissing),
         };
+        // Prefer a sandboxed historical WASM kernel when available for cross-version replays.
+        if let Some(ctx) = self.wasm_context_for(&game, &replay.head, &ready.loaded.game.dir)
+            && let Some(roms) = shell.games.rom_source().cloned()
+            && let Ok(replay_bytes) = saito_files::read(path)
+        {
+            let side = side.unwrap_or(replay.info.side).min(1);
+            self.sides = replay.info.open_setups.then(|| saito_match::binary::read_match(ready.content(), &replay.match_bytes).ok()).flatten().map(|m| (Box::new(m.sides), m.random_battle));
+            let ui = shell.ui();
+            let view = ui.global::<ReplaysView>();
+            let card = |of: u8| VersusCard { role: if of == 0 { view.get_p1() } else { view.get_p2() }, name: replay.info.names[of as usize].as_str().into(), ..VersusCard::default() };
+            let cards = [card(side), card(side ^ 1)];
+            self.close_sheet(shell);
+            self.opening = Some(path.to_path_buf());
+            self.opening_ready = other;
+            let lang = shell.i18n.code.to_string();
+            let enhancements = shell.settings.enhancements();
+            shell.start_wasm_replay(
+                ScreenId::Replays,
+                cards,
+                WasmWatch { ctx, roms, replay_bytes, view: Some(side), lang, enhancements },
+            );
+            return;
+        }
         // (Its set is started to be checked: an engine that stops there is a failure, not a crash.)
         let set = match saito_frontend::session::in_engine(|| saito_frontend::replay::set_of_compat(ready.content(), &replay, compat)) {
             Ok(Ok(set)) => set,
@@ -910,6 +1049,7 @@ impl Replays {
         view.set_builds_shown(false);
         view.set_viewer_notice(Default::default());
         view.set_viewer_diverged(false);
+        view.set_viewer_exact_kernel(false);
         shell.nav.enter(ScreenId::Replays.name(), self.main());
         // (The replay played is the one selected, the cursor on its row, where it is listed: the user, "when exiting
         // a replay, it should highlight the replay that was played instead of moving the cursor to the start". The
@@ -1220,7 +1360,7 @@ impl Replays {
         let Ok(summary) = &entry.read else { return shell.sound.play(Cue::Refused) };
         w.hide_builds(shell);
         let (path, side) = (w.path().to_path_buf(), w.side());
-        self.export = Some(Export::open(shell, &path, summary, side, w.both(), w.ready_of_replay(), w.compat()));
+        self.export = Some(Export::open(shell, &path, summary, side, w.both(), w.ready_of_replay(), w.compat(), w.wasm_context()));
         self.hud = None;
     }
 
@@ -1864,7 +2004,11 @@ impl Screen for Replays {
     }
 
     fn battle(&mut self, shell: &mut Shell, event: BattleEvent) {
-        let BattleEvent::Watching(viewer) = event else { return };
+        let viewer = match event {
+            BattleEvent::Watching(viewer) => ReplayViewer::Native(viewer),
+            BattleEvent::WatchingWasm(viewer, ctx) => ReplayViewer::Wasm(viewer, ctx),
+            _ => return,
+        };
         let Some(path) = self.opening.take() else { return };
         let mut watching = Watching::new(viewer, path, self.sides.take(), self.overlays, self.opening_ready.take());
         if let Some(speed) = self.carry_speed.take() {
@@ -1920,13 +2064,33 @@ impl Screen for Replays {
         // The selected replay's still, where its box is on screen.
         let shown_path = self.shown_path().cloned();
         let Still { surface, frame, text, .. } = &mut self.still;
-        if let Some((path, frame)) = frame
+        if let Some((path, image)) = frame
             && shown_path.as_ref() == Some(&*path)
             && (!shell.scale.phone || self.sheet)
         {
-            shell.show_surface(surface, false, |_, buffer, width, height| {
-                saito_render::present::present(frame, text.as_mut(), buffer, width, height);
+            shell.show_surface(surface, false, |_, buffer, width, height| match image {
+                StillImage::Frame(frame) => {
+                    saito_render::present::present(frame, text.as_mut(), buffer, width, height);
+                }
+                StillImage::Pixels(pixels) => blit_still(pixels, buffer, width, height),
             });
+        }
+    }
+}
+
+/// Nearest-neighbor blit of a 240×160 `0x00RRGGBB` still into `buffer` (`width` × `height`).
+fn blit_still(src: &[u32], dst: &mut [u32], width: usize, height: usize) {
+    const SRC_W: usize = saito_render::compose::WIDTH;
+    const SRC_H: usize = saito_render::compose::HEIGHT;
+    if src.len() < SRC_W * SRC_H || width == 0 || height == 0 {
+        return;
+    }
+    for y in 0..height {
+        let sy = y * SRC_H / height;
+        let srow = &src[sy * SRC_W..(sy + 1) * SRC_W];
+        let drow = &mut dst[y * width..(y + 1) * width];
+        for (x, pixel) in drow.iter_mut().enumerate() {
+            *pixel = srow[x * SRC_W / width];
         }
     }
 }

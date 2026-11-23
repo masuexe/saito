@@ -114,11 +114,23 @@ pub enum BattleEvent {
     Started,
     /// The replay asked for is ready to watch: its viewer, which is the owner's from here.
     Watching(Box<Viewer>),
+    /// The legacy replay asked for is ready to watch inside a sandboxed historical WASM simulation kernel.
+    WatchingWasm(Box<saito_sim_host::WasmViewer>, crate::replays::WasmContext),
     /// The set is over: how it went for this player (none: nobody's).
     Finished(#[allow(dead_code)] Option<BattleResult>),
     /// It stopped without ending: why, as a player can be told it (`UserError::of_stop`). The detail is in
     /// the log.
     Stopped(StopReason),
+}
+
+/// Request to open a legacy replay inside a sandboxed historical WASM simulation kernel behind the versus cards.
+pub struct WasmWatch {
+    pub ctx: crate::replays::WasmContext,
+    pub roms: saito_extract::RomSource,
+    pub replay_bytes: Vec<u8>,
+    pub view: Option<u8>,
+    pub lang: String,
+    pub enhancements: saito_frontend::game::Enhancements,
 }
 
 /// The battle on screen.
@@ -181,12 +193,36 @@ impl Battle {
 }
 
 /// A battle being made ready.
-pub struct Loading {
-    pub(crate) start: BattleStart,
-    began: Instant,
-    /// Made on the first frame after the cards are up.
-    preload: Option<Preload>,
-    theirs: f32,
+pub enum Loading {
+    Native {
+        start: BattleStart,
+        began: Instant,
+        /// Made on the first frame after the cards are up.
+        preload: Option<Preload>,
+    },
+    Wasm {
+        owner: ScreenId,
+        began: Instant,
+        req: Option<Box<WasmWatch>>,
+        ready: Option<std::sync::mpsc::Receiver<Result<(Box<saito_sim_host::WasmViewer>, crate::replays::WasmContext), String>>>,
+        opened: Option<(Box<saito_sim_host::WasmViewer>, crate::replays::WasmContext)>,
+    },
+}
+
+impl Loading {
+    pub(crate) fn owner(&self) -> ScreenId {
+        match self {
+            Loading::Native { start, .. } => start.owner,
+            Loading::Wasm { owner, .. } => *owner,
+        }
+    }
+
+    pub(crate) fn music(&self) -> BattleMusic {
+        match self {
+            Loading::Native { start, .. } => start.music,
+            Loading::Wasm { .. } => BattleMusic::Background,
+        }
+    }
 }
 
 impl Shell {
@@ -206,21 +242,104 @@ impl Shell {
         }
         shell.set_battle(BattleKind::None);
         shell.set_battle_menu(false);
-        self.loading = Some(Loading { start, began: Instant::now(), preload: None, theirs: 0.0 });
+        self.loading = Some(Loading::Native { start, began: Instant::now(), preload: None });
+    }
+
+    /// Open a legacy replay inside a sandboxed historical WASM simulation kernel behind the versus cards.
+    pub fn start_wasm_replay(&mut self, owner: ScreenId, cards: [VersusCard; 2], req: WasmWatch) {
+        self.battle = None;
+        self.nav.close("menu.");
+        let ui = self.ui();
+        let shell = ui.global::<saito_ui::Shell>();
+        let [left, right] = cards;
+        shell.set_versus_left(left);
+        shell.set_versus_right(right);
+        shell.set_versus(true);
+        shell.set_rush_seq(shell.get_rush_seq() + 1);
+        shell.set_battle(BattleKind::None);
+        shell.set_battle_menu(false);
+        self.loading = Some(Loading::Wasm { owner, began: Instant::now(), req: Some(Box::new(req)), ready: None, opened: None });
     }
 
     /// A frame of the cards: the match made ready a few steps at a time, and the battle begun once it is, the
     /// other side is, and the cards were up long enough to be seen. What its owner hears, once it is ready.
     pub(crate) fn load_battle(&mut self, now: Instant) -> Option<(ScreenId, BattleEvent)> {
-        let mut loading = self.loading.take()?;
-        let Some(ready) = loading.start.ready.clone().or_else(|| self.games.ready(&loading.start.game)) else {
-            crate::errors::log("starting a battle", &format_args!("{} isn't ready", loading.start.game));
+        let loading = self.loading.take()?;
+        let (mut start, began, mut preload) = match loading {
+            Loading::Native { start, began, preload, .. } => (start, began, preload),
+            Loading::Wasm { owner, began, mut req, mut ready, mut opened } => {
+                let ui = self.ui();
+                let shell = ui.global::<saito_ui::Shell>();
+                if let Some(req) = req.take() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let started = saito_threads::spawn("wasm-viewer", move || {
+                        let res = crate::kernels::open_viewer(
+                            &req.ctx.kernel,
+                            &req.ctx.game,
+                            &req.ctx.content_dir,
+                            &req.ctx.pool,
+                            &req.roms,
+                            req.view,
+                            &req.lang,
+                            req.enhancements,
+                            true,
+                            &req.replay_bytes,
+                        )
+                        .map(|v| (Box::new(v), req.ctx));
+                        let _ = tx.send(res);
+                    });
+                    if let Err(why) = started {
+                        crate::errors::log("opening a legacy replay kernel", &why);
+                        self.loading_failed();
+                        return None;
+                    }
+                    ready = Some(rx);
+                }
+                if opened.is_none()
+                    && let Some(rx) = &ready
+                {
+                    match rx.try_recv() {
+                        Ok(Ok(pair)) => opened = Some(pair),
+                        Ok(Err(why)) => {
+                            crate::errors::log("opening a legacy replay kernel", &why);
+                            self.loading_failed();
+                            return None;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            crate::errors::log("opening a legacy replay kernel", &"worker thread ended");
+                            self.loading_failed();
+                            return None;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    }
+                }
+                let progress = if opened.is_some() {
+                    1.0
+                } else {
+                    (now.saturating_duration_since(began).as_secs_f32() / 1.5).min(0.95)
+                };
+                let (mut left, mut right) = (shell.get_versus_left(), shell.get_versus_right());
+                (left.progress, right.progress) = (progress, progress);
+                shell.set_versus_left(left);
+                shell.set_versus_right(right);
+                let seen = now.saturating_duration_since(began) >= CARDS_SHOWN;
+                if let Some((viewer, ctx)) = opened.take().filter(|_| seen && !self.hold_cards) {
+                    shell.set_versus(false);
+                    self.jack_in();
+                    return Some((owner, BattleEvent::WatchingWasm(viewer, ctx)));
+                }
+                self.loading = Some(Loading::Wasm { owner, began, req, ready, opened });
+                return None;
+            }
+        };
+        let Some(ready) = start.ready.clone().or_else(|| self.games.ready(&start.game)) else {
+            crate::errors::log("starting a battle", &format_args!("{} isn't ready", start.game));
             self.loading_failed();
             return None;
         };
         let ui = self.ui();
         let shell = ui.global::<saito_ui::Shell>();
-        match &mut loading.preload {
+        match &mut preload {
             // (The first frame shows the cards; the work starts on the next.)
             None => {
                 // The picture's size as the battle will show it: the text is laid out at it.
@@ -231,32 +350,32 @@ impl Shell {
                 let graphics = ready.graphics(self.i18n.code);
                 let font = ready.loaded.font_in(self.i18n.code).filter(|_| enhancements.wants_font());
                 let mut renderer = graphics.renderer(enhancements, font.clone());
-                let pres = loading.start.presentation.take();
+                let pres = start.presentation.take();
                 let (music, rounds) = if pres.is_some() {
                     let bg_music = crate::music::Music::Background;
                     (crate::music::sound(&self.games, &ready, &bg_music), None)
                 } else {
                     // (The music the player picked, the backgrounds' or a theme, where the battle plays the pick; else
                     // the backgrounds': `crate::music`.)
-                    let music = if loading.start.music == BattleMusic::Picked { self.battle_music() } else { crate::music::Music::Background };
+                    let music = if start.music == BattleMusic::Picked { self.battle_music() } else { crate::music::Music::Background };
                     (crate::music::sound(&self.games, &ready, &music), crate::music::round_music(&self.games, &ready, &music))
                 };
                 if let Some(pres) = pres {
                     renderer.set_background_override(pres.first_background);
-                    loading.preload = Some(
-                        Preload::with(renderer, font.map(TextRenderer::new), music, &loading.start.set, loading.start.viewer, size)
+                    preload = Some(
+                        Preload::with(renderer, font.map(TextRenderer::new), music, &start.set, start.viewer, size)
                             .extra_backgrounds(pres.extra_backgrounds)
                             .round_presentation(Some(pres.resolver)),
                     );
                 } else {
-                    loading.preload = Some(
-                        Preload::with(renderer, font.map(TextRenderer::new), music, &loading.start.set, loading.start.viewer, size).round_music(rounds),
+                    preload = Some(
+                        Preload::with(renderer, font.map(TextRenderer::new), music, &start.set, start.viewer, size).round_music(rounds),
                     );
                 }
             }
             Some(preload) => {
-                let began = Instant::now();
-                while preload.step() && began.elapsed() < STEP_BUDGET {}
+                let began_step = Instant::now();
+                while preload.step() && began_step.elapsed() < STEP_BUDGET {}
                 if let Some(why) = preload.stopped() {
                     crate::errors::log("making a battle ready", &why);
                     self.loading_failed();
@@ -264,30 +383,29 @@ impl Shell {
                 }
             }
         }
-        let preload = loading.preload.as_ref().expect("made above");
-        let mine = preload.fraction();
-        loading.theirs = match &mut loading.start.gate {
+        let preload_ref = preload.as_ref().expect("made above");
+        let mine = preload_ref.fraction();
+        let theirs = match &mut start.gate {
             Some(gate) => gate(mine),
             None => mine,
         };
-        if loading.start.cards.is_some() {
+        if start.cards.is_some() {
             // A bar a card: online each is its machine's; alone both are this one's, each side's own steps
             // with the match's.
-            let side = |n: u8| (preload.fraction_of(Part::Match) + preload.fraction_of(Part::Side(n))) / 2.0;
-            let bars = if loading.start.gate.is_some() { [mine, loading.theirs] } else { [side(0), side(1)] };
-            let bars = if loading.start.viewer == 1 && loading.start.gate.is_none() { [bars[1], bars[0]] } else { bars };
+            let side = |n: u8| (preload_ref.fraction_of(Part::Match) + preload_ref.fraction_of(Part::Side(n))) / 2.0;
+            let bars = if start.gate.is_some() { [mine, theirs] } else { [side(0), side(1)] };
+            let bars = if start.viewer == 1 && start.gate.is_none() { [bars[1], bars[0]] } else { bars };
             let (mut left, mut right) = (shell.get_versus_left(), shell.get_versus_right());
             (left.progress, right.progress) = (bars[0], bars[1]);
             shell.set_versus_left(left);
             shell.set_versus_right(right);
         }
-        let seen = loading.start.cards.is_none() || now.saturating_duration_since(loading.began) >= CARDS_SHOWN;
-        if !preload.done() || loading.theirs < 1.0 || !seen || self.hold_cards {
-            self.loading = Some(loading);
+        let seen = start.cards.is_none() || now.saturating_duration_since(began) >= CARDS_SHOWN;
+        if !preload_ref.done() || theirs < 1.0 || !seen || self.hold_cards {
+            self.loading = Some(Loading::Native { start, began, preload });
             return None;
         }
         // The battle.
-        let Loading { start, preload, .. } = loading;
         let preload = preload.expect("made above");
         for missing in preload.missing() {
             crate::errors::log("the game's assets lack something this battle draws", &missing);
@@ -369,7 +487,7 @@ impl Shell {
 
     /// Whether the battle being made ready is `owner`'s.
     pub fn loading_of(&self, owner: ScreenId) -> bool {
-        self.loading.as_ref().is_some_and(|l| l.start.owner == owner)
+        self.loading.as_ref().is_some_and(|l| l.owner() == owner)
     }
 
     /// Give up the battle being made ready (its owner asks: an invite canceled).

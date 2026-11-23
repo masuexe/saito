@@ -1611,7 +1611,7 @@ impl Screen for Practice {
                     shell.open_menu();
                 }
             }
-            BattleEvent::Watching(_) => {}
+            BattleEvent::Watching(_) | BattleEvent::WatchingWasm(..) => {}
             // Practice has no end: a battle that ends is followed by another, a single battle of its own on a seed
             // of its own (its folders shuffled anew, a Random arena or background picked anew; the screenshot
             // pass's the next seed on, so it is the same each time).

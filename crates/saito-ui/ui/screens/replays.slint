@@ -82,8 +82,10 @@ export global ReplaysView {
     in property <int> result-tone;
     in property <string> length;
     in property <string> reason;
-    // Compatibility notice for playable legacy replays (amber, shown when `reason` is empty).
+    // Compatibility notice for playable legacy replays (shown when `reason` is empty).
     in property <string> notice;
+    // True when `notice` describes an exact historical simulation kernel rather than lenient compatibility mode.
+    in property <bool> notice-exact;
     // Its still is in the picture.
     in property <bool> still;
     // A phone: the selected replay's sheet is open.
@@ -137,9 +139,10 @@ export global ReplaysView {
     // lately, paused or at the end, a setting taken, the builds, the export, the ⋯ menu or the popup up next open;
     // always on a phone). The pointer resting on the transport holds them too.
     in property <bool> hud: true;
-    // Compatibility notice over the viewer for legacy replays (and whether playback diverged from the recording).
+    // Compatibility notice over the viewer for legacy replays (and whether playback diverged or uses an exact kernel).
     in property <string> viewer-notice;
     in property <bool> viewer-diverged;
+    in property <bool> viewer-exact-kernel;
     // Whether the queue's next replay starts by itself at the end of one (Autoplay next, remembered).
     in property <bool> autoplay: true;
 
@@ -259,6 +262,9 @@ export global ReplaysView {
     }
     pure public function legacy-diverged(version: string) -> string {
         return @tr("Recorded on v{} · playback may differ from original", version);
+    }
+    pure public function legacy-kernel(version: string) -> string {
+        return @tr("Recorded on v{} · exact replay kernel", version);
     }
 }
 
@@ -543,7 +549,7 @@ component Facts inherits Rectangle {
         height: root.stacked ? max(0px, root.height - self.y) : 36px;
         visible: ReplaysView.reason == "" && ReplaysView.notice != "";
         text: ReplaysView.notice;
-        color: Theme.code;
+        color: ReplaysView.notice-exact ? Theme.cursor : Theme.code;
         vertical-alignment: top;
     }
 }
@@ -1674,13 +1680,13 @@ component ViewerPage inherits Rectangle {
         height: 26px;
         background: Theme.bar;
         border-width: 1px;
-        border-color: Theme.code;
+        border-color: ReplaysView.viewer-exact-kernel ? Theme.cursor : Theme.code;
         notice-text := Text {
             x: 10px;
             width: parent.width - 20px;
             height: parent.height;
             text: ReplaysView.viewer-notice;
-            color: Theme.code;
+            color: ReplaysView.viewer-exact-kernel ? Theme.cursor : Theme.code;
             font-family: Theme.body;
             font-size: 12px;
             font-weight: 600;

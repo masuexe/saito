@@ -114,17 +114,35 @@ pub struct Look {
     pub font: Option<Arc<VectorFont>>,
 }
 
+/// Parameters for executing a legacy replay inside a sandboxed historical WASM simulation kernel.
+#[derive(Clone)]
+pub struct WasmContext {
+    pub kernel: PathBuf,
+    pub game: String,
+    pub content_dir: PathBuf,
+    pub pool: Vec<(String, PathBuf)>,
+}
+
+/// A rendered replay still: either a native 240×160 [`Frame`] (presented with sharp text by the UI) or
+/// pre-presented 240×160 `0x00RRGGBB` pixels rendered inside a WASM simulation kernel.
+pub enum StillImage {
+    Frame(Box<Frame>),
+    Pixels(Vec<u32>),
+}
+
 enum Job {
     List(PathBuf),
     Play(Key, Id, Arc<Content>, Compat),
+    PlayWasm(Key, Id, WasmContext),
     Still(Key, u8, Arc<Content>, Box<Look>, Compat),
+    StillWasm(Key, u8, WasmContext, saito_extract::RomSource, String, Enhancements),
 }
 
 enum Told {
     Listed(Vec<Entry>),
     /// What a replay's playing out gave, and whether it was kept from before.
     Played(Key, Played, bool),
-    Still(Key, Option<Box<Frame>>),
+    Still(Key, Option<StillImage>),
 }
 
 /// What [`Library::poll`] says was found since the last.
@@ -134,7 +152,7 @@ pub enum Found {
     /// A replay was played out: [`Library::played`] has it.
     Played(PathBuf),
     /// A replay's still (none: it isn't played here).
-    Still(PathBuf, Option<Box<Frame>>),
+    Still(PathBuf, Option<StillImage>),
 }
 
 /// The replays folder as last listed, and what was found of its replays.
@@ -192,6 +210,24 @@ impl Library {
         self.ask(Job::Play(key, Id { file, content: hash }, content.clone(), compat));
     }
 
+    /// Play `entry` out inside a sandboxed historical WASM simulation kernel.
+    pub fn play_wasm(&mut self, entry: &Entry, ctx: WasmContext, hash: u64) {
+        let key = entry.key();
+        let Some(file) = entry.digest else { return };
+        if self.played.contains_key(&key) || !self.asked.insert(key.clone()) {
+            return;
+        }
+        // Distinguish exact WASM kernel cache entries from lenient fallback entries.
+        let id = Id { file, content: hash ^ 0x5741_534D_5349_4D31 };
+        self.ask(Job::PlayWasm(key, id, ctx));
+    }
+
+    /// Clear cached played outcomes so replays can be re-evaluated (e.g. once a historical kernel arrives).
+    pub fn clear_played(&mut self) {
+        self.played.clear();
+        self.asked.clear();
+    }
+
     /// What playing `entry` out made, once it was.
     pub fn played(&self, entry: &Entry) -> Option<&Played> {
         self.played.get(&(entry.path.clone(), entry.stamp))
@@ -201,6 +237,11 @@ impl Library {
     /// One asked for after it is made first, and one asked for before it and not yet begun isn't made at all.
     pub fn still_with(&mut self, entry: &Entry, side: u8, content: &Arc<Content>, look: Look, compat: Compat) {
         self.ask(Job::Still(entry.key(), side, content.clone(), Box::new(look), compat));
+    }
+
+    /// Make a still of `entry` inside a sandboxed historical WASM simulation kernel.
+    pub fn still_wasm(&mut self, entry: &Entry, side: u8, ctx: WasmContext, roms: saito_extract::RomSource, lang: String, enhancements: Enhancements) {
+        self.ask(Job::StillWasm(entry.key(), side, ctx, roms, lang, enhancements));
     }
 
     /// Take what the thread found since the last call.
@@ -240,11 +281,16 @@ impl Library {
 /// first. What playing one out gave is kept in `cache_file`'s cache, and one kept is told at once; the cache is
 /// written whenever the thread has nothing to do.
 fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
+    enum PlayTask {
+        Native(Key, Id, Arc<Content>, Compat),
+        Wasm(Key, Id, WasmContext),
+    }
+
     let stats = std::env::var_os("SAITO_PLAY_STATS").is_some();
     let mut cache = cache_file.map(Cache::load);
     let mut listing: Option<PathBuf> = None;
     let mut still: Option<Job> = None;
-    let mut plays: VecDeque<(Key, Id, Arc<Content>, Compat)> = VecDeque::new();
+    let mut plays: VecDeque<PlayTask> = VecDeque::new();
     // (What the last listing read: a file as it was then is not read again. None before the first: the cache
     // keeps all it holds until the folder is known.)
     let mut known: Option<HashMap<PathBuf, Entry>> = None;
@@ -270,9 +316,17 @@ fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
                             return;
                         }
                     }
-                    None => plays.push_back((key, id, content, compat)),
+                    None => plays.push_back(PlayTask::Native(key, id, content, compat)),
                 },
-                job @ Job::Still(..) => still = Some(job),
+                Job::PlayWasm(key, id, ctx) => match cache.as_ref().and_then(|c| c.get(&id)) {
+                    Some(kept) => {
+                        if tell.send(Told::Played(key, Ok(kept.clone()), true)).is_err() {
+                            return;
+                        }
+                    }
+                    None => plays.push_back(PlayTask::Wasm(key, id, ctx)),
+                },
+                job @ (Job::Still(..) | Job::StillWasm(..)) => still = Some(job),
             }
             next = jobs.try_recv().ok();
         }
@@ -286,11 +340,29 @@ fn work(jobs: Receiver<Job>, tell: Sender<Told>, cache_file: Option<PathBuf>) {
             }
             known = Some(entries.iter().map(|e| (e.path.clone(), e.clone())).collect());
             Told::Listed(entries)
-        } else if let Some(Job::Still(key, side, content, look, compat)) = still.take() {
-            let frame = guarded(|| still_of(&key.0, side, &content, &look, compat)).flatten();
-            Told::Still(key, frame.map(Box::new))
-        } else if let Some((key, id, content, compat)) = plays.pop_front() {
-            let played = guarded(|| play(&key.0, &content, compat)).unwrap_or_else(|| Err(Refused::BadMatch("playing it out stopped the engine".into())));
+        } else if let Some(job) = still.take() {
+            match job {
+                Job::Still(key, side, content, look, compat) => {
+                    let frame = guarded(|| still_of(&key.0, side, &content, &look, compat)).flatten();
+                    Told::Still(key, frame.map(|f| StillImage::Frame(Box::new(f))))
+                }
+                Job::StillWasm(key, side, ctx, roms, lang, enhancements) => {
+                    let pixels = guarded(|| still_wasm(&key.0, side, &ctx, &roms, &lang, enhancements)).flatten();
+                    Told::Still(key, pixels.map(StillImage::Pixels))
+                }
+                _ => continue,
+            }
+        } else if let Some(task) = plays.pop_front() {
+            let (key, id, played) = match task {
+                PlayTask::Native(key, id, content, compat) => {
+                    let played = guarded(|| play(&key.0, &content, compat)).unwrap_or_else(|| Err(Refused::BadMatch("playing it out stopped the engine".into())));
+                    (key, id, played)
+                }
+                PlayTask::Wasm(key, id, ctx) => {
+                    let played = guarded(|| play_wasm_file(&key.0, &ctx)).unwrap_or_else(|| Err(Refused::BadMatch("playing it out stopped the WASM kernel".into())));
+                    (key, id, played)
+                }
+            };
             if let (Some(cache), Ok(outcome)) = (&mut cache, &played) {
                 cache.put(id, outcome.clone());
             }
@@ -349,6 +421,22 @@ pub fn read(path: &Path) -> Result<Replay, ReadError> {
 fn play(path: &Path, content: &Arc<Content>, compat: Compat) -> Played {
     let replay = read(path).map_err(|e| Refused::BadMatch(e.to_string()))?;
     saito_frontend::replay::play_out_compat(content, &replay, compat)
+}
+
+fn play_wasm_file(path: &Path, ctx: &WasmContext) -> Played {
+    let bytes = saito_files::read(path).map_err(|e| Refused::BadMatch(format!("{}: {e}", path.display())))?;
+    crate::kernels::play_out(&ctx.kernel, &ctx.game, &ctx.content_dir, &ctx.pool, &bytes).map_err(Refused::BadMatch)
+}
+
+fn still_wasm(path: &Path, side: u8, ctx: &WasmContext, roms: &saito_extract::RomSource, lang: &str, enhancements: Enhancements) -> Option<Vec<u32>> {
+    let bytes = saito_files::read(path).ok()?;
+    match crate::kernels::still(&ctx.kernel, &ctx.game, &ctx.content_dir, &ctx.pool, roms, side, lang, enhancements, &bytes) {
+        Ok(pixels) => Some(pixels),
+        Err(why) => {
+            crate::errors::log(&format!("making a still with kernel {}", ctx.kernel.display()), &why);
+            None
+        }
+    }
 }
 
 /// A picture of the replay at `path` from `side`'s console: a moment into its first fight (or its last tick,

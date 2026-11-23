@@ -6,12 +6,12 @@ license.workspace = true
 description = "Files, the same calls on the desktop (std::fs), in a browser (a tree in memory the page keeps) and on a phone, and the system's folders for the app's data and for files kept a while"
 
 # What goes wrong (the browser's storage, Android's folders), said as a warning: the app keeps them in its log.
-[target.'cfg(any(target_arch = "wasm32", target_os = "android"))'.dependencies]
+[target.'cfg(any(all(target_arch = "wasm32", target_os = "unknown"), target_os = "android"))'.dependencies]
 log = "0.4"
 
 # The browser's: its tree's locks (a page's main thread may not wait) and times; the stowed files' storage, the
 # page's (the origin private file system, through web-sys), written and read on threads of their own.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 saito-threads = { path = "../saito-threads" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

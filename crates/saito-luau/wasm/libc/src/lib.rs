@@ -7,6 +7,11 @@ pub use libc_upstream::*;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use unavailable_files::*;
 
+#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
+pub unsafe extern "C" fn tmpfile() -> *mut FILE {
+    core::ptr::null_mut()
+}
+
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod unavailable_files {
     use core::ffi::{c_int, c_long, c_void};

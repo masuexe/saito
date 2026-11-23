@@ -348,10 +348,48 @@ jobs:
           path: target/package/ios/device/saito-ios.ipa
           if-no-files-found: error
 
+  # Sandboxed historical WASM simulation kernel (`saito-sim-<line>.wasm.gz`), enabling newer versions of Saito
+  # to play older-version replays with 100% deterministic accuracy (S-022).
+  sim-kernel:
+    name: WASM simulation kernel
+    runs-on: ubuntu-24.04
+    env:
+      WASI_SDK_VERSION: "34"
+      WASI_SDK_SHA256: "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-wasip1 --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: wasm32-wasip1-sim-kernel
+      - name: WASI SDK 34
+        run: |
+          tarball="$RUNNER_TEMP/wasi-sdk.tar.gz"
+          curl -fsSL -o "$tarball" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          echo "${WASI_SDK_SHA256}  ${tarball}" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/wasi-sdk"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/wasi-sdk" --strip-components=1
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk" >> "$GITHUB_ENV"
+      - name: Build simulation kernel
+        run: |
+          chmod +x packaging/sim-kernel/build.sh
+          packaging/sim-kernel/build.sh target/package/sim-kernel
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saito-sim-kernel
+          path: |
+            target/package/sim-kernel/saito-sim-*.wasm.gz
+            target/package/sim-kernel/saito-sim-*.json
+          if-no-files-found: error
+
   release:
     name: Release
     if: inputs.publish && github.ref == 'refs/heads/main'
-    needs: [windows, macos, linux, android, ios]
+    needs: [windows, macos, linux, android, ios, sim-kernel]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -421,6 +459,7 @@ jobs:
           python3 -I packaging/ios/altstore.py releases/saito-ios.ipa \
             "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/saito-ios.ipa" > releases/altstore.json
           gh release upload "$TAG" releases/saito-android.apk releases/saito-ios.ipa releases/altstore.json \
+            releases/saito-sim-*.wasm.gz releases/saito-sim-*.json \
             --repo "$GITHUB_REPOSITORY" --clobber
       - name: Publish
         env:
