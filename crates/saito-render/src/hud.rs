@@ -1506,6 +1506,7 @@ const GAUGE_WARNING: (i32, i32) = (0x78, 0x0C);
 /// both, those the left's doesn't show, a place's mirrored about it.
 fn warning_parts<'a>(b: &Battle, hud: &'a Hud, view: &View, seat: Seat, list: &mut SpriteList<'a>, problems: &mut Problems) {
     let console = seat.side as usize & 1;
+    let saved_anchor = list.anchor;
     for w in &b.warnings[console] {
         if seat.mirrored() && b.warnings[console ^ 1].contains(w) {
             continue;
@@ -1529,8 +1530,13 @@ fn warning_parts<'a>(b: &Battle, hud: &'a Hud, view: &View, seat: Seat, list: &m
         // (A place's mirrored as its arrow's pixels are, upright.)
         let shift = if w.at.is_some() { seat.ink_shift(std::slice::from_ref(&part), x, 16) } else { 0 };
         let part = SpritePart { x: x + shift, ..part };
+        // A gauge warning (FstGauge / SloGauge arrow, `w.at == None`) belongs to the custom gauge
+        // anchored at the top edge (`Anchor::TOP`), whereas a field warning stays with the field
+        // (`Anchor::CENTER`).
+        list.anchor = if w.at.is_none() { Anchor::TOP } else { Anchor::CENTER };
         list.insert_placed(FRONT_LAYER, 0, vec![part], None, fine);
     }
+    list.anchor = saved_anchor;
 }
 
 /// The sprite layers the HUD's tasks insert into (`sub_802FE28`'s r2), and
@@ -3501,5 +3507,34 @@ mod tests {
             assert!(matches!(m, 2 | 3), "in-battle switch tick {tick} must never flash normal face (got {m})");
         }
         assert_eq!(face_mark(&b, &state), 2);
+    }
+
+    /// S-071: A custom-gauge warning arrow (FstGauge / SloGauge, `w.at == None`) must anchor to
+    /// `Anchor::TOP` so it stays with the custom gauge in tall portrait layouts, while a field
+    /// warning (`w.at == Some(..)`) keeps `Anchor::CENTER` with the field.
+    #[test]
+    fn gauge_warning_anchors_to_top_while_field_warning_stays_centered() {
+        let mut b = battle();
+        b.warnings[0].push(saito_battle::hud::Warning { at: None });
+        // A panel center on the field so `project_hud` lands inside the visible screen.
+        b.warnings[0].push(saito_battle::hud::Warning { at: Some(saito_battle::object::Vec3::px(0, 0, 0)) });
+
+        let mut h = hud();
+        h.warning = Tiles { pixels: vec![1; 8 * Tiles::TILE] };
+        let view = crate::render::Renderer::view(&b);
+        let seat = Seat::of(crate::seat::Consoles::Both, &b)[0];
+        let mut list = SpriteList::default();
+        list.anchor = Anchor::CENTER;
+        let mut problems = Problems::default();
+
+        warning_parts(&b, &h, &view, seat, &mut list, &mut problems);
+        assert_eq!(list.anchor, Anchor::CENTER, "warning_parts must restore list.anchor");
+
+        let parts = list.into_parts();
+        assert_eq!(parts.len(), 2, "expected both gauge and field warning sprites");
+        let gauge = parts.iter().find(|p| p.x == GAUGE_WARNING.0 && p.y == GAUGE_WARNING.1).expect("gauge warning part");
+        let field = parts.iter().find(|p| !(p.x == GAUGE_WARNING.0 && p.y == GAUGE_WARNING.1)).expect("field warning part");
+        assert_eq!(gauge.anchor, Anchor::TOP, "gauge warning must anchor to TOP");
+        assert_eq!(field.anchor, Anchor::CENTER, "field warning must stay anchored to CENTER");
     }
 }
