@@ -5,7 +5,7 @@
 //! GitHub says, and handed to the system's installer by `android/saito/updater/SaitoUpdater.kt` (via
 //! `PackageInstaller` session or `FileProvider` `ACTION_VIEW` fallback).
 
-use crate::android_release::{is_newer_tag, newer, parse_expanded_assets, parse_web_latest_tag};
+use crate::android_release::check_android_releases;
 use crate::{Releases, Told};
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::jint;
@@ -17,9 +17,6 @@ use std::sync::Mutex;
 use std::sync::mpsc::Sender;
 
 pub use crate::android_release::Found;
-
-/// The most of the release's JSON/HTML read (its assets and its notes: some tens of kilobytes).
-const MAX_RELEASE: u64 = 1 << 20;
 
 /// Ceiling on an APK download when its exact byte length wasn't known beforehand.
 const MAX_APK: u64 = 512 << 20;
@@ -70,24 +67,12 @@ pub fn check(releases: &Releases, fallback_version: Option<&str>, tell: Sender<T
 
 /// Check `releases` against the installed app's version; cleans up stale cached APKs once up to date.
 ///
-/// Queries `https://github.com/{owner}/{repo}/releases/latest` (`Accept: application/json`) first to avoid
-/// `api.github.com`'s strict 60 req/hr unauthenticated IP rate limit (common on shared VPN nodes and mobile
-/// CGNAT). Only resolves full asset metadata when a newer tag is actually out, falling back from the tag API
-/// to GitHub's `expanded_assets` HTML fragment (and from `web_latest` to `api.github.com/.../releases/latest`).
+/// Queries the configured mirror (`<mirror>/latest/android.json`) first in a single request, falling back
+/// to GitHub (`web_latest` -> tag API / `expanded_assets`, then `api.github.com/.../releases/latest`).
 async fn ask(releases: &Releases, fallback_version: Option<&str>) -> Result<Option<Found>, String> {
     let installed = installed(fallback_version)?;
     let clients = crate::http::Clients::new()?;
-    let found = match fetch_web_latest(&clients, releases, &installed).await {
-        Ok(found) => found,
-        Err(web_err) => {
-            log::warn!("github web release check failed ({web_err}); falling back to GitHub API");
-            let json = clients
-                .get_bytes(&releases.latest(), MAX_RELEASE)
-                .await
-                .map_err(|api_err| format!("{api_err} (web: {web_err})"))?;
-            newer(&json, &installed)?
-        }
-    };
+    let found = check_android_releases(&clients, releases, &installed).await?;
     if found.is_none()
         && let Ok(path) = apk()
     {
@@ -95,30 +80,6 @@ async fn ask(releases: &Releases, fallback_version: Option<&str>) -> Result<Opti
         let _ = std::fs::remove_file(path.with_extension("apk.part"));
     }
     Ok(found)
-}
-
-async fn fetch_web_latest(clients: &crate::http::Clients, releases: &Releases, installed: &str) -> Result<Option<Found>, String> {
-    let web_json = clients
-        .get_bytes_with_accept(&releases.web_latest(), Some("application/json"), MAX_RELEASE)
-        .await?;
-    let tag = parse_web_latest_tag(&web_json)?;
-    if !is_newer_tag(&tag, installed)? {
-        return Ok(None);
-    }
-    match clients.get_bytes(&releases.release_by_tag(&tag), MAX_RELEASE).await {
-        Ok(json) => match newer(&json, installed) {
-            Ok(found) => return Ok(found),
-            Err(api_err) => log::warn!("github tag API parse failed ({api_err}); falling back to expanded_assets"),
-        },
-        Err(api_err) => log::warn!("github tag API failed ({api_err}); falling back to expanded_assets"),
-    }
-    let html_bytes = clients.get_bytes(&releases.expanded_assets(&tag), MAX_RELEASE).await?;
-    let html = String::from_utf8_lossy(&html_bytes);
-    let mut found = parse_expanded_assets(&html, &tag, releases)?;
-    if let Some(len) = clients.head_content_length(&found.url).await {
-        found.size = len;
-    }
-    Ok(Some(found))
 }
 
 /// Where the update's APK is downloaded: the app's cache folder.
@@ -144,24 +105,49 @@ pub fn download(_releases: &Releases, found: &Found, tell: Sender<Told>) {
 }
 
 /// `found`'s APK written atomically to `path`, its SHA-256 matching the release; returns immediately if cached and valid.
+/// If downloading from `found.url` (e.g. mirror) fails, automatically retries `found.fallback_url` (GitHub) while
+/// enforcing the same SHA-256 digest.
 async fn fetch(found: &Found, path: &Path, tell: &Sender<Told>) -> Result<(), String> {
     if verify_sha256(path, &found.sha256) {
         let _ = tell.send(Told::Progress(1.0));
         return Ok(());
     }
+    let clients = crate::http::Clients::new()?;
+    match fetch_from_url(&clients, &found.url, found.size, &found.sha256, path, tell).await {
+        Ok(()) => Ok(()),
+        Err(primary_err) => {
+            if let Some(fallback) = found.fallback_url.as_deref().filter(|u| *u != found.url) {
+                log::warn!("APK download from primary URL failed ({primary_err}); falling back to GitHub");
+                fetch_from_url(&clients, fallback, found.size, &found.sha256, path, tell)
+                    .await
+                    .map_err(|fb_err| format!("{fb_err} (primary: {primary_err})"))
+            } else {
+                Err(primary_err)
+            }
+        }
+    }
+}
+
+async fn fetch_from_url(
+    clients: &crate::http::Clients,
+    url: &str,
+    expected_size: u64,
+    expected_sha256: &str,
+    path: &Path,
+    tell: &Sender<Told>,
+) -> Result<(), String> {
     let part = path.with_extension("apk.part");
     let written = |e: std::io::Error| format!("{}: {e}", part.display());
-    let clients = crate::http::Clients::new()?;
-    let limit = if found.size > 0 { found.size } else { MAX_APK };
+    let limit = if expected_size > 0 { expected_size } else { MAX_APK };
     let res = async {
         let mut file = std::fs::File::create(&part).map_err(written)?;
         let mut sum = Sha256::new();
         let mut said = 0;
         clients
-            .get_streaming(&found.url, None, limit, |piece, got, content_len| {
+            .get_streaming(url, None, limit, |piece, got, content_len| {
                 sum.update(piece);
                 file.write_all(piece).map_err(written)?;
-                let total = if found.size > 0 { found.size } else { content_len.unwrap_or(0) };
+                let total = if expected_size > 0 { expected_size } else { content_len.unwrap_or(0) };
                 if total > 0 {
                     // (Told by the percent: no more often.)
                     let percent = (got.saturating_mul(100) / total).min(100);
@@ -176,8 +162,8 @@ async fn fetch(found: &Found, path: &Path, tell: &Sender<Told>) -> Result<(), St
         file.flush().map_err(written)?;
         drop(file);
         let sum = format!("{:x}", sum.finalize());
-        if sum != found.sha256 {
-            return Err(format!("the APK downloaded has the SHA-256 {sum}, where the release says {}", found.sha256));
+        if sum != expected_sha256 {
+            return Err(format!("the APK downloaded has the SHA-256 {sum}, where the release says {expected_sha256}"));
         }
         std::fs::rename(&part, path).map_err(|e| format!("{} -> {}: {e}", part.display(), path.display()))?;
         Ok(())

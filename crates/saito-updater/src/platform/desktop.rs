@@ -90,63 +90,100 @@ impl UpdateSource for LatestGithubSource {
         let feed_name = format!("releases.{channel}.json").to_ascii_lowercase();
         Self::with_runtime(async {
             let clients = crate::http::Clients::new()?;
-            // Prefer GitHub's direct `/releases/latest/download/<feed>` URL: single hop, no `api.github.com`
-            // 60 req/hr unauthenticated rate limit (common on shared VPN/proxy nodes).
-            let direct_url = self.releases.latest_download(&feed_name);
-            let bytes = match clients.get_bytes(&direct_url, MAX_FEED).await {
-                Ok(bytes) => bytes,
-                Err(direct_err) => {
-                    log::warn!("direct release feed download failed ({direct_err}); falling back to GitHub API");
-                    let assets = self
-                        .fetch_assets(&clients)
-                        .await
-                        .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
-                    let Some(url) = assets.get(&feed_name) else {
-                        return Ok(VelopackAssetFeed { Assets: Vec::new() });
-                    };
-                    clients.get_bytes(url, MAX_FEED).await?
-                }
-            };
-            serde_json::from_slice(&bytes).map_err(|e| format!("parsing {feed_name}: {e}"))
+            self.fetch_release_feed(&clients, &feed_name).await
         })
     }
 
     fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path, progress_sender: Option<Sender<i16>>) -> Result<(), velopack::Error> {
-        let key = asset.FileName.to_ascii_lowercase();
         let size = asset.Size;
         Self::with_runtime(async {
             let clients = crate::http::Clients::new()?;
-            let primary_url = self
-                .assets
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| self.releases.latest_download(&asset.FileName));
-            let send_pct = |pct| {
-                if let Some(tx) = &progress_sender {
-                    let _ = tx.send(pct);
-                }
-            };
-            match clients.download_to_file(&primary_url, local_file, size, send_pct).await {
-                Ok(()) => Ok(()),
-                Err(direct_err) => {
-                    log::warn!("direct release asset download failed ({direct_err}); falling back to GitHub API");
-                    let assets = self
-                        .fetch_assets(&clients)
-                        .await
-                        .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
-                    let url = assets
-                        .get(&key)
-                        .cloned()
-                        .ok_or_else(|| format!("release asset {} not found in latest release", asset.FileName))?;
-                    if url == primary_url {
-                        return Err(direct_err);
-                    }
-                    clients.download_to_file(&url, local_file, size, send_pct).await
+            self.download_asset(&clients, &asset.FileName, local_file, size, progress_sender).await
+        })
+    }
+}
+
+impl LatestGithubSource {
+    async fn fetch_release_feed(&self, clients: &crate::http::Clients, feed_name: &str) -> Result<VelopackAssetFeed, String> {
+        if let Some(mirror_url) = self.releases.mirror_latest(feed_name) {
+            match clients
+                .get_bytes(&mirror_url, MAX_FEED)
+                .await
+                .and_then(|bytes| serde_json::from_slice::<VelopackAssetFeed>(&bytes).map_err(|e| format!("parsing {feed_name}: {e}")))
+            {
+                Ok(feed) => return Ok(feed),
+                Err(mirror_err) => {
+                    log::warn!("mirror release feed failed ({mirror_err}); falling back to GitHub");
                 }
             }
-        })
+        }
+        // Prefer GitHub's direct `/releases/latest/download/<feed>` URL: single hop, no `api.github.com`
+        // 60 req/hr unauthenticated rate limit (common on shared VPN/proxy nodes).
+        let direct_url = self.releases.latest_download(feed_name);
+        let bytes = match clients.get_bytes(&direct_url, MAX_FEED).await {
+            Ok(bytes) => bytes,
+            Err(direct_err) => {
+                log::warn!("direct release feed download failed ({direct_err}); falling back to GitHub API");
+                let assets = self
+                    .fetch_assets(clients)
+                    .await
+                    .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
+                let Some(url) = assets.get(feed_name) else {
+                    return Ok(VelopackAssetFeed { Assets: Vec::new() });
+                };
+                clients.get_bytes(url, MAX_FEED).await?
+            }
+        };
+        serde_json::from_slice(&bytes).map_err(|e| format!("parsing {feed_name}: {e}"))
+    }
+
+    async fn download_asset(
+        &self,
+        clients: &crate::http::Clients,
+        file_name: &str,
+        local_file: &Path,
+        size: u64,
+        progress_sender: Option<Sender<i16>>,
+    ) -> Result<(), String> {
+        let send_pct = |pct| {
+            if let Some(tx) = &progress_sender {
+                let _ = tx.send(pct);
+            }
+        };
+        if let Some(mirror_url) = self.releases.mirror_latest(file_name) {
+            match clients.download_to_file(&mirror_url, local_file, size, send_pct).await {
+                Ok(()) => return Ok(()),
+                Err(mirror_err) => {
+                    log::warn!("mirror release asset download failed ({mirror_err}); falling back to GitHub");
+                }
+            }
+        }
+        let key = file_name.to_ascii_lowercase();
+        let primary_url = self
+            .assets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| self.releases.latest_download(file_name));
+        match clients.download_to_file(&primary_url, local_file, size, send_pct).await {
+            Ok(()) => Ok(()),
+            Err(direct_err) => {
+                log::warn!("direct release asset download failed ({direct_err}); falling back to GitHub API");
+                let assets = self
+                    .fetch_assets(clients)
+                    .await
+                    .map_err(|api_err| format!("{direct_err} (api: {api_err})"))?;
+                let url = assets
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| format!("release asset {file_name} not found in latest release"))?;
+                if url == primary_url {
+                    return Err(direct_err);
+                }
+                clients.download_to_file(&url, local_file, size, send_pct).await
+            }
+        }
     }
 }
 
@@ -374,5 +411,102 @@ mod tests {
             let update = update_to("0.20.0", channel, system, &release(&["0.21.0"]));
             assert_eq!(update, full("0.21.0", channel), "{channel}");
         }
+    }
+
+    fn spawn_http_server(routes: Vec<(String, u16, Vec<u8>)>) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| p == path)
+                    .map(|(_, s, b)| (*s, b.as_slice()))
+                    .unwrap_or((404, b"not found"));
+                let reason = match status {
+                    200 => "OK",
+                    404 => "Not Found",
+                    503 => "Service Unavailable",
+                    _ => "Error",
+                };
+                let header = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn desktop_source_prefers_mirror_and_falls_back_to_github() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let clients = crate::http::Clients::direct_for_test().unwrap();
+        let feed_json = |ver: &str| {
+            serde_json::json!({
+                "Assets": [{
+                    "PackageId": "saito",
+                    "Version": ver,
+                    "Type": "Full",
+                    "FileName": format!("saito-{ver}-linux-x64-full.nupkg"),
+                }]
+            })
+            .to_string()
+            .into_bytes()
+        };
+
+        // 1. Mirror serves both feed and nupkg directly.
+        let mirror_ok = spawn_http_server(vec![
+            ("/latest/releases.linux-x64.json".into(), 200, feed_json("0.7.0")),
+            ("/latest/saito-0.7.0-linux-x64-full.nupkg".into(), 200, b"mirror-nupkg-bytes".to_vec()),
+        ]);
+        let gh_empty = spawn_http_server(vec![]);
+        let releases = crate::Releases::github("masuexe", "saito")
+            .with_mirror(&mirror_ok)
+            .with_github_bases(&gh_empty, &gh_empty);
+        let source = super::LatestGithubSource::new(releases);
+
+        let feed = rt.block_on(source.fetch_release_feed(&clients, "releases.linux-x64.json")).unwrap();
+        assert_eq!(feed.Assets.len(), 1);
+        assert_eq!(feed.Assets[0].Version, "0.7.0");
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("pkg.nupkg");
+        rt.block_on(source.download_asset(&clients, "saito-0.7.0-linux-x64-full.nupkg", &out, 18, None)).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"mirror-nupkg-bytes");
+
+        // 2. Mirror returns 503 (or corrupt JSON) -> falls back to GitHub direct download.
+        let mirror_bad = spawn_http_server(vec![
+            ("/latest/releases.linux-x64.json".into(), 200, b"<html>captive portal</html>".to_vec()),
+            ("/latest/saito-0.7.1-linux-x64-full.nupkg".into(), 503, b"down".to_vec()),
+        ]);
+        let gh_ok = spawn_http_server(vec![
+            ("/masuexe/saito/releases/latest/download/releases.linux-x64.json".into(), 200, feed_json("0.7.1")),
+            (
+                "/masuexe/saito/releases/latest/download/saito-0.7.1-linux-x64-full.nupkg".into(),
+                200,
+                b"github-nupkg-bytes".to_vec(),
+            ),
+        ]);
+        let releases = crate::Releases::github("masuexe", "saito")
+            .with_mirror(&mirror_bad)
+            .with_github_bases(&gh_ok, &gh_ok);
+        let source = super::LatestGithubSource::new(releases);
+
+        let feed = rt.block_on(source.fetch_release_feed(&clients, "releases.linux-x64.json")).unwrap();
+        assert_eq!(feed.Assets[0].Version, "0.7.1");
+
+        let out2 = dir.path().join("pkg2.nupkg");
+        rt.block_on(source.download_asset(&clients, "saito-0.7.1-linux-x64-full.nupkg", &out2, 18, None)).unwrap();
+        assert_eq!(std::fs::read(&out2).unwrap(), b"github-nupkg-bytes");
     }
 }
