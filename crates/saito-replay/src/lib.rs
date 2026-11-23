@@ -122,12 +122,14 @@ pub fn sim_version(engine: &str, game: &str) -> Option<u32> {
         // 0.1 -> 0.2 only modified EXE5 party knockout / custom switch state (S-004, S-005).
         // 0.2 -> 0.3 only modified EXE5 navi-switch guard clearing and party mood init (S-020, S-030).
         // 0.3 -> 0.4 only modified EXE5 party-switch hand size recomputation and barrier wind rule (S-050, S-056).
-        // EXE4 and EXE6 deterministic simulation and state digest are identical across 0.1, 0.2, 0.3, and 0.4.
+        // 0.4 -> 0.5 added EXE5 5DS ABD cooldown behavior in auto_battle/ai.luau (S-026).
+        // EXE4 and EXE6 deterministic simulation and state digest are identical across 0.1, 0.2, 0.3, 0.4, and 0.5.
         ("0.1", "exe5") => Some(1),
         ("0.2", "exe5") => Some(2),
         ("0.3", "exe5") => Some(3),
         ("0.4", "exe5") => Some(4),
-        ("0.1" | "0.2" | "0.3" | "0.4", _) => Some(2),
+        ("0.5", "exe5") => Some(5),
+        ("0.1" | "0.2" | "0.3" | "0.4" | "0.5", _) => Some(2),
         _ => None,
     }
 }
