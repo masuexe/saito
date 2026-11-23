@@ -181,6 +181,10 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
     for side in &m.sides {
         put_side(content, side, &mut out);
     }
+    if let Some(rank) = m.random_battle {
+        out.push(b'R');
+        out.push(rank.as_u8());
+    }
     Ok(out)
 }
 
@@ -211,8 +215,16 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
         Ok(s)
     };
     let sides = [side("left")?, side("right")?];
+    let random_battle = if bytes.len() - at == 2 && bytes[at] == b'R' {
+        let rank = crate::RandomRank::from_u8(bytes[at + 1])
+            .ok_or_else(|| format!("random battle: unknown rank {}", bytes[at + 1]))?;
+        at += 2;
+        Some(rank)
+    } else {
+        None
+    };
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle })
 }
 
 

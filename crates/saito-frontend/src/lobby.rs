@@ -453,6 +453,8 @@ pub struct Settings {
     /// far their hand (docs/engine/custom-screen.md §6.1). A new lobby's is
     /// 60 seconds (`saito_match::DEFAULT_CUSTOM_SCREEN_TIME`).
     pub custom_screen_time: Option<u16>,
+    /// Official EXE6 Random Battle rank (`Some(Rank1 | Rank2 | Rank3)`), or `None` for normal builds.
+    pub random_battle: Option<saito_match::RandomRank>,
 }
 
 /// A part of a round as the lobby names it: its name, or none (from the
@@ -476,6 +478,7 @@ impl Settings {
             ruleset,
             open_setups: false,
             custom_screen_time: Some(saito_match::DEFAULT_CUSTOM_SCREEN_TIME),
+            random_battle: None,
         }
     }
 
@@ -501,6 +504,7 @@ impl Settings {
             ruleset,
             open_setups: false,
             custom_screen_time: m.custom_screen_time,
+            random_battle: m.random_battle,
         }
     }
 
@@ -556,6 +560,9 @@ impl Settings {
         for r in &self.rounds {
             put_name(&mut w, r.stage.map(|s| saito_match::ids::local(&content.defs.stage(s).key)));
             put_name(&mut w, r.background.as_deref());
+        }
+        if let Some(rank) = self.random_battle {
+            w.put(&rank.as_u8());
         }
         out
     }
@@ -627,6 +634,21 @@ impl Settings {
             };
             rounds.push(RoundSettings { stage, background });
         }
+        let random_battle = if !r.is_empty() {
+            let v: u8 = r.get().map_err(bad)?;
+            if v == 0 {
+                None
+            } else {
+                let rank = saito_match::RandomRank::from_u8(v)
+                    .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
+                if !saito_match::random_battle::supported(&game) {
+                    return Err(format!("random battle is not supported for {game}"));
+                }
+                Some(rank)
+            }
+        } else {
+            None
+        };
         r.finish().map_err(bad)?;
         if content.game() != game || rulesets.game() != game {
             return Err(format!("a match of {game}, and this side has {}'s content", content.game()));
@@ -638,7 +660,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle })
     }
 
     /// The settings' hash, of their bytes.
@@ -918,7 +940,7 @@ impl Lobby {
     pub fn new(role: Role, content: &Arc<Content>, rulesets: Arc<Rulesets>, settings: Settings, side: Side, entropy: u64, timeout: Duration) -> Lobby {
         let mut nonces = Nonces { entropy, count: 0 };
         let nonce = nonces.next_u64();
-        let problems = settings.checked(content, &rulesets, &side).problems;
+        let problems = if settings.random_battle.is_some() { Vec::new() } else { settings.checked(content, &rulesets, &side).problems };
         Lobby {
             content: content.clone(),
             rulesets,
@@ -1103,7 +1125,11 @@ impl Lobby {
 
     /// Check this player's build as the settings stand.
     fn check(&mut self) {
-        self.problems = self.mine.checked(&self.content, &self.rulesets, &self.side).problems;
+        self.problems = if self.mine.random_battle.is_some() {
+            Vec::new()
+        } else {
+            self.mine.checked(&self.content, &self.rulesets, &self.side).problems
+        };
     }
 
     /// Say this player's name ([`player_name`] of it) to the other peer.
@@ -1753,22 +1779,24 @@ impl Lobby {
         let side_bytes = r.bytes().map_err(bad)?;
         r.finish().map_err(bad)?;
         let side = saito_match::binary::read_side(&self.content, side_bytes).map_err(|e| failed(Reason::Protocol, format!("the other player's side doesn't decode ({e})")))?;
-        // Their build, checked as this peer checks its own player's: under
-        // the agreed ruleset, by a build's check.
-        let problems = c.settings.checked(&self.content, &self.rulesets, &side).problems;
-        if !problems.is_empty() {
-            let said: Vec<&str> = problems.iter().map(|p| p.text.as_str()).collect();
-            let detail = format!("the other player's side breaks the rules: {}", said.join("; "));
-            return Err(failed(Reason::TheirBuild { problems }, detail));
-        }
-        if side.folder(&self.content).saved().is_none() {
-            return Err(failed(Reason::TheirBuild { problems: Vec::new() }, "the other player's folder isn't whole".into()));
-        }
-        // (This peer's own player can't be ready with a build that breaks a
-        // rule: a match isn't made of one, whatever let it this far.)
-        if !self.problems.is_empty() {
-            let said: Vec<&str> = self.problems.iter().map(|p| p.text.as_str()).collect();
-            return Err(failed(Reason::YourBuild { problems: self.problems.clone() }, format!("this player's side breaks the rules: {}", said.join("; "))));
+        if c.settings.random_battle.is_none() {
+            // Their build, checked as this peer checks its own player's: under
+            // the agreed ruleset, by a build's check.
+            let problems = c.settings.checked(&self.content, &self.rulesets, &side).problems;
+            if !problems.is_empty() {
+                let said: Vec<&str> = problems.iter().map(|p| p.text.as_str()).collect();
+                let detail = format!("the other player's side breaks the rules: {}", said.join("; "));
+                return Err(failed(Reason::TheirBuild { problems }, detail));
+            }
+            if side.folder(&self.content).saved().is_none() {
+                return Err(failed(Reason::TheirBuild { problems: Vec::new() }, "the other player's folder isn't whole".into()));
+            }
+            // (This peer's own player can't be ready with a build that breaks a
+            // rule: a match isn't made of one, whatever let it this far.)
+            if !self.problems.is_empty() {
+                let said: Vec<&str> = self.problems.iter().map(|p| p.text.as_str()).collect();
+                return Err(failed(Reason::YourBuild { problems: self.problems.clone() }, format!("this player's side breaks the rules: {}", said.join("; "))));
+            }
         }
         let me = self.compat.role.side();
         let (host, join) = if me == 0 { (self.nonce, nonce) } else { (nonce, self.nonce) };
@@ -3216,5 +3244,58 @@ mod tests {
                 assert_eq!(ping.quality(), quality);
             }
         }
+    }
+
+    /// EXE6 Random Battle settings roundtrip cleanly (leaving normal settings
+    /// wire-identical), non-EXE6 games refuse it, and two peers in a Random
+    /// Battle lobby agree even with incomplete custom builds, generating the
+    /// exact same shared 30-chip folder and rank stats on both peers.
+    #[test]
+    fn random_battle_lobby_agrees_with_shared_folder_and_rank_stats() {
+        use saito_match::RandomRank;
+        let content = saito_match::testing::exe6_content();
+        let now = Instant::now();
+        let rules = rulesets();
+
+        // Wire roundtrip: None vs Some(Rank1/2/3).
+        let base = settings(TRIPLE_BATTLE);
+        let base_bytes = base.to_bytes(&content);
+        assert_eq!(Settings::from_bytes(&content, &rules, &base_bytes).unwrap(), base);
+        for rank in RandomRank::ALL {
+            let mut s = base.clone();
+            s.random_battle = Some(rank);
+            let bytes = s.to_bytes(&content);
+            assert_eq!(bytes.len(), base_bytes.len() + 1, "one-byte trailer for {rank:?}");
+            assert_eq!(Settings::from_bytes(&content, &rules, &bytes).unwrap(), s);
+        }
+
+        // Two peers with incomplete/empty folders can still ready and agree in Random Battle.
+        let mut rb = base.clone();
+        rb.random_battle = Some(RandomRank::Rank3);
+        let empty_side = Side::fresh(&content, "exe6").unwrap();
+        let mut lobbies = [
+            Lobby::new(Role::Host, &content, rules.clone(), rb.clone(), empty_side.clone(), 11, Duration::from_secs(10)),
+            Lobby::new(Role::Join, &content, rules.clone(), base.clone(), empty_side, 22, Duration::from_secs(10)),
+        ];
+        assert!(lobbies[0].problems().is_empty(), "host ignores own custom build in random battle");
+        run(&mut lobbies, now, 4, &mut |_, _| {});
+        assert_eq!(lobbies[1].settings().random_battle, Some(RandomRank::Rank3), "joiner adopts host random rank");
+        assert!(lobbies[1].problems().is_empty(), "joiner ignores own custom build in random battle");
+        lobbies[0].set_ready(true);
+        lobbies[1].set_ready(true);
+        run(&mut lobbies, now, 20, &mut |_, _| {});
+        load(&mut lobbies, now);
+        let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
+        assert_eq!(agreed[0].seed, agreed[1].seed);
+        assert_eq!(agreed[0].m.random_battle, Some(RandomRank::Rank3));
+        assert_eq!(agreed[0].sides, agreed[1].sides);
+        assert_eq!(agreed[0].sides[0], agreed[0].sides[1], "both sides share the generated 30-chip folder");
+        assert_eq!(agreed[0].sides[0].folder(&content).chips().count(), 30);
+        let start = agreed[0].set.start();
+        assert_eq!(start.digest(), agreed[1].set.start().digest());
+        assert_eq!(start.stats[0].hp, 1200);
+        assert_eq!(start.stats[1].hp, 1200);
+        assert_eq!(start.stats[0].custom_level, 7);
+        assert_eq!(start.stats[0].weapons.back_special, content.defs.weapon_by_key("megaman/shield"));
     }
 }

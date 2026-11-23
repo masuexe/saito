@@ -130,3 +130,15 @@ msgstr "종료"
 # In a corner over the battle, beside a count of chips ("34/58"): the dummy that fights is getting ready.
 msgid "Getting ready"
 msgstr "준비 중"
+
+msgid "Random Battle"
+msgstr "랜덤 배틀"
+
+msgid "Rank 1"
+msgstr "랭크 1"
+
+msgid "Rank 2"
+msgstr "랭크 2"
+
+msgid "Rank 3"
+msgstr "랭크 3"

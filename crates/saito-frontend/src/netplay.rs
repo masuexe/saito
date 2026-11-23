@@ -90,6 +90,10 @@ pub const INPUT_DELAY: std::ops::RangeInclusive<u32> = 0..=10;
 /// alike, so the set, its first round's digest and the match a recording
 /// keeps all hold the sides as they are played.
 pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby::Settings, sides: [Side; 2]) -> Result<(Set, Match), String> {
+    let sides = match settings.random_battle {
+        Some(rank) => saito_match::random_battle::build_match_sides(content, rank, seed)?,
+        None => sides,
+    };
     let m = Match {
         game: settings.game.clone(),
         seed: Some(seed),
@@ -97,6 +101,7 @@ pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby:
         sides,
         backgrounds: settings.backgrounds,
         custom_screen_time: settings.custom_screen_time,
+        random_battle: settings.random_battle,
     };
     let m = m.stated(content, seed)?;
     Ok((Set::of(content, &m, seed), m))

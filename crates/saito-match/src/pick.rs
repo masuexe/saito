@@ -100,6 +100,19 @@ pub fn places(content: &Content, game: &str, rounds: &[RoundSettings], picks: &m
 /// whichever it is. Refused besides: a background named that the pool
 /// hasn't.
 pub fn places_from(content: &Content, game: &str, rounds: &[RoundSettings], backgrounds: BackgroundPick, picks: &mut Picks) -> Result<Vec<Stage>, String> {
+    places_from_limit(content, game, rounds, backgrounds, None, picks)
+}
+
+/// [`places_from`] with an optional cap on how many entries from `link_pick.stages`
+/// are eligible (e.g. EXE6 Random Battle's 68 stages, `0x44`).
+pub fn places_from_limit(
+    content: &Content,
+    game: &str,
+    rounds: &[RoundSettings],
+    backgrounds: BackgroundPick,
+    stage_limit: Option<usize>,
+    picks: &mut Picks,
+) -> Result<Vec<Stage>, String> {
     crate::playable(content, game)?;
     let pick = &content.rules().link_pick;
     let backgrounds = random_backgrounds(content, backgrounds);
@@ -107,7 +120,8 @@ pub fn places_from(content: &Content, game: &str, rounds: &[RoundSettings], back
     for (i, round) in rounds.iter().enumerate() {
         // (The first round among the first `first_round_stages`, the rounds
         // after among them all: the counts the original passes.)
-        let count = if i == 0 { pick.first_round_stages } else { pick.stages.len() };
+        let base_count = if i == 0 { pick.first_round_stages } else { pick.stages.len() };
+        let count = stage_limit.map_or(base_count, |cap| base_count.min(cap).min(pick.stages.len()));
         let drawn = (!pick.stages.is_empty()).then(|| pick.stages[picks.below(count)]);
         let drawn_background = (!backgrounds.is_empty()).then(|| backgrounds[picks.below(backgrounds.len())]);
         let at = format!("round {}", i + 1);
@@ -256,7 +270,7 @@ fn plain_side(content: &Arc<Content>, game: &str, rounds: &[RoundSettings], pick
     // (Its form list, where the rules take one: its version's own. Its
     // navi's level is every side's, its highest: `set_navi`.)
     side.state_own_forms(content);
-    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [side.clone(), side.clone()], backgrounds: BackgroundPick::Game, custom_screen_time: None };
+    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [side.clone(), side.clone()], backgrounds: BackgroundPick::Game, custom_screen_time: None, random_battle: None };
     if let Ok(mut b) = crate::check::set_up(content, &m)
         && !folders::pool(content, game, &mut b, 0).is_empty()
     {
@@ -273,7 +287,7 @@ pub fn plain(content: &Arc<Content>, game: &str, seed: u32, stage: Option<StageH
     let mut picks = Picks::new(seed);
     let rounds = random_rounds(content, game, &mut picks, stage)?;
     let sides = [plain_side(content, game, &rounds, &mut picks)?, plain_side(content, game, &rounds, &mut picks)?];
-    Ok(Match { game: game.to_string(), seed: Some(seed), rounds, sides, backgrounds: BackgroundPick::Game, custom_screen_time: None })
+    Ok(Match { game: game.to_string(), seed: Some(seed), rounds, sides, backgrounds: BackgroundPick::Game, custom_screen_time: None, random_battle: None })
 }
 
 /// The battle live players' folders are picked against: two live players
@@ -282,7 +296,7 @@ pub fn plain(content: &Arc<Content>, game: &str, seed: u32, stage: Option<StageH
 fn rules_battle(content: &Arc<Content>, game: &str, rounds: &[RoundSettings], stated: [&[(String, Required)]; 2]) -> Result<Battle, String> {
     let anything = SavedFolder { chips: [FolderChip::new(Default::default(), saito_battle::content::ChipCode(0)); 30], regular: None, tags: None };
     let side = |stated| Side::live(content, game, anything, &[], stated);
-    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [side(stated[0])?, side(stated[1])?], backgrounds: BackgroundPick::Game, custom_screen_time: None };
+    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [side(stated[0])?, side(stated[1])?], backgrounds: BackgroundPick::Game, custom_screen_time: None, random_battle: None };
     crate::check::set_up(content, &m)
 }
 
@@ -311,7 +325,7 @@ pub fn live(content: &Arc<Content>, game: &str, seed: u32, stage: Option<StageHa
     let forms = [form_list(content, game, &mut picks)?, form_list(content, game, &mut picks)?];
     let side = |side: usize| Side::live(content, game, folders[side], &forms[side], &stated[side]);
     let sides = [side(0)?, side(1)?];
-    Ok(Match { game: game.to_string(), seed: Some(seed), rounds, sides, backgrounds: BackgroundPick::Game, custom_screen_time: None })
+    Ok(Match { game: game.to_string(), seed: Some(seed), rounds, sides, backgrounds: BackgroundPick::Game, custom_screen_time: None, random_battle: None })
 }
 
 #[cfg(test)]

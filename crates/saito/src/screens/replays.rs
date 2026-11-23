@@ -255,7 +255,7 @@ pub struct Replays {
     /// The replay being made ready to watch (the two cards show), and its two sides where its builds may be
     /// shown (the match's setups were open).
     opening: Option<PathBuf>,
-    sides: Option<Box<[saito_match::Side; 2]>>,
+    sides: Option<(Box<[saito_match::Side; 2]>, Option<saito_match::RandomRank>)>,
     /// The viewer's export mode, while it is in it; and that the replay being made ready opens in it (EXPORT VIDEO
     /// from the list).
     export: Option<Export>,
@@ -867,7 +867,7 @@ impl Replays {
         };
         let side = side.unwrap_or(replay.info.side).min(1);
         // (The sides of a match whose setups weren't open aren't kept at all.)
-        self.sides = replay.info.open_setups.then(|| saito_match::binary::read_match(ready.content(), &replay.match_bytes).ok()).flatten().map(|m| Box::new(m.sides));
+        self.sides = replay.info.open_setups.then(|| saito_match::binary::read_match(ready.content(), &replay.match_bytes).ok()).flatten().map(|m| (Box::new(m.sides), m.random_battle));
         let ui = shell.ui();
         let view = ui.global::<ReplaysView>();
         // (The console shown has its side at the left. A card says who played, and nothing of what they

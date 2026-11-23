@@ -20,6 +20,7 @@ pub mod binary;
 pub mod build;
 pub mod check;
 pub mod pick;
+pub mod random_battle;
 pub mod ruleset;
 pub mod facts;
 pub mod file;
@@ -53,6 +54,7 @@ use saito_content_api::{NaviHandle, StageHandle};
 pub use check::{check_match, check_side};
 pub use facts::Facts;
 pub use pick::Picks;
+pub use random_battle::RandomRank;
 pub use file::{parse, write};
 pub use folders::Folder;
 pub use set::{After, RoundStart, Set};
@@ -241,6 +243,10 @@ pub struct Match {
     /// §6.1). A lobby's match has the lobby's (60 seconds unless its host
     /// sets another).
     pub custom_screen_time: Option<u16>,
+    /// Official EXE6 Random Battle rank (`Some(Rank1 | Rank2 | Rank3)`), or `None` for normal play.
+    /// When set, `BattleSettings::effects` includes `effects::RANDOM` (`0x200000`), stage picks use
+    /// the original 68-stage pool, and both sides receive the rank's fixed MegaMan stats.
+    pub random_battle: Option<RandomRank>,
 }
 
 /// The custom screen's time limits a match may set, in seconds, besides
@@ -336,6 +342,7 @@ impl Match {
             sides: [side.clone(), side],
             backgrounds: BackgroundPick::Game,
             custom_screen_time: None,
+            random_battle: None,
         })
     }
 
@@ -356,7 +363,8 @@ impl Match {
     /// whose rules pick none, or names a background neither its game's pack
     /// nor the background pool has (the checks refuse both).
     pub fn places(&self, content: &Content, seed: u32) -> Result<Vec<Stage>, String> {
-        pick::places_from(content, &self.game, &self.rounds, self.backgrounds, &mut Picks::new(seed))
+        let stage_limit = self.random_battle.map(|_| random_battle::RANDOM_BATTLE_STAGES);
+        pick::places_from_limit(content, &self.game, &self.rounds, self.backgrounds, stage_limit, &mut Picks::new(seed))
     }
 
     /// The match with every round's place stated: as `seed` picks those it
@@ -408,7 +416,11 @@ impl Match {
     fn round_dealt(&self, content: &Content, seed: u32, deal: bool) -> RoundSetup {
         let mut places = self.places(content, seed).expect("a checked match's places").into_iter();
         let first = places.next().expect("a checked match has a round");
-        let settings = BattleSettings { stage: first.stage, background: first.background, effects: content.stage(first.stage).effects | match_effects(self.rounds.len()) };
+        let mut effects = content.stage(first.stage).effects | match_effects(self.rounds.len());
+        if self.random_battle.is_some() {
+            effects |= saito_battle::setup::effects::RANDOM;
+        }
+        let settings = BattleSettings { stage: first.stage, background: first.background, effects };
         let player = |side: usize| {
             let s = &self.sides[side];
             // Each console shuffles its folder with its own RNG (RNG1),
@@ -430,13 +442,19 @@ impl Match {
             };
             player
         };
+        let mut navi_stats = self.sides.each_ref().map(|s| Side::fresh_stats(content, s.navi(content)));
+        if let Some(rank) = self.random_battle {
+            for stats in &mut navi_stats {
+                random_battle::apply_rank_stats(content, rank, stats);
+            }
+        }
         RoundSetup {
             content: content.hash(),
             settings,
             // (Each navi's fresh stats, which its rules build on: the
             // version byte, what the save brings, a link navi's level, the
-            // NaviCust, the patch cards.)
-            navi_stats: self.sides.each_ref().map(|s| Side::fresh_stats(content, s.navi(content))),
+            // NaviCust, the patch cards — or fixed Random Battle rank stats.)
+            navi_stats,
             rng: seed,
             local_side: 0,
             score: SetScore::default(),

@@ -133,3 +133,15 @@ msgstr "終了"
 # chips being looked at before it can play (a few seconds, the first time a folder's chips are met).
 msgid "Getting ready"
 msgstr "準備中"
+
+msgid "Random Battle"
+msgstr "ランダムバトル"
+
+msgid "Rank 1"
+msgstr "ランク1"
+
+msgid "Rank 2"
+msgstr "ランク2"
+
+msgid "Rank 3"
+msgstr "ランク3"

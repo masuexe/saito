@@ -50,6 +50,8 @@ export enum PracticeOption {
     emotion,
     custom-gauge,
     chip-draw,
+    // Official EXE6 Random Battle mode (Off / Rank 1 / Rank 2 / Rank 3).
+    random-battle,
     input-display,
     // Netplay's input delay, in frames (the one setting: changed here, it is changed for netplay too).
     input-delay,
@@ -151,6 +153,9 @@ export global PracticeView {
         if option == PracticeOption.chip-draw {
             return @tr("Chip draw");
         }
+        if option == PracticeOption.random-battle {
+            return @tr("Random Battle");
+        }
         if option == PracticeOption.input-display {
             return @tr("Input display");
         }
@@ -178,6 +183,9 @@ export global PracticeView {
         }
         if option == PracticeOption.chip-draw {
             return value == 0 ? @tr("Shuffled") : @tr("Folder order");
+        }
+        if option == PracticeOption.random-battle {
+            return value == 1 ? @tr("Rank 1") : value == 2 ? @tr("Rank 2") : value == 3 ? @tr("Rank 3") : @tr("Off");
         }
         if option == PracticeOption.input-display {
             return value == 0 ? @tr("Off") : @tr("On");

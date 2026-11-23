@@ -354,3 +354,15 @@ msgstr "起始局为病毒战 BGM 与常规地图；单赛点为 Boss 战 BGM �
 
 msgid "Configure each round's background and BGM ({} rounds max, First to {})."
 msgstr "按最多 {} 局（{} 局先胜）单独设定每场次的背景与 BGM。"
+
+msgid "Random Battle: {}"
+msgstr "随机卡组战：{}"
+
+msgid "Rank 1"
+msgstr "Rank 1"
+
+msgid "Rank 2"
+msgstr "Rank 2"
+
+msgid "Rank 3"
+msgstr "Rank 3"

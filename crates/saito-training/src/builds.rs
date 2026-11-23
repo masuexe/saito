@@ -609,6 +609,7 @@ impl Maker {
             sides,
             backgrounds: BackgroundPick::Game,
             custom_screen_time: None,
+            random_battle: None,
         };
         let hp_fact = content.defs.fact_name(PlayerFact::BaseHp).zip(hp);
         if let Some((name, hp)) = hp_fact {

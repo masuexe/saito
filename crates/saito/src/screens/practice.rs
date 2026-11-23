@@ -216,6 +216,7 @@ struct MenuChoices {
     emotions: [Option<String>; 2],
     full_gauge: bool,
     folder_order: bool,
+    random_battle: Option<saito_match::RandomRank>,
     inputs: bool,
 }
 
@@ -288,6 +289,9 @@ struct Session {
     /// picked from: an Arena or Background row changed plays the match's set again on the new place.
     game: String,
     m: Match,
+    /// Player and dummy custom builds saved when toggling Random Battle on/off.
+    custom_sides: [Side; 2],
+    random_battle: Option<saito_match::RandomRank>,
     seed: u32,
     /// The game's places, what each is called in the language shown (Random not among them), and the two
     /// chosen (each its list's place, 0 Random).
@@ -333,7 +337,7 @@ struct Session {
 /// does in [`values`], [`value`] and `Practice::change_option`. The dummy's Level is shown under its Action while
 /// that is Fights alone, and its build and EDIT in a session of Practice's own ([`shown_rows`]). A row of two
 /// columns ([`paired`]) is under the Columns row, its headings.
-pub(crate) const ROWS: [PracticeOption; 17] = [
+pub(crate) const ROWS: [PracticeOption; 18] = [
     PracticeOption::Dummy,
     // (Who the dummy is, then what it does: the user, "add Dummy's build to its DUMMY group".)
     PracticeOption::DummysBuild,
@@ -355,6 +359,7 @@ pub(crate) const ROWS: [PracticeOption; 17] = [
     PracticeOption::Emotion,
     PracticeOption::CustomGauge,
     PracticeOption::ChipDraw,
+    PracticeOption::RandomBattle,
     PracticeOption::InputDisplay,
     // (Netplay's input delay, the one setting: the user, "practice mode should have the same input delay as netplay
     // and adjusting it should adjust the netplay delay".)
@@ -408,6 +413,7 @@ fn values(option: PracticeOption, places: &Places, emotions: usize) -> usize {
         PracticeOption::Action => ACTIONS.len(),
         PracticeOption::Level => LEVEL_COUNT,
         PracticeOption::Hp | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::InputDisplay => 2,
+        PracticeOption::RandomBattle => 4,
         PracticeOption::InputDelay => MAX_INPUT_DELAY as usize + 1,
         PracticeOption::Added | PracticeOption::Dummy | PracticeOption::Stage | PracticeOption::Options | PracticeOption::Columns | PracticeOption::EditDummy => 0,
     }
@@ -415,7 +421,16 @@ fn values(option: PracticeOption, places: &Places, emotions: usize) -> usize {
 
 /// The values a row has, each its place among the row's values: a row of two columns' the player's side's and the
 /// dummy's (Emotion's, each side's emotion's among `emotions`, after Normal); another row's its one, then 0.
-fn value(option: PracticeOption, opponent: Opponent, level: usize, options: Options, inputs: bool, place: [usize; 2], emotions: &[(Emotion, String)]) -> [usize; 2] {
+fn value(
+    option: PracticeOption,
+    opponent: Opponent,
+    level: usize,
+    options: Options,
+    random_battle: Option<saito_match::RandomRank>,
+    inputs: bool,
+    place: [usize; 2],
+    emotions: &[(Emotion, String)],
+) -> [usize; 2] {
     let held = |side: usize| options.emotions[side].and_then(|e| emotions.iter().position(|(h, _)| *h == e)).map_or(0, |at| at + 1);
     let one = match option {
         PracticeOption::Hp => return options.refills.map(usize::from),
@@ -427,6 +442,7 @@ fn value(option: PracticeOption, opponent: Opponent, level: usize, options: Opti
         PracticeOption::Action => ACTIONS.iter().position(|a| *a == opponent.in_fight).unwrap_or(0),
         PracticeOption::CustomGauge => options.full_gauge as usize,
         PracticeOption::ChipDraw => (options.chip_draw == ChipDraw::FolderOrder) as usize,
+        PracticeOption::RandomBattle => random_battle.map_or(0, |r| r.as_u8() as usize),
         PracticeOption::InputDisplay => inputs as usize,
         // (The setting's, not the session's: `row`.)
         PracticeOption::InputDelay => 0,
@@ -447,7 +463,7 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
         let name = session.builds.get(session.dummys).map(|p| p.build.name.as_str()).unwrap_or_default();
         return PracticeRow { option, value: session.dummys as i32, text: name.into(), ..Default::default() };
     }
-    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.inputs, session.place, &session.emotions);
+    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.inputs, session.place, &session.emotions);
     let part = match option {
         PracticeOption::Arena => Some(ARENA),
         PracticeOption::Background => Some(BACKGROUND),
@@ -472,13 +488,14 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
 /// menus' (the user: "in the waiting for opponent screen, it really shouldn't let you change the music because
 /// it does nothing"), and EDIT, whose editor would leave the screen that holds the invite (Play leaves its link
 /// as it is hidden).
-fn shown_rows(in_fight: InFight, beside: bool, builds: bool) -> Vec<PracticeOption> {
+fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: bool) -> Vec<PracticeOption> {
     ROWS.into_iter()
         .filter(|o| match o {
             PracticeOption::Level => in_fight == InFight::Ai,
             PracticeOption::Music => !beside,
             PracticeOption::DummysBuild => builds,
             PracticeOption::EditDummy => builds && !beside,
+            PracticeOption::RandomBattle => random_supported,
             _ => true,
         })
         .collect()
@@ -498,7 +515,12 @@ fn tell_rows(shell: &Shell, session: &Session, options: &[PracticeOption]) {
 /// now put in under it (the rows above them, the Action's among them, staying where they are, and the focus
 /// with them).
 fn lay_out_rows(shell: &Shell, session: &mut Session) {
-    let wanted = shown_rows(session.opponent.in_fight, session.from.is_some(), !session.builds.is_empty());
+    let wanted = shown_rows(
+        session.opponent.in_fight,
+        session.from.is_some(),
+        !session.builds.is_empty(),
+        saito_match::random_battle::supported(&session.game),
+    );
     if wanted == session.rows {
         return;
     }
@@ -606,7 +628,26 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         crate::errors::log("making a practice match", &why);
         UserError::Other
     })?;
-    m.sides = [start.you.side.clone(), start.dummy.side.clone()];
+    let custom_sides = [start.you.side.clone(), start.dummy.side.clone()];
+    let random_battle = if start.from.is_none() && saito_match::random_battle::supported(&start.game) {
+        shell.practice.visit.menu.random_battle
+    } else {
+        None
+    };
+    if let Some(rank) = random_battle {
+        match saito_match::random_battle::build_match_sides(content, rank, start.seed) {
+            Ok(sides) => {
+                m.sides = sides;
+                m.random_battle = Some(rank);
+            }
+            Err(why) => {
+                crate::errors::log("starting random battle practice", &why);
+                m.sides = custom_sides.clone();
+            }
+        }
+    } else {
+        m.sides = custom_sides.clone();
+    }
     // (Single battles, one after another: the user, "training mode should just be repeated single battles". A
     // match of one round is the single battle's type, with no BATTLE 1 START! banner: `saito_match::match_effects`.)
     m.rounds.truncate(1);
@@ -645,6 +686,8 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         exit: start.exit.is_some(),
         game: start.game.clone(),
         m,
+        custom_sides,
+        random_battle,
         seed: start.seed,
         places,
         place_labels,
@@ -652,7 +695,12 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         music: crate::music::shown(shell),
         full: start.full,
         added: start.rows.len(),
-        rows: shown_rows(start.opponent.in_fight, start.from.is_some(), !start.builds.is_empty()),
+        rows: shown_rows(
+            start.opponent.in_fight,
+            start.from.is_some(),
+            !start.builds.is_empty(),
+            saito_match::random_battle::supported(&start.game),
+        ),
         opponent: start.opponent,
         level: start.level,
         options: start.options,
@@ -780,7 +828,16 @@ fn forget(shell: &Shell) {
 }
 
 /// The practice battle's set again from its start, if one is being played (not under its menu).
+/// In Random Battle mode, re-rolls a fresh random folder and stage from a new seed.
 fn restart(shell: &mut Shell) -> bool {
+    if shell.practice.session.as_ref().is_some_and(|s| s.random_battle.is_some()) {
+        if let Some(mut session) = shell.practice.session.take() {
+            session.seed = if shell.still { session.seed.wrapping_add(1) } else { clock_seed() };
+            restart_set(shell, &mut session);
+            shell.practice.session = Some(session);
+            return true;
+        }
+    }
     let Some(b) = shell.battle.as_mut().filter(|b| b.owner == ScreenId::Practice && b.playing()) else { return false };
     b.restart()
 }
@@ -793,6 +850,15 @@ fn restart(shell: &mut Shell) -> bool {
 /// chips' fingerprints asked for at once (a build it hasn't met: made while the round opens).
 fn restart_set(shell: &mut Shell, session: &mut Session) {
     let Some(ready) = shell.games.ready(&session.game) else { return };
+    if let Some(rank) = session.random_battle {
+        if let Ok(sides) = saito_match::random_battle::build_match_sides(ready.content(), rank, session.seed) {
+            session.m.sides = sides;
+            session.m.random_battle = Some(rank);
+        }
+    } else {
+        session.m.sides = session.custom_sides.clone();
+        session.m.random_battle = None;
+    }
     session.places.put(&mut session.m, session.place);
     let set = set_of(ready.content(), &session.m, session.seed);
     #[cfg(feature = "ai")]
@@ -1283,8 +1349,11 @@ impl Practice {
                 if session.from.is_none() {
                     shell.practice.visit.dummys_build = Some((session.game.clone(), build.name.clone()));
                 }
-                session.m.sides[1] = build.side;
-                restart_set(shell, &mut session);
+                session.custom_sides[1] = build.side.clone();
+                if session.random_battle.is_none() {
+                    session.m.sides[1] = build.side;
+                    restart_set(shell, &mut session);
+                }
                 shell.ui().global::<PracticeView>().set_session_dummys(build.name.as_str().into());
             }
             tell_rows(shell, &session, &[PracticeOption::DummysBuild]);
@@ -1294,7 +1363,7 @@ impl Practice {
         let count = |o: PracticeOption, session: &Session| values(o, &session.places, session.emotions.len());
         if let Some(option) = option.filter(|o| count(*o, &session) > 0) {
             let next = match change {
-                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.inputs, session.place, &session.emotions)[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
+                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.inputs, session.place, &session.emotions)[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
                 Change::To(at) => at.min(count(option, &session) - 1),
             };
             // (A session another screen started keeps its choices for its wait alone, not for the visit.)
@@ -1352,6 +1421,17 @@ impl Practice {
                     if keep {
                         shell.practice.visit.menu.folder_order = next == 1;
                     }
+                }
+                PracticeOption::RandomBattle => {
+                    let rank = saito_match::RandomRank::from_u8(next as u8);
+                    session.random_battle = rank;
+                    if keep {
+                        shell.practice.visit.menu.random_battle = rank;
+                    }
+                    if rank.is_some() {
+                        session.seed = if shell.still { session.seed.wrapping_add(1) } else { clock_seed() };
+                    }
+                    restart_set(shell, &mut session);
                 }
                 PracticeOption::InputDisplay => {
                     shell.practice.visit.menu.inputs = next == 1;
@@ -1630,39 +1710,40 @@ mod tests {
         let content = saito_match::testing::exe6_content();
         let (opponent, options, places, mut seen) = (Opponent::default(), Options::default(), Places::of(&content, "exe6"), 0);
         let emotions = emotions_of(&content, &Names { content: &content, strings: None });
-        let value = |option, opponent, level, options, inputs, place| value(option, opponent, level, options, inputs, place, &emotions);
+        let value = |option, opponent, level, options, random_battle, inputs, place| value(option, opponent, level, options, random_battle, inputs, place, &emotions);
         let values = |option, places: &Places| values(option, places, emotions.len());
         for option in ROWS {
             if values(option, &places) > 0 {
                 let sides = 1 + paired(option) as usize;
                 seen += sides;
-                let had = value(option, opponent, NORMAL, options, false, [0; 2]);
+                let had = value(option, opponent, NORMAL, options, None, false, [0; 2]);
                 assert!(had[..sides].iter().all(|v| *v < values(option, &places)), "{option:?}");
             }
             // (A session another screen starts has the battle's options at their normal values and the places
             // Random: the first.)
-            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw) {
-                assert_eq!(value(option, opponent, NORMAL, options, false, [0; 2]), [0, 0], "{option:?}");
+            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::RandomBattle) {
+                assert_eq!(value(option, opponent, NORMAL, options, None, false, [0; 2]), [0, 0], "{option:?}");
             }
         }
-        assert_eq!(seen, 14, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Input display, Input delay");
+        assert_eq!(seen, 15, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Random Battle, Input display, Input delay");
         // (Normal, then the game's emotions; a held one is its place after Normal, on its side.)
         assert_eq!(values(PracticeOption::Emotion, &places), 1 + emotions.len());
         let angry = Options { emotions: [None, Some(emotions[1].0)], ..options };
-        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, false, [0; 2]), [0, 2]);
+        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, None, false, [0; 2]), [0, 2]);
         assert_eq!(values(PracticeOption::InputDelay, &places), MAX_INPUT_DELAY as usize + 1, "0 to netplay's most");
         #[cfg(feature = "ai")]
         {
             assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::Ai, InFight::SecondPad]);
-            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, false, [0; 2]), [2, 0]);
+            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, None, false, [0; 2]), [2, 0]);
         }
         #[cfg(not(feature = "ai"))]
         assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad], "no Fights without the AI");
-        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, false, [0; 2]), [ACTIONS.len() - 1, 0]);
-        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, false, [0; 2]), [1, 0], "Normal at first");
-        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, false, [0; 2]), [0, 1]);
-        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, true, [0; 2]), [1, 0]);
-        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, false, [3, 2]), [2, 0]);
+        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, None, false, [0; 2]), [ACTIONS.len() - 1, 0]);
+        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, None, false, [0; 2]), [1, 0], "Normal at first");
+        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, None, false, [0; 2]), [0, 1]);
+        assert_eq!(value(PracticeOption::RandomBattle, opponent, NORMAL, options, Some(saito_match::RandomRank::Rank3), false, [0; 2]), [3, 0]);
+        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, None, true, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, None, false, [3, 2]), [2, 0]);
         // (The arenas and the backgrounds after Random.)
         assert_eq!(values(PracticeOption::Arena, &places), 1 + places.arenas.len());
         assert_eq!(values(PracticeOption::Background, &places), 1 + saito_match::ids::pool_backgrounds(&content).len(), "every game's");
@@ -1708,19 +1789,21 @@ mod tests {
     fn the_dummys_action_brings_its_own_row() {
         // (How many rows it shows, and the one under the Action.)
         let under = |in_fight| {
-            let rows = shown_rows(in_fight, false, true);
+            let rows = shown_rows(in_fight, false, true, true);
             let at = rows.iter().position(|o| *o == PracticeOption::Action).unwrap();
             (rows.len(), rows.get(at + 1).copied())
         };
         let (none, one) = (ROWS.len() - 1, ROWS.len());
         assert_eq!(under(InFight::StandsStill), (none, Some(PracticeOption::Stage)));
-        assert_eq!(shown_rows(InFight::StandsStill, false, true)[..4], [PracticeOption::Dummy, PracticeOption::DummysBuild, PracticeOption::EditDummy, PracticeOption::Action]);
+        assert_eq!(shown_rows(InFight::StandsStill, false, true, true)[..4], [PracticeOption::Dummy, PracticeOption::DummysBuild, PracticeOption::EditDummy, PracticeOption::Action]);
+        assert!(!shown_rows(InFight::StandsStill, false, true, false).contains(&PracticeOption::RandomBattle), "non-EXE6 hides Random Battle");
+        assert!(shown_rows(InFight::StandsStill, false, true, true).contains(&PracticeOption::RandomBattle), "EXE6 shows Random Battle");
         // Beside a waiting invite the usual menu, but for its Music and EDIT.
-        let beside = shown_rows(InFight::StandsStill, true, true);
-        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true).into_iter().filter(|o| !matches!(o, PracticeOption::Music | PracticeOption::EditDummy)).collect();
+        let beside = shown_rows(InFight::StandsStill, true, true, true);
+        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true, true).into_iter().filter(|o| !matches!(o, PracticeOption::Music | PracticeOption::EditDummy)).collect();
         assert_eq!(beside, usual, "beside a waiting invite");
         assert!(beside.contains(&PracticeOption::DummysBuild));
-        assert_eq!(shown_rows(InFight::StandsStill, false, false).len(), none - 2, "no builds offered: no Dummy's build, no EDIT");
+        assert_eq!(shown_rows(InFight::StandsStill, false, false, true).len(), none - 2, "no builds offered: no Dummy's build, no EDIT");
         assert_eq!(under(InFight::MovesAround), (none, Some(PracticeOption::Stage)));
         assert_eq!(under(InFight::Ai), (one, Some(PracticeOption::Level)));
         assert_eq!(under(InFight::SecondPad), (none, Some(PracticeOption::Stage)));
@@ -1861,7 +1944,7 @@ mod tests {
         visit.leave();
         assert!(visit.arrive(), "from elsewhere, a visit starts");
         assert_eq!(visit.build("exe6", 0), None, "Play's remembered build");
-        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, inputs: true };
+        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, random_battle: Some(saito_match::RandomRank::Rank2), inputs: true };
         visit.set_place("exe6", [3, 5]);
         visit.music = theme.clone();
         visit.menu = menu.clone();

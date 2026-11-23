@@ -199,8 +199,8 @@ pub struct Watching {
     told: Option<Told>,
     stats: Option<Stats>,
     probe: Option<Probe>,
-    /// The match's two sides, where its builds may be shown; and whether they are.
-    sides: Option<Box<[Side; 2]>>,
+    /// The match's two sides (and optional Random Battle rank), where its builds may be shown; and whether they are.
+    sides: Option<(Box<[Side; 2]>, Option<saito_match::RandomRank>)>,
     builds: bool,
     /// What else is on over the picture; the other console's picture (its own image); and the buttons the
     /// input display was last told each side holds.
@@ -224,7 +224,7 @@ pub struct Watching {
 impl Watching {
     /// A viewer made ready, of the replay at `path`: playing from its start (the screenshot pass holds it
     /// still, a little way into its second round where it has one), with `overlays` on over its picture.
-    pub fn new(mut viewer: Box<Viewer>, path: PathBuf, sides: Option<Box<[Side; 2]>>, overlays: Overlays, ready: Option<std::rc::Rc<crate::games::Ready>>) -> Watching {
+    pub fn new(mut viewer: Box<Viewer>, path: PathBuf, sides: Option<(Box<[Side; 2]>, Option<saito_match::RandomRank>)>, overlays: Overlays, ready: Option<std::rc::Rc<crate::games::Ready>>) -> Watching {
         if let Some(speed) = std::env::var("SAITO_REPLAY_SPEED").ok().and_then(|s| ["half", "1", "2", "4"].iter().position(|name| *name == s)) {
             viewer.set_speed(Speed::ALL[speed]);
         }
@@ -650,14 +650,14 @@ impl Watching {
     /// Both builds' sheets, in the language shown: the console shown's player's at the left. Over each name,
     /// YOU for the side that recorded it, else OPPONENT; the name is the player's (a replay has no build's).
     fn show_builds(&self, shell: &Shell) {
-        let (Some(sides), Some(kit)) = (&self.sides, crate::builds::kit(shell)) else { return };
+        let (Some((sides, random_battle)), Some(kit)) = (&self.sides, crate::builds::kit(shell)) else { return };
         let ui = shell.ui();
         let view = ui.global::<ReplaysView>();
         let info = self.viewer.info();
         let left = self.viewer.view();
         let sheet = |of: u8| {
             let label = if of == info.side { view.get_you() } else { view.get_opponent() };
-            crate::builds::overview::sheet(shell, &kit, &label, &name(&view, info, of), &sides[of as usize])
+            crate::builds::overview::sheet_for(shell, &kit, &label, &name(&view, info, of), &sides[of as usize], *random_battle)
         };
         view.set_left_build(sheet(left));
         view.set_right_build(sheet(left ^ 1));

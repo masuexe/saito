@@ -196,6 +196,9 @@ export global PlayView {
     in property <int> stage-mode: 0;
     in property <bool> stage-dialog;
     in property <[StageRoundEntry]> stage-rounds;
+    // Official EXE6 Random Battle mode (0 = Off, 1 = Rank 1, 2 = Rank 2, 3 = Rank 3).
+    in property <bool> random-supported: false;
+    in property <int> random-rank: 0;
 
     // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
     // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
@@ -823,7 +826,7 @@ component MatchFacts inherits Rectangle {
         height: 36px;
         nav: "lobby.ruleset";
         value: PlayView.ruleset;
-        enabled: PlayView.host;
+        enabled: PlayView.host && PlayView.random-rank == 0;
     }
 
     rules := Button {
@@ -1465,11 +1468,15 @@ export component PlayScreen inherits Page {
                 big: Theme.sideways;
             }
 
-            // Client-local Stage & BGM mode + host spectator controls (visibility + anti-ghosting delay).
+            // Client-local Stage & BGM mode + EXE6 Random Battle + host spectator controls.
             Rectangle {
                 property <bool> show-spec: PlayView.host && !PlayView.invite-direct;
+                property <bool> show-random: PlayView.random-supported;
                 property <length> gap: Theme.sideways ? 6px : 10px;
-                property <length> row-w: stage-btn.width + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
+                property <length> row-w: stage-btn.width
+                    + (self.show-random ? self.gap + random-btn.width : 0px)
+                    + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
+                property <length> top-w: stage-btn.width + (self.show-random ? self.gap + random-btn.width : 0px);
                 property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
                 x: Theme.sideways ? (connection.width + 14px) : 0px;
                 y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 108px : 92px);
@@ -1477,7 +1484,7 @@ export component PlayScreen inherits Page {
                 height: Theme.phone ? (self.show-spec ? 74px : 36px) : Theme.sideways ? 30px : 36px;
 
                 stage-btn := Button {
-                    x: Theme.phone ? (parent.width - self.width) / 2 : (parent.width - parent.row-w) / 2;
+                    x: Theme.phone ? (parent.width - parent.top-w) / 2 : (parent.width - parent.row-w) / 2;
                     y: 0;
                     height: Theme.sideways ? 28px : 34px;
                     compact: true;
@@ -1486,8 +1493,20 @@ export component PlayScreen inherits Page {
                     text: @tr("Stage & BGM: {}", PlayView.stage-mode == 1 ? @tr("stage mode" => "Full random") : PlayView.stage-mode == 2 ? @tr("stage mode" => "Escalating") : PlayView.stage-mode == 3 ? @tr("stage mode" => "Custom") : @tr("stage mode" => "Default"));
                 }
 
+                random-btn := Button {
+                    x: stage-btn.x + stage-btn.width + parent.gap;
+                    y: 0;
+                    height: Theme.sideways ? 28px : 34px;
+                    compact: true;
+                    visible: parent.show-random;
+                    enabled: parent.show-random && PlayView.host;
+                    nav: parent.show-random && PlayView.host ? "lobby.random-battle" : "";
+                    kind: PlayView.random-rank > 0 ? ButtonKind.normal : ButtonKind.ghost;
+                    text: @tr("Random Battle: {}", PlayView.random-rank == 1 ? @tr("Rank 1") : PlayView.random-rank == 2 ? @tr("Rank 2") : PlayView.random-rank == 3 ? @tr("Rank 3") : @tr("Off"));
+                }
+
                 spec-vis := Button {
-                    x: Theme.phone ? (parent.width - parent.spec-w) / 2 : stage-btn.x + stage-btn.width + parent.gap;
+                    x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                     y: Theme.phone ? 40px : 0px;
                     height: Theme.sideways ? 28px : 34px;
                     compact: true;

@@ -130,6 +130,7 @@ const REMEMBERED_OPEN_SETUPS: &str = "play.open-setups";
 const REMEMBERED_CUSTOM_TIME: &str = "play.custom-time";
 const REMEMBERED_SPECTATE_VISIBILITY: &str = "play.spectate-visibility";
 const REMEMBERED_SPECTATE_DELAY: &str = "play.spectate-delay";
+const REMEMBERED_RANDOM_BATTLE: &str = "play.random-battle";
 const UNLIMITED: &str = "unlimited";
 
 fn remembered_build(game: &str) -> String {
@@ -269,6 +270,8 @@ struct Live {
     open: bool,
     /// The custom screen's time limit in seconds, none for none.
     custom_time: Option<u16>,
+    /// Official EXE6 Random Battle rank, or none for normal play.
+    random_battle: Option<saito_match::RandomRank>,
     bars: i32,
     ping: i32,
     note: Option<LobbyNote>,
@@ -757,6 +760,11 @@ impl Play {
             }
             None => {}
         }
+        if saito_match::random_battle::supported(game) {
+            settings.random_battle = remembered(REMEMBERED_RANDOM_BATTLE)
+                .and_then(|r| r.parse::<u8>().ok())
+                .and_then(saito_match::RandomRank::from_u8);
+        }
         Some(settings)
     }
 
@@ -767,6 +775,10 @@ impl Play {
         remembered.insert(REMEMBERED_FIRST_TO.into(), settings.first_to().to_string());
         remembered.insert(REMEMBERED_OPEN_SETUPS.into(), settings.open_setups.to_string());
         remembered.insert(REMEMBERED_CUSTOM_TIME.into(), time);
+        if saito_match::random_battle::supported(&settings.game) {
+            let rank = settings.random_battle.map_or(0u8, |r| r.as_u8());
+            remembered.insert(REMEMBERED_RANDOM_BATTLE.into(), rank.to_string());
+        }
         shell.save_settings();
     }
 
@@ -1000,6 +1012,23 @@ impl Play {
         self.change_settings(shell, |s| s.open_setups = open);
     }
 
+    fn cycle_random_battle(&mut self, shell: &mut Shell) {
+        if !self.is_host() {
+            return;
+        }
+        let next = match self.live.random_battle {
+            None => Some(saito_match::RandomRank::Rank1),
+            Some(saito_match::RandomRank::Rank1) => Some(saito_match::RandomRank::Rank2),
+            Some(saito_match::RandomRank::Rank2) => Some(saito_match::RandomRank::Rank3),
+            Some(saito_match::RandomRank::Rank3) => None,
+        };
+        self.change_settings(shell, |s| {
+            if saito_match::random_battle::supported(&s.game) {
+                s.random_battle = next;
+            }
+        });
+    }
+
     /// The Custom timer stepped `by`: through the match's time limits, then none (∞), and around.
     fn step_custom_time(&mut self, shell: &mut Shell, by: i32) {
         let choices: Vec<Option<u16>> = saito_match::CUSTOM_SCREEN_TIMES.into_iter().map(Some).chain([None]).collect();
@@ -1149,7 +1178,11 @@ impl Play {
             && self.wait_checked.as_ref().is_none_or(|(checked, ..)| checked != settings)
             && let (Some((_, ready)), Some(rulesets), Ok(side)) = (shell.ready(), builds::kit(shell).and_then(|kit| kit.rulesets()), self.side(shell, false))
         {
-            let problems = settings.checked(ready.content(), &rulesets, &side).problems;
+            let problems = if settings.random_battle.is_some() {
+                Vec::new()
+            } else {
+                settings.checked(ready.content(), &rulesets, &side).problems
+            };
             self.wait_checked = Some((settings.clone(), rulesets, problems));
         }
         let waited = waiting.and(self.wait_checked.clone());
@@ -1180,6 +1213,7 @@ impl Play {
             host,
             open: settings.open_setups,
             custom_time: settings.custom_screen_time,
+            random_battle: settings.random_battle,
             bars: if reconnecting.is_some() { 0 } else { steady.map_or(ping.map_or(0, |p| p.quality().bars() as i32), |s| s.0) },
             ping: if reconnecting.is_some() { -1 } else { steady.map_or(ping.map_or(-1, |p| p.ms.round() as i32), |s| s.1) },
             // (A build the settings can't play: the lobby's own check, typed; while the host waits, the same check
@@ -1240,6 +1274,8 @@ impl Play {
         }
         view.set_open(live.open);
         view.set_custom_time(live.custom_time.map_or(0, i32::from));
+        view.set_random_supported(saito_match::random_battle::supported(&settings.game));
+        view.set_random_rank(live.random_battle.map_or(0, |r| r.as_u8() as i32));
         view.set_bars(live.bars);
         view.set_ping(live.ping);
         view.set_note(live.note.unwrap_or(LobbyNote::None));
@@ -1425,9 +1461,9 @@ impl Play {
             // (The agreement's sides are as the match plays them: without their patch cards where those are off.
             // Where the setups aren't open the other player's isn't shown, and isn't made.)
             let (me, other) = (agreed.side, 1 - agreed.side);
-            view.set_mine(overview::sheet(shell, &kit, &view.get_you(), &shell.settings.name, &agreed.sides[me]));
+            view.set_mine(overview::sheet_for(shell, &kit, &view.get_you(), &shell.settings.name, &agreed.sides[me], agreed.m.random_battle));
             view.set_theirs(match agreed.open_setups() {
-                true => overview::sheet(shell, &kit, &view.get_opponent(), &agreed.names[other], &agreed.sides[other]),
+                true => overview::sheet_for(shell, &kit, &view.get_opponent(), &agreed.names[other], &agreed.sides[other], agreed.m.random_battle),
                 false => BuildSheet::default(),
             });
             view.set_open_match(agreed.open_setups());
@@ -1974,7 +2010,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
             _ if id.starts_with("watch.") => matches!(self.stage, Stage::Spectating),
@@ -2136,6 +2172,7 @@ impl Screen for Play {
             "lobby.spectate" => self.cycle_host_spectate_visibility(shell),
             "lobby.spectate-delay" => self.cycle_host_spectate_delay(shell),
             "lobby.stage" => self.open_stage_dialog(shell),
+            "lobby.random-battle" => self.cycle_random_battle(shell),
             "stage.mode-0" => self.set_stage_mode(shell, stage::StageMode::Default),
             "stage.mode-1" => self.set_stage_mode(shell, stage::StageMode::Random),
             "stage.mode-2" => self.set_stage_mode(shell, stage::StageMode::Escalating),

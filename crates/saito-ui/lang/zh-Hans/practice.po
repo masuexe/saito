@@ -134,3 +134,15 @@ msgstr "退出"
 # chips being looked at before it can play (a few seconds, the first time a folder's chips are met).
 msgid "Getting ready"
 msgstr "准备中"
+
+msgid "Random Battle"
+msgstr "随机卡组战"
+
+msgid "Rank 1"
+msgstr "Rank 1"
+
+msgid "Rank 2"
+msgstr "Rank 2"
+
+msgid "Rank 3"
+msgstr "Rank 3"

@@ -354,3 +354,15 @@ msgstr "일반 라운드는 바이러스전, 한쪽 매치 포인트는 보스�
 
 msgid "Configure each round's background and BGM ({} rounds max, First to {})."
 msgstr "최대 {}라운드({}선승)별로 배경과 BGM을 개별 설정합니다."
+
+msgid "Random Battle: {}"
+msgstr "랜덤 배틀: {}"
+
+msgid "Rank 1"
+msgstr "랭크 1"
+
+msgid "Rank 2"
+msgstr "랭크 2"
+
+msgid "Rank 3"
+msgstr "랭크 3"

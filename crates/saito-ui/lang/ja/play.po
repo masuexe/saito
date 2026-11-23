@@ -354,3 +354,15 @@ msgstr "通常はウイルス戦と通常背景、片方マッチポイントは
 
 msgid "Configure each round's background and BGM ({} rounds max, First to {})."
 msgstr "最大{}ラウンド（{}本先取）ごとに背景とBGMを個別に設定します。"
+
+msgid "Random Battle: {}"
+msgstr "ランダムバトル：{}"
+
+msgid "Rank 1"
+msgstr "ランク1"
+
+msgid "Rank 2"
+msgstr "ランク2"
+
+msgid "Rank 3"
+msgstr "ランク3"

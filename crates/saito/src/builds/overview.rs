@@ -106,12 +106,74 @@ pub fn bug(words: &Words, bug: &Bug) -> (String, String) {
 /// The overview of `side`, a build named `name` (a player's name, in a match, under `label`: YOU, OPPONENT),
 /// in the language shown.
 pub fn sheet(shell: &Shell, kit: &Kit, label: &str, name: &str, side: &Side) -> BuildSheet {
+    sheet_for(shell, kit, label, name, side, None)
+}
+
+/// [`sheet`], optionally reflecting an official EXE6 Random Battle rank's fixed stats and abilities.
+pub fn sheet_for(shell: &Shell, kit: &Kit, label: &str, name: &str, side: &Side, random_rank: Option<saito_match::RandomRank>) -> BuildSheet {
     let ui = shell.ui();
     let graphics = kit.ready.graphics(shell.i18n.code);
     let names = Names::of(kit.content(), &graphics);
     let words = Words { ui: &ui, kit, names: &names, i18n: &shell.i18n };
+    if let Some(rank) = random_rank {
+        return sheet_random(&words, label, name, side, rank);
+    }
     let mut checked = Checked::of(kit.content(), &kit.game, side);
     sheet_of(&words, label, name, side, &mut checked)
+}
+
+fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito_match::RandomRank) -> BuildSheet {
+    let (kit, names) = (words.kit, words.names);
+    let content = kit.content();
+    let navi = side.navi(content);
+    let folder = side.folder(content);
+    let say = words.ui.global::<saito_ui::BuildWords>();
+    let line = |val: i32, megabytes: bool| StatLine {
+        label: Default::default(),
+        value: if megabytes { say.invoke_megabytes(val) } else { val.to_string().into() },
+        added: Default::default(),
+    };
+    let buster = rank.buster_level() as i32;
+    let stats = vec![
+        line(rank.hp() as i32, false),
+        line(buster, false),
+        line(buster, false),
+        line(buster, false),
+        line(rank.custom_level() as i32, false),
+        line(5, false),
+        line(1, false),
+        line(0, true),
+    ];
+    let ability_keys: &[&str] = match rank {
+        saito_match::RandomRank::Rank1 => &["suprarmr", "undersht"],
+        saito_match::RandomRank::Rank2 => &["suprarmr", "airshoes"],
+        saito_match::RandomRank::Rank3 => &["chpshufl", "shield"],
+    };
+    let abilities: Vec<String> = ability_keys
+        .iter()
+        .filter_map(|key| saito_match::ids::entry(content, "exe6", "navicust", key))
+        .map(|entry| names.entry(entry))
+        .collect();
+    let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false)).collect();
+    BuildSheet {
+        label: label.into(),
+        name: name.into(),
+        navi: names.navi(navi).into(),
+        presets: Default::default(),
+        face: kit.pictures.navi(navi),
+        forms: ModelRc::new(VecModel::default()),
+        party: ModelRc::new(VecModel::default()),
+        stats: ModelRc::new(VecModel::from(stats)),
+        abilities: items(abilities),
+        bugs: items(Vec::<String>::new()),
+        navicust: false,
+        programs: ModelRc::new(VecModel::default()),
+        patch_cards: false,
+        cards: items(Vec::<String>::new()),
+        auto_battle: ModelRc::new(VecModel::default()),
+        count: folder.chips().count() as i32,
+        chips: ModelRc::new(VecModel::from(chips)),
+    }
 }
 
 /// [`sheet`], of a build already checked.
