@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod abd_mode;
 pub mod binary;
 pub mod build;
 pub mod check;
@@ -51,6 +52,7 @@ use saito_battle::setup::{BattleSettings, HostKeys, NaviStats, RoundSetup, SetSc
 use saito_battle::Rng;
 use saito_content_api::{NaviHandle, StageHandle};
 
+pub use abd_mode::AbdMode;
 pub use check::{check_match, check_side};
 pub use facts::Facts;
 pub use pick::Picks;
@@ -247,6 +249,9 @@ pub struct Match {
     /// When set, `BattleSettings::effects` includes `effects::RANDOM` (`0x200000`), stage picks use
     /// the original 68-stage pool, and both sides receive the rank's fixed MegaMan stats.
     pub random_battle: Option<RandomRank>,
+    /// EXE4 / EXE5 Dark Soul Auto Battle Data (ABD) behavior mode (`Original`, `LegacyCollection`,
+    /// or `DoubleTeamDs` for EXE5). Defaults to [`AbdMode::Original`].
+    pub abd_mode: AbdMode,
 }
 
 /// The custom screen's time limits a match may set, in seconds, besides
@@ -343,6 +348,7 @@ impl Match {
             backgrounds: BackgroundPick::Game,
             custom_screen_time: None,
             random_battle: None,
+            abd_mode: AbdMode::Original,
         })
     }
 
@@ -420,9 +426,18 @@ impl Match {
         if self.random_battle.is_some() {
             effects |= saito_battle::setup::effects::RANDOM;
         }
+        if self.abd_mode == AbdMode::DoubleTeamDs && self.game == "exe5" {
+            effects |= saito_battle::setup::effects::ABD_DS;
+        }
         let settings = BattleSettings { stage: first.stage, background: first.background, effects };
+        let transformed_sides: Option<[Side; 2]> = if self.abd_mode != AbdMode::Original && AbdMode::supported(&self.game) {
+            Some(self.sides.each_ref().map(|s| abd_mode::transform_side(content, &self.game, self.abd_mode, s)))
+        } else {
+            None
+        };
+        let active_sides = transformed_sides.as_ref().unwrap_or(&self.sides);
         let player = |side: usize| {
-            let s = &self.sides[side];
+            let s = &active_sides[side];
             // Each console shuffles its folder with its own RNG (RNG1),
             // which goes on from there.
             let mut rng = Rng::new(seed ^ (side as u32).wrapping_mul(0x9E37_79B9));

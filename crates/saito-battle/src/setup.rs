@@ -53,6 +53,10 @@ pub mod effects {
     /// number, the microphone's story flag) are presentation or the save's.
     /// No stage of the engine's sets it.
     pub const NO_SWITCH_VOICE: u32 = 0x40_0000;
+    /// EXE5 Double Team DS (5DS) Dark Soul ABD mode: after using a Dark Chip,
+    /// SearchMan (V1/SP/DS), ShakPar (1-3), or BigNoise, the AI must fire its
+    /// 3-shot buster 8 times before attempting another chip.
+    pub const ABD_DS: u32 = 0x80_0000;
 }
 
 /// Custom gauge speed (NaviStats+0x08).

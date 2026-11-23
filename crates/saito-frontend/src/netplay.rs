@@ -102,6 +102,7 @@ pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby:
         backgrounds: settings.backgrounds,
         custom_screen_time: settings.custom_screen_time,
         random_battle: settings.random_battle,
+        abd_mode: settings.abd_mode,
     };
     let m = m.stated(content, seed)?;
     Ok((Set::of(content, &m, seed), m))

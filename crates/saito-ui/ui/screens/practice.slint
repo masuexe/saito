@@ -52,6 +52,8 @@ export enum PracticeOption {
     chip-draw,
     // Official EXE6 Random Battle mode (Off / Rank 1 / Rank 2 / Rank 3).
     random-battle,
+    // EXE4 / EXE5 Dark Soul AI (ABD) mode (Original / Legacy Collection / DS).
+    abd-mode,
     input-display,
     // Netplay's input delay, in frames (the one setting: changed here, it is changed for netplay too).
     input-delay,
@@ -156,6 +158,9 @@ export global PracticeView {
         if option == PracticeOption.random-battle {
             return @tr("Random Battle");
         }
+        if option == PracticeOption.abd-mode {
+            return @tr("Dark Soul AI");
+        }
         if option == PracticeOption.input-display {
             return @tr("Input display");
         }
@@ -186,6 +191,9 @@ export global PracticeView {
         }
         if option == PracticeOption.random-battle {
             return value == 1 ? @tr("Rank 1") : value == 2 ? @tr("Rank 2") : value == 3 ? @tr("Rank 3") : @tr("Off");
+        }
+        if option == PracticeOption.abd-mode {
+            return value == 1 ? @tr("Legacy Collection") : value == 2 ? @tr("DS") : @tr("Original");
         }
         if option == PracticeOption.input-display {
             return value == 0 ? @tr("Off") : @tr("On");

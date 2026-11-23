@@ -185,6 +185,10 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
         out.push(b'R');
         out.push(rank.as_u8());
     }
+    if m.abd_mode != crate::AbdMode::Original {
+        out.push(b'A');
+        out.push(m.abd_mode.as_u8());
+    }
     Ok(out)
 }
 
@@ -215,16 +219,34 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
         Ok(s)
     };
     let sides = [side("left")?, side("right")?];
-    let random_battle = if bytes.len() - at == 2 && bytes[at] == b'R' {
-        let rank = crate::RandomRank::from_u8(bytes[at + 1])
-            .ok_or_else(|| format!("random battle: unknown rank {}", bytes[at + 1]))?;
-        at += 2;
-        Some(rank)
-    } else {
-        None
-    };
+    let mut random_battle = None;
+    let mut abd_mode = crate::AbdMode::Original;
+    let mut seen_random = false;
+    let mut seen_abd = false;
+    while bytes.len() - at >= 2 {
+        match bytes[at] {
+            b'R' if !seen_random => {
+                let rank = crate::RandomRank::from_u8(bytes[at + 1])
+                    .ok_or_else(|| format!("random battle: unknown rank {}", bytes[at + 1]))?;
+                random_battle = Some(rank);
+                seen_random = true;
+                at += 2;
+            }
+            b'A' if !seen_abd => {
+                let mode = crate::AbdMode::from_u8(bytes[at + 1])
+                    .ok_or_else(|| format!("dark soul ai: unknown mode {}", bytes[at + 1]))?;
+                if !mode.allowed_for(content.game()) {
+                    return Err(format!("dark soul ai: {mode:?} is not supported for {}", content.game()));
+                }
+                abd_mode = mode;
+                seen_abd = true;
+                at += 2;
+            }
+            _ => break,
+        }
+    }
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode })
 }
 
 
@@ -420,6 +442,31 @@ mod tests {
         let mut navi = bytes.clone();
         navi[at..at + 2].copy_from_slice(&0x7FFFu16.to_le_bytes());
         assert_eq!(read(&navi), "left: navi: no navi 32766 in the content");
+    }
+
+    #[test]
+    fn a_match_keeps_its_abd_mode() {
+        let exe5 = exe5_content();
+        let live5 = crate::pick::live(&exe5, "exe5", 13, None).unwrap();
+        let base = match_bytes(&exe5, &live5).unwrap();
+        for mode in [crate::AbdMode::Original, crate::AbdMode::LegacyCollection, crate::AbdMode::DoubleTeamDs] {
+            let m = Match { abd_mode: mode, ..live5.clone() };
+            let bytes = match_bytes(&exe5, &m).unwrap();
+            if mode == crate::AbdMode::Original {
+                assert_eq!(bytes, base);
+            } else {
+                assert_eq!(bytes.len(), base.len() + 2);
+            }
+            let back = read_match(&exe5, &bytes).unwrap();
+            assert_eq!(back.abd_mode, mode);
+            assert_eq!(match_bytes(&exe5, &back).unwrap(), bytes);
+        }
+        // EXE4 rejects DoubleTeamDs in binary.
+        let exe4 = crate::testing::exe4_content();
+        let mut bad4 = crate::pick::live(&exe4, "exe4", 13, None).unwrap();
+        bad4.abd_mode = crate::AbdMode::DoubleTeamDs;
+        let bytes = match_bytes(&exe4, &bad4).unwrap();
+        assert!(read_match(&exe4, &bytes).is_err());
     }
 
     /// Where fact `name` of a side starts in its compact form: the bytes of

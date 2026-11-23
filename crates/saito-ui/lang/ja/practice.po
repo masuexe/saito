@@ -145,3 +145,15 @@ msgstr "ランク2"
 
 msgid "Rank 3"
 msgstr "ランク3"
+
+msgid "Dark Soul AI"
+msgstr "ダークソウルAI"
+
+msgid "Original"
+msgstr "オリジナル"
+
+msgid "Legacy Collection"
+msgstr "アドコレ版"
+
+msgid "DS"
+msgstr "DS版"

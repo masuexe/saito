@@ -455,6 +455,8 @@ pub struct Settings {
     pub custom_screen_time: Option<u16>,
     /// Official EXE6 Random Battle rank (`Some(Rank1 | Rank2 | Rank3)`), or `None` for normal builds.
     pub random_battle: Option<saito_match::RandomRank>,
+    /// Dark Soul AI (Auto Battle Data) rule mode for EXE4 / EXE5 (`Original`, `LegacyCollection`, or `DoubleTeamDs`).
+    pub abd_mode: saito_match::AbdMode,
 }
 
 /// A part of a round as the lobby names it: its name, or none (from the
@@ -479,6 +481,7 @@ impl Settings {
             open_setups: false,
             custom_screen_time: Some(saito_match::DEFAULT_CUSTOM_SCREEN_TIME),
             random_battle: None,
+            abd_mode: saito_match::AbdMode::Original,
         }
     }
 
@@ -505,6 +508,7 @@ impl Settings {
             open_setups: false,
             custom_screen_time: m.custom_screen_time,
             random_battle: m.random_battle,
+            abd_mode: m.abd_mode,
         }
     }
 
@@ -563,6 +567,9 @@ impl Settings {
         }
         if let Some(rank) = self.random_battle {
             w.put(&rank.as_u8());
+        }
+        if self.abd_mode != saito_match::AbdMode::Original {
+            w.put(&(0x10 | self.abd_mode.as_u8()));
         }
         out
     }
@@ -634,21 +641,28 @@ impl Settings {
             };
             rounds.push(RoundSettings { stage, background });
         }
-        let random_battle = if !r.is_empty() {
+        let mut random_battle = None;
+        let mut abd_mode = saito_match::AbdMode::Original;
+        while !r.is_empty() {
             let v: u8 = r.get().map_err(bad)?;
             if v == 0 {
-                None
+                // legacy explicit None
+            } else if v & 0xF0 == 0x10 {
+                let mode = saito_match::AbdMode::from_u8(v & 0x0F)
+                    .ok_or_else(|| format!("dark soul ai: unknown mode ({})", v & 0x0F))?;
+                if !mode.allowed_for(&game) {
+                    return Err(format!("dark soul ai mode is not supported for {game}"));
+                }
+                abd_mode = mode;
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
                 if !saito_match::random_battle::supported(&game) {
                     return Err(format!("random battle is not supported for {game}"));
                 }
-                Some(rank)
+                random_battle = Some(rank);
             }
-        } else {
-            None
-        };
+        }
         r.finish().map_err(bad)?;
         if content.game() != game || rulesets.game() != game {
             return Err(format!("a match of {game}, and this side has {}'s content", content.game()));
@@ -660,7 +674,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode })
     }
 
     /// The settings' hash, of their bytes.
@@ -1198,6 +1212,14 @@ impl Lobby {
     /// ([`Lobby::problems`]), and so is the other's by its own peer.
     pub fn set_ruleset(&mut self, ruleset: Ruleset) -> bool {
         self.propose(Settings { ruleset, ..self.mine.clone() })
+    }
+
+    /// Change the Dark Soul AI (Auto Battle Data) rule mode, the host alone.
+    pub fn set_abd_mode(&mut self, abd_mode: saito_match::AbdMode) -> bool {
+        if !abd_mode.allowed_for(&self.mine.game) {
+            return false;
+        }
+        self.propose(Settings { abd_mode, ..self.mine.clone() })
     }
 
     /// Ready (or not) to play the settings as they stand. A player whose
@@ -3297,5 +3319,69 @@ mod tests {
         assert_eq!(start.stats[1].hp, 1200);
         assert_eq!(start.stats[0].custom_level, 7);
         assert_eq!(start.stats[0].weapons.back_special, content.defs.weapon_by_key("megaman/shield"));
+    }
+
+    #[test]
+    fn abd_mode_wire_roundtrip_validation_and_lobby_sync() {
+        use saito_match::AbdMode;
+        let exe4 = saito_match::testing::exe4_content();
+        let exe5 = saito_match::testing::exe5_content();
+        let exe6 = saito_match::testing::exe6_content();
+        let rules4 = Rulesets::of(&exe4, "exe4").unwrap();
+        let rules5 = Rulesets::of(&exe5, "exe5").unwrap();
+        let rules6 = Rulesets::of(&exe6, "exe6").unwrap();
+
+        // EXE5 supports Original, LegacyCollection, DoubleTeamDs.
+        let base5 = Settings::new("exe5", TRIPLE_BATTLE, rules5.presets[0].clone());
+        let base5_bytes = base5.to_bytes(&exe5);
+        assert_eq!(Settings::from_bytes(&exe5, &rules5, &base5_bytes).unwrap(), base5);
+        for mode in [AbdMode::LegacyCollection, AbdMode::DoubleTeamDs] {
+            let mut s = base5.clone();
+            s.abd_mode = mode;
+            let bytes = s.to_bytes(&exe5);
+            assert_eq!(bytes.len(), base5_bytes.len() + 1, "one-byte trailer for {mode:?}");
+            assert_eq!(Settings::from_bytes(&exe5, &rules5, &bytes).unwrap(), s);
+        }
+
+        // EXE4 allows LegacyCollection, rejects DoubleTeamDs.
+        let base4 = Settings::new("exe4", TRIPLE_BATTLE, rules4.presets[0].clone());
+        let mut s4 = base4.clone();
+        s4.abd_mode = AbdMode::LegacyCollection;
+        assert_eq!(Settings::from_bytes(&exe4, &rules4, &s4.to_bytes(&exe4)).unwrap(), s4);
+        let mut bad4 = base4.clone();
+        bad4.abd_mode = AbdMode::DoubleTeamDs;
+        assert!(Settings::from_bytes(&exe4, &rules4, &bad4.to_bytes(&exe4)).is_err());
+
+        // EXE6 rejects any non-Original ABD mode.
+        let mut bad6 = Settings::new("exe6", TRIPLE_BATTLE, rules6.presets[0].clone());
+        bad6.abd_mode = AbdMode::LegacyCollection;
+        assert!(Settings::from_bytes(&exe6, &rules6, &bad6.to_bytes(&exe6)).is_err());
+
+        // Host syncs DoubleTeamDs to joiner in EXE5 lobby and sets effects::ABD_DS in the battle.
+        let now = Instant::now();
+        let rules5 = Arc::new(rules5);
+        let builds5 = saito_match::build::Builds::of(&exe5, "exe5").unwrap();
+        let side5 = builds5.new_build(&exe5, &builds5.groups[0].id).unwrap();
+        let mut host_settings = base5.clone();
+        host_settings.abd_mode = AbdMode::DoubleTeamDs;
+        let mut lobbies = [
+            Lobby::new(Role::Host, &exe5, rules5.clone(), host_settings, side5.clone(), 101, Duration::from_secs(10)),
+            Lobby::new(Role::Join, &exe5, rules5.clone(), base5, side5, 202, Duration::from_secs(10)),
+        ];
+        assert!(lobbies[0].problems().is_empty(), "host build usable: {:?}", lobbies[0].problems());
+        run(&mut lobbies, now, 4, &mut |_, _| {});
+        assert_eq!(lobbies[1].settings().abd_mode, AbdMode::DoubleTeamDs, "joiner adopts host abd_mode");
+        assert!(!lobbies[1].set_abd_mode(AbdMode::Original), "joiner cannot change abd_mode");
+        assert!(lobbies[0].set_ready(true));
+        assert!(lobbies[1].set_ready(true));
+        run(&mut lobbies, now, 20, &mut |_, _| {});
+        load(&mut lobbies, now);
+        let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
+        assert_eq!(agreed[0].m.abd_mode, AbdMode::DoubleTeamDs);
+        assert_eq!(agreed[1].m.abd_mode, AbdMode::DoubleTeamDs);
+        let start0 = agreed[0].set.start();
+        let start1 = agreed[1].set.start();
+        assert_eq!(start0.digest(), start1.digest());
+        assert_ne!(start0.setup.settings.effects & saito_battle::setup::effects::ABD_DS, 0);
     }
 }

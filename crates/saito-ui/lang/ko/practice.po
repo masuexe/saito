@@ -142,3 +142,15 @@ msgstr "랭크 2"
 
 msgid "Rank 3"
 msgstr "랭크 3"
+
+msgid "Dark Soul AI"
+msgstr "다크 소울 AI"
+
+msgid "Original"
+msgstr "오리지널"
+
+msgid "Legacy Collection"
+msgstr "레거시 컬렉션"
+
+msgid "DS"
+msgstr "DS판"

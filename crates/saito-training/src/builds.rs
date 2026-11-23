@@ -610,6 +610,7 @@ impl Maker {
             backgrounds: BackgroundPick::Game,
             custom_screen_time: None,
             random_battle: None,
+            abd_mode: saito_match::AbdMode::Original,
         };
         let hp_fact = content.defs.fact_name(PlayerFact::BaseHp).zip(hp);
         if let Some((name, hp)) = hp_fact {

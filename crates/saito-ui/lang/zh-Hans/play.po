@@ -366,3 +366,15 @@ msgstr "Rank 2"
 
 msgid "Rank 3"
 msgstr "Rank 3"
+
+msgid "Dark Soul AI: {}"
+msgstr "黑暗之魂 AI：{}"
+
+msgid "Original"
+msgstr "原版"
+
+msgid "Legacy Collection"
+msgstr "合集版"
+
+msgid "DS"
+msgstr "NDS 版"

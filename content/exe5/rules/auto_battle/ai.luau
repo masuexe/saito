@@ -58,6 +58,35 @@ export type State = {
 local buster: Weapon = require("./buster").weapon
 local navi_status = require("@exelib/navi_status")
 
+-- Battle effect bit enabling EXE5 Double Team DS (5DS) Dark Soul ABD behavior:
+-- after using any nerfed chip below, the AI must execute 8 buster runs (3-shot bursts)
+-- before attempting another chip. Encoded in `s.shots` using bit 7 (`0x80..0x88`) so
+-- `StateSchema` and GBA/Legacy Collection digests remain unchanged.
+local ABD_DS = 0x800000
+local DS_COOLDOWN_BASE = 0x80
+local DS_COOLDOWN_SHOTS = 8
+local DS_COOLDOWN_CHIPS: { [string]: boolean } = {
+    darkcirc = true,
+    drksword = true,
+    darkinvs = true,
+    darkplus = true,
+    drklance = true,
+    darkwide = true,
+    darkthnd = true,
+    drkrecov = true,
+    darkmetr = true,
+    darkdril = true,
+    darktorn = true,
+    drksonic = true,
+    serchman = true,
+    ["serchmn-sp"] = true,
+    ["serchmn-ds"] = true,
+    shakpar1 = true,
+    shakpar2 = true,
+    shakpar3 = true,
+    bignoise = true,
+}
+
 -- The two families (`ai.run`, `ai.run_own`): whose auto battle data they play, and where the target a step faces is
 -- searched from.
 export type Family = { own: boolean }
@@ -226,7 +255,14 @@ local function buster_run(navi: Object, s: State, fam: Family)
         battle.set_hud("chip_window", false, if chip_use.window_hides_every_console then nil else navi.alliance)
         navi:start_weapon(buster, 1)
         s.shots += 1
-        if s.shots < 2 then
+        if s.shots >= DS_COOLDOWN_BASE then
+            if s.shots < DS_COOLDOWN_BASE + DS_COOLDOWN_SHOTS then
+                s.sub = 0
+            else
+                s.shots = 0
+                s.step = 0
+            end
+        elseif s.shots < 2 then
             s.sub = 0
         else
             s.step = 0
@@ -381,9 +417,13 @@ local function playing(navi: Object, s: State, fam: Family)
             s.sub = 8
         end
     elseif sub == 8 then
-        ai.use_chip(navi, s.entry_chip :: Chip)
+        local chip = s.entry_chip :: Chip
+        ai.use_chip(navi, chip)
         turn(navi, s, fam)
         s.mode = 0
+        if bit32.btest(battle.effects(), ABD_DS) and DS_COOLDOWN_CHIPS[chip.id :: string] then
+            s.step, s.sub, s.shots = 8, 0, DS_COOLDOWN_BASE
+        end
     end
 end
 
