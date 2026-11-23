@@ -233,6 +233,8 @@ component EditorActionBtn inherits Rectangle {
 
     height: 36px;
     Rectangle {
+        width: parent.width;
+        height: parent.height;
         y: hit.pressed ? 1px : 0px;
         background: root.primary ? (hit.has-hover ? Theme.action.brighter(12%) : Theme.action) : (hit.has-hover ? Theme.raised-hover : Theme.raised);
         border-width: 1px;
@@ -241,6 +243,8 @@ component EditorActionBtn inherits Rectangle {
     }
 
     Text {
+        width: parent.width;
+        height: parent.height;
         y: hit.pressed ? 1px : 0px;
         text: root.text;
         color: root.primary ? Theme.action-ink : Theme.text;
@@ -271,18 +275,23 @@ component EditorToolbar inherits Rectangle {
     callback close();
 
     width: 336px;
-    height: col.preferred-height + 20px;
+    height: col.preferred-height;
 
     Rectangle {
+        width: parent.width;
+        height: parent.height;
         background: Theme.panel.with-alpha(0.94);
         border-width: 1px;
         border-color: Theme.line;
     }
 
     col := VerticalLayout {
-        x: 12px;
-        y: 10px;
-        width: parent.width - 24px;
+        width: parent.width;
+        height: parent.height;
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 10px;
         spacing: 8px;
 
         HorizontalLayout {
