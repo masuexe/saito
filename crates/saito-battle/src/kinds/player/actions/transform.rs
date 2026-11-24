@@ -121,7 +121,7 @@ pub(in crate::kinds::player) fn revert(b: &mut Battle, r: ObjectRef) {
         if let Some(e) = effect::spawn(b, Vec3 { z: pos.z.wrapping_add(0x14_0000), ..pos }, look, 0, 0, 0) {
             b.objects.get_mut(e).flags |= flags::RUN_WHILE_PAUSED;
         }
-        clear_flag1(b, r, f1::UNTOUCHABLE | f1::SLIDING | f1::FLINCHING | f1::MOVING);
+        clear_flag1(b, r, f1::UNTOUCHABLE | f1::DRAG | f1::SLIDING | f1::FLINCHING | f1::MOVING);
         clear_flag2(b, r, 0x10);
         b.objects.get_mut(r).slide_state = 0;
         let current = stats(b, r).form;
@@ -231,8 +231,8 @@ pub(in crate::kinds::player) fn break_form(b: &mut Battle, r: ObjectRef) -> bool
         if let Some(e) = effect::spawn(b, Vec3 { z: pos.z.wrapping_add(0x14_0000), ..pos }, look, 0, 0, 0) {
             b.objects.get_mut(e).flags |= flags::RUN_WHILE_PAUSED;
         }
-        let moving = f1::SLIDING | f1::PARALYZED | f1::FLINCHING | f1::MOVING;
-        clear_flag1(b, r, if any_form { moving } else { moving | f1::BUBBLED | f1::DRAG | f1::FROZEN });
+        let moving = f1::DRAG | f1::SLIDING | f1::PARALYZED | f1::FLINCHING | f1::MOVING;
+        clear_flag1(b, r, if any_form { moving } else { moving | f1::BUBBLED | f1::FROZEN });
         clear_flag2(b, r, 0x10);
         b.objects.get_mut(r).slide_state = 0;
         if !any_form {

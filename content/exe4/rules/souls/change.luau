@@ -105,6 +105,7 @@ local function prepare(me: Object, soul: FormDef, spec: Spec)
         me:snap_to_future_panel()
         flash(me)
         battle.play_sound(CHANGE_SOUND)
+        me:set_status("drag", false)
         me:set_status("moving", false)
         me:set_request("revert_form", false)
         if spec.prepare then

@@ -481,13 +481,18 @@ fn step_drag(b: &mut Battle, r: ObjectRef) {
     let fp = b.objects.get(r).future_panel;
     let (tx, ty) = panel_coordinates(fp.x, fp.y);
     let o = b.objects.get_mut(r);
-    let old_x = o.pos.x;
-    o.pos.x = o.pos.x.wrapping_add(o.vel.x);
-    let mut arrived = saito_content_api::passed_x(o.pos.x, old_x, tx, o.alliance);
+    // Guard against flying off-field when another transition (e.g. form revert / change)
+    // snapped `pos` onto `future_panel` while `drag_step == Slide` remained active.
+    let mut arrived = o.pos.x == tx && o.pos.y == ty;
     if !arrived {
-        let old_y = o.pos.y;
-        o.pos.y = o.pos.y.wrapping_add(o.vel.y);
-        arrived = saito_content_api::passed(o.pos.y, old_y, ty);
+        let old_x = o.pos.x;
+        o.pos.x = o.pos.x.wrapping_add(o.vel.x);
+        arrived = saito_content_api::passed_x(o.pos.x, old_x, tx, o.alliance);
+        if !arrived {
+            let old_y = o.pos.y;
+            o.pos.y = o.pos.y.wrapping_add(o.vel.y);
+            arrived = saito_content_api::passed(o.pos.y, old_y, ty);
+        }
     }
     if !arrived {
         let o = b.objects.get_mut(r);
@@ -1032,5 +1037,40 @@ mod tests {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(emotions(exe6), (names(&["normal", "normal", "full_synchro", "worn_out", "worn_out", "tired"]), 0x80, 0xFF, 0x80));
         assert_eq!(emotions(exe5), (names(&["normal", "worried", "full_synchro", "evil", "angry", "full_synchro"]), 0, 0, 0xFF));
+    }
+
+    /// Regression test (S-097): if a navi in `DragStep::Slide` with non-zero velocity
+    /// has already been snapped onto `future_panel` (e.g. by form revert/change after
+    /// custom screen), `step_drag` must finish on `future_panel` instead of missing
+    /// `passed_x`/`passed` and flying off-field.
+    #[test]
+    fn snapped_drag_does_not_fly_off_field() {
+        let mut c: Content = testing::build();
+        c.define().unwrap_or_else(|e| panic!("{e}"));
+        let c = Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+        crate::content::testing::on(&mut setup, &c);
+        let mut b = Battle::new(setup, c);
+        b.spawn_actors();
+        b.run_objects();
+        let r = b.player(0).unwrap();
+        let fp = PanelPos { x: 2, y: 2 };
+        let (tx, ty) = panel_coordinates(fp.x, fp.y);
+        {
+            let o = b.objects.get_mut(r);
+            o.panel = fp;
+            o.future_panel = fp;
+            o.pos.x = tx;
+            o.pos.y = ty;
+            o.vel.x = 0x000A_0000;
+            o.vel.y = 0;
+            o.timer2 = 1;
+            o.drag_step = DragStep::Slide;
+        }
+        step_drag(&mut b, r);
+        let o = b.objects.get(r);
+        assert_eq!(o.drag_step, DragStep::Recover);
+        assert_eq!(o.panel, fp);
+        assert_eq!((o.pos.x, o.pos.y), (tx, ty));
     }
 }
