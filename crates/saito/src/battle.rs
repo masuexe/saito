@@ -668,7 +668,7 @@ impl Shell {
         let (width, height) = (shell.get_picture_width(), shell.get_picture_height());
         let dialog = self.dialog.is_some();
         let Some(b) = self.battle.as_mut().filter(|b| b.playing() && !b.kept && !dialog) else { return };
-        b.stage.player.set_drag_enabled(!phone_app);
+        b.stage.player.set_touch_drag(phone_app);
         if width <= 0.0 || height <= 0.0 {
             return;
         }

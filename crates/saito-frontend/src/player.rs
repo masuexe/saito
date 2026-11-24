@@ -175,8 +175,10 @@ pub struct Player {
     choice: Option<saito_battle::ScreenChoice>,
     /// The pointer on the local player's custom screen ([`Player::point`]).
     pointer: crate::pointer::ScreenPointer,
-    /// Desktop drag-and-drop toggle (disabled on mobile touch UIs).
+    /// Chip drag-and-drop toggle on the custom screen.
     drag_enabled: bool,
+    /// Touch-screen ergonomics for chip drag-and-drop (wider threshold, lifted ghost icon).
+    touch_drag: bool,
     speed: usize,
     clock: Clock,
     /// What had been made before the player was: this thread's runtimes
@@ -232,7 +234,8 @@ impl Player {
             switch: None,
             choice: None,
             pointer: crate::pointer::ScreenPointer::default(),
-            drag_enabled: !cfg!(any(target_os = "ios", target_os = "android")),
+            drag_enabled: true,
+            touch_drag: cfg!(any(target_os = "ios", target_os = "android")),
             speed: NORMAL,
             clock: Clock::new(),
             before,
@@ -344,13 +347,18 @@ impl Player {
         self.choice = Some(choice);
     }
 
-    /// Enable or disable desktop mouse drag-and-drop on the custom screen
-    /// (disabled when the mobile phone UI is active).
+    /// Enable or disable pointer drag-and-drop on the custom screen.
     pub fn set_drag_enabled(&mut self, enabled: bool) {
         self.drag_enabled = enabled;
         if !enabled {
             self.pointer.cancel_drag();
         }
+    }
+
+    /// Enable or disable touch-screen drag ergonomics (wider drag threshold and
+    /// upward ghost offset so the fingertip doesn't obscure the dragged chip).
+    pub fn set_touch_drag(&mut self, touch: bool) {
+        self.touch_drag = touch;
     }
 
     fn drag_context(&self, side: u8) -> crate::pointer::DragContext {
@@ -406,6 +414,7 @@ impl Player {
         }
         crate::pointer::DragContext {
             enabled: true,
+            touch: self.touch_drag,
             can_peek: true,
             picks: p.screen.selection().len() as u8,
             locked_first: is_locked_first_pick(p.screen, p.folder, &p.view),
@@ -579,7 +588,12 @@ impl Player {
             }
             DropTarget::Outside => (matches!(drag.from, DragSource::Pick(_)) || held_arm).then_some(DropVisual::Remove),
         };
-        Some(DragOverlay { side, chip, x: drag.x, y: drag.y, target })
+        let overlay_y = if self.touch_drag {
+            (drag.y - crate::pointer::TOUCH_DRAG_LIFT_Y).max(8)
+        } else {
+            drag.y
+        };
+        Some(DragOverlay { side, chip, x: drag.x, y: overlay_y, target })
     }
 
     /// A pointer's event on the battle's picture (the mouse's, a finger's;

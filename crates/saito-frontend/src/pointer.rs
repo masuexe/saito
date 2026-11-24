@@ -25,6 +25,11 @@ use saito_render::textlayer::Rect;
 pub const LONG_PRESS: u32 = 30;
 /// Pointer movement distance (in frame pixels) required to begin dragging on desktop.
 pub const DRAG_THRESHOLD: f32 = 5.0;
+/// Pointer movement distance (in frame pixels) required to begin dragging on touch screens.
+pub const TOUCH_DRAG_THRESHOLD: f32 = 10.0;
+/// Upward visual offset (in frame pixels) for the floating chip icon while dragging on touch screens,
+/// keeping the icon visible above the user's fingertip.
+pub const TOUCH_DRAG_LIFT_Y: i32 = 14;
 /// Leftward horizontal drag distance (in frame pixels) required to begin peeking behind the custom screen.
 pub const PEEK_THRESHOLD: f32 = 6.0;
 /// Maximum leftward peek scroll distance (in frame pixels), matching `saito_render::custom::SLIDE`.
@@ -32,10 +37,11 @@ pub const PEEK_MAX: f32 = saito_render::custom::SLIDE as f32;
 /// Pixels per tick the custom screen slides back after releasing a peek drag.
 pub const PEEK_RETURN_STEP: f32 = 16.0;
 
-/// Desktop drag capabilities & layout metadata computed from the current custom screen.
+/// Drag capabilities & layout metadata computed from the current custom screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DragContext {
     pub enabled: bool,
+    pub touch: bool,
     pub can_peek: bool,
     pub picks: u8,
     pub locked_first: bool,
@@ -228,8 +234,9 @@ impl ScreenPointer {
                     } else if !press.dragging {
                         let dx = e.x - press.start.0;
                         let dy = e.y - press.start.1;
+                        let drag_threshold = if ctx.touch { TOUCH_DRAG_THRESHOLD } else { DRAG_THRESHOLD };
                         if let Some(src) = press.drag_source
-                            && dx.hypot(dy) >= DRAG_THRESHOLD
+                            && dx.hypot(dy) >= drag_threshold
                         {
                             press.dragging = true;
                             press.off = true;
@@ -513,6 +520,7 @@ mod tests {
         let col = Rect::new(100, 16, 24, 80); // rows 0..5, 16px each: row 0 = y 16..32, row 1 = y 32..48
         let ctx = DragContext {
             enabled: true,
+            touch: false,
             can_peek: true,
             picks: 2,
             locked_first: false,
@@ -579,6 +587,7 @@ mod tests {
     fn long_press_describe_transitions_cleanly_into_drag() {
         let ctx = DragContext {
             enabled: true,
+            touch: false,
             can_peek: true,
             picks: 1,
             locked_first: false,
@@ -600,13 +609,41 @@ mod tests {
     }
 
     #[test]
-    fn mobile_touch_does_not_trigger_drag() {
+    fn disabled_drag_does_not_trigger_drag() {
         let ctx = DragContext { enabled: false, ..DragContext::default() };
         let mut s = ScreenPointer::default();
         s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &ctx);
         assert_eq!(s.event_with_drag(p(PointerKind::Moved, 120.0, 10.0), at, &ctx), None);
         assert_eq!(s.active_drag(), None);
         assert_eq!(s.event_with_drag(p(PointerKind::Up, 120.0, 10.0), at, &ctx), None);
+    }
+
+    #[test]
+    fn touch_drag_uses_wider_threshold() {
+        let ctx = DragContext {
+            enabled: true,
+            touch: true,
+            can_peek: true,
+            picks: 1,
+            draggable_slots: 1 << 1,
+            column_rect: Some(Rect::new(100, 16, 24, 80)),
+            ..DragContext::default()
+        };
+        let mut s = ScreenPointer::default();
+        // 7px jitter exceeds desktop DRAG_THRESHOLD (5px) but stays below TOUCH_DRAG_THRESHOLD (10px).
+        assert_eq!(s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &ctx), Some(Gesture::Over(CHIP)));
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 17.0, 10.0), at, &ctx), None);
+        assert_eq!(s.active_drag(), None);
+        assert_eq!(s.event_with_drag(p(PointerKind::Up, 17.0, 10.0), at, &ctx), Some(Gesture::Click(Some(CHIP))));
+
+        // Moving >= 10px begins dragging on touch.
+        assert_eq!(s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &ctx), Some(Gesture::Over(CHIP)));
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 21.0, 10.0), at, &ctx), Some(Gesture::DragBegin(DragSource::Slot(1))));
+        assert!(s.active_drag().is_some());
+        assert_eq!(
+            s.event_with_drag(p(PointerKind::Up, 112.0, 40.0), at, &ctx),
+            Some(Gesture::Drop { from: DragSource::Slot(1), to: DropTarget::InsertAt(1) })
+        );
     }
 
     #[test]
