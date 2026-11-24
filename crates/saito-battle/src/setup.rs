@@ -380,6 +380,9 @@ pub struct RoundSetup {
     /// its rounds (the lobby's custom screen time); every other round,
     /// and a recording of the original's, has none.
     pub custom_screen_limit: Option<u16>,
+    /// Per-effect bitmask of ChargeShot Addition effects whose probability fix
+    /// is enabled for B-PowerAttack ChargeShot (EXE5/EXE6; 0 = original GBA).
+    pub cs_prob_fix: u32,
     /// Per side: the battle folder and what the save unlocks on the
     /// custom screen.
     pub players: [crate::custom::PlayerSetup; 2],

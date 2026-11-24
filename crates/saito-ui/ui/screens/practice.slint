@@ -14,6 +14,7 @@ import { Shell } from "../shell.slint";
 import { Button, ButtonKind, Select, Stepper, MenuItem, GroupTitle, Label, ScrollPage, Mono, Bar } from "../widgets.slint";
 import { MenuOverlay } from "battle.slint";
 import { InputDisplay } from "../inputs.slint";
+import { CsProbEntry } from "../cs_prob.slint";
 
 // What a row of the practice menu is.
 export enum PracticeOption {
@@ -54,6 +55,8 @@ export enum PracticeOption {
     random-battle,
     // EXE4 / EXE5 Dark Soul AI (ABD) mode (Original / Legacy Collection / DS).
     abd-mode,
+    // EXE5 / EXE6 per-effect ChargeShot Addition probability fix.
+    cs-prob-fix,
     input-display,
     // Netplay's input delay, in frames (the one setting: changed here, it is changed for netplay too).
     input-delay,
@@ -101,8 +104,14 @@ export global PracticeView {
     // The dummy's Action offers Fights (the app built with its `ai` feature): its values are Stands still, Moves
     // around, Fights and A second pad; without it, Stands still, Moves around and A second pad.
     in property <bool> fights;
+    // Per-effect ChargeShot Addition probability fix dialog state (EXE5 / EXE6).
+    in property <bool> cs-prob-dialog: false;
+    in property <[CsProbEntry]> cs-prob-items;
 
     // ---- What the Rust half says in words.
+    pure public function cs-prob-custom(count: int, total: int) -> string {
+        return @tr("Custom ({}/{})", count, total);
+    }
     // Who the two sides are: the two cards before a battle, and the menu's two columns' headings.
     out property <string> you: I18n.upper(@tr("You"));
     out property <string> dummy: I18n.upper(@tr("Dummy"));
@@ -161,6 +170,9 @@ export global PracticeView {
         if option == PracticeOption.abd-mode {
             return @tr("Dark Soul AI");
         }
+        if option == PracticeOption.cs-prob-fix {
+            return @tr("CS Prob Fix");
+        }
         if option == PracticeOption.input-display {
             return @tr("Input display");
         }
@@ -194,6 +206,9 @@ export global PracticeView {
         }
         if option == PracticeOption.abd-mode {
             return value == 1 ? @tr("Legacy Collection") : value == 2 ? @tr("DS") : @tr("Original");
+        }
+        if option == PracticeOption.cs-prob-fix {
+            return value == 1 ? @tr("All Fixed") : @tr("Original");
         }
         if option == PracticeOption.input-display {
             return value == 0 ? @tr("Off") : @tr("On");
@@ -232,9 +247,11 @@ component MenuRow inherits Rectangle {
     property <bool> option: !root.added && !root.title && !root.columns && !root.edit;
     property <bool> paired: root.entry.option == PracticeOption.hp || root.entry.option == PracticeOption.emotion;
     property <bool> pictured: root.entry.option == PracticeOption.arena || root.entry.option == PracticeOption.background;
-    property <bool> select: root.pictured || root.entry.option == PracticeOption.music || root.entry.option == PracticeOption.dummys-build;
+    property <bool> select: root.pictured || root.entry.option == PracticeOption.music || root.entry.option == PracticeOption.dummys-build || root.entry.option == PracticeOption.cs-prob-fix;
     property <string> label: PracticeView.label(root.entry.option);
-    property <string> value: root.option && root.entry.text != "" ? root.entry.text : PracticeView.value(root.entry.option, root.entry.value);
+    property <string> value: root.entry.option == PracticeOption.cs-prob-fix
+        ? (root.entry.value == 0 ? @tr("Original") : root.entry.value >= root.entry.dummys-value ? @tr("All Fixed") : @tr("Custom ({}/{})", root.entry.value, root.entry.dummys-value))
+        : (root.option && root.entry.text != "" ? root.entry.text : PracticeView.value(root.entry.option, root.entry.value));
     property <string> dummys-value: root.entry.dummys-text != "" ? root.entry.dummys-text : PracticeView.value(root.entry.option, root.entry.dummys-value);
     // The value's box: sized for the longest value in the longest language (a longer one the stepper fits to it,
     // and tells the pass if it can't); the stepper and the select are as wide as it and their arrows (`box`), and

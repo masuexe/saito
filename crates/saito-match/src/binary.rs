@@ -189,6 +189,10 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
         out.push(b'A');
         out.push(m.abd_mode.as_u8());
     }
+    if !m.cs_prob_fix.is_empty() {
+        out.push(b'C');
+        out.extend_from_slice(&m.cs_prob_fix.bits().to_le_bytes());
+    }
     Ok(out)
 }
 
@@ -221,8 +225,10 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
     let sides = [side("left")?, side("right")?];
     let mut random_battle = None;
     let mut abd_mode = crate::AbdMode::Original;
+    let mut cs_prob_fix = crate::CsProbFix::NONE;
     let mut seen_random = false;
     let mut seen_abd = false;
+    let mut seen_cs_prob_fix = false;
     while bytes.len() - at >= 2 {
         match bytes[at] {
             b'R' if !seen_random => {
@@ -242,11 +248,20 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 seen_abd = true;
                 at += 2;
             }
+            b'C' if !seen_cs_prob_fix && bytes.len() - at >= 3 => {
+                let fix = crate::CsProbFix::from_bits(u16::from_le_bytes([bytes[at + 1], bytes[at + 2]]));
+                if !fix.allowed_for(content.game()) {
+                    return Err(format!("cs prob fix: {:#06x} is not supported for {}", fix.bits(), content.game()));
+                }
+                cs_prob_fix = fix;
+                seen_cs_prob_fix = true;
+                at += 3;
+            }
             _ => break,
         }
     }
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, cs_prob_fix })
 }
 
 
@@ -465,6 +480,36 @@ mod tests {
         let exe4 = crate::testing::exe4_content();
         let mut bad4 = crate::pick::live(&exe4, "exe4", 13, None).unwrap();
         bad4.abd_mode = crate::AbdMode::DoubleTeamDs;
+        let bytes = match_bytes(&exe4, &bad4).unwrap();
+        assert!(read_match(&exe4, &bytes).is_err());
+    }
+
+    #[test]
+    fn a_match_keeps_its_cs_prob_fix() {
+        let exe5 = exe5_content();
+        let live5 = crate::pick::live(&exe5, "exe5", 17, None).unwrap();
+        let base5 = match_bytes(&exe5, &live5).unwrap();
+        for fix in [crate::CsProbFix::NONE, crate::CsProbFix::from_bits(0x0088), crate::CsProbFix::all("exe5")] {
+            let m = Match { cs_prob_fix: fix, ..live5.clone() };
+            let bytes = match_bytes(&exe5, &m).unwrap();
+            if fix.is_empty() {
+                assert_eq!(bytes, base5);
+            } else {
+                assert_eq!(bytes.len(), base5.len() + 3);
+            }
+            let back = read_match(&exe5, &bytes).unwrap();
+            assert_eq!(back.cs_prob_fix, fix);
+            assert_eq!(match_bytes(&exe5, &back).unwrap(), bytes);
+        }
+        // EXE5 rejects EXE6-only bits.
+        let mut bad5 = live5.clone();
+        bad5.cs_prob_fix = crate::CsProbFix::all("exe6");
+        let bytes = match_bytes(&exe5, &bad5).unwrap();
+        assert!(read_match(&exe5, &bytes).is_err());
+        // EXE4 rejects any non-zero cs_prob_fix.
+        let exe4 = crate::testing::exe4_content();
+        let mut bad4 = crate::pick::live(&exe4, "exe4", 17, None).unwrap();
+        bad4.cs_prob_fix = crate::CsProbFix::from_bits(1);
         let bytes = match_bytes(&exe4, &bad4).unwrap();
         assert!(read_match(&exe4, &bytes).is_err());
     }

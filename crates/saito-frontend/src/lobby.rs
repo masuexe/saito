@@ -457,6 +457,8 @@ pub struct Settings {
     pub random_battle: Option<saito_match::RandomRank>,
     /// Dark Soul AI (Auto Battle Data) rule mode for EXE4 / EXE5 (`Original`, `LegacyCollection`, or `DoubleTeamDs`).
     pub abd_mode: saito_match::AbdMode,
+    /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6.
+    pub cs_prob_fix: saito_match::CsProbFix,
 }
 
 /// A part of a round as the lobby names it: its name, or none (from the
@@ -482,6 +484,7 @@ impl Settings {
             custom_screen_time: Some(saito_match::DEFAULT_CUSTOM_SCREEN_TIME),
             random_battle: None,
             abd_mode: saito_match::AbdMode::Original,
+            cs_prob_fix: saito_match::CsProbFix::NONE,
         }
     }
 
@@ -509,6 +512,7 @@ impl Settings {
             custom_screen_time: m.custom_screen_time,
             random_battle: m.random_battle,
             abd_mode: m.abd_mode,
+            cs_prob_fix: m.cs_prob_fix,
         }
     }
 
@@ -570,6 +574,10 @@ impl Settings {
         }
         if self.abd_mode != saito_match::AbdMode::Original {
             w.put(&(0x10 | self.abd_mode.as_u8()));
+        }
+        if !self.cs_prob_fix.is_empty() {
+            w.put(&0x20u8);
+            w.put(&self.cs_prob_fix.bits());
         }
         out
     }
@@ -643,6 +651,7 @@ impl Settings {
         }
         let mut random_battle = None;
         let mut abd_mode = saito_match::AbdMode::Original;
+        let mut cs_prob_fix = saito_match::CsProbFix::NONE;
         while !r.is_empty() {
             let v: u8 = r.get().map_err(bad)?;
             if v == 0 {
@@ -654,6 +663,13 @@ impl Settings {
                     return Err(format!("dark soul ai mode is not supported for {game}"));
                 }
                 abd_mode = mode;
+            } else if v == 0x20 {
+                let bits: u16 = r.get().map_err(bad)?;
+                let fix = saito_match::CsProbFix::from_bits(bits);
+                if !fix.allowed_for(&game) {
+                    return Err(format!("cs prob fix ({bits:#06x}) is not supported for {game}"));
+                }
+                cs_prob_fix = fix;
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
@@ -674,7 +690,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, cs_prob_fix })
     }
 
     /// The settings' hash, of their bytes.
@@ -1220,6 +1236,14 @@ impl Lobby {
             return false;
         }
         self.propose(Settings { abd_mode, ..self.mine.clone() })
+    }
+
+    /// Change the per-effect ChargeShot Addition probability fix bitmask, the host alone.
+    pub fn set_cs_prob_fix(&mut self, cs_prob_fix: saito_match::CsProbFix) -> bool {
+        if !cs_prob_fix.allowed_for(&self.mine.game) {
+            return false;
+        }
+        self.propose(Settings { cs_prob_fix, ..self.mine.clone() })
     }
 
     /// Ready (or not) to play the settings as they stand. A player whose
@@ -3383,5 +3407,63 @@ mod tests {
         let start1 = agreed[1].set.start();
         assert_eq!(start0.digest(), start1.digest());
         assert_ne!(start0.setup.settings.effects & saito_battle::setup::effects::ABD_DS, 0);
+    }
+
+    #[test]
+    fn cs_prob_fix_wire_roundtrip_validation_and_lobby_sync() {
+        use saito_match::CsProbFix;
+        let exe4 = saito_match::testing::exe4_content();
+        let exe5 = saito_match::testing::exe5_content();
+        let exe6 = saito_match::testing::exe6_content();
+        let rules4 = Rulesets::of(&exe4, "exe4").unwrap();
+        let rules5 = Rulesets::of(&exe5, "exe5").unwrap();
+        let rules6 = Rulesets::of(&exe6, "exe6").unwrap();
+
+        // EXE6 supports 13-bit mask (0x1FFF).
+        let base6 = Settings::new("exe6", TRIPLE_BATTLE, rules6.presets[0].clone());
+        let base6_bytes = base6.to_bytes(&exe6);
+        assert_eq!(Settings::from_bytes(&exe6, &rules6, &base6_bytes).unwrap(), base6);
+        for fix in [CsProbFix::from_bits(0x1040), CsProbFix::all("exe6")] {
+            let mut s = base6.clone();
+            s.cs_prob_fix = fix;
+            let bytes = s.to_bytes(&exe6);
+            assert_eq!(bytes.len(), base6_bytes.len() + 3, "three-byte trailer for {fix:?}");
+            assert_eq!(Settings::from_bytes(&exe6, &rules6, &bytes).unwrap(), s);
+        }
+
+        // EXE5 rejects EXE6-only bits; EXE4 rejects any non-zero bit.
+        let mut bad5 = Settings::new("exe5", TRIPLE_BATTLE, rules5.presets[0].clone());
+        bad5.cs_prob_fix = CsProbFix::all("exe6");
+        assert!(Settings::from_bytes(&exe5, &rules5, &bad5.to_bytes(&exe5)).is_err());
+        let mut bad4 = Settings::new("exe4", TRIPLE_BATTLE, rules4.presets[0].clone());
+        bad4.cs_prob_fix = CsProbFix::from_bits(1);
+        assert!(Settings::from_bytes(&exe4, &rules4, &bad4.to_bytes(&exe4)).is_err());
+
+        // Host syncs custom cs_prob_fix to joiner in EXE6 lobby and propagates it to RoundSetup.
+        let now = Instant::now();
+        let rules6 = Arc::new(rules6);
+        let builds6 = saito_match::build::Builds::of(&exe6, "exe6").unwrap();
+        let side6 = builds6.new_build(&exe6, &builds6.groups[0].id).unwrap();
+        let custom = CsProbFix::from_bits(0x1040); // CS即死 + CS芯片破坏
+        let mut host_settings = base6.clone();
+        host_settings.cs_prob_fix = custom;
+        let mut lobbies = [
+            Lobby::new(Role::Host, &exe6, rules6.clone(), host_settings, side6.clone(), 101, Duration::from_secs(10)),
+            Lobby::new(Role::Join, &exe6, rules6.clone(), base6, side6, 202, Duration::from_secs(10)),
+        ];
+        run(&mut lobbies, now, 4, &mut |_, _| {});
+        assert_eq!(lobbies[1].settings().cs_prob_fix, custom, "joiner adopts host cs_prob_fix");
+        assert!(!lobbies[1].set_cs_prob_fix(CsProbFix::NONE), "joiner cannot change cs_prob_fix");
+        assert!(lobbies[0].set_ready(true));
+        assert!(lobbies[1].set_ready(true));
+        run(&mut lobbies, now, 20, &mut |_, _| {});
+        load(&mut lobbies, now);
+        let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
+        assert_eq!(agreed[0].m.cs_prob_fix, custom);
+        assert_eq!(agreed[1].m.cs_prob_fix, custom);
+        let start0 = agreed[0].set.start();
+        let start1 = agreed[1].set.start();
+        assert_eq!(start0.digest(), start1.digest());
+        assert_eq!(start0.setup.cs_prob_fix, custom.bits() as u32);
     }
 }

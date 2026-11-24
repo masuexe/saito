@@ -406,3 +406,30 @@ msgstr "对战进行中…"
 
 msgid "{} is not installed."
 msgstr "未安装 {}。"
+
+msgid "CS Prob Fix"
+msgstr "CS概率修复"
+
+msgid "Choose which ChargeShot Addition effects use normal random chance (50% / 12.5%) instead of 100% with B-PowerAttack ChargeShot."
+msgstr "选择在Ⓑ集气CS下哪些 CS 附加效果恢复正常触发概率（50% / 12.5%），未勾选的保持原版 100%。"
+
+msgid "Host's ChargeShot Addition probability fix settings (read-only)."
+msgstr "房主设置的 CS 附加效果概率修复（只读）。"
+
+msgid "All Original (100%)"
+msgstr "全部原版 (100%)"
+
+msgid "All Fixed"
+msgstr "全部修复"
+
+msgid "CS Prob Fix: Original"
+msgstr "CS概率修复：原版"
+
+msgid "CS Prob Fix: All Fixed"
+msgstr "CS概率修复：全部修复"
+
+msgid "CS Prob Fix: Custom ({}/{})"
+msgstr "CS概率修复：自定义 ({}/{})"
+
+msgid "Custom ({}/{})"
+msgstr "自定义 ({}/{})"

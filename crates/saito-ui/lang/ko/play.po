@@ -406,3 +406,30 @@ msgstr "대전 진행 중…"
 
 msgid "{} is not installed."
 msgstr "{}이(가) 설치되어 있지 않습니다."
+
+msgid "CS Prob Fix"
+msgstr "CS 확률 수정"
+
+msgid "Choose which ChargeShot Addition effects use normal random chance (50% / 12.5%) instead of 100% with B-PowerAttack ChargeShot."
+msgstr "Ⓑ차지 CS 사용 시 원래 확률(50% / 12.5%)을 적용할 CS 추가 효과를 선택합니다. 선택하지 않은 효과는 원작과 동일하게 100%입니다."
+
+msgid "Host's ChargeShot Addition probability fix settings (read-only)."
+msgstr "방장의 CS 추가 효과 확률 수정 설정(읽기 전용)."
+
+msgid "All Original (100%)"
+msgstr "모두 원작 (100%)"
+
+msgid "All Fixed"
+msgstr "모두 수정"
+
+msgid "CS Prob Fix: Original"
+msgstr "CS 확률 수정: 원작"
+
+msgid "CS Prob Fix: All Fixed"
+msgstr "CS 확률 수정: 모두 수정"
+
+msgid "CS Prob Fix: Custom ({}/{})"
+msgstr "CS 확률 수정: 사용자 지정 ({}/{})"
+
+msgid "Custom ({}/{})"
+msgstr "사용자 지정 ({}/{})"

@@ -141,6 +141,7 @@ pub fn netbattle(content: &Content, stage: &str, hp: u16, seed: u32, folders: [B
         low_hp_music_latched: false,
         host_keys: saito_battle::setup::HostKeys::NONE,
         custom_screen_limit: None,
+        cs_prob_fix: 0,
         players: [player(a, 0), player(b, 1)],
     }
 }

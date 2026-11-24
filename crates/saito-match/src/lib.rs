@@ -20,6 +20,7 @@ pub mod abd_mode;
 pub mod binary;
 pub mod build;
 pub mod check;
+pub mod cs_prob_fix;
 pub mod pick;
 pub mod random_battle;
 pub mod ruleset;
@@ -54,6 +55,7 @@ use saito_content_api::{NaviHandle, StageHandle};
 
 pub use abd_mode::AbdMode;
 pub use check::{check_match, check_side};
+pub use cs_prob_fix::CsProbFix;
 pub use facts::Facts;
 pub use pick::Picks;
 pub use random_battle::RandomRank;
@@ -252,6 +254,8 @@ pub struct Match {
     /// EXE4 / EXE5 Dark Soul Auto Battle Data (ABD) behavior mode (`Original`, `LegacyCollection`,
     /// or `DoubleTeamDs` for EXE5). Defaults to [`AbdMode::Original`].
     pub abd_mode: AbdMode,
+    /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6 (`NONE` by default).
+    pub cs_prob_fix: CsProbFix,
 }
 
 /// The custom screen's time limits a match may set, in seconds, besides
@@ -349,6 +353,7 @@ impl Match {
             custom_screen_time: None,
             random_battle: None,
             abd_mode: AbdMode::Original,
+            cs_prob_fix: CsProbFix::NONE,
         })
     }
 
@@ -477,6 +482,7 @@ impl Match {
             low_hp_music_latched: false,
             host_keys: HOST_KEYS,
             custom_screen_limit: custom_screen_limit(self.custom_screen_time),
+            cs_prob_fix: if CsProbFix::supported(&self.game) { self.cs_prob_fix.clamp_for(&self.game).bits() as u32 } else { 0 },
             players: [player(0), player(1)],
         }
     }

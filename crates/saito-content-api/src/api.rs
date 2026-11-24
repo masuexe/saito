@@ -673,6 +673,9 @@ named_fields! {
         /// rules read by their own names (EXE5's 0x20000, a held light/dark
         /// value; 0x100000, dark chips fizzle).
         Effects = "effects", U32, ro;
+        /// Per-effect bitmask of ChargeShot Addition effects whose probability
+        /// fix is enabled for B-PowerAttack ChargeShot (EXE5/EXE6; 0 = original).
+        CsProbFix = "cs_prob_fix", U32, ro;
         Mode = "mode", U8, ro;
         PanelPattern = "panel_pattern", U8, ro;
         /// Every navi is in (the intro's bit 2).

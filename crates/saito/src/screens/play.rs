@@ -137,6 +137,34 @@ fn remembered_abd_mode(game: &str) -> String {
     format!("play.abd-mode.{game}")
 }
 
+fn remembered_cs_prob_fix(game: &str) -> String {
+    format!("play.cs-prob-fix.{game}")
+}
+
+/// Build the `CsProbEntry` model for `game`'s ChargeShot Addition probability fix dialog.
+pub(crate) fn cs_prob_items(shell: &Shell, game: &str, fix: saito_match::CsProbFix) -> ModelRc<saito_ui::CsProbEntry> {
+    let entries = saito_match::cs_prob_fix::effects(game);
+    let ready = shell.games.ready(game);
+    let graphics = ready.as_ref().map(|r| r.graphics(shell.i18n.code));
+    let names = ready.as_ref().zip(graphics.as_ref()).map(|(r, g)| Names::of(r.content(), g));
+    let items: Vec<saito_ui::CsProbEntry> = entries
+        .iter()
+        .map(|e| {
+            let key = e.locale_key();
+            let name = names
+                .as_ref()
+                .and_then(|n| n.text(crate::builds::cards::TABLE, &key))
+                .unwrap_or_else(|| e.variant_id.to_string());
+            saito_ui::CsProbEntry {
+                name: name.into(),
+                prob: (if e.rare { "12.5%" } else { "50%" }).into(),
+                fixed: fix.has(e.bit),
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(items))
+}
+
 fn remembered_build(game: &str) -> String {
     format!("play.build.{game}")
 }
@@ -278,6 +306,8 @@ struct Live {
     random_battle: Option<saito_match::RandomRank>,
     /// EXE4 / EXE5 Dark Soul AI (Auto Battle Data) rule mode.
     abd_mode: saito_match::AbdMode,
+    /// EXE5 / EXE6 per-effect ChargeShot Addition probability fix bitmask.
+    cs_prob_fix: saito_match::CsProbFix,
     bars: i32,
     ping: i32,
     note: Option<LobbyNote>,
@@ -351,6 +381,8 @@ pub struct Play {
     stage_config: stage::StageConfig,
     stage_loaded: bool,
     stage_dialog: bool,
+    /// Per-effect ChargeShot Addition probability fix dialog state (EXE5 / EXE6).
+    cs_prob_dialog: bool,
     /// Local replay file currently being recorded for the active online set, plus its final outcome once finished.
     recorded_replay: Option<(std::path::PathBuf, Option<crate::replays::feed::UploadOutcome>)>,
 }
@@ -397,6 +429,7 @@ impl Default for Play {
             stage_config: stage::StageConfig::default(),
             stage_loaded: false,
             stage_dialog: false,
+            cs_prob_dialog: false,
             recorded_replay: None,
         }
     }
@@ -647,6 +680,11 @@ impl Play {
             shell.nav.close("stage.");
             shell.ui().global::<PlayView>().set_stage_dialog(false);
         }
+        if self.cs_prob_dialog {
+            self.cs_prob_dialog = false;
+            shell.nav.close("cs-prob.");
+            shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        }
         self.close_rules(shell);
         shell.stay_awake = false;
         self.set_peek(shell, false);
@@ -783,6 +821,14 @@ impl Play {
                 .filter(|m| m.allowed_for(game))
                 .unwrap_or(saito_match::AbdMode::Original);
         }
+        if saito_match::cs_prob_fix::supported(game) {
+            let key = remembered_cs_prob_fix(game);
+            settings.cs_prob_fix = remembered(&key)
+                .and_then(|r| r.parse::<u16>().ok())
+                .map(saito_match::CsProbFix::from_bits)
+                .map(|f| f.clamp_for(game))
+                .unwrap_or(saito_match::CsProbFix::NONE);
+        }
         Some(settings)
     }
 
@@ -799,6 +845,9 @@ impl Play {
         }
         if saito_match::abd_mode::supported(&settings.game) {
             remembered.insert(remembered_abd_mode(&settings.game), settings.abd_mode.as_u8().to_string());
+        }
+        if saito_match::cs_prob_fix::supported(&settings.game) {
+            remembered.insert(remembered_cs_prob_fix(&settings.game), settings.cs_prob_fix.bits().to_string());
         }
         shell.save_settings();
     }
@@ -850,6 +899,11 @@ impl Play {
             shell.nav.close("stage.");
             shell.ui().global::<PlayView>().set_stage_dialog(false);
         }
+        if self.cs_prob_dialog {
+            self.cs_prob_dialog = false;
+            shell.nav.close("cs-prob.");
+            shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        }
         let presentation = Some(self.stage_config.build_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to()));
         let (me, other) = (agreed.side, 1 - agreed.side);
         let ui = shell.ui();
@@ -891,6 +945,11 @@ impl Play {
             self.stage_dialog = false;
             shell.nav.close("stage.");
             shell.ui().global::<PlayView>().set_stage_dialog(false);
+        }
+        if self.cs_prob_dialog {
+            self.cs_prob_dialog = false;
+            shell.nav.close("cs-prob.");
+            shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
         }
         self.close_rules(shell);
         self.agreed = Some(agreed);
@@ -1075,6 +1134,72 @@ impl Play {
                 s.abd_mode = current.next_for(&s.game);
             }
         });
+    }
+
+    fn set_cs_prob_fix(&mut self, shell: &mut Shell, fix: saito_match::CsProbFix) {
+        if !self.is_host() {
+            return;
+        }
+        self.change_settings(shell, |s| {
+            if saito_match::cs_prob_fix::supported(&s.game) {
+                s.cs_prob_fix = fix.clamp_for(&s.game);
+            }
+        });
+        shell.sound.play(Cue::Pick);
+        self.show_cs_prob(shell);
+    }
+
+    fn toggle_cs_prob_item(&mut self, shell: &mut Shell, index: i32) {
+        if !self.is_host() {
+            return;
+        }
+        let Some(game) = self.match_settings().map(|s| s.game) else { return };
+        let Some(entry) = saito_match::cs_prob_fix::effects(&game).get(index.max(0) as usize) else { return };
+        let next = self.live.cs_prob_fix.toggled(entry.bit);
+        self.set_cs_prob_fix(shell, next);
+    }
+
+    fn show_cs_prob(&mut self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_cs_prob_dialog(self.cs_prob_dialog);
+        let (game, fix) = match self.match_settings() {
+            Some(s) => (s.game, s.cs_prob_fix),
+            None => return,
+        };
+        let total = saito_match::cs_prob_fix::effects(&game).len() as i32;
+        view.set_cs_prob_supported(total > 0);
+        view.set_cs_prob_count(fix.count(&game) as i32);
+        view.set_cs_prob_total(total);
+        if self.cs_prob_dialog {
+            view.set_cs_prob_items(cs_prob_items(shell, &game, fix));
+        }
+    }
+
+    fn open_cs_prob_dialog(&mut self, shell: &mut Shell) {
+        let Some(game) = self.match_settings().map(|s| s.game) else { return };
+        if !saito_match::cs_prob_fix::supported(&game) {
+            return;
+        }
+        if matches!(self.stage, Stage::Waiting) && practice::running(shell) {
+            practice::stop(shell);
+        }
+        self.cs_prob_dialog = true;
+        let focus = if self.is_host() { Key::new("cs-prob.list.item", 0) } else { Key::new("cs-prob.close", 0) };
+        shell.nav.open("cs-prob.", focus);
+        self.show_cs_prob(shell);
+    }
+
+    fn close_cs_prob_dialog(&mut self, shell: &mut Shell) {
+        if !self.cs_prob_dialog {
+            return;
+        }
+        self.cs_prob_dialog = false;
+        shell.nav.close("cs-prob.");
+        shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        if matches!(self.stage, Stage::Waiting) && !shell.scale.handheld() {
+            self.train(shell);
+        }
     }
 
     /// The Custom timer stepped `by`: through the match's time limits, then none (∞), and around.
@@ -1263,6 +1388,7 @@ impl Play {
             custom_time: settings.custom_screen_time,
             random_battle: settings.random_battle,
             abd_mode: settings.abd_mode,
+            cs_prob_fix: settings.cs_prob_fix,
             bars: if reconnecting.is_some() { 0 } else { steady.map_or(ping.map_or(0, |p| p.quality().bars() as i32), |s| s.0) },
             ping: if reconnecting.is_some() { -1 } else { steady.map_or(ping.map_or(-1, |p| p.ms.round() as i32), |s| s.1) },
             // (A build the settings can't play: the lobby's own check, typed; while the host waits, the same check
@@ -1327,6 +1453,14 @@ impl Play {
         view.set_random_rank(live.random_battle.map_or(0, |r| r.as_u8() as i32));
         view.set_abd_supported(saito_match::abd_mode::supported(&settings.game));
         view.set_abd_mode(live.abd_mode.as_u8() as i32);
+        let cs_total = saito_match::cs_prob_fix::effects(&settings.game).len() as i32;
+        view.set_cs_prob_supported(cs_total > 0);
+        view.set_cs_prob_count(live.cs_prob_fix.count(&settings.game) as i32);
+        view.set_cs_prob_total(cs_total);
+        let cs_prob_changed = live.cs_prob_fix != self.live.cs_prob_fix;
+        if self.cs_prob_dialog && cs_prob_changed {
+            view.set_cs_prob_items(cs_prob_items(shell, &settings.game, live.cs_prob_fix));
+        }
         view.set_bars(live.bars);
         view.set_ping(live.ping);
         view.set_note(live.note.unwrap_or(LobbyNote::None));
@@ -2079,8 +2213,9 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("stage.") => self.stage_dialog,
+            _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
             _ if id.starts_with("watch.") => matches!(self.stage, Stage::Spectating),
             _ if id.starts_with("name.") => self.naming.is_some(),
@@ -2243,6 +2378,15 @@ impl Screen for Play {
             "lobby.stage" => self.open_stage_dialog(shell),
             "lobby.random-battle" => self.cycle_random_battle(shell),
             "lobby.abd-mode" => self.cycle_abd_mode(shell),
+            "lobby.cs-prob" => self.open_cs_prob_dialog(shell),
+            "cs-prob.none" => self.set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
+            "cs-prob.all" => {
+                if let Some(game) = self.match_settings().map(|s| s.game) {
+                    self.set_cs_prob_fix(shell, saito_match::CsProbFix::all(&game));
+                }
+            }
+            "cs-prob.list.item" => self.toggle_cs_prob_item(shell, index),
+            "cs-prob.close" => self.close_cs_prob_dialog(shell),
             "stage.mode-0" => self.set_stage_mode(shell, stage::StageMode::Default),
             "stage.mode-1" => self.set_stage_mode(shell, stage::StageMode::Random),
             "stage.mode-2" => self.set_stage_mode(shell, stage::StageMode::Escalating),
@@ -2572,6 +2716,8 @@ impl Screen for Play {
             self.open_watch_menu(shell, MatchPage::Menu);
         } else if self.stage_dialog {
             self.close_stage_dialog(shell);
+        } else if self.cs_prob_dialog {
+            self.close_cs_prob_dialog(shell);
         } else if self.changing {
             self.close_change(shell);
         } else if matches!(self.stage, Stage::Lobby) {

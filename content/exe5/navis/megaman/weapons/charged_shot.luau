@@ -57,8 +57,24 @@ function exe5.setup(navi: Object): Action
     return charged_shot.action
 end
 
+-- Per-effect bitmask matching `saito_match::cs_prob_fix::EXE5`.
+local CS_PROB_FIX_BITS: { [ProjectileVariant]: number } = {
+    [variants.breaking] = 0x0001,
+    [variants.charged_attack_a0] = 0x0002,
+    [variants.charged_blinding] = 0x0004,
+    [variants.charged_confusing] = 0x0008,
+    [variants.charged_hp_bug] = 0x0010,
+    [variants.charged_lava] = 0x0020,
+    [variants.charged_panel_breaking] = 0x0040,
+    [variants.charged_paralyzing] = 0x0080,
+    [variants.charged_poisoning] = 0x0100,
+    [variants.charged_uninstalling] = 0x0200,
+    [variants.chip_destruction] = 0x0400,
+}
+
 -- 0x0800FDD0: the patch cards' ChrgS (B↓ChrgS), the charged shot without the draw: (Attack + 1) * 10 damage, always
 -- the shot the navi's charged-shot program names (NaviStats +0x4F; the charged shot, row 6, when 0).
+-- When the host enables the probability fix for the active `charge_shot_kind`, it draws at 1/2 like `exe5.setup`.
 function exe5.program_setup(navi: Object): Action
     local stats = battle.navi(navi.alliance)
     navi.attack_damage = (stats.attack + 1) * 10
@@ -70,7 +86,14 @@ function exe5.program_setup(navi: Object): Action
     local s = navi:action_state(charged_shot.action) :: { projectile: ProjectileVariant? }
     -- (The program's 0 is the projectile table's first row, the plain shot: none, here.)
     local program = stats.charge_shot_kind
-    s.projectile = if program == nil or program == variants.plain then variants.charged else program
+    local shot = if program == nil or program == variants.plain then variants.charged else program
+    local bit = if program then CS_PROB_FIX_BITS[program] else nil
+    if bit and bit32.btest(battle.cs_prob_fix(), bit) then
+        if bit32.band(battle.rng_positive(), 0x10) == 0 then
+            shot = variants.charged
+        end
+    end
+    s.projectile = shot
     return charged_shot.action
 end
 

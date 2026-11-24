@@ -1564,7 +1564,9 @@ impl App {
         } else if let Some(cancel) = self.shell.dialog.as_ref().map(|d| d.cancel) {
             self.answer(cancel);
         } else if self.shell.battle.as_ref().is_some_and(Battle::menu_open) {
-            self.shell.close_menu();
+            if !crate::screens::practice::close_cs_prob_dialog(&mut self.shell) {
+                self.shell.close_menu();
+            }
         } else {
             let shown = self.shell.screen;
             let within = self.call(shown, |s, shell| s.back(shell)).unwrap_or(false);

@@ -1155,6 +1155,7 @@ impl Round {
             // (A console's battle: it pauses itself, and L is its run key.)
             host_keys: saito_battle::setup::HostKeys::NONE,
             custom_screen_limit: None,
+            cs_prob_fix: 0,
             players: [p0?, p1?],
         })
     }

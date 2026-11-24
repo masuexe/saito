@@ -21,6 +21,7 @@ import { MenuOverlay } from "battle.slint";
 import { SettingsView, BindBox } from "settings.slint";
 import { Arrive, Tween, Pulse, Flash, Count } from "../motion.slint";
 import { VersionTag, BuildEntry, BuildSheet, BuildRow, BuildOverview, RulesetNote } from "../build.slint";
+import { CsProbDialog, CsProbEntry } from "../cs_prob.slint";
 
 // The part of Play shown.
 export enum PlayPart {
@@ -202,6 +203,12 @@ export global PlayView {
     // EXE4 / EXE5 Dark Soul AI (ABD) mode (0 = Original, 1 = Legacy Collection, 2 = DS).
     in property <bool> abd-supported: false;
     in property <int> abd-mode: 0;
+    // EXE5 / EXE6 per-effect ChargeShot Addition probability fix settings and dialog state.
+    in property <bool> cs-prob-supported: false;
+    in property <int> cs-prob-count: 0;
+    in property <int> cs-prob-total: 0;
+    in property <bool> cs-prob-dialog: false;
+    in property <[CsProbEntry]> cs-prob-items;
 
     // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
     // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
@@ -1196,23 +1203,28 @@ component LobbyBody inherits Rectangle {
             big: Theme.sideways;
         }
 
-        // Client-local Stage & BGM mode + EXE6 Random Battle / EXE4-5 Dark Soul AI + host spectator controls.
+        // Client-local Stage & BGM mode + EXE6 Random Battle / EXE4-5 Dark Soul AI / EXE5-6 CS Prob Fix + host spectator controls.
         pills := Rectangle {
             property <bool> show-spec: PlayView.host && !PlayView.invite-direct;
             property <bool> show-random: PlayView.random-supported;
             property <bool> show-abd: PlayView.abd-supported;
+            property <bool> show-cs-prob: PlayView.cs-prob-supported;
             property <length> gap: Theme.sideways ? 6px : 10px;
             property <length> row-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
                 + (self.show-abd ? self.gap + abd-btn.width : 0px)
+                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
                 + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
             property <length> top-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
-                + (self.show-abd ? self.gap + abd-btn.width : 0px);
-            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd) && self.top-w > self.width;
+                + (self.show-abd ? self.gap + abd-btn.width : 0px)
+                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px);
+            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd || self.show-cs-prob) && self.top-w > self.width;
             property <length> extra-w: (self.show-random ? random-btn.width : 0px)
                 + (self.show-random && self.show-abd ? self.gap : 0px)
-                + (self.show-abd ? abd-btn.width : 0px);
+                + (self.show-abd ? abd-btn.width : 0px)
+                + ((self.show-random || self.show-abd) && self.show-cs-prob ? self.gap : 0px)
+                + (self.show-cs-prob ? cs-prob-btn.width : 0px);
             property <length> spec-row-y: self.wrap-top ? 80px : 40px;
             property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
             x: Theme.sideways ? (connection.width + 14px) : 0px;
@@ -1243,7 +1255,7 @@ component LobbyBody inherits Rectangle {
             }
 
             abd-btn := Button {
-                x: parent.wrap-top ? (parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - self.width) / 2) : (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                x: parent.wrap-top ? (parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2) : (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: parent.wrap-top ? 40px : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;
@@ -1254,8 +1266,26 @@ component LobbyBody inherits Rectangle {
                 text: @tr("Dark Soul AI: {}", PlayView.abd-mode == 1 ? @tr("Legacy Collection") : PlayView.abd-mode == 2 ? @tr("DS") : @tr("Original"));
             }
 
+            cs-prob-btn := Button {
+                x: parent.wrap-top
+                    ? (parent.show-abd ? abd-btn.x + abd-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
+                    : (parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                y: parent.wrap-top ? 40px : 0px;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-cs-prob;
+                enabled: parent.show-cs-prob;
+                nav: parent.show-cs-prob ? "lobby.cs-prob" : "";
+                kind: PlayView.cs-prob-count > 0 ? ButtonKind.normal : ButtonKind.ghost;
+                text: PlayView.cs-prob-count == 0
+                    ? @tr("CS Prob Fix: Original")
+                    : PlayView.cs-prob-count >= PlayView.cs-prob-total
+                        ? @tr("CS Prob Fix: All Fixed")
+                        : @tr("CS Prob Fix: Custom ({}/{})", PlayView.cs-prob-count, PlayView.cs-prob-total);
+            }
+
             spec-vis := Button {
-                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: Theme.phone ? parent.spec-row-y : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;
@@ -3074,6 +3104,13 @@ export component PlayOverlay inherits Rectangle {
             text: I18n.upper(@tr("Done"));
             kind: ButtonKind.main;
         }
+    }
+
+    // Per-effect ChargeShot Addition probability fix configuration dialog (EXE5 / EXE6).
+    if PlayView.cs-prob-dialog: CsProbDialog {
+        items: PlayView.cs-prob-items;
+        editable: PlayView.host;
+        nav-prefix: "cs-prob.";
     }
 
     // Another build for the lobby: the player's builds of the game.

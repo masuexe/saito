@@ -406,3 +406,30 @@ msgstr "対戦中…"
 
 msgid "{} is not installed."
 msgstr "{} がインストールされていません。"
+
+msgid "CS Prob Fix"
+msgstr "CS確率修正"
+
+msgid "Choose which ChargeShot Addition effects use normal random chance (50% / 12.5%) instead of 100% with B-PowerAttack ChargeShot."
+msgstr "ⒷためチャージS使用時に本来の確率（50% / 12.5%）へ修正するCS追加効果を選択します。未選択は原作通り100%です。"
+
+msgid "Host's ChargeShot Addition probability fix settings (read-only)."
+msgstr "ホストのCS追加効果確率修正設定（閲覧のみ）。"
+
+msgid "All Original (100%)"
+msgstr "すべて原作通り (100%)"
+
+msgid "All Fixed"
+msgstr "すべて修正"
+
+msgid "CS Prob Fix: Original"
+msgstr "CS確率修正：原作"
+
+msgid "CS Prob Fix: All Fixed"
+msgstr "CS確率修正：すべて修正"
+
+msgid "CS Prob Fix: Custom ({}/{})"
+msgstr "CS確率修正：カスタム ({}/{})"
+
+msgid "Custom ({}/{})"
+msgstr "カスタム ({}/{})"

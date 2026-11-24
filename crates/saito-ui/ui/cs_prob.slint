@@ -1,0 +1,166 @@
+// Per-effect ChargeShot Addition probability fix dialog, shared by the Lobby and Practice menu.
+
+import { Theme, I18n } from "theme.slint";
+import { Focusable, Nav, NavKind } from "nav.slint";
+import { DialogFrame } from "shell.slint";
+import { Button, ButtonKind, Note, ScrollPage } from "widgets.slint";
+
+export struct CsProbEntry {
+    name: string,
+    prob: string,
+    fixed: bool,
+}
+
+export component CsProbDialog inherits DialogFrame {
+    in property <[CsProbEntry]> items;
+    in property <bool> editable: true;
+    in property <string> nav-prefix: "cs-prob.";
+    property <int> cols: Theme.phone ? 1 : 2;
+    property <int> rows: self.items.length > 0 ? Math.ceil(self.items.length / self.cols) : 0;
+    property <length> desc-h: Theme.phone ? 44px : 32px;
+    property <length> quick-y: self.desc-h + 8px;
+    property <length> quick-h: self.editable ? (Theme.sideways ? 30px : 34px) : 0px;
+    property <length> list-y: self.editable ? self.quick-y + self.quick-h + 10px : self.desc-h + 10px;
+    property <length> row-h: Theme.sideways ? 34px : 38px;
+    property <length> row-gap: 6px;
+    property <length> row-pitch: self.row-h + self.row-gap;
+    property <length> list-h: Theme.sideways ? 148px : Theme.phone ? 260px : 290px;
+    property <length> footer-y: self.list-y + self.list-h + 12px;
+    title: @tr("CS Prob Fix");
+    wide: true;
+    panel-width: 560px;
+    content-height: self.footer-y + 40px;
+
+    Note {
+        x: 0;
+        y: 0;
+        width: root.inner-width;
+        height: root.desc-h;
+        text: root.editable
+            ? @tr("Choose which ChargeShot Addition effects use normal random chance (50% / 12.5%) instead of 100% with B-PowerAttack ChargeShot.")
+            : @tr("Host's ChargeShot Addition probability fix settings (read-only).");
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+
+    if root.editable: Button {
+        x: 0;
+        y: root.quick-y;
+        width: (root.inner-width - 8px) / 2;
+        height: root.quick-h;
+        compact: true;
+        nav: root.nav-prefix + "none";
+        kind: ButtonKind.ghost;
+        text: @tr("All Original (100%)");
+    }
+
+    if root.editable: Button {
+        x: (root.inner-width - 8px) / 2 + 8px;
+        y: root.quick-y;
+        width: (root.inner-width - 8px) / 2;
+        height: root.quick-h;
+        compact: true;
+        nav: root.nav-prefix + "all";
+        kind: ButtonKind.ghost;
+        text: @tr("All Fixed");
+    }
+
+    scroll := ScrollPage {
+        x: 0;
+        y: root.list-y;
+        width: root.inner-width;
+        height: root.list-h;
+        nav: root.nav-prefix + "list.";
+        content-height: max(0px, root.rows * root.row-pitch - root.row-gap);
+        for item[i] in root.items: Focusable {
+            property <int> item-col: Math.mod(i, root.cols);
+            property <int> item-row: Math.floor(i / root.cols);
+            property <length> col-gap: 8px;
+            property <length> cell-w: root.cols == 1 ? scroll.view-width : (scroll.view-width - self.col-gap) / 2;
+            property <bool> hot: self.focused || touch.has-hover;
+            x: self.item-col * (self.cell-w + self.col-gap);
+            y: self.item-row * root.row-pitch;
+            width: self.cell-w;
+            height: root.row-h;
+            nav: root.editable ? (root.nav-prefix + "list.item") : "";
+            nav-index: i;
+            kind: NavKind.button;
+
+            Rectangle {
+                background: item.fixed ? Theme.tint : parent.hot && root.editable ? Theme.raised-hover : Theme.inset;
+                border-width: 1px;
+                border-color: item.fixed ? Theme.cursor : parent.hot && root.editable ? Theme.cursor : Theme.line;
+            }
+
+            // Checkbox indicator
+            Rectangle {
+                x: 10px;
+                y: (parent.height - 16px) / 2;
+                width: 16px;
+                height: 16px;
+                background: item.fixed ? Theme.cursor : transparent;
+                border-width: 1px;
+                border-color: item.fixed ? Theme.cursor : Theme.muted;
+
+                Text {
+                    visible: item.fixed;
+                    width: parent.width;
+                    height: parent.height;
+                    text: "✓";
+                    color: Theme.action-ink;
+                    font-family: Theme.body;
+                    font-size: 11px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Effect name
+            Text {
+                x: 34px;
+                y: 0;
+                width: parent.width - 34px - 56px;
+                height: parent.height;
+                text: item.name;
+                color: item.fixed ? Theme.text : Theme.muted;
+                font-family: Theme.body;
+                font-size: 13px;
+                font-weight: item.fixed ? 600 : 400;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            // Active probability badge
+            Text {
+                x: parent.width - 54px;
+                y: 0;
+                width: 44px;
+                height: parent.height;
+                text: item.fixed ? item.prob : "100%";
+                color: item.fixed ? Theme.cursor : Theme.muted;
+                font-family: Theme.mono;
+                font-size: 12px;
+                font-weight: 600;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+
+            touch := TouchArea {
+                enabled: root.editable;
+                mouse-cursor: root.editable ? pointer : default;
+                clicked => {
+                    Nav.activate(root.nav-prefix + "list.item", i);
+                }
+            }
+        }
+    }
+
+    Button {
+        x: root.inner-width - self.width;
+        y: root.footer-y;
+        nav: root.nav-prefix + "close";
+        text: I18n.upper(@tr("Done"));
+        kind: ButtonKind.main;
+    }
+}

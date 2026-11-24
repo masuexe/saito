@@ -387,6 +387,7 @@ pub fn live_setup(content: &Content, settings: BattleSettings, folders: [SavedFo
         low_hp_music_latched: false,
         host_keys: saito_match::HOST_KEYS,
         custom_screen_limit: None,
+        cs_prob_fix: 0,
         players: [player(0), player(1)],
     }
 }

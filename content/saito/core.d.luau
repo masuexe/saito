@@ -1204,6 +1204,8 @@ declare battle: {
     boss_rank: () -> boolean,
     -- The battle's effects (its settings' word), whose bits a game's rules read by their own names.
     effects: () -> number,
+    -- Per-effect bitmask of ChargeShot Addition effects whose probability fix is enabled (0 = original).
+    cs_prob_fix: () -> number,
     mode: () -> number,
     panel_pattern: () -> number,
     -- Every navi is in (the intro's bit 2).

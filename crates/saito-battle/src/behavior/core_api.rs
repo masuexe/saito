@@ -486,6 +486,7 @@ impl CoreApi for Battle {
             BattleInfo::Link => Value::Bool(self.setup.settings.effects & crate::setup::effects::LINK != 0),
             BattleInfo::BossRank => Value::Bool(self.setup.settings.effects & crate::setup::effects::BOSS_RANK != 0),
             BattleInfo::Effects => Value::Int(self.setup.settings.effects as i64),
+            BattleInfo::CsProbFix => Value::Int(self.setup.cs_prob_fix as i64),
             BattleInfo::Mode => Value::Int(self.round.mode_copy as i64),
             BattleInfo::PanelPattern => Value::Int(self.content.stage(self.setup.settings.stage).panel_pattern as i64),
             BattleInfo::NavisIn => Value::Bool(self.round.intro_bits & 0x02 != 0),
