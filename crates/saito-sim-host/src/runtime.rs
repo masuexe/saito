@@ -283,7 +283,14 @@ mod native {
         let rom_mount = match roms {
             None => None,
             Some(RomSource::Collection(install)) => {
-                mounts.push((install.data.clone(), VFS_ROMS.to_string()));
+                if let Some(vol2) = install.vol2_dat()
+                    && let Some(vol2_dir) = vol2.parent()
+                {
+                    mounts.push((install.data.clone(), format!("{VFS_ROMS}/exe/data")));
+                    mounts.push((vol2_dir.to_path_buf(), format!("{VFS_ROMS}/launcher/data")));
+                } else {
+                    mounts.push((install.data.clone(), VFS_ROMS.to_string()));
+                }
                 Some(RomMount::Collection { dir: VFS_ROMS.to_string() })
             }
             Some(RomSource::Copies(dir)) => {

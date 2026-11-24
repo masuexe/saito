@@ -89,7 +89,7 @@ impl AutoBattle {
 
     /// A chip as a row of the folder shows it, without a code (a place holds a chip in none); `flagged`: the rules
     /// have something against the place.
-    fn cell(draft: &Draft, words: &crate::builds::words::Words, entry: Entry, flagged: bool) -> ChipCell {
+    fn cell(draft: &Draft, words: &crate::builds::words::Words, entry: Entry, flagged: bool, hd: bool) -> ChipCell {
         let Entry::Chip(chip) = entry else { return ChipCell { flagged, ..Default::default() } };
         let record = draft.content().chip(chip);
         ChipCell {
@@ -97,7 +97,7 @@ impl AutoBattle {
             icon: draft.kit.pictures.icon(chip),
             name: words.names.chip(chip).into(),
             kind: kind(record.class),
-            element: draft.kit.pictures.chip_element(chip),
+            element: draft.kit.pictures.chip_element(chip, hd),
             flagged,
             warn: draft.kit.auto_layout().is_some_and(|l| l.is_unrecordable(chip)),
             version: draft.kit.version_tag_of(words.names, Registry::Chip, &Item::of(chip.0)),
@@ -143,7 +143,7 @@ impl AutoBattle {
                     let (column, r) = ((k % columns) as i32, row + (k / columns) as i32);
                     self.at[place] = (column, r);
                     self.editable.push(place);
-                    let chip = AutoBattle::cell(draft, words, data.places[place], AutoBattle::problems(draft, place).next().is_some());
+                    let chip = AutoBattle::cell(draft, words, data.places[place], AutoBattle::problems(draft, place).next().is_some(), shell.settings.hd_chip_art);
                     lines.push(PlaceLine { chip, number: k as i32 + 1, place: place as i32, column, row: r, ..Default::default() });
                 }
                 row += list.len.div_ceil(columns) as i32;
@@ -260,7 +260,7 @@ impl AutoBattle {
                         warn,
                         megabytes: say.invoke_megabytes(record.mb as i32),
                         attack: if record.damage > 0 { record.damage.to_string().into() } else { Default::default() },
-                        element: draft.kit.pictures.chip_element(chip),
+                        element: draft.kit.pictures.chip_element(chip, shell.settings.hd_chip_art),
                         code: Default::default(),
                         version: draft.kit.version_tag_of(words.names, Registry::Chip, &Item::of(chip.0)),
                     }
@@ -329,7 +329,7 @@ impl AutoBattle {
                 name: words.names.chip(chip).into(),
                 kind: kind(record.class),
                 description: description.into(),
-                element: draft.kit.pictures.chip_element(chip),
+                element: draft.kit.pictures.chip_element(chip, shell.settings.hd_chip_art),
                 facts: ModelRc::new(VecModel::from(facts)),
                 problem: problem.into(),
                 fault: fault.into(),
@@ -455,7 +455,7 @@ impl AutoBattle {
             && self.ghost != Some(chip)
         {
             self.ghost = Some(chip);
-            let cell = draft.with_words(shell, |words| AutoBattle::cell(draft, words, Entry::Chip(chip), false));
+            let cell = draft.with_words(shell, |words| AutoBattle::cell(draft, words, Entry::Chip(chip), false, shell.settings.hd_chip_art));
             shell.ui().global::<AutoBattleView>().set_lifted(PlaceLine { chip: cell, place: -1, ..Default::default() });
         }
         let to = editor::nearest(shell, "places.place", self.editable.iter().copied(), editor::pointer_at(at), Some("places."));

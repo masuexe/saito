@@ -13,7 +13,7 @@ pub mod lettering;
 pub mod shapes;
 pub use lettering::{BASE_LANGUAGE, ButtonLettering, CustomLettering, HudLettering};
 pub use custom::{
-    ButtonPictures, ButtonPlace, ButtonSets, ChipArt, CursorPlace, CustomLayout, CustomScreen, ElementSprite, Emblem, HdChipArtIndex, MapPatch, PatchList, Picture,
+    ButtonPictures, ButtonPlace, ButtonSets, ChipArt, CursorPlace, CustomLayout, CustomScreen, ElementSprite, Emblem, HdChipArtIndex, HdCrossArt, HdCrossSheet, MapPatch, PatchList, Picture,
     SlotPictures, VersionPictures, WindowEmblem, WindowLabel,
 };
 

@@ -25,7 +25,7 @@ use saito_ui::{BuildSheet, ChipCell, ChipMark, SheetForm, SheetList, SheetProgra
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 /// A folder's entry `entry` as a row shows it; `flagged`: the folder's rules have something against it.
-pub fn chip_cell(kit: &Kit, names: &Names, folder: &Folder, entry: usize, flagged: bool) -> ChipCell {
+pub fn chip_cell(kit: &Kit, names: &Names, folder: &Folder, entry: usize, flagged: bool, hd: bool) -> ChipCell {
     let Some(chip) = folder.chips.get(entry).copied().flatten() else { return ChipCell { flagged, ..Default::default() } };
     let record = kit.content().chip(chip.id);
     ChipCell {
@@ -39,7 +39,7 @@ pub fn chip_cell(kit: &Kit, names: &Names, folder: &Folder, entry: usize, flagge
             Some(build::Mark::Tag2) => ChipMark::Tag2,
             None => ChipMark::None,
         },
-        element: kit.pictures.chip_element(chip.id),
+        element: kit.pictures.chip_element(chip.id, hd),
         code: chip.code.letter().to_string().into(),
         flagged,
         // (The editor marks a version's own chips: the overview doesn't.)
@@ -115,14 +115,15 @@ pub fn sheet_for(shell: &Shell, kit: &Kit, label: &str, name: &str, side: &Side,
     let graphics = kit.ready.graphics(shell.i18n.code);
     let names = Names::of(kit.content(), &graphics);
     let words = Words { ui: &ui, kit, names: &names, i18n: &shell.i18n };
+    let hd = shell.settings.hd_chip_art;
     if let Some(rank) = random_rank {
-        return sheet_random(&words, label, name, side, rank);
+        return sheet_random(&words, label, name, side, rank, hd);
     }
     let mut checked = Checked::of(kit.content(), &kit.game, side);
-    sheet_of(&words, label, name, side, &mut checked)
+    sheet_of(&words, label, name, side, &mut checked, hd)
 }
 
-fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito_match::RandomRank) -> BuildSheet {
+fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito_match::RandomRank, hd: bool) -> BuildSheet {
     let (kit, names) = (words.kit, words.names);
     let content = kit.content();
     let navi = side.navi(content);
@@ -154,7 +155,7 @@ fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito
         .filter_map(|key| saito_match::ids::entry(content, "exe6", "navicust", key))
         .map(|entry| names.entry(entry))
         .collect();
-    let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false)).collect();
+    let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false, hd)).collect();
     BuildSheet {
         label: label.into(),
         name: name.into(),
@@ -177,7 +178,7 @@ fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito
 }
 
 /// [`sheet`], of a build already checked.
-pub fn sheet_of(words: &Words, label: &str, name: &str, side: &Side, checked: &mut Checked) -> BuildSheet {
+pub fn sheet_of(words: &Words, label: &str, name: &str, side: &Side, checked: &mut Checked, hd: bool) -> BuildSheet {
     let (kit, names) = (words.kit, words.names);
     let content = kit.content();
     let navi = side.navi(content);
@@ -243,7 +244,7 @@ pub fn sheet_of(words: &Words, label: &str, name: &str, side: &Side, checked: &m
         None => Vec::new(),
     };
     let face = checked.face().map(|f| kit.pictures.shown(&f)).unwrap_or_else(|| kit.pictures.navi(navi));
-    let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false)).collect();
+    let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false, hd)).collect();
     let one_line = |(name, extent): &(String, String)| if extent.is_empty() { name.clone() } else { format!("{name} {extent}") };
     BuildSheet {
         label: label.into(),

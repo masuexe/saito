@@ -124,10 +124,20 @@ pub struct Extraction {
 }
 
 impl Extraction {
-    /// Index official Legacy Collection Vol. 2 HD chip artwork from `roms`'s `vol2.dat` if available.
+    /// Index official Legacy Collection Vol. 2 HD chip artwork from `roms`'s `vol2.dat` (or an
+    /// optional fallback `vol2.dat` path such as a stowed compacted copy) if available.
     pub fn attach_hd_chip_art(&mut self, roms: &RomSource) {
-        if let Some(vol2) = roms.vol2_dat() {
+        self.attach_hd_chip_art_with_fallback(roms, None);
+    }
+
+    /// Like [`Extraction::attach_hd_chip_art`], falling back to `fallback` if `roms` has no `vol2.dat`.
+    pub fn attach_hd_chip_art_with_fallback(&mut self, roms: &RomSource, fallback: Option<&std::path::Path>) {
+        let vol2 = roms.vol2_dat().or_else(|| fallback.filter(|p| saito_files::is_file(p)).map(std::path::Path::to_path_buf));
+        if let Some(vol2) = vol2 {
             self.graphics.custom.hd_chip_art = hd_art::index_from_vol2(&vol2, &self.game, &self.names.chips);
+        }
+        if self.game == "exe6" {
+            self.graphics.custom.hd_cross_art = hd_art::extract_cross_art(roms);
         }
     }
 }

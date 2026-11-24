@@ -22,6 +22,7 @@ pub struct Pictures {
     art: RefCell<HashMap<ChipHandle, slint::Image>>,
     hd_art: Cell<bool>,
     elements: RefCell<HashMap<ChipFamily, slint::Image>>,
+    hd_elements: Cell<bool>,
     faces: RefCell<HashMap<FormHandle, slint::Image>>,
     navis: RefCell<HashMap<NaviHandle, slint::Image>>,
     shown: RefCell<HashMap<Face, slint::Image>>,
@@ -56,6 +57,7 @@ impl Pictures {
             art: Default::default(),
             hd_art: Cell::new(false),
             elements: Default::default(),
+            hd_elements: Cell::new(false),
             faces: Default::default(),
             navis: Default::default(),
             shown: Default::default(),
@@ -82,25 +84,32 @@ impl Pictures {
 
     /// A chip's element icon: its family's, as the game's chip window shows it. A Program Advance has no element: an
     /// empty image.
-    pub fn chip_element(&self, chip: ChipHandle) -> slint::Image {
+    pub fn chip_element(&self, chip: ChipHandle, hd: bool) -> slint::Image {
         let record = self.ready.content().chip(chip);
         if record.class == ChipClass::ProgramAdvance {
             return slint::Image::default();
         }
-        self.element(record.family)
+        self.element(record.family, hd)
     }
 
-    /// A chip family's 16x16 element icon, as the game's chip window shows it: its frame smooth at any size, drawn
-    /// from the game's drawing of it, with the symbol over it as its pixels (`pictures::element_icon_svg`; the user:
-    /// "you should draw the element icons in the ui with the smooth frame as well"); the picture where the game's
-    /// graphics have no drawing of the frame.
-    pub fn element(&self, family: ChipFamily) -> slint::Image {
+    /// A chip family's element icon: Legacy Collection HD (108×108) when `hd` is true and available,
+    /// else its frame smooth at any size drawn from the game's drawing (`pictures::element_icon_svg`),
+    /// falling back to the 16×16 pixel picture.
+    pub fn element(&self, family: ChipFamily, hd: bool) -> slint::Image {
+        if self.hd_elements.get() != hd {
+            self.elements.borrow_mut().clear();
+            self.hd_elements.set(hd);
+        }
         if let Some(i) = self.elements.borrow().get(&family) {
             return i.clone();
         }
         let graphics = self.graphics.view();
-        let svg = pictures::element_icon_svg(&graphics, family).and_then(|s| slint::Image::load_from_svg_data(s.as_bytes()).ok());
-        let i = svg.unwrap_or_else(|| image(pictures::element_icon(&graphics, family)));
+        let i = if let Some(hd_img) = pictures::hd_element_icon(&graphics, family, hd) {
+            image(Some(hd_img))
+        } else {
+            let svg = pictures::element_icon_svg(&graphics, family).and_then(|s| slint::Image::load_from_svg_data(s.as_bytes()).ok());
+            svg.unwrap_or_else(|| image(pictures::element_icon(&graphics, family)))
+        };
         self.elements.borrow_mut().insert(family, i.clone());
         i
     }

@@ -42,6 +42,8 @@ export global SettingsView {
     in property <bool> smooth-motion;
     in property <bool> fill-window;
     in property <bool> hd-chip-art;
+    in property <bool> has-hd-art;
+    in property <bool> importing-hd-art;
     in property <int> music;
     in property <int> effects;
     in property <int> input-delay;
@@ -531,7 +533,7 @@ component SettingsPage inherits Page {
                     height: hd-art-row.height;
                     hd-art-row := SettingLabel {
                         label: @tr("HD chip art");
-                        note: @tr("Use Legacy Collection high-resolution chip artwork when available.");
+                        note: @tr("Use Legacy Collection high-resolution chip artwork and element icons when available.");
                         control-x: root.control-x;
                         control-width: root.control-width;
                     }
@@ -543,6 +545,24 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.hd-chip-art ? 1 : 0;
+                    }
+                }
+
+                if !SettingsView.has-hd-art: Rectangle {
+                    height: hd-art-import-row.height;
+                    hd-art-import-row := SettingLabel {
+                        label: @tr("HD art archive");
+                        note: @tr("Select launcher/data/vol2.dat from Battle Network Legacy Collection Vol. 2.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.hd-chip-art-import";
+                        enabled: !SettingsView.importing-hd-art;
+                        text: I18n.upper(SettingsView.importing-hd-art ? @tr("Importing…") : @tr("Choose file"));
                     }
                 }
 

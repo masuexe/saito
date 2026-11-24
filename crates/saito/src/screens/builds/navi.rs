@@ -322,7 +322,7 @@ impl Tab for Navi {
         view.set_ruleset(ruleset.into());
         view.set_ruleset_missing(missing);
         view.set_face(face);
-        view.set_element(kit.pictures.element(family(&content, content.navi(chosen).element)));
+        view.set_element(kit.pictures.element(family(&content, content.navi(chosen).element), shell.settings.hd_chip_art));
         // (The focus starts on the build's navi's card: in the grid, or on a phone the one that opens its sheet.)
         let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "base-hp", "base-hp-step", "tab", "ruleset", "ruleset-edit", "practice"];
         if shell.nav.focused().is_none_or(|k| (!known.contains(&k.id.as_str()) && !k.id.starts_with(SHEET)) || (!phone && k.id == "navi-pick")) {

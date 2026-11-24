@@ -627,7 +627,7 @@ impl Party {
             _ => None,
         };
         let facts = navi.and_then(|n| self.navi_facts(draft, n));
-        let element = navi.map(|n| kit.pictures.element(super::navi::family(&content, content.navi(n).element)));
+        let element = navi.map(|n| kit.pictures.element(super::navi::family(&content, content.navi(n).element), shell.settings.hd_chip_art));
         let library_navi = matches!(described, Some(Described::Row(_)));
         let refusal = navi.filter(|_| library_navi).and_then(|n| self.navi_refusal(shell, draft, n));
         let detail = draft.with_words(shell, |words| {

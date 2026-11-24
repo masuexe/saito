@@ -53,12 +53,31 @@ pub struct Emblem {
 }
 
 /// On-demand index into Battle Network Legacy Collection Vol. 2's `launcher/data/vol2.dat`
-/// for official high-resolution (512×432 cropped) chip artwork, keyed by local chip key.
+/// for official high-resolution (512×432 cropped) chip artwork and (108×108) element icons.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HdChipArtIndex {
     pub archive: std::path::PathBuf,
     /// Local chip key -> `(byte offset, byte length)` of the PNG entry inside `archive`.
     pub entries: std::collections::BTreeMap<String, (u64, u32)>,
+    /// Chip family id (`ChipFamily.0`) -> `(byte offset, byte length)` of a representative
+    /// 512×551 PNG entry in `archive` whose bottom bar holds that family's 108×108 HD element icon.
+    pub elements: std::collections::BTreeMap<u8, (u64, u32)>,
+}
+
+/// Pre-extracted EXE6 Legacy Collection HD Cross-selection bars (288×64 RGBA8 each) for one
+/// `(version, lang)` sheet (`exe6/data/ui/cross_*.pak` or `exe6f/data/ui/cross_*.pak`).
+/// Indexed as `state * 5 + number` where `state` is `0` = selected, `1` = marked/used, `2` = unselected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HdCrossSheet {
+    pub bars: std::sync::Arc<[Vec<u8>; 15]>,
+}
+
+/// EXE6 Legacy Collection HD Cross-selection bars indexed by `(version, lang)`, with the active
+/// UI language updated by `Bundle::for_language`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HdCrossArt {
+    pub sheets: std::collections::BTreeMap<(String, String), HdCrossSheet>,
+    pub lang: String,
 }
 
 /// A chip's picture, under its chip's key.
@@ -347,6 +366,8 @@ pub struct CustomScreen {
     pub chip_art: Vec<ChipArt>,
     /// Optional on-demand index into Legacy Collection Vol. 2's `vol2.dat` for official HD chip art.
     pub hd_chip_art: Option<HdChipArtIndex>,
+    /// Optional EXE6 Legacy Collection HD Cross-selection bars (`cross_*.pak`).
+    pub hd_cross_art: Option<HdCrossArt>,
     pub pictures: SlotPictures,
     /// Chip codes as 8x16 glyphs (A..Z, '*', then one no chip has).
     pub codes: Tiles,

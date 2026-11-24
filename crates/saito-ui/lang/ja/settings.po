@@ -102,8 +102,20 @@ msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せま
 msgid "HD chip art"
 msgstr "高解像度チップ画像"
 
-msgid "Use Legacy Collection high-resolution chip artwork when available."
-msgstr "利用可能な場合、アドバンスドコレクションの高解像度チップ画像を使用します。"
+msgid "Use Legacy Collection high-resolution chip artwork and element icons when available."
+msgstr "利用可能な場合、アドバンスドコレクションの高解像度チップ画像と属性アイコンを使用します。"
+
+msgid "HD art archive"
+msgstr "高解像度イラストファイル"
+
+msgid "Select launcher/data/vol2.dat from Battle Network Legacy Collection Vol. 2."
+msgstr "アドバンスドコレクション Vol.2 の launcher/data/vol2.dat を選択してください。"
+
+msgid "Choose file"
+msgstr "ファイルを選択"
+
+msgid "Importing…"
+msgstr "インポート中…"
 
 msgid "Music"
 msgstr "BGM"

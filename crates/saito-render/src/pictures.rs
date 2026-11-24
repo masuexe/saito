@@ -53,9 +53,25 @@ pub fn chip_icon(graphics: &Graphics, c: &Content, chip: ChipHandle) -> Option<I
 /// (removing the 119px bottom element/attack bar).
 pub const HD_CHIP_ART_CROP_HEIGHT: u32 = 432;
 
+/// Bounding box `(x, y, width, height)` of the 108×108 HD element icon inside Legacy Collection
+/// Vol. 2's 512×551 chip PNG bottom bar.
+pub const HD_ELEMENT_ICON_RECT: (u32, u32, u32, u32) = (138, 438, 108, 108);
+
 /// Decode a single Legacy Collection Vol. 2 chip artwork PNG from `archive` at `(offset, size)`,
 /// cropping off the bottom element/attack bar to keep the 512×432 artwork as RGBA8.
 pub fn decode_hd_chip_art(archive: &std::path::Path, offset: u64, size: u32) -> Option<Image> {
+    let raw = read_vol2_entry(archive, offset, size)?;
+    decode_hd_chip_art_bytes(&raw)
+}
+
+/// Decode a single Legacy Collection Vol. 2 HD element icon (108×108 RGBA8 with transparent
+/// rounded corners) from a chip PNG in `archive` at `(offset, size)`.
+pub fn decode_hd_element_icon(archive: &std::path::Path, offset: u64, size: u32) -> Option<Image> {
+    let raw = read_vol2_entry(archive, offset, size)?;
+    decode_hd_element_icon_bytes(&raw)
+}
+
+fn read_vol2_entry(archive: &std::path::Path, offset: u64, size: u32) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     if size == 0 || size > 16 * 1024 * 1024 {
         return None;
@@ -64,32 +80,103 @@ pub fn decode_hd_chip_art(archive: &std::path::Path, offset: u64, size: u32) -> 
     file.seek(SeekFrom::Start(offset)).ok()?;
     let mut raw = vec![0u8; size as usize];
     file.read_exact(&mut raw).ok()?;
-    decode_hd_chip_art_bytes(&raw)
+    Some(raw)
 }
 
 /// Decode raw PNG bytes of a Legacy Collection chip artwork, cropping to [`HD_CHIP_ART_CROP_HEIGHT`].
 pub fn decode_hd_chip_art_bytes(png_bytes: &[u8]) -> Option<Image> {
+    let (w, h, color_type, buf) = decode_png_raw(png_bytes)?;
+    let ch = h.min(HD_CHIP_ART_CROP_HEIGHT);
+    let rgba = slice_rgba(&buf, w, color_type, 0, 0, w, ch)?;
+    Some(Image { width: w, height: ch, rgba })
+}
+
+/// Decode raw PNG bytes of a Legacy Collection 512×551 chip artwork and extract its 108×108 HD
+/// element icon from [`HD_ELEMENT_ICON_RECT`], clearing the dark gray bar corners outside the
+/// rounded icon border to transparent.
+pub fn decode_hd_element_icon_bytes(png_bytes: &[u8]) -> Option<Image> {
+    let (w, h, color_type, buf) = decode_png_raw(png_bytes)?;
+    let (rx, ry, rw, rh) = HD_ELEMENT_ICON_RECT;
+    if w < rx + rw || h < ry + rh {
+        return None;
+    }
+    let mut rgba = slice_rgba(&buf, w, color_type, rx, ry, rw, rh)?;
+    clear_outer_corners(&mut rgba, rw as usize, rh as usize);
+    Some(Image { width: rw, height: rh, rgba })
+}
+
+fn decode_png_raw(png_bytes: &[u8]) -> Option<(u32, u32, png::ColorType, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA);
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;
-    let bytes = &buf[..info.buffer_size()];
-    let w = info.width;
-    let h = info.height.min(HD_CHIP_ART_CROP_HEIGHT);
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => bytes.get(..(w * h * 4) as usize)?.to_vec(),
-        png::ColorType::Rgb => {
-            let src = bytes.get(..(w * h * 3) as usize)?;
-            let mut out = Vec::with_capacity((w * h * 4) as usize);
-            for px in src.chunks_exact(3) {
-                out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
-            }
-            out
-        }
+    buf.truncate(info.buffer_size());
+    Some((info.width, info.height, info.color_type, buf))
+}
+
+fn slice_rgba(bytes: &[u8], src_w: u32, color_type: png::ColorType, rx: u32, ry: u32, rw: u32, rh: u32) -> Option<Vec<u8>> {
+    let bpp = match color_type {
+        png::ColorType::Rgba => 4usize,
+        png::ColorType::Rgb => 3usize,
         _ => return None,
     };
-    Some(Image { width: w, height: h, rgba })
+    let mut out = Vec::with_capacity((rw * rh * 4) as usize);
+    let stride = src_w as usize * bpp;
+    for y in ry..ry + rh {
+        let row_start = y as usize * stride + rx as usize * bpp;
+        let row = bytes.get(row_start..row_start + rw as usize * bpp)?;
+        if bpp == 4 {
+            out.extend_from_slice(row);
+        } else {
+            for px in row.chunks_exact(3) {
+                out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Flood-fill from the four corners of the cropped 108×108 element icon to clear the `(40,40,40)`
+/// bottom-bar background pixels outside the rounded grey frame to transparent.
+fn clear_outer_corners(rgba: &mut [u8], w: usize, h: usize) {
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return;
+    }
+    let bg = [rgba[0], rgba[1], rgba[2]];
+    let is_bg = |rgba: &[u8], idx: usize| -> bool {
+        let p = &rgba[idx * 4..idx * 4 + 4];
+        p[3] != 0
+            && p[0].abs_diff(bg[0]) <= 12
+            && p[1].abs_diff(bg[1]) <= 12
+            && p[2].abs_diff(bg[2]) <= 12
+    };
+    let mut visited = vec![false; w * h];
+    let mut stack = Vec::with_capacity(256);
+    for (sx, sy) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+        let idx = sy * w + sx;
+        if !visited[idx] && is_bg(rgba, idx) {
+            visited[idx] = true;
+            stack.push((sx, sy));
+        }
+    }
+    while let Some((x, y)) = stack.pop() {
+        let idx = y * w + x;
+        rgba[idx * 4 + 3] = 0;
+        let neighbors = [
+            x.checked_sub(1).map(|nx| (nx, y)),
+            (x + 1 < w).then_some((x + 1, y)),
+            y.checked_sub(1).map(|ny| (x, ny)),
+            (y + 1 < h).then_some((x, y + 1)),
+        ];
+        for (nx, ny) in neighbors.into_iter().flatten() {
+            let nidx = ny * w + nx;
+            if !visited[nidx] && is_bg(rgba, nidx) {
+                visited[nidx] = true;
+                stack.push((nx, ny));
+            }
+        }
+    }
 }
 
 /// A chip's 56x48 picture in the chip window, in its definition's
@@ -135,6 +222,15 @@ pub fn element_icon(graphics: &Graphics, family: saito_battle::content::ChipFami
     let family = family.0 as usize;
     let palette = element_palette(a, family)?;
     image(&a.element_icon(family)?, 2, 2, &palette)
+}
+
+/// A chip family's Legacy Collection HD element icon (108×108 RGBA8) when `hd` is true and
+/// available from `vol2.dat`; `None` otherwise so callers can fall back to SVG/pixel icons.
+pub fn hd_element_icon(graphics: &Graphics, family: saito_battle::content::ChipFamily, hd: bool) -> Option<Image> {
+    if !hd {
+        return None;
+    }
+    graphics.hd_element_icon(family.0).map(|img| (*img).clone())
 }
 
 /// A chip family's element icon as an SVG of 16x16 frame pixels: the frame
@@ -222,5 +318,40 @@ mod tests {
         assert_eq!(img.rgba.len(), (w * HD_CHIP_ART_CROP_HEIGHT * 4) as usize);
         assert_eq!(&img.rgba[..4], &[200, 100, 50, 255]);
         assert_eq!(&img.rgba[img.rgba.len() - 4..], &[200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn decode_hd_element_icon_crops_and_clears_outer_corners() {
+        let (w, h) = (512u32, 551u32);
+        let (rx, ry, rw, rh) = HD_ELEMENT_ICON_RECT;
+        let mut raw = vec![40u8; (w * h * 3) as usize];
+        // Draw a bright border ring inset by 4px at corners, with a dark interior that must NOT be cleared.
+        for y in 0..rh {
+            for x in 0..rw {
+                let in_corner = (x < 4 || x >= rw - 4) && (y < 4 || y >= rh - 4);
+                let on_border = !in_corner && (x < 8 || x >= rw - 8 || y < 8 || y >= rh - 8);
+                let color = if on_border { [170u8, 170, 170] } else { [40, 40, 40] };
+                let idx = (((ry + y) * w + (rx + x)) * 3) as usize;
+                raw[idx..idx + 3].copy_from_slice(&color);
+            }
+        }
+        let mut png_bytes = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut png_bytes, w, h);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().unwrap();
+            writer.write_image_data(&raw).unwrap();
+        }
+        let icon = decode_hd_element_icon_bytes(&png_bytes).expect("decodes HD element icon");
+        assert_eq!((icon.width, icon.height), (rw, rh));
+        // Outer corner must be transparent.
+        assert_eq!(icon.rgba[3], 0);
+        // Border pixel must be opaque.
+        let border_idx = ((6 * rw + 50) * 4) as usize;
+        assert_eq!(icon.rgba[border_idx + 3], 255);
+        // Dark interior pixel behind the border must stay opaque (not flood-filled).
+        let center_idx = (((rh / 2) * rw + (rw / 2)) * 4) as usize;
+        assert_eq!(icon.rgba[center_idx + 3], 255);
     }
 }

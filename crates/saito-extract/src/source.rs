@@ -37,10 +37,17 @@ use std::path::{Path, PathBuf};
 /// The environment variable that names the ROMs for the tools and development ([`RomSource::from_env`]).
 pub const ROMS: &str = "SAITO_ROMS";
 
-/// The per-game archives of a folder chosen as the install, at the three places [`Install::at`] looks: the
-/// browser reads them, and no more, from the folder chosen (`saito_dialogs::open_folder`). (`exe?*`: not
-/// the shared `exe.dat`, which holds no ROM and is large.)
-pub const ARCHIVES: [&str; 3] = ["exe/data/exe?*.dat", "data/exe?*.dat", "exe?*.dat"];
+/// The per-game archives and optional HD chip art archive (`vol2.dat`) of a folder chosen as the install:
+/// the phone and browser pickers read only these from the folder chosen (`saito_dialogs::open_folder`).
+/// (`exe?*`: not the shared `exe.dat`, which holds no ROM and is large.)
+pub const ARCHIVES: [&str; 6] = [
+    "exe/data/exe?*.dat",
+    "data/exe?*.dat",
+    "exe?*.dat",
+    "launcher/data/vol2.dat",
+    "data/vol2.dat",
+    "vol2.dat",
+];
 
 /// Vol. 2's Steam app id (reference `Volume::Vol2`).
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,11 +77,18 @@ impl Install {
         })
     }
 
-    /// Path to Legacy Collection Vol. 2's `launcher/data/vol2.dat` beside `<install>/exe/data`, if present.
+    /// Path to Legacy Collection Vol. 2's `vol2.dat` if present: checks `<install>/launcher/data/vol2.dat`
+    /// beside `<install>/exe/data`, as well as `vol2.dat` placed directly in `exe/data/` or `exe/`.
     pub fn vol2_dat(&self) -> Option<PathBuf> {
-        let root = self.data.parent()?.parent()?;
-        let candidate = root.join("launcher").join("data").join("vol2.dat");
-        candidate.is_file().then_some(candidate)
+        let mut candidates = Vec::with_capacity(3);
+        if let Some(root) = self.data.parent().and_then(Path::parent) {
+            candidates.push(root.join("launcher").join("data").join(crate::hd_art::VOL2_FILE));
+        }
+        candidates.push(self.data.join(crate::hd_art::VOL2_FILE));
+        if let Some(parent) = self.data.parent() {
+            candidates.push(parent.join(crate::hd_art::VOL2_FILE));
+        }
+        candidates.into_iter().find(|p| saito_files::is_file(p))
     }
 }
 
@@ -225,6 +239,16 @@ impl RomSource {
             let copy = copy_of(rom)?;
             saito_files::stow(&dir.join(format!("{}.zip", rom.code)), copy).map_err(|e| Error(format!("keeping {}: {e}", rom.at)))?;
         }
+        if let RomSource::Collection(install) = self {
+            crate::hd_art::stow_cross_sheets(&install.data, dir);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(vol2) = self.vol2_dat() {
+            let dst = dir.join(crate::hd_art::VOL2_FILE);
+            if let Err(e) = crate::hd_art::compact_vol2(&vol2, &dst) {
+                log::warn!("compacting {} for HD chip art: {e}", vol2.display());
+            }
+        }
         Ok(roms.len())
     }
 
@@ -236,11 +260,16 @@ impl RomSource {
         roms.iter().map(|rom| Ok((format!("{}.zip", rom.code), copy_of(rom)?))).collect()
     }
 
-    /// Path to Legacy Collection Vol. 2's `launcher/data/vol2.dat` if this source is a collection install.
+    /// Path to Legacy Collection Vol. 2's `vol2.dat` if this source has one (either a full install's
+    /// `launcher/data/vol2.dat` or a compacted copy stowed alongside [`RomSource::Copies`]).
     pub fn vol2_dat(&self) -> Option<PathBuf> {
         match self {
             RomSource::Collection(install) => install.vol2_dat(),
-            _ => None,
+            RomSource::Copies(dir) => {
+                let candidate = dir.join(crate::hd_art::VOL2_FILE);
+                saito_files::is_file(&candidate).then_some(candidate)
+            }
+            RomSource::Files(_) => None,
         }
     }
 

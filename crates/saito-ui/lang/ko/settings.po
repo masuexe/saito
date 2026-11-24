@@ -103,8 +103,20 @@ msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
 msgid "HD chip art"
 msgstr "HD 칩 일러스트"
 
-msgid "Use Legacy Collection high-resolution chip artwork when available."
-msgstr "사용 가능한 경우 레거시 컬렉션 고해상도 칩 일러스트를 사용합니다."
+msgid "Use Legacy Collection high-resolution chip artwork and element icons when available."
+msgstr "사용 가능한 경우 레거시 컬렉션 고해상도 칩 일러스트와 속성 아이콘을 사용합니다."
+
+msgid "HD art archive"
+msgstr "HD 일러스트 파일"
+
+msgid "Select launcher/data/vol2.dat from Battle Network Legacy Collection Vol. 2."
+msgstr "레거시 컬렉션 Vol.2의 launcher/data/vol2.dat 파일을 선택하세요."
+
+msgid "Choose file"
+msgstr "파일 선택"
+
+msgid "Importing…"
+msgstr "가져오는 중…"
 
 msgid "Music"
 msgstr "배경음"

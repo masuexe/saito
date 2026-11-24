@@ -159,6 +159,8 @@ pub fn set_backgrounds(first: &saito_battle::setup::RoundSetup) -> Vec<Backgroun
 /// its state, and several renderers share the same graphics); what a frame
 /// draws from is a [`Graphics`] over them ([`GameGraphics::view`]).
 type HdArtCache = Mutex<std::collections::HashMap<String, Option<Arc<crate::pictures::Image>>>>;
+type HdElementCache = Mutex<std::collections::HashMap<u8, Option<Arc<crate::pictures::Image>>>>;
+type HdCrossCache = Mutex<std::collections::HashMap<(String, usize, usize), Option<Arc<crate::pictures::Image>>>>;
 
 #[derive(Clone)]
 pub struct GameGraphics {
@@ -166,12 +168,21 @@ pub struct GameGraphics {
     others: Arc<OtherBackgrounds>,
     numbers: Arc<AssetNumbers>,
     hd_art: Arc<HdArtCache>,
+    hd_elements: Arc<HdElementCache>,
+    hd_cross: Arc<HdCrossCache>,
 }
 
 impl GameGraphics {
     /// The game's graphics `bundle`: every asset is its.
     pub fn new(bundle: Arc<Bundle>) -> GameGraphics {
-        GameGraphics { bundle, others: Default::default(), numbers: Default::default(), hd_art: Default::default() }
+        GameGraphics {
+            bundle,
+            others: Default::default(),
+            numbers: Default::default(),
+            hd_art: Default::default(),
+            hd_elements: Default::default(),
+            hd_cross: Default::default(),
+        }
     }
 
     /// The drawings (`Bundle::drawings`), each once; the chatbox's
@@ -234,7 +245,15 @@ impl GameGraphics {
 
     /// What a frame draws from.
     pub fn view(&self) -> Graphics<'_> {
-        Graphics { bundle: &self.bundle, others: &self.others, numbers: &self.numbers, version: None, hd_art: Some(&self.hd_art) }
+        Graphics {
+            bundle: &self.bundle,
+            others: &self.others,
+            numbers: &self.numbers,
+            version: None,
+            hd_art: Some(&self.hd_art),
+            hd_elements: Some(&self.hd_elements),
+            hd_cross: Some(&self.hd_cross),
+        }
     }
 }
 
@@ -260,12 +279,14 @@ pub struct Graphics<'a> {
     /// draws otherwise (`ChipArt::version`).
     version: Option<&'static str>,
     hd_art: Option<&'a HdArtCache>,
+    hd_elements: Option<&'a HdElementCache>,
+    hd_cross: Option<&'a HdCrossCache>,
 }
 
 impl<'a> Graphics<'a> {
     /// The graphics `bundle`: every asset is its.
     pub fn of(bundle: &'a Bundle) -> Graphics<'a> {
-        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None, hd_art: None }
+        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None, hd_art: None, hd_elements: None, hd_cross: None }
     }
 
     /// These graphics, with other games' backgrounds beside them.
@@ -333,6 +354,55 @@ impl<'a> Graphics<'a> {
             guard.insert(local.to_string(), decoded.clone());
         }
         decoded
+    }
+
+    /// A chip family's Legacy Collection HD element icon (108×108 RGBA8), decoded on demand from
+    /// `vol2.dat` and cached in memory; `None` if unavailable.
+    pub fn hd_element_icon(&self, family: u8) -> Option<Arc<crate::pictures::Image>> {
+        let index = self.bundle.custom.hd_chip_art.as_ref()?;
+        if let Some(cache) = self.hd_elements
+            && let Ok(guard) = cache.lock()
+            && let Some(cached) = guard.get(&family)
+        {
+            return cached.clone();
+        }
+        let decoded = index
+            .elements
+            .get(&family)
+            .and_then(|&(off, sz)| crate::pictures::decode_hd_element_icon(&index.archive, off, sz))
+            .map(Arc::new);
+        if let Some(cache) = self.hd_elements
+            && let Ok(mut guard) = cache.lock()
+        {
+            guard.insert(family, decoded.clone());
+        }
+        decoded
+    }
+
+    /// An EXE6 Legacy Collection HD Cross-selection bar (`288×64` RGBA8) for `version` (`"gregar"`
+    /// or `"falzar"`), Cross `number` (`0..5`), and `state` (`0` = selected, `1` = marked/used,
+    /// `2` = unselected) in the bundle's active language; `None` if unavailable.
+    pub fn hd_cross_bar(&self, version: &str, number: usize, state: usize) -> Option<Arc<crate::pictures::Image>> {
+        let cross = self.bundle.custom.hd_cross_art.as_ref()?;
+        if number >= 5 || state >= 3 {
+            return None;
+        }
+        let cache_key = (version.to_string(), number, state);
+        if let Some(cache) = self.hd_cross
+            && let Ok(guard) = cache.lock()
+            && let Some(cached) = guard.get(&cache_key)
+        {
+            return cached.clone();
+        }
+        let sheet = cross.sheets.get(&(version.to_string(), cross.lang.clone()))?;
+        let rgba = sheet.bars.get(state * 5 + number)?.clone();
+        let img = Some(Arc::new(crate::pictures::Image { width: 288, height: 64, rgba }));
+        if let Some(cache) = self.hd_cross
+            && let Ok(mut guard) = cache.lock()
+        {
+            guard.insert(cache_key, img.clone());
+        }
+        img
     }
 
     /// Sprite `id`'s sheet.

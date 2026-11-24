@@ -193,13 +193,33 @@ fn backgrounds_of(e: &Extraction) -> BTreeMap<String, Background> {
 impl ContentLoaded {
     /// The game, its assets extracted from `roms` and checked against its content; the background pool's other
     /// games' to be extracted when first wanted ([`others`]).
-    fn extract(self, roms: &RomSource) -> Result<Game, LoadError> {
+    fn extract(self, roms: &RomSource, hd_art_fallback: Option<&Path>) -> Result<Game, LoadError> {
         let ContentLoaded { name, content, recipe, dir, pool, mut report } = self;
         let failed = |report: Report| LoadError { what: Failed::Assets { game: name.clone() }, report };
         let extracted = recipe.and_then(|recipe| saito_content::load::assets(&content, &recipe, roms));
         let own = match extracted {
             Ok(mut own) => {
-                own.attach_hd_chip_art(roms);
+                own.attach_hd_chip_art_with_fallback(roms, hd_art_fallback);
+                if let Some(hd) = &mut own.graphics.custom.hd_chip_art {
+                    // Map each chip family to a representative vol2.dat chip PNG whose bottom bar
+                    // contains that family's 108×108 HD element icon (preferring Standard chips).
+                    let mut fallback = std::collections::BTreeMap::new();
+                    for (i, def) in content.defs.chips.iter().enumerate() {
+                        let chip = saito_content_api::ChipHandle(i as u16);
+                        let data = content.chip(chip);
+                        let local = saito_content_api::keys::local(&def.key);
+                        let Some(&loc) = hd.entries.get(local) else { continue };
+                        let fam = data.family.0;
+                        if data.class == saito_battle::content::ChipClass::Standard {
+                            hd.elements.entry(fam).or_insert(loc);
+                        } else {
+                            fallback.entry(fam).or_insert(loc);
+                        }
+                    }
+                    for (fam, loc) in fallback {
+                        hd.elements.entry(fam).or_insert(loc);
+                    }
+                }
                 own
             }
             Err(e) => {
@@ -256,7 +276,7 @@ impl Game {
     /// a round or a picture first wants one ([`others`]); none given, the
     /// content directory's own games'.
     pub fn load(roms: &RomSource, content: Option<&Path>, name: &str, pool: &[(String, PathBuf)]) -> Result<Game, LoadError> {
-        read_content(content, name, pool)?.extract(roms)
+        read_content(content, name, pool)?.extract(roms, None)
     }
 
     /// The game's graphics in `lang`: their lettering in it (fonts, HUD
@@ -382,6 +402,8 @@ pub struct Options {
     pub font: Option<PathBuf>,
     /// Load the sound too (a host that plays none needn't).
     pub sound: bool,
+    /// Optional fallback path to a compacted `vol2.dat` when `roms` itself doesn't contain one.
+    pub hd_art_fallback: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -389,7 +411,16 @@ impl Default for Options {
     /// program comes with, in its own language, every enhancement with the
     /// library's font, with sound.
     fn default() -> Options {
-        Options { roms: None, content: None, pool: Vec::new(), lang: locale::OWN.to_string(), enhancements: Enhancements::ALL, font: None, sound: true }
+        Options {
+            roms: None,
+            content: None,
+            pool: Vec::new(),
+            lang: locale::OWN.to_string(),
+            enhancements: Enhancements::ALL,
+            font: None,
+            sound: true,
+            hd_art_fallback: None,
+        }
     }
 }
 
@@ -575,7 +606,7 @@ impl Loading {
                         LoadError { what: Failed::Assets { game: self.name.clone() }, report }
                     })?,
                 };
-                self.game = Some(content.extract(&roms)?);
+                self.game = Some(content.extract(&roms, self.options.hd_art_fallback.as_deref())?);
             }
             Part::Graphics => {
                 let Some(game) = &self.game else { loaded("assets") };

@@ -190,7 +190,10 @@ impl Bundle {
     /// The bundle as a frontend set to `lang` draws it: in `lang` if the
     /// graphics have its lettering, else in their own language, so that a
     /// picture with words is one the game's graphics have.
-    pub fn for_language(self, lang: &str) -> Bundle {
+    pub fn for_language(mut self, lang: &str) -> Bundle {
+        if let Some(hd) = &mut self.custom.hd_cross_art {
+            hd.lang = lang.to_string();
+        }
         if self.hud.has_language(lang) { self.in_language(lang).expect("a language the HUD has") } else { self }
     }
 

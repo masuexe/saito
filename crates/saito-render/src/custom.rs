@@ -915,6 +915,10 @@ struct Window {
     help_lines: Vec<TextItem>,
     /// Optional Legacy Collection HD chip art (512×432 RGBA8) to overlay on the 56×48 chip picture box.
     hd_art: Option<std::sync::Arc<crate::pictures::Image>>,
+    /// Optional Legacy Collection HD element icon (108×108 RGBA8) to overlay on the 16×16 element box.
+    hd_element: Option<std::sync::Arc<crate::pictures::Image>>,
+    /// Optional EXE6 Legacy Collection HD Cross-selection bars (288×64 RGBA8): `(first_tile, image)`.
+    hd_form_names: Vec<(u16, std::sync::Arc<crate::pictures::Image>)>,
     /// The damage's digits' words, with the sharp HUD (their cells blank).
     damage: Option<String>,
     /// With the sharp HUD, the window's labels it shows (`letter_labels`):
@@ -1132,6 +1136,8 @@ impl Window {
             help: None,
             help_lines: Vec::new(),
             hd_art: None,
+            hd_element: None,
+            hd_form_names: Vec::new(),
             damage: None,
             labels: Vec::new(),
             codes: Vec::new(),
@@ -1186,7 +1192,7 @@ impl Window {
         w.slots(v, problems);
         w.column(v, problems);
         if form_list.is_some_and(|i| i >= FORM_LIST_OPENING_MAPS) {
-            w.form_names(v, problems);
+            w.form_names(v, text, problems);
         }
         if window_look(v.layer).turn_limit {
             // sub_8029D34: "FINAL TURN", 7x2 at column 15, row 4 (past the
@@ -1655,7 +1661,7 @@ impl Window {
     /// under the cursor in its own look) over the form list window's map,
     /// and palette 10 the form under the cursor's (`sub_8029EAC`: a used
     /// one's darker).
-    fn form_names(&mut self, v: &View, problems: &mut Problems) {
+    fn form_names(&mut self, v: &View, text: &TextSink, problems: &mut Problems) {
         let Some(w) = v.b.form_list(v.side) else { return };
         // (The entry under the list's cursor: the layer's.)
         let cursor = v.layer.map_or(0, |l| l.list_cursor) as usize;
@@ -1669,7 +1675,21 @@ impl Window {
             let at = self.layout.form_names + (FORM_NAME_TILES * slot) as u16;
             self.tiles.put_part(at, &own.form_names, FORM_NAME_TILES * name, FORM_NAME_TILES);
             if let Some(form) = w.forms[slot] {
-                self.form_name_tiles.push((at, form, name));
+                let state = if slot != cursor {
+                    2
+                } else if w.marked[slot] {
+                    1
+                } else {
+                    0
+                };
+                if text.draws_hd_chip_art()
+                    && let Some(version) = v.b.content.form(form).version.as_deref()
+                    && let Some(img) = v.graphics.hd_cross_bar(version, number, state)
+                {
+                    self.hd_form_names.push((at, img));
+                } else {
+                    self.form_name_tiles.push((at, form, name));
+                }
             }
             let [x0, y0] = self.layout.form_names_at.map(usize::from);
             for i in 0..FORM_NAME_TILES {
@@ -1811,18 +1831,27 @@ impl Window {
         }
         let family = data.family.0 as usize;
         if family < a.element_colors.len() {
-            // (The frame with the icon over it, as the game's; in the
-            // sharp HUD, where the game's graphics draw the frame, the symbol on
-            // the frame's ground, the frame's drawing over it but for the
-            // symbol: `shape_frames`. The ground fills the square round the
-            // ring, as the window's own panel round it.)
-            let framed = text.draws_shapes() && a.shapes.element_frame.is_some() && !a.element_frame.is_empty();
-            if let Some(symbol) = framed.then(|| element_symbol(a, family)).flatten() {
-                self.tiles.put(self.layout.element, &symbol);
-            } else if let Some(icon) = a.element_icon(family) {
-                self.tiles.put(self.layout.element, &icon);
+            if text.draws_hd_chip_art()
+                && let Some(img) = v.graphics.hd_element_icon(family as u8)
+            {
+                // Blank the pixelated element tiles so the HD rounded corners don't show pixel bleed.
+                self.blank_element(a);
+                self.hd_element = Some(img);
+                self.element_framed = None;
+            } else {
+                // (The frame with the icon over it, as the game's; in the
+                // sharp HUD, where the game's graphics draw the frame, the symbol on
+                // the frame's ground, the frame's drawing over it but for the
+                // symbol: `shape_frames`. The ground fills the square round the
+                // ring, as the window's own panel round it.)
+                let framed = text.draws_shapes() && a.shapes.element_frame.is_some() && !a.element_frame.is_empty();
+                if let Some(symbol) = framed.then(|| element_symbol(a, family)).flatten() {
+                    self.tiles.put(self.layout.element, &symbol);
+                } else if let Some(icon) = a.element_icon(family) {
+                    self.tiles.put(self.layout.element, &icon);
+                }
+                self.element_framed = framed.then_some(family);
             }
-            self.element_framed = framed.then_some(family);
         }
         let shows = data.flags.0 & (ChipFlags::HAS_DAMAGE | ChipFlags::DAMAGE_SHOWN_VARIABLE) != 0;
         let digits: Vec<usize> = if !shows {
@@ -2468,6 +2497,27 @@ impl Window {
         text.push(Plane::Hud, TextItem { clip, past_ranged, ..TextItem::raster(img.clone(), rect) });
     }
 
+    /// The Legacy Collection HD element icon overlaid on the 16×16 element box when enabled and present.
+    fn hd_element_item(&self, text: &mut TextSink, place: Placement) {
+        let Some(img) = &self.hd_element else { return };
+        let Some(block) = self.block(self.layout.element..self.layout.element + 4) else { return };
+        let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
+        let past_ranged = block.palette & 15 >= 14;
+        let rect = Rect::new(x, 8 * block.row as i32, 8 * block.w as i32, 8 * block.h as i32);
+        text.push(Plane::Hud, TextItem { clip, past_ranged, ..TextItem::raster(img.clone(), rect) });
+    }
+
+    /// EXE6 Legacy Collection HD Cross-selection bars overlaid on the 72×16 Cross bar slots.
+    fn hd_form_name_items(&self, text: &mut TextSink, place: Placement) {
+        for (first, img) in &self.hd_form_names {
+            let Some(block) = self.block(*first..*first + FORM_NAME_TILES as u16) else { continue };
+            let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { continue };
+            let past_ranged = block.palette & 15 >= 14;
+            let rect = Rect::new(x, 8 * block.row as i32, 8 * block.w as i32, 8 * block.h as i32);
+            text.push(Plane::Hud, TextItem { clip, past_ranged, ..TextItem::raster(img.clone(), rect) });
+        }
+    }
+
     /// The damage's digits in the numbers' font (the sharp HUD's:
     /// `damage`), in their glyphs' look, laid as every number is
     /// (`numbers::laid`), ending where the original's last digit does.
@@ -2998,9 +3048,25 @@ fn element_part<'a>(v: &View, a: &'a CustomScreen, place: Placement) -> Option<S
 /// sharp HUD, where the game's graphics draw the frame, the icon alone with the
 /// frame drawn over it as a shape as deep as it, kept off the symbol's
 /// pixels inside its ring, the window's panel showing round the ring.
-fn framed_element<'a>(part: SpritePart<'a>, a: &'a CustomScreen, text: &mut TextSink, tags: &mut Vec<Option<u32>>, at: usize) -> Vec<SpritePart<'a>> {
+fn framed_element<'a>(
+    part: SpritePart<'a>,
+    a: &'a CustomScreen,
+    graphics: &crate::graphics::Graphics<'a>,
+    text: &mut TextSink,
+    tags: &mut Vec<Option<u32>>,
+    at: usize,
+) -> Vec<SpritePart<'a>> {
     tags.resize(at, None);
     let family = part.first_tile / 4;
+    if text.draws_hd_chip_art()
+        && let Some(img) = graphics.hd_element_icon(family as u8)
+    {
+        let tag = text.tag();
+        tags.push(Some(tag));
+        let rect = Rect::new(part.x, part.y, 16, 16);
+        text.push(Plane::Sprite(tag), TextItem::raster(img, rect));
+        return vec![SpritePart { tiles: &BLANK_TILES, first_tile: 0, ..part }];
+    }
     let frame = a.shapes.element_frame.as_ref().filter(|d| text.draws_shapes() && d.size == [16, 16] && !a.element_frame.is_empty());
     let Some(d) = frame else {
         let under = (!a.element_frame.is_empty()).then(|| SpritePart { tiles: &a.element_frame, first_tile: 0, ..part.clone() });
@@ -3195,6 +3261,8 @@ pub fn draw<'a>(
     w.name_item(text, place);
     w.help_items(text, place);
     w.hd_art_item(text, place);
+    w.hd_element_item(text, place);
+    w.hd_form_name_items(text, place);
     w.damage_item(&v, text, place);
     w.label_items(text, place);
     if let Some((r, p)) = &panel {
@@ -3209,6 +3277,8 @@ pub fn draw<'a>(
         p.name_item(text, place);
         p.help_items(text, place);
         p.hd_art_item(text, place);
+        p.hd_element_item(text, place);
+        p.hd_form_name_items(text, place);
         p.damage_item(&v, text, place);
         p.label_items(text, place);
         text.rework_since(items, |_, item| {
@@ -3332,7 +3402,7 @@ pub fn draw<'a>(
         // (Not once the rising form list panel reaches it.)
         let covered = |p: &SpritePart| rise.is_some_and(|r| !Rect::new(p.x, p.y, p.width as i32, p.height as i32).intersect(r.rect).is_empty());
         if let Some(part) = element_part(&v, a, place).filter(|p| !covered(p)) {
-            let parts = framed_element(part, a, text, &mut tags, queue.len());
+            let parts = framed_element(part, a, graphics, text, &mut tags, queue.len());
             queue.extend(parts);
             sprite_ends(&queue);
         }

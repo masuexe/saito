@@ -201,7 +201,7 @@ impl Folder {
             (0..folder.chips.len())
                 .map(|i| {
                     let flagged = stood.chips[i].is_some() && !entry_problems(draft, &fields, &stood, i).is_empty();
-                    let mut cell = chip_cell(words.kit, words.names, &folder, i, flagged);
+                    let mut cell = chip_cell(words.kit, words.names, &folder, i, flagged, shell.settings.hd_chip_art);
                     // (A chip of one version's own is marked so: a Giga chip's version.)
                     if let Some(chip) = folder.chips.get(i).copied().flatten() {
                         cell.version = words.kit.version_tag_of(words.names, Registry::Chip, &Item::of(chip.id.0));
@@ -272,7 +272,7 @@ impl Folder {
                             warn: false,
                             megabytes: say.invoke_megabytes(record.mb as i32),
                             attack: if record.damage > 0 { record.damage.to_string().into() } else { Default::default() },
-                            element: kit.pictures.chip_element(row.id),
+                            element: kit.pictures.chip_element(row.id, shell.settings.hd_chip_art),
                             code: Default::default(),
                             version: kit.version_tag_of(words.names, Registry::Chip, &Item::of(row.id.0)),
                         }
@@ -346,7 +346,7 @@ impl Folder {
                 kind: kind(record.class),
                 code: chip.code.letter().to_string().into(),
                 description: description(words, chip.id).into(),
-                element: kit.pictures.chip_element(chip.id),
+                element: kit.pictures.chip_element(chip.id, shell.settings.hd_chip_art),
                 facts: ModelRc::new(VecModel::from(facts)),
                 problem: problem.into(),
                 fault: fault.into(),
@@ -478,7 +478,7 @@ impl Folder {
             icon: words.kit.pictures.icon(chip.id),
             name: words.names.chip(chip.id).into(),
             kind: kind(content.chip(chip.id).class),
-            element: words.kit.pictures.chip_element(chip.id),
+            element: words.kit.pictures.chip_element(chip.id, shell.settings.hd_chip_art),
             code: chip.code.letter().to_string().into(),
             version: words.kit.version_tag_of(words.names, Registry::Chip, &Item::of(chip.id.0)),
             ..Default::default()

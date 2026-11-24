@@ -76,7 +76,7 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => 1,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" => 1,
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
@@ -137,6 +137,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_smooth_motion(s.smooth_motion);
     view.set_fill_window(s.fill_window);
     view.set_hd_chip_art(s.hd_chip_art);
+    view.set_has_hd_art(shell.games.has_vol2_dat());
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
     view.set_input_delay(s.input_delay as i32);
@@ -341,6 +342,8 @@ pub struct Settings {
     touch_editor: bool,
     /// Target `IP:port` entered for manual nearby transfer.
     nearby_target: String,
+    /// Background `vol2.dat` compaction job started from Settings.
+    importing_hd_art: Option<std::sync::mpsc::Receiver<Result<usize, String>>>,
 }
 
 impl Settings {
@@ -401,7 +404,10 @@ impl Screen for Settings {
 
     fn show(&mut self, shell: &mut Shell) {
         show_values(shell, &self.binding);
-        shell.ui().global::<SettingsView>().set_nearby_target(self.nearby_target.as_str().into());
+        let ui = shell.ui();
+        let view = ui.global::<SettingsView>();
+        view.set_nearby_target(self.nearby_target.as_str().into());
+        view.set_importing_hd_art(self.importing_hd_art.is_some());
         if self.about.is_open() {
             self.about.show(shell);
         }
@@ -448,6 +454,11 @@ impl Screen for Settings {
                 shell.check_updates_now(true);
             }
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, None),
+            "set.hd-chip-art-import" => {
+                if self.importing_hd_art.is_none() {
+                    shell.choose_files("vol2.dat", &["dat"], "hd-art");
+                }
+            }
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
             "set.keyboard-only" => {
@@ -641,6 +652,68 @@ impl Screen for Settings {
 
     fn button(&mut self, shell: &mut Shell, button: Button) -> bool {
         self.binding.button(shell, button)
+    }
+
+    fn chosen(&mut self, shell: &mut Shell, purpose: &str, paths: &[std::path::PathBuf]) {
+        if purpose != "hd-art" || self.importing_hd_art.is_some() {
+            return;
+        }
+        let Some(src) = paths.first().cloned() else { return };
+        let dst = crate::games::copies().join(saito_extract::hd_art::VOL2_FILE);
+        let cleanup_picked = !saito_dialogs::FOLDERS_READ_AGAIN;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = saito_threads::spawn("importing vol2.dat for HD chip art", move || {
+            let result = saito_extract::hd_art::compact_vol2(&src, &dst).map_err(|e| e.to_string());
+            if cleanup_picked {
+                if let Some(parent) = src.parent() {
+                    let _ = std::fs::remove_dir_all(parent);
+                } else {
+                    let _ = std::fs::remove_file(&src);
+                }
+            }
+            let _ = tx.send(result);
+        });
+        match spawned {
+            Ok(_) => {
+                self.importing_hd_art = Some(rx);
+                self.show(shell);
+            }
+            Err(why) => {
+                crate::errors::log("importing vol2.dat", &why);
+                shell.sound.play(Cue::Refused);
+            }
+        }
+    }
+
+    fn frame(&mut self, shell: &mut Shell, _now: web_time::Instant, shown: bool) {
+        let Some(rx) = &self.importing_hd_art else { return };
+        match rx.try_recv() {
+            Ok(Ok(count)) => {
+                self.importing_hd_art = None;
+                crate::errors::log("importing vol2.dat", &format_args!("compacted {count} HD chip art entries"));
+                shell.games.reload_all();
+                shell.sound.play(Cue::Pick);
+                if shown {
+                    self.show(shell);
+                }
+            }
+            Ok(Err(why)) => {
+                self.importing_hd_art = None;
+                crate::errors::log("importing vol2.dat", &why);
+                shell.sound.play(Cue::Refused);
+                if shown {
+                    self.show(shell);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.importing_hd_art = None;
+                shell.sound.play(Cue::Refused);
+                if shown {
+                    self.show(shell);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
     }
 }
 

@@ -267,7 +267,12 @@ impl Games {
         if std::env::var_os(saito_extract::source::ROMS).is_some() {
             return RomSource::from_env().map_err(|why| crate::errors::log("finding the ROMs", &why)).ok();
         }
-        let kept = || (!saito_files::stowed(&copies()).is_empty()).then(|| RomSource::Copies(copies()));
+        let kept = || {
+            saito_files::stowed(&copies())
+                .iter()
+                .any(|p| p.extension().is_some_and(|e| e == "zip"))
+                .then(|| RomSource::Copies(copies()))
+        };
         if !saito_dialogs::FOLDERS_READ_AGAIN {
             return kept();
         }
@@ -283,6 +288,21 @@ impl Games {
     /// Where the games' ROMs are read from, once found: what a desktop offers to another device (`crate::nearby`).
     pub fn rom_source(&self) -> Option<&RomSource> {
         self.source.as_ref()
+    }
+
+    /// Whether Legacy Collection Vol. 2's `vol2.dat` (full or compacted) is available for HD chip art.
+    pub fn has_vol2_dat(&self) -> bool {
+        self.source.as_ref().and_then(RomSource::vol2_dat).is_some()
+            || saito_files::is_file(&copies().join(saito_extract::hd_art::VOL2_FILE))
+    }
+
+    /// Mark every currently loaded game for reload (e.g. after importing `vol2.dat` for HD chip art).
+    pub fn reload_all(&mut self) {
+        for entry in &mut self.list {
+            if matches!(entry.state, State::Ready(_)) {
+                entry.state = State::NotLoaded;
+            }
+        }
     }
 
     /// The game codes of every ROM the games' recipes declare, sorted: what is kept of a collection, and sent of one.
@@ -697,7 +717,8 @@ impl Games {
         };
         let content = entry.map(|e| e.content.clone());
         let pool = crate::contents::pool();
-        game::Options { roms: self.source.clone(), content, pool, ..game::Options::default() }
+        let hd_art_fallback = Some(copies().join(saito_extract::hd_art::VOL2_FILE));
+        game::Options { roms: self.source.clone(), content, pool, hd_art_fallback, ..game::Options::default() }
     }
 
     /// A part of `id`'s loading ended: how far it is now, or the game (or why there is none: to the log).
