@@ -137,10 +137,6 @@ fn remembered_abd_mode(game: &str) -> String {
     format!("play.abd-mode.{game}")
 }
 
-fn remembered_cs_prob_fix(game: &str) -> String {
-    format!("play.cs-prob-fix.{game}")
-}
-
 /// Build the `CsProbEntry` model for `game`'s ChargeShot Addition probability fix dialog.
 pub(crate) fn cs_prob_items(shell: &Shell, game: &str, fix: saito_match::CsProbFix) -> ModelRc<saito_ui::CsProbEntry> {
     let entries = saito_match::cs_prob_fix::effects(game);
@@ -822,12 +818,7 @@ impl Play {
                 .unwrap_or(saito_match::AbdMode::Original);
         }
         if saito_match::cs_prob_fix::supported(game) {
-            let key = remembered_cs_prob_fix(game);
-            settings.cs_prob_fix = remembered(&key)
-                .and_then(|r| r.parse::<u16>().ok())
-                .map(saito_match::CsProbFix::from_bits)
-                .map(|f| f.clamp_for(game))
-                .unwrap_or(saito_match::CsProbFix::NONE);
+            settings.cs_prob_fix = saito_match::CsProbFix::recommended(game);
         }
         Some(settings)
     }
@@ -845,9 +836,6 @@ impl Play {
         }
         if saito_match::abd_mode::supported(&settings.game) {
             remembered.insert(remembered_abd_mode(&settings.game), settings.abd_mode.as_u8().to_string());
-        }
-        if saito_match::cs_prob_fix::supported(&settings.game) {
-            remembered.insert(remembered_cs_prob_fix(&settings.game), settings.cs_prob_fix.bits().to_string());
         }
         shell.save_settings();
     }

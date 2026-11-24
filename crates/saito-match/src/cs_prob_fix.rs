@@ -62,8 +62,9 @@ pub const EXE6: [EffectEntry; 13] = [
     EffectEntry { bit: 0x1000, variant_id: "shot/chip-destruction", rare: true },
 ];
 
-/// EXE5 recommended battle preset: Reset (`charged-uninstalling`) and Chip Destruction (`chip-destruction`).
-pub const EXE5_RECOMMENDED: u16 = 0x0200 | 0x0400;
+/// EXE5 recommended battle preset: Paralyze (`charged-paralyzing`), Reset (`charged-uninstalling`),
+/// and Chip Destruction (`chip-destruction`).
+pub const EXE5_RECOMMENDED: u16 = 0x0080 | 0x0200 | 0x0400;
 
 /// EXE6 recommended battle preset: Freeze (`charged-freezing`) and Paralyze (`charged-paralyzing`).
 pub const EXE6_RECOMMENDED: u16 = 0x0008 | 0x0100;
@@ -200,7 +201,7 @@ mod tests {
             assert!(CsProbFix::all(game).allowed_for(game));
             assert!(CsProbFix::recommended(game).is_recommended(game));
             assert!(CsProbFix::recommended(game).allowed_for(game));
-            assert_eq!(CsProbFix::recommended(game).count(game), 2);
+            assert_eq!(CsProbFix::recommended(game).count(game), if game == "exe5" { 3 } else { 2 });
         }
         assert!(!supported("exe4"));
         assert!(CsProbFix::NONE.allowed_for("exe4"));
