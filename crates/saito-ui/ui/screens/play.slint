@@ -1444,12 +1444,13 @@ export component PlayScreen inherits Page {
             }
         }
 
-        // The chosen build: its overview (the wide sheet) with EDIT and ⋯ in its header's right; on a phone, no
-        // overview, and the two in a row under the box. ⋯ opens the build's menu (PRACTICE, DUPLICATE and, apart, DELETE). A
-        // build whose file doesn't read has an empty frame, EDIT unavailable and only DELETE in its menu. With no build
-        // neither is there. (PRACTICE is the editor's and the menu's: docs/design/app-ui.md §2.86, §2.88.)
+        // The chosen build: its overview (the wide sheet) with EDIT, PRACTICE, DUPLICATE and DELETE in its header's
+        // right; on a phone, no overview, and the four in a row under the box. A build whose file doesn't read has an
+        // empty frame, with only DELETE available. With no build none are shown.
         Arrive {
             order: 1;
+            property <length> phone-action-w: (root.body-width - 18px) / 4;
+            property <length> action-gap: Theme.phone ? 6px : 8px;
             PanelBack {
                 x: root.side-x;
                 y: 0;
@@ -1466,7 +1467,7 @@ export component PlayScreen inherits Page {
                 height: Theme.handheld ? self.sheet-height : root.sheet-height;
                 visible: !Theme.handheld && root.usable && PlayView.sheet.name != "";
                 build: PlayView.sheet;
-                tools: edit.width + 8px + root.more-width;
+                tools: edit.width + 8px + practice-btn.width + 8px + duplicate-btn.width + 8px + delete-btn.width;
                 scroll <=> PlayView.sheet-y;
                 init => {
                     PlayView.sheet-span = self.span;
@@ -1495,51 +1496,52 @@ export component PlayScreen inherits Page {
             }
 
             edit := Button {
-                x: Theme.phone ? 0px : more.x - 8px - self.width;
+                x: Theme.phone ? 0px : practice-btn.x - parent.action-gap - self.width;
                 y: Theme.phone ? 136px : Theme.sideways ? 12px : 24px;
-                width: Theme.phone ? root.body-width - 8px - root.more-width : self.natural-width;
+                width: Theme.phone ? parent.phone-action-w : self.natural-width;
+                compact: true;
+                tight: Theme.phone;
                 visible: !root.none;
                 nav: "edit";
                 text: I18n.upper(@tr("Edit"));
                 enabled: root.usable;
             }
 
-            more := Button {
-                x: Theme.phone ? root.body-width - self.width : root.body-width - (Theme.sideways ? 12px : 16px) - self.width;
+            practice-btn := Button {
+                x: Theme.phone ? parent.phone-action-w + parent.action-gap : duplicate-btn.x - parent.action-gap - self.width;
                 y: edit.y;
-                width: root.more-width;
+                width: Theme.phone ? parent.phone-action-w : self.natural-width;
+                compact: true;
+                tight: Theme.phone;
                 visible: !root.none;
+                nav: "practice";
+                text: PlayView.practice-word;
+                enabled: root.usable;
+            }
+
+            duplicate-btn := Button {
+                x: Theme.phone ? 2 * (parent.phone-action-w + parent.action-gap) : delete-btn.x - parent.action-gap - self.width;
+                y: edit.y;
+                width: Theme.phone ? parent.phone-action-w : self.natural-width;
+                compact: true;
+                tight: Theme.phone;
+                visible: !root.none;
+                nav: "duplicate";
+                text: PlayView.duplicate-word;
+                enabled: root.usable;
+            }
+
+            delete-btn := Button {
+                x: Theme.phone ? 3 * (parent.phone-action-w + parent.action-gap) : root.body-width - (Theme.sideways ? 12px : 16px) - self.width;
+                y: edit.y;
+                width: Theme.phone ? parent.phone-action-w : self.natural-width;
+                compact: true;
+                tight: Theme.phone;
+                danger: true;
+                visible: !root.none;
+                nav: "delete";
+                text: PlayView.delete-word;
                 enabled: !root.none && PlayView.chosen >= 0;
-                nav: "more";
-                text: "";
-            }
-
-            // (Its ⋯, three dots over it.)
-            Rectangle {
-                x: more.x + more.width / 2 - 7.5px;
-                y: more.y + (more.height - 3px) / 2 + 0.5px;
-                width: 3px;
-                height: 3px;
-                visible: !root.none;
-                background: more.enabled ? Theme.text : Theme.dim;
-            }
-
-            Rectangle {
-                x: more.x + more.width / 2 - 1.5px;
-                y: more.y + (more.height - 3px) / 2 + 0.5px;
-                width: 3px;
-                height: 3px;
-                visible: !root.none;
-                background: more.enabled ? Theme.text : Theme.dim;
-            }
-
-            Rectangle {
-                x: more.x + more.width / 2 + 4.5px;
-                y: more.y + (more.height - 3px) / 2 + 0.5px;
-                width: 3px;
-                height: 3px;
-                visible: !root.none;
-                background: more.enabled ? Theme.text : Theme.dim;
             }
         }
 

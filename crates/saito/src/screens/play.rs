@@ -2212,7 +2212,7 @@ impl Screen for Play {
         // (A control of a part that isn't shown any more does nothing: a press may come as the part changes.)
         let part = self.part();
         let of_its_part = match id {
-            "builds" | "build" | "new" | "edit" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
+            "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
             "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
@@ -2242,6 +2242,9 @@ impl Screen for Play {
             }
             "new" => self.ask_new(shell),
             "edit" => self.edit_chosen(shell),
+            "practice" => self.practice(shell),
+            "duplicate" => self.duplicate(shell),
+            "delete" => self.ask_delete(shell),
             "more" => self.open_menu(shell, &Key::new("more", 0)),
             "name.confirm" => self.confirm(shell),
             "name.cancel" => self.close_dialog(shell),
@@ -2644,9 +2647,9 @@ impl Screen for Play {
         }
         let ui = shell.ui();
         match action {
-            Action::Right if shell.nav.focused().is_some_and(|k| k.id == "builds") => shell.nav.focus_first(&ui, &["edit", "more"]),
+            Action::Right if shell.nav.focused().is_some_and(|k| k.id == "builds") => shell.nav.focus_first(&ui, &["edit", "practice", "duplicate", "delete"]),
             Action::NextFocus | Action::PreviousFocus => {
-                shell.nav.tab_in(&ui, action == Action::PreviousFocus, &["new", "builds", "edit", "more", "invite", "rooms", "direct"]);
+                shell.nav.tab_in(&ui, action == Action::PreviousFocus, &["new", "builds", "edit", "practice", "duplicate", "delete", "invite", "rooms", "direct"]);
                 true
             }
             _ => false,
