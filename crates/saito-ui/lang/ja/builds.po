@@ -140,6 +140,9 @@ msgstr "すべて"
 msgid "Clear"
 msgstr "クリア"
 
+msgid "Fix"
+msgstr "修復"
+
 msgid "Clear the folder?"
 msgstr "フォルダをクリアしますか？"
 

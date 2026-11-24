@@ -11,7 +11,7 @@
 //! Any screen shows a build with it: [`sheet`] makes the model of a side, and the screen sets it as the
 //! `build` of a `BuildOverview` (docs/app.md §8).
 
-use crate::builds::auto::{self, AutoBattle, Entry, Holds};
+use crate::builds::auto::{self, AutoBattle, Entry};
 use crate::builds::words::{Words, kind};
 use crate::builds::{Kit, cards, grid};
 use crate::games::Names;
@@ -229,16 +229,35 @@ pub fn sheet_of(words: &Words, label: &str, name: &str, side: &Side, checked: &m
     let patch_cards = own && facts::takes(content, facts::PATCH_CARDS);
     let held = if patch_cards { cards::held(&kit.builds, content, side, facts::PATCH_CARDS) } else { Vec::new() };
     let card_names: Vec<String> = held.into_iter().flatten().map(|(h, _)| names.entry(h)).collect();
-    // (A pattern's places aren't the build's: it states no pattern records, as the Auto battle tab shows none.)
+    // (Pattern and `first` places aren't shown: neither can be written by a player in normal gameplay.)
     let auto_battle: Vec<SheetList> = match kit.auto_layout().filter(|_| own) {
         Some(layout) => {
             let data = AutoBattle::of_side(content, side);
-            let chip = |place: usize| if let Entry::Chip(c) = data.places[place] { Some(names.chip(c)) } else { None };
             layout
                 .lists
                 .iter()
-                .filter(|l| l.holds != Holds::Patterns)
-                .map(|l| SheetList { name: auto::list_name(names, l).into(), chips: items(l.places().filter_map(&chip)) })
+                .filter(|l| !l.is_hidden())
+                .map(|l| {
+                    let chips: Vec<String> = if l.is_weighted() {
+                        l.slots()
+                            .into_iter()
+                            .zip(l.logical_entries(&data))
+                            .filter_map(|(slot, entry)| match entry {
+                                Entry::Chip(c) if slot.weight > 1 => Some(format!("{} ×{}", names.chip(c), slot.weight)),
+                                Entry::Chip(c) => Some(names.chip(c)),
+                                _ => None,
+                            })
+                            .collect()
+                    } else {
+                        l.places()
+                            .filter_map(|place| match data.places[place] {
+                                Entry::Chip(c) => Some(names.chip(c)),
+                                _ => None,
+                            })
+                            .collect()
+                    };
+                    SheetList { name: auto::list_name(names, l).into(), chips: items(chips) }
+                })
                 .collect()
         }
         None => Vec::new(),

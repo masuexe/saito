@@ -182,7 +182,7 @@ component SlotRow inherits Rectangle {
         big: Theme.handheld;
         chip: FolderView.slots[root.index];
         number: FolderDrag.shown(root.index) + 1;
-        hover: touch.has-hover && !FolderDrag.on;
+        hover: !Theme.handheld && touch.has-hover && !FolderDrag.on;
         opacity: root.gone ? 0 : 1;
         animate y {
             duration: FolderDrag.on ? Theme.quick : 0ms;
@@ -205,6 +205,7 @@ component SlotRow inherits Rectangle {
 export component LiftedRow inherits Rectangle {
     in property <ChipCell> chip;
     in property <int> number;
+    in property <string> badge;
     in property <bool> big;
     in property <bool> removing;
     Rectangle {
@@ -227,6 +228,7 @@ export component LiftedRow inherits Rectangle {
             height: parent.height;
             chip: root.chip;
             number: root.number;
+            badge: root.badge;
             big: root.big;
             chosen: !root.removing;
         }
@@ -300,7 +302,7 @@ component LibraryRowView inherits Rectangle {
     property <length> note-width: Theme.handheld ? 118px : 150px;
     property <length> note-x: root.megabytes-x - 8px - root.note-width;
     Rectangle {
-        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+        background: !Theme.handheld && touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
     }
 
     Image {
@@ -534,7 +536,7 @@ export component LibraryRowLook inherits Rectangle {
     property <length> name-end: root.end-x - (root.end-room > 0px ? 8px : 0px) - root.note-used;
     property <length> name-room: max(0px, root.name-end - root.name-x);
     Rectangle {
-        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+        background: !Theme.handheld && touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
     }
 
     Rectangle {

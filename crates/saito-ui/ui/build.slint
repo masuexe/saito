@@ -469,15 +469,18 @@ export component ChipRow inherits Rectangle {
     in property <ChipCell> chip;
     // Its number, from 1; 0: no number (a player's panel in a match).
     in property <int> number;
+    // Optional prefix label shown in place of `number` (e.g., "4×", "2×", "1×" for weighted ABD slots).
+    in property <string> badge;
     in property <bool> big;
     in property <bool> chosen;
     in property <bool> hover;
-    property <length> gap: root.number > 0 ? 8px : 6px;
-    property <length> pad: root.number > 0 ? 8px : 4px;
-    property <length> icon-x: root.number > 0 ? root.pad + 22px + root.gap : root.pad;
+    property <bool> has-lead: root.number > 0 || root.badge != "";
+    property <length> gap: root.has-lead ? 8px : 6px;
+    property <length> pad: root.has-lead ? 8px : 4px;
+    property <length> icon-x: root.has-lead ? root.pad + 22px + root.gap : root.pad;
     property <length> code-x: self.width - root.pad - 18px;
     property <length> element-x: root.code-x - root.gap - 16px;
-    property <length> mark-width: root.number > 0 ? 34px : 30px;
+    property <length> mark-width: root.has-lead ? 34px : 30px;
     property <length> mark-x: root.element-x - root.gap - root.mark-width;
     height: root.big ? 40px : Theme.chip-row;
     Rectangle {
@@ -493,11 +496,11 @@ export component ChipRow inherits Rectangle {
     Text {
         x: root.pad;
         width: 22px;
-        text: root.number <= 0 ? "" : (root.number < 10 ? "0\{root.number}" : "\{root.number}");
-        color: Theme.dim;
+        text: root.badge != "" ? root.badge : root.number <= 0 ? "" : (root.number < 10 ? "0\{root.number}" : "\{root.number}");
+        color: root.badge == "4×" ? Theme.cursor : root.badge == "2×" ? Theme.text : Theme.dim;
         font-family: Theme.mono;
         font-size: 11px;
-        font-weight: 500;
+        font-weight: root.badge == "4×" || root.badge == "2×" ? 700 : 500;
         vertical-alignment: center;
     }
 
@@ -607,7 +610,7 @@ export component BuildRow inherits Rectangle {
     in property <bool> menu;
     height: 52px;
     Rectangle {
-        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+        background: !Theme.handheld && touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
     }
 
     Text {

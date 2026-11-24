@@ -26,11 +26,14 @@ export type Place = { chip: Chip?, pattern: number, zero: boolean }
 
 -- The lists the games write the places in (EXE5's 0x0802C692 to 0x0802C6E6): their names, first places (from 1) and
 -- sizes, the chip `class` the list accepts (`class` or `own_class` when it matches the list's name; a tool reads it to
--- offer a place the chips it can hold), and `unique` where a chip can appear at most once in the list (the mega, giga
--- and program advance lists hold distinct most-used chips). Both first and standard lists hold standard chips alone.
-local LISTS: { { name: string, start: number, len: number, class: string?, own_class: boolean?, unique: boolean? } } = {
+-- offer a place the chips it can hold), `unique` where a chip can appear at most once in the list (the standard, mega,
+-- giga and program advance lists hold distinct most-used chips), and `weights` for the standard list's GBA repeat
+-- table (4, 4, 2, 2, then 1×12 = 24 places across 16 logical slots). `first` (places 1..3) cannot be written in normal
+-- gameplay and must remain empty.
+local STANDARD_WEIGHTS: { number } = { 4, 4, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+local LISTS: { { name: string, start: number, len: number, class: string?, own_class: boolean?, unique: boolean?, weights: { number }? } } = {
     { name = "first", start = 1, len = 3, class = "standard" },
-    { name = "standard", start = 4, len = 24, class = "standard", own_class = true },
+    { name = "standard", start = 4, len = 24, class = "standard", own_class = true, unique = true, weights = STANDARD_WEIGHTS },
     { name = "mega", start = 28, len = 5, class = "mega", own_class = true, unique = true },
     { name = "giga", start = 33, len = 1, class = "giga", own_class = true, unique = true },
     { name = "patterns", start = 34, len = 8 },
@@ -156,28 +159,74 @@ function places.turn(sent: { Place }): { Place }
 end
 
 -- A game's `validate`'s part for a setup's places: each place one thing (a chip, a pattern, a 0, or empty), a
--- pattern one of the eight records, no chip among the 42 places that the game's AI can't play or that can't be obtained
--- normally, each chip list held to its required chip class, and `unique` lists (mega/giga/PA) holding each chip at most once.
+-- pattern one of the eight records, `first` (places 1..3) empty (cannot be written in normal gameplay), no chip among
+-- the 42 places that the game's AI can't play or that can't be obtained normally, each chip list held to its required
+-- chip class, weighted lists (`standard`: 4, 4, 2, 2, 1×12) uniform within each weighted block, and `unique` lists
+-- (standard/mega/giga/PA) holding each chip in at most one logical slot.
 function places.validate(stated: { Place }, problem: (p: SetupProblem) -> ())
+    local function place_at(i: number): Place
+        return if i <= #stated then stated[i] else EMPTY
+    end
+    local function same_place(a: Place, b: Place): boolean
+        return a.chip == b.chip and a.pattern == b.pattern and a.zero == b.zero
+    end
+
     local counts: { [any]: { [Chip]: number } } = {}
+    local bad_block_slots: { [number]: boolean } = {}
     for _, l in LISTS do
         if l.unique then
             counts[l] = {}
         end
-    end
-    for i, p in stated do
-        local chip: Chip? = p.chip
-        if chip ~= nil then
-            local list = list_at(i)
-            local list_counts = counts[list]
-            if list_counts ~= nil then
-                list_counts[chip] = (list_counts[chip] or 0) + 1
+        if l.weights ~= nil then
+            local offset = l.start
+            for _, w in l.weights do
+                local first_p = place_at(offset)
+                local consistent = true
+                local seen_in_block: { [Chip]: boolean } = {}
+                for k = 0, w - 1 do
+                    local idx = offset + k
+                    local p = place_at(idx)
+                    if not same_place(p, first_p) then
+                        consistent = false
+                    end
+                    if p.chip ~= nil then
+                        seen_in_block[p.chip] = true
+                    end
+                end
+                if not consistent then
+                    for k = 0, w - 1 do
+                        bad_block_slots[offset + k] = true
+                    end
+                end
+                if l.unique then
+                    local list_counts = counts[l]
+                    for chip in seen_in_block do
+                        list_counts[chip] = (list_counts[chip] or 0) + 1
+                    end
+                end
+                offset += w
+            end
+        elseif l.unique then
+            local list_counts = counts[l]
+            for i = l.start, l.start + l.len - 1 do
+                local chip: Chip? = place_at(i).chip
+                if chip ~= nil then
+                    list_counts[chip] = (list_counts[chip] or 0) + 1
+                end
             end
         end
     end
     for i, p in stated do
         local list = list_at(i)
         local where = string.format("place %d of the auto battle data (`%s`, entry %d)", i, list.name, i - list.start + 1)
+        if list.name == "first" and not empty(p) then
+            problem({
+                kind = "invalid",
+                field = "auto_battle_places",
+                entry = i,
+                text = string.format("%s cannot be set in the original game", where),
+            })
+        end
         local things = (if p.chip ~= nil then 1 else 0) + (if p.pattern > 0 then 1 else 0) + (if p.zero then 1 else 0)
         if things > 1 then
             problem({
@@ -196,6 +245,14 @@ function places.validate(stated: { Place }, problem: (p: SetupProblem) -> ())
                 least = 0,
                 most = places.RECORDS,
                 text = string.format("place %d of the auto battle data names pattern %d; it has %d pattern records", i, p.pattern, places.RECORDS),
+            })
+        end
+        if bad_block_slots[i] then
+            problem({
+                kind = "invalid",
+                field = "auto_battle_places",
+                entry = i,
+                text = string.format("%s breaks the 4x-2x-1x slot rule of `standard`", where),
             })
         end
         local chip: Chip? = p.chip

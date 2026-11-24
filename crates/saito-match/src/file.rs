@@ -651,15 +651,15 @@ mod tests {
         let chip = |name: &str| ids::chip(&content, "exe5", name).unwrap();
         let def = |name: &str| -> Fact<'static> { Fact::Value(Value::Def(Registry::Chip, chip(name).0)) };
         let int = |n: i64| -> Fact<'static> { Fact::Value(Value::Int(n)) };
-        // Its 42 places: the first, the standard chips from place 4 (a 0
-        // after them), an empty place before the second mega chip, a giga, two
-        // patterns and a program advance.
+        // Its 42 places: `first` empty, standard chips following the 4-4-2-2-1×12 weights
+        // (4× sword at places 4..=7, 1× cannon at place 16, a 0 at place 17), an empty place
+        // before the second mega chip, a giga, two patterns and a program advance.
         let mut places: Vec<Fact> = (0..42).map(|_| Fact::Record(Vec::new())).collect();
-        places[0] = Fact::Record(vec![("chip", def("areagrab"))]);
-        for (i, name) in ["sword", "sword", "sword", "sword", "cannon"].into_iter().enumerate() {
-            places[3 + i] = Fact::Record(vec![("chip", def(name))]);
+        for p in 3..7 {
+            places[p] = Fact::Record(vec![("chip", def("sword"))]);
         }
-        places[8] = Fact::Record(vec![("zero", Fact::Value(Value::Bool(true)))]);
+        places[15] = Fact::Record(vec![("chip", def("cannon"))]);
+        places[16] = Fact::Record(vec![("zero", Fact::Value(Value::Bool(true)))]);
         places[28] = Fact::Record(vec![("chip", def("protoman"))]);
         places[32] = Fact::Record(vec![("chip", def("crossdiv"))]);
         places[33] = Fact::Record(vec![("pattern", int(1))]);
@@ -685,7 +685,7 @@ mod tests {
         m.sides[1].set_fact(&content, "auto_battle_records", &[]).unwrap();
         let text = write(&content, &m);
         for line in [
-            "auto_battle_places = [\n    { chip = \"areagrab\" },\n    {},\n    {},\n    { chip = \"sword\" },",
+            "auto_battle_places = [\n    {},\n    {},\n    {},\n    { chip = \"sword\" },",
             "    { zero = true },\n",
             "    { pattern = 1 },\n    { pattern = 3 },\n",
             "    { chip = \"csmopris\" },\n]",
@@ -697,35 +697,31 @@ mod tests {
         let back = parse(&content, &text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
         assert_eq!(back, m);
         // The round sends it (EXE5's rules, as the round is set up): its
-        // twelve entries (the 0 one of them), the one of the first three
-        // places still first; the other side's none.
+        // eleven entries (the 0 one of them); the other side's none.
         let b = crate::check::start(&content, &m).unwrap();
-        let sent = |side: u8| -> (usize, saito_content_api::FieldValue) {
+        let sent = |side: u8| -> usize {
             let (schema, state) = b.rules_state(side).unwrap();
             let place = schema.place(schema.index_of("auto_battle_places").unwrap());
-            let n = state.len_at(place).unwrap();
-            let first = place.elem(0).map_or(saito_content_api::FieldValue::Ref(None), |e| state.get_at(e.field("chip").unwrap()));
-            (n, first)
+            state.len_at(place).unwrap()
         };
-        let areagrab = saito_content_api::FieldValue::Ref(Some((saito_content_api::Registry::Chip, chip("areagrab").0)));
-        assert_eq!(sent(0), (12, areagrab));
-        assert_eq!(sent(1).0, 0);
+        assert_eq!(sent(0), 11);
+        assert_eq!(sent(1), 0);
         // What a file gets wrong.
         let bad = |from: &str, to: &str| -> Vec<String> {
             assert!(text.contains(from), "{from}:\n{text}");
             parse(&content, &text.replacen(from, to, 1)).unwrap_err()
         };
         let has = |problems: Vec<String>, said: &str| assert!(problems.iter().any(|p| p.contains(said)), "{said}: {problems:?}");
-        let first = "{ chip = \"areagrab\" }";
-        has(bad(first, "{ chip = \"nothing-at-all\" }"), "left: auto_battle_places: [1]: chip: no chip \"nothing-at-all\" in exe5");
-        has(bad(first, "{ pattern = 9 }"), "left: place 1 of the auto battle data names pattern 9; it has 8 pattern records");
-        has(bad(first, "{ chip = \"areagrab\", pattern = 1 }"), "left: place 1 of the auto battle data (`first`, entry 1) is a chip, a pattern or a 0, not more");
-        has(bad(first, "{ chip = \"stepswrd\" }"), "left: place 1 of the auto battle data (`first`, entry 1) holds");
-        // Each chip list holds chips of its required class alone (`first` and `standard` hold standard chips,
-        // while `mega`, `giga` and `program_advance` hold their own classes).
+        let first_empty = "auto_battle_places = [\n    {},";
+        has(bad(first_empty, "auto_battle_places = [\n    { chip = \"areagrab\" },"), "left: place 1 of the auto battle data (`first`, entry 1) cannot be set in the original game");
+        let cannon = "{ chip = \"cannon\" }";
+        has(bad(cannon, "{ chip = \"nothing-at-all\" }"), "left: auto_battle_places: [16]: chip: no chip \"nothing-at-all\" in exe5");
+        has(bad(cannon, "{ pattern = 9 }"), "left: place 16 of the auto battle data names pattern 9; it has 8 pattern records");
+        has(bad(cannon, "{ chip = \"areagrab\", pattern = 1 }"), "left: place 16 of the auto battle data (`standard`, entry 13) is a chip, a pattern or a 0, not more");
+        has(bad(cannon, "{ chip = \"stepswrd\" }"), "left: place 16 of the auto battle data (`standard`, entry 13) holds");
+        // Each chip list holds chips of its required class alone (`standard`, `mega`, `giga` and `program_advance`).
         for (from, to, said) in [
-            (first, "{ chip = \"crossdiv\" }", "left: place 1 of the auto battle data (`first`, entry 1) holds クロスディバイド, a chip of class `giga`: the list holds `standard` chips alone"),
-            ("{ chip = \"cannon\" }", "{ chip = \"csmopris\" }", "left: place 8 of the auto battle data (`standard`, entry 5) holds コスモプリズン, a chip of class `program_advance`: the list holds `standard` chips alone"),
+            (cannon, "{ chip = \"csmopris\" }", "left: place 16 of the auto battle data (`standard`, entry 13) holds コスモプリズン, a chip of class `program_advance`: the list holds `standard` chips alone"),
             ("{ chip = \"protoman\" }", "{ chip = \"cannon\" }", "left: place 29 of the auto battle data (`mega`, entry 2) holds キャノン, a chip of class `standard`: the list holds `mega` chips alone"),
             ("{ chip = \"crossdiv\" }", "{ chip = \"protoman\" }", "left: place 33 of the auto battle data (`giga`, entry 1) holds ブルース, a chip of class `mega`: the list holds `giga` chips alone"),
             ("{ chip = \"csmopris\" }", "{ chip = \"crossdiv\" }", "left: place 42 of the auto battle data (`program_advance`, entry 1) holds クロスディバイド, a chip of class `giga`: the list holds `program_advance` chips alone"),

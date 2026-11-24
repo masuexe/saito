@@ -841,7 +841,10 @@ fn a_souls_chip_is_no_place_of_exe4s_auto_battle_data() {
     let mut m = crate::pick::live(&content, "exe4", 3, None).unwrap();
     let chip = |name: &str| crate::ids::chip(&content, "exe4", name).unwrap();
     let place = |name: &str| Fact::Record(vec![("chip", Fact::Value(Value::Def(Registry::Chip, chip(name).0)))]);
-    let places = [place("metlsoul"), place("cannon"), Fact::Record(Vec::new()), place("rollsoul")];
+    let mut places: Vec<Fact> = (0..19).map(|_| Fact::Record(Vec::new())).collect();
+    places[15] = place("metlsoul");
+    places[16] = place("cannon");
+    places[18] = place("rollsoul");
     m.sides[0].set_fact(&content, "auto_battle_places", &places).unwrap();
     let said: Vec<(Option<usize>, Option<usize>, Wrong)> = crate::check::problems(&content, &m)
         .into_iter()
@@ -849,7 +852,7 @@ fn a_souls_chip_is_no_place_of_exe4s_auto_battle_data() {
         .map(|p| (p.side, p.entry, p.what))
         .collect();
     let refused = |entry: usize, name: &str| (Some(0), Some(entry), Wrong::ChipNotAllowed { chip: chip(name) });
-    assert_eq!(said, [refused(0, "metlsoul"), refused(3, "rollsoul")]);
+    assert_eq!(said, [refused(15, "metlsoul"), refused(18, "rollsoul")]);
 }
 
 /// The stages a match may name are its rules' (`link_pick.match_stages`):

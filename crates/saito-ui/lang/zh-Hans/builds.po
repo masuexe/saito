@@ -140,6 +140,9 @@ msgstr "全部"
 msgid "Clear"
 msgstr "清空"
 
+msgid "Fix"
+msgstr "修复"
+
 msgid "Clear the folder?"
 msgstr "清空文件夹？"
 

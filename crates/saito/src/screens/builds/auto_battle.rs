@@ -105,16 +105,42 @@ impl AutoBattle {
         }
     }
 
-    /// The build's problems with place `place` (from 0), the ruleset's among them (a chip its auto battle category holds
-    /// back, in each place that holds it).
-    fn problems(draft: &Draft, place: usize) -> impl Iterator<Item = &saito_match::check::Problem> {
-        draft.checked.problems.iter().filter(move |p| p.field.as_deref() == Some(auto::PLACES_FIELD) && p.at(place))
+    /// The logical entry held by the slot containing physical `place`.
+    fn slot_entry(draft: &Draft, data: &Data, place: usize) -> Entry {
+        draft
+            .kit
+            .auto_layout()
+            .and_then(|l| l.slot_of(place).map(|(list, idx, _)| list.logical_entries(data)[idx]))
+            .unwrap_or_else(|| data.places.get(place).copied().unwrap_or(Entry::Empty))
     }
 
-    /// The data's problems about no place of it (a fact of it a build made by hand states wrong): every place's strip
-    /// says them after its own (docs/design/app-ui.md §2.66).
+    /// Physical place range covered by the logical slot containing `place`.
+    fn slot_range(draft: &Draft, place: usize) -> std::ops::Range<usize> {
+        draft.kit.auto_layout().and_then(|l| l.slot_of(place)).map_or(place..place + 1, |(_, _, s)| s.places())
+    }
+
+    /// The build's problems with the logical slot containing `place` (from 0), the ruleset's among them.
+    fn problems(draft: &Draft, place: usize) -> impl Iterator<Item = &saito_match::check::Problem> {
+        let range = AutoBattle::slot_range(draft, place);
+        draft.checked.problems.iter().filter(move |p| {
+            p.field.as_deref() == Some(auto::PLACES_FIELD) && p.entry.is_some_and(|e| range.contains(&e))
+        })
+    }
+
+    /// The data's problems about no visible place of it (e.g., hidden `first` slots or whole-data facts):
+    /// every place's strip says them after its own (docs/design/app-ui.md §2.66).
     fn unplaced<'d>(draft: &'d Draft, places: usize) -> Vec<&'d saito_match::check::Problem> {
-        draft.pane_problems(&[auto::PLACES_FIELD.to_string()], false).into_iter().filter(|p| p.field.as_deref() != Some(auto::PLACES_FIELD) || p.entry.is_none_or(|e| e >= places)).collect()
+        let layout = draft.kit.auto_layout();
+        draft
+            .pane_problems(&[auto::PLACES_FIELD.to_string()], false)
+            .into_iter()
+            .filter(|p| {
+                p.field.as_deref() != Some(auto::PLACES_FIELD)
+                    || p.entry.is_none_or(|e| {
+                        e >= places || layout.is_some_and(|l| l.list_of(e).is_some_and(|list| list.is_hidden()))
+                    })
+            })
+            .collect()
     }
 
     /// The places under their lists' titles, two columns of them (on a phone one, upright or sideways), each place where it is, marked
@@ -128,37 +154,53 @@ impl AutoBattle {
         self.at = vec![(0, 0); auto::PLACES];
         self.editable.clear();
         let mut row = 0;
+        let mut filled = 0i32;
         let lines: Vec<PlaceLine> = draft.with_words(shell, |words| {
             let mut lines = Vec::new();
-            // (A pattern's places aren't shown: a build states no pattern records, the rules' default being
-            // nothing learned, so no place of it points at one, and the game never puts a chip there.)
-            for list in layout.lists.iter().filter(|l| l.holds != Holds::Patterns) {
+            // (`patterns` and `first` aren't shown: neither can be written by a player in normal gameplay.)
+            for list in layout.lists.iter().filter(|l| !l.is_hidden()) {
                 // (A list with no name in a game of one list has no title.)
                 if !list.name.is_empty() {
                     let title = auto::list_name(words.names, list);
                     lines.push(PlaceLine { title: true, text: title.into(), row, ..Default::default() });
                     row += 1;
                 }
-                for (k, place) in list.places().enumerate() {
+                let entries = list.logical_entries(&data);
+                for (k, (slot, entry)) in list.slots().into_iter().zip(entries).enumerate() {
+                    let place = slot.start;
                     let (column, r) = ((k % columns) as i32, row + (k / columns) as i32);
                     self.at[place] = (column, r);
                     self.editable.push(place);
-                    let chip = AutoBattle::cell(draft, words, data.places[place], AutoBattle::problems(draft, place).next().is_some(), shell.settings.hd_chip_art);
-                    lines.push(PlaceLine { chip, number: k as i32 + 1, place: place as i32, column, row: r, ..Default::default() });
+                    if entry != Entry::Empty {
+                        filled += 1;
+                    }
+                    let flagged = AutoBattle::problems(draft, place).next().is_some();
+                    let chip = AutoBattle::cell(draft, words, entry, flagged, shell.settings.hd_chip_art);
+                    let badge = if list.is_weighted() { format!("{}×", slot.weight) } else { String::new() };
+                    lines.push(PlaceLine { chip, number: k as i32 + 1, badge: badge.into(), place: place as i32, column, row: r, ..Default::default() });
                 }
-                row += list.len.div_ceil(columns) as i32;
+                row += list.slot_count().div_ceil(columns) as i32;
             }
             lines
         });
+        if !self.editable.contains(&self.place)
+            && let Some(&first) = self.editable.first()
+        {
+            self.place = first;
+            if matches!(self.described, Some(Described::Place(_)) | None) {
+                self.described = Some(Described::Place(self.place));
+            }
+        }
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
         view.set_lines(ModelRc::new(VecModel::from(lines)));
         view.set_rows(row);
         view.set_place(self.place as i32);
-        view.set_filled(self.editable.iter().filter(|&&p| data.places[p] != Entry::Empty).count() as i32);
+        view.set_filled(filled);
         view.set_places(self.editable.len() as i32);
         view.set_problems(draft.pane_line(shell, &[auto::PLACES_FIELD.to_string()], false).into());
         view.set_warning(AutoBattle::data_warning(shell, draft, &data));
+        view.set_needs_fix(layout.needs_normalize(&data));
     }
 
     /// Non-blocking ABD-wide warning (e.g., EXE4 missing DarkSword when Standard slots are not full).
@@ -212,15 +254,26 @@ impl AutoBattle {
     /// The library's row under the cursor is the chip the place being filled holds (Confirm takes it out again).
     fn on_placed(&self, shell: &Shell, draft: &Draft) -> bool {
         let Some(row) = shell.nav.focused().filter(|k| k.id == "lib.rows").map(|k| k.index.max(0) as usize) else { return false };
-        let place = Data::of_side(draft.content(), draft.side()).places.get(self.place).copied();
-        self.rows.get(row).is_some_and(|&chip| place == Some(Entry::Chip(chip)))
+        let data = Data::of_side(draft.content(), draft.side());
+        let entry = AutoBattle::slot_entry(draft, &data, self.place);
+        self.rows.get(row).is_some_and(|&chip| entry == Entry::Chip(chip))
     }
 
     fn show_library(&self, shell: &Shell, draft: &Draft) {
         let content = draft.content();
         let data = Data::of_side(content, draft.side());
         let layout = draft.kit.auto_layout();
-        let active_list = layout.and_then(|l| l.list_of(self.place));
+        let active_slot = layout.and_then(|l| l.slot_of(self.place));
+        let active_entries: Vec<Entry> = active_slot.map(|(list, _, _)| list.logical_entries(&data)).unwrap_or_default();
+        let visible_entries: Vec<Entry> = layout
+            .map(|l| {
+                l.lists
+                    .iter()
+                    .filter(|list| !list.is_hidden())
+                    .flat_map(|list| list.logical_entries(&data))
+                    .collect()
+            })
+            .unwrap_or_else(|| data.places.to_vec());
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
         let say = ui.global::<BuildWords>();
@@ -229,13 +282,17 @@ impl AutoBattle {
                 .iter()
                 .map(|&chip| {
                     let record = content.chip(chip);
-                    let copies = data.places.iter().filter(|e| **e == Entry::Chip(chip)).count() as i32;
+                    let copies = visible_entries.iter().filter(|e| **e == Entry::Chip(chip)).count() as i32;
                     // (One the build's ruleset holds back here is greyed and says so: it can't be put in,
                     // docs/design/app-ui.md §2.68. Unrecordable ABD chips stay pickable but carry a warning;
                     // a chip already placed elsewhere in a `unique` list cannot be added a second time.)
                     let banned = !draft.allows(auto::PLACES_FIELD, chip.0);
-                    let duplicate_in_unique = active_list.is_some_and(|list| {
-                        list.unique && list.places().any(|p| p != self.place && data.places[p] == Entry::Chip(chip))
+                    let duplicate_in_unique = active_slot.is_some_and(|(list, active_idx, _)| {
+                        list.unique
+                            && active_entries
+                                .iter()
+                                .enumerate()
+                                .any(|(idx, e)| idx != active_idx && *e == Entry::Chip(chip))
                     });
                     let illegal = layout.is_some_and(|l| l.is_unrecordable(chip));
                     let (note, refused, warn) = if banned {
@@ -287,8 +344,8 @@ impl AutoBattle {
         // (Why the last chip wasn't put in is the focused place's.)
         let notice = if hovered.is_some_and(|h| Some(h) != self.described) { None } else { self.notice.clone() };
         let chip = match hovered.or(self.described) {
-            Some(Described::Place(i)) => match data.places.get(i) {
-                Some(Entry::Chip(c)) => Some(*c),
+            Some(Described::Place(i)) => match AutoBattle::slot_entry(draft, &data, i) {
+                Entry::Chip(c) => Some(c),
                 _ => None,
             },
             Some(Described::Row(r)) => self.rows.get(r).copied(),
@@ -373,7 +430,8 @@ impl AutoBattle {
         let Some(&chip) = self.rows.get(row) else { return };
         let place = self.place;
         // (The chip the place holds already: taken out again, from where the cursor is; it flies back to its row.)
-        if Data::of_side(draft.content(), draft.side()).places.get(place) == Some(&Entry::Chip(chip)) {
+        let data = Data::of_side(draft.content(), draft.side());
+        if AutoBattle::slot_entry(draft, &data, place) == Entry::Chip(chip) {
             let (icon, name) = draft.with_words(shell, |w| (draft.kit.pictures.icon(chip), w.names.chip(chip)));
             shell.fly(("places.place", place as i32), ("lib.rows", row as i32), icon, &name);
             self.remove(shell, draft, place);
@@ -389,7 +447,8 @@ impl AutoBattle {
     /// strip says why), and the place being filled stays as it was.
     fn fill(&mut self, shell: &mut Shell, draft: &mut Draft, row: usize, to: usize) {
         let Some(&chip) = self.rows.get(row) else { return };
-        if Data::of_side(draft.content(), draft.side()).places.get(to) == Some(&Entry::Chip(chip)) || !self.put_in(shell, draft, row, to) {
+        let data = Data::of_side(draft.content(), draft.side());
+        if AutoBattle::slot_entry(draft, &data, to) == Entry::Chip(chip) || !self.put_in(shell, draft, row, to) {
             return;
         }
         self.place = to;
@@ -418,16 +477,29 @@ impl AutoBattle {
             refuse(self, shell, draft, ui.global::<BuildWords>().invoke_not_allowed_here().to_string());
             return false;
         }
+        let Some(layout) = draft.kit.auto_layout().cloned() else { return false };
+        let range = AutoBattle::slot_range(draft, place);
         let before = draft.side().clone();
         let field = Some(auto::PLACES_FIELD);
-        let had: Vec<String> = draft.checked.problems.iter().filter(|p| p.field.as_deref() == field && p.entry == Some(place)).map(|p| p.text.clone()).collect();
-        if !draft.edit(|content, side| auto::update(content, side, Edit::Put(place, chip))) {
+        let had: Vec<String> = draft
+            .checked
+            .problems
+            .iter()
+            .filter(|p| p.field.as_deref() == field && p.entry.is_some_and(|e| range.contains(&e)))
+            .map(|p| p.text.clone())
+            .collect();
+        if !draft.edit(|content, side| auto::put_slot(content, side, &layout, place, chip)) {
             shell.sound.play(Cue::Refused);
             return false;
         }
         // (What the game's rules have against it there: a ruleset's problem is another place's chip's, which this one
         // didn't bring.)
-        let against = draft.checked.problems.iter().find(|p| p.field.as_deref() == field && p.entry == Some(place) && !p.what.of_ruleset() && !had.contains(&p.text)).cloned();
+        let against = draft
+            .checked
+            .problems
+            .iter()
+            .find(|p| p.field.as_deref() == field && p.entry.is_some_and(|e| range.contains(&e)) && !p.what.of_ruleset() && !had.contains(&p.text))
+            .cloned();
         if let Some(problem) = against {
             draft.edit(|_, side| {
                 *side = before;
@@ -489,12 +561,24 @@ impl AutoBattle {
 
     /// Empty place `i`.
     fn remove(&mut self, shell: &mut Shell, draft: &mut Draft, i: usize) {
-        if draft.edit(|content, side| auto::update(content, side, Edit::Empty(i))) {
+        let Some(layout) = draft.kit.auto_layout().cloned() else { return };
+        if draft.edit(|content, side| auto::empty_slot(content, side, &layout, i)) {
             shell.sound.play(Cue::Back);
             self.changed(shell, draft);
         } else {
             shell.sound.play(Cue::Refused);
         }
+    }
+
+    /// FIX: normalize legacy/illegal ABD data (clear `first` and align `standard` to 4x-2x-1x).
+    fn fix(&mut self, shell: &mut Shell, draft: &mut Draft) {
+        let Some(layout) = draft.kit.auto_layout().cloned() else { return };
+        self.notice = None;
+        if draft.edit(|content, side| auto::normalize(content, side, &layout)) {
+            shell.sound.play(Cue::Pick);
+        }
+        self.changed(shell, draft);
+        shell.nav.focus("places.place", self.place as i32);
     }
 
     /// CLEAR, answered: every place emptied, as one change (`Edit::Clear`). The cursor goes to the place being filled.
@@ -529,7 +613,10 @@ impl AutoBattle {
         let lines = view.get_lines();
         let line = |place: usize| lines.iter().find(|l| !l.title && l.place == place as i32);
         if let Some(mut lifted) = line(from) {
-            lifted.number = drop.and_then(|d| line(d.0)).map_or(lifted.number, |l| l.number);
+            if let Some(dest) = drop.and_then(|d| line(d.0)) {
+                lifted.number = dest.number;
+                lifted.badge = dest.badge;
+            }
             view.set_lifted(lifted);
         }
         if editor::over_library(shell, at) {
@@ -541,18 +628,37 @@ impl AutoBattle {
     /// Place `from`'s chip let go over place `to`: moved there within its list, or traded with another list's, unless
     /// the rules refuse a chip where it would go (then it shakes, and the strip says why).
     fn reorder(&mut self, shell: &mut Shell, draft: &mut Draft, from: usize, to: usize, swap: bool) {
+        let Some(layout) = draft.kit.auto_layout().cloned() else { return };
         let before = draft.side().clone();
         let field = Some(auto::PLACES_FIELD);
         let had: Vec<String> = draft.checked.problems.iter().filter(|p| p.field.as_deref() == field).map(|p| p.text.clone()).collect();
-        let change = if swap { Edit::Swap(from, to) } else { Edit::Move(from, to) };
-        if !draft.edit(|content, side| auto::update(content, side, change)) {
+        let changed = draft.edit(|content, side| {
+            if swap {
+                auto::swap_slot(content, side, &layout, from, to)
+            } else {
+                auto::move_slot(content, side, &layout, from, to)
+            }
+        });
+        if !changed {
             return;
         }
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
         // (Within a list nothing is refused: its places hold the same chips. Across, each place the trade fills is
         // held to what the rules let it hold.)
-        let against = draft.checked.problems.iter().find(|p| p.field.as_deref() == field && (p.entry == Some(from) || p.entry == Some(to)) && !p.what.of_ruleset() && !had.contains(&p.text)).cloned();
+        let from_range = AutoBattle::slot_range(draft, from);
+        let to_range = AutoBattle::slot_range(draft, to);
+        let against = draft
+            .checked
+            .problems
+            .iter()
+            .find(|p| {
+                p.field.as_deref() == field
+                    && p.entry.is_some_and(|e| from_range.contains(&e) || to_range.contains(&e))
+                    && !p.what.of_ruleset()
+                    && !had.contains(&p.text)
+            })
+            .cloned();
         if let Some(problem) = against.filter(|_| swap) {
             draft.edit(|_, side| {
                 *side = before;
@@ -654,6 +760,7 @@ impl Tab for AutoBattle {
                 self.leave_library(shell);
             }
             "lib.close" => self.leave_library(shell),
+            "fix" => self.fix(shell, draft),
             "clear" => {
                 let empty = Data::of_side(draft.content(), draft.side()).entries() == 0;
                 editor::ask_clear(shell, view.get_clear_question(), empty);

@@ -22,6 +22,7 @@ export struct PlaceLine {
     title: bool,
     text: string,
     number: int,
+    badge: string,
     chip: ChipCell,
     place: int,
     column: int,
@@ -55,6 +56,8 @@ export global AutoBattleView {
     in property <string> problems;
     // Non-blocking ABD-wide illegal data warning (e.g., EXE4 missing DarkSword when Standard slots are not full).
     in property <string> warning;
+    // Whether the build holds legacy/illegal ABD structure (non-empty `first` or non-4x-2x-1x `standard`).
+    in property <bool> needs-fix;
     out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
     // Where the place a chip just went into is (its column and row), counted: it flashes.
     in property <int> landed-column;
@@ -125,8 +128,9 @@ component PlaceView inherits Rectangle {
     in property <length> dy;
     in property <bool> gone;
     in property <bool> gap;
-    // Its number in its list, as it shows (shifted, the place's it shows at).
+    // Its number in its list, as it shows (shifted, the place's it shows at), and optional weight badge ("4×", "2×", "1×").
     in property <int> number;
+    in property <string> badge;
     DropGap {
         x: 0;
         y: 0;
@@ -154,8 +158,9 @@ component PlaceView inherits Rectangle {
         opacity: root.gone ? 0 : 1;
         chip: root.line.chip;
         number: root.number;
+        badge: root.badge;
         chosen: root.chosen;
-        hover: hit.has-hover && !PlaceDrag.on && !PlaceDrag.filling;
+        hover: !Theme.handheld && hit.has-hover && !PlaceDrag.on && !PlaceDrag.filling;
         big: Theme.handheld;
         animate x, y {
             duration: PlaceDrag.on ? Theme.quick : 0ms;
@@ -184,7 +189,7 @@ component AutoLibraryRowView inherits Rectangle {
     property <length> note-width: Theme.handheld ? 118px : 150px;
     property <length> note-x: root.megabytes-x - 8px - root.note-width;
     Rectangle {
-        background: touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+        background: !Theme.handheld && touch.has-hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
     }
 
     Image {
@@ -445,14 +450,26 @@ export component AutoBattleTab inherits Rectangle {
         visible: !Theme.phone;
     }
 
+    property <length> actions-left: AutoBattleView.needs-fix ? fix.x + fix.pad : clear.x + clear.pad;
+
     places-title := Label {
         x: 12px;
         y: root.pane-y;
-        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        width: max(0px, root.actions-left - 12px - self.x);
         height: 44px;
         visible: !Theme.phone;
         text: I18n.upper(@tr("Auto battle"));
         color: AutoBattleView.in-library ? Theme.muted : Theme.cursor;
+    }
+
+    // FIX: normalizes legacy/illegal ABD data (clears `first` and aligns `standard` to 4×-2×-1×).
+    fix := WordButton {
+        x: clear.x + clear.pad - 12px + self.pad - self.width;
+        y: clear.y;
+        visible: AutoBattleView.needs-fix;
+        nav: "fix";
+        text: I18n.upper(@tr("Fix"));
+        enabled: AutoBattleView.needs-fix;
     }
 
     // CLEAR (docs/design/app-ui.md §2.71; the user: "you should add clear for navicust/folder/patch cards/abd"): every
@@ -463,7 +480,7 @@ export component AutoBattleTab inherits Rectangle {
         y: Theme.phone ? 0px : root.pane-y + 14px;
         nav: "clear";
         text: I18n.upper(@tr("Clear"));
-        enabled: AutoBattleView.filled > 0;
+        enabled: AutoBattleView.filled > 0 || AutoBattleView.needs-fix;
     }
 
     // (What is wrong with the data: a phone's line of its own over the places, before CLEAR; sideways in the header,
@@ -471,7 +488,7 @@ export component AutoBattleTab inherits Rectangle {
     ProblemNote {
         x: Theme.sideways ? places-title.x + places-title.preferred-width + 12px : 0px;
         y: Theme.sideways ? clear.y : 0px;
-        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        width: max(0px, root.actions-left - 12px - self.x);
         visible: Theme.handheld;
         text: AutoBattleView.problems;
     }
@@ -480,7 +497,7 @@ export component AutoBattleTab inherits Rectangle {
     Text {
         x: Theme.phone ? 0px : places-title.x + places-title.preferred-width + 12px;
         y: Theme.phone ? 0px : Theme.sideways ? clear.y : root.pane-y;
-        width: max(0px, clear.x + clear.pad - 12px - self.x);
+        width: max(0px, root.actions-left - 12px - self.x);
         height: Theme.phone ? root.phone-lead : Theme.sideways ? clear.height : 44px;
         visible: AutoBattleView.warning != "" && (!Theme.handheld || AutoBattleView.problems == "");
         text: AutoBattleView.warning;
@@ -515,6 +532,7 @@ export component AutoBattleTab inherits Rectangle {
             gone: PlaceDrag.on && !line.title && line.place == Drag.from;
             gap: !line.title && line.place == PlaceDrag.to;
             number: AutoBattleView.lines[k + self.step].number;
+            badge: AutoBattleView.lines[k + self.step].badge;
 
             Rectangle { }  // (Copied in: docs/app.md §14.)
         }
@@ -565,6 +583,7 @@ export component AutoBattleTab inherits Rectangle {
         big: Theme.handheld;
         chip: AutoBattleView.lifted.chip;
         number: AutoBattleView.lifted.number;
+        badge: AutoBattleView.lifted.badge;
         removing: Drag.removing;
     }
 

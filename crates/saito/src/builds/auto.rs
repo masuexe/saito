@@ -49,8 +49,23 @@ pub enum Holds {
     Any,
 }
 
+/// One editable logical slot in a list: its first physical place (from 0) and
+/// how many contiguous physical places it occupies (`4`, `2`, or `1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    pub start: usize,
+    pub weight: usize,
+}
+
+impl Slot {
+    pub fn places(&self) -> std::ops::Range<usize> {
+        self.start..self.start + self.weight
+    }
+}
+
 /// A list of the data: its name, its places (from `start`, from 0),
-/// what it holds, and whether each chip may appear at most once in it.
+/// what it holds, whether each chip may appear at most once in it, and
+/// optional per-slot repeat weights (`[4, 4, 2, 2, 1×12]` for `standard`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct List {
     pub name: String,
@@ -58,11 +73,93 @@ pub struct List {
     pub len: usize,
     pub holds: Holds,
     pub unique: bool,
+    pub weights: Vec<usize>,
 }
 
 impl List {
     pub fn places(&self) -> std::ops::Range<usize> {
         self.start..self.start + self.len
+    }
+
+    /// Hidden in the editor and build overview (`patterns` and `first`, neither of
+    /// which can be written by a player in normal gameplay).
+    pub fn is_hidden(&self) -> bool {
+        self.holds == Holds::Patterns || self.name == "first"
+    }
+
+    pub fn is_weighted(&self) -> bool {
+        !self.weights.is_empty()
+    }
+
+    pub fn slot_count(&self) -> usize {
+        if self.weights.is_empty() { self.len } else { self.weights.len() }
+    }
+
+    pub fn slots(&self) -> Vec<Slot> {
+        if self.weights.is_empty() {
+            return self.places().map(|start| Slot { start, weight: 1 }).collect();
+        }
+        let mut offset = self.start;
+        self.weights
+            .iter()
+            .map(|&weight| {
+                let slot = Slot { start: offset, weight };
+                offset += weight;
+                slot
+            })
+            .collect()
+    }
+
+    pub fn slot_at(&self, place: usize) -> Option<(usize, Slot)> {
+        self.slots().into_iter().enumerate().find(|(_, s)| s.places().contains(&place))
+    }
+
+    /// Whether `data`'s physical places for this list obey its structural rules:
+    /// `first` empty; weighted lists uniform within each block and unique across blocks.
+    pub fn is_normalized(&self, data: &AutoBattle) -> bool {
+        if self.name == "first" {
+            return self.places().all(|p| data.places[p] == Entry::Empty);
+        }
+        if !self.is_weighted() {
+            return true;
+        }
+        let mut seen = BTreeSet::new();
+        for slot in self.slots() {
+            let first = data.places[slot.start];
+            if !slot.places().all(|p| data.places[p] == first) {
+                return false;
+            }
+            if self.unique
+                && let Entry::Chip(chip) = first
+                && !seen.insert(chip)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Logical entries for this list (one per `Slot`). If a weighted list is not yet
+    /// normalized (legacy build), ranks unique chips by `(copy_count desc, first_pos asc)`.
+    pub fn logical_entries(&self, data: &AutoBattle) -> Vec<Entry> {
+        let slots = self.slots();
+        if !self.is_weighted() || self.is_normalized(data) {
+            return slots.into_iter().map(|s| data.places[s.start]).collect();
+        }
+        let mut counts: std::collections::HashMap<ChipHandle, (usize, usize)> = std::collections::HashMap::new();
+        for (idx, p) in self.places().enumerate() {
+            if let Entry::Chip(chip) = data.places[p] {
+                counts
+                    .entry(chip)
+                    .and_modify(|(n, _)| *n += 1)
+                    .or_insert((1, idx));
+            }
+        }
+        let mut ranked: Vec<(ChipHandle, usize, usize)> = counts.into_iter().map(|(c, (n, first))| (c, n, first)).collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
+        let mut entries: Vec<Entry> = ranked.into_iter().take(slots.len()).map(|(c, _, _)| Entry::Chip(c)).collect();
+        entries.resize(slots.len(), Entry::Empty);
+        entries
     }
 }
 
@@ -130,7 +227,7 @@ impl Layout {
             Data::List(items) => items.as_slice(),
             Data::Nil => {
                 return Some(Layout {
-                    lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any, unique: false }],
+                    lists: vec![List { name: String::new(), start: 0, len: PLACES, holds: Holds::Any, unique: false, weights: Vec::new() }],
                     unrecordable,
                     required_if_standard_unfilled,
                 });
@@ -142,6 +239,18 @@ impl Layout {
             let name = l.field("name").str()?.to_string();
             let (start, len) = (l.field("start").int()? as usize, l.field("len").int()? as usize);
             let unique = matches!(l.field("unique"), Data::Bool(true));
+            let weights = match l.field("weights") {
+                Data::List(ws) => {
+                    let parsed: Option<Vec<usize>> = ws.iter().map(|v| v.int().and_then(|n| (n > 0).then_some(n as usize))).collect();
+                    let parsed = parsed?;
+                    if parsed.iter().sum::<usize>() != len {
+                        return None;
+                    }
+                    parsed
+                }
+                Data::Nil => Vec::new(),
+                _ => return None,
+            };
             let holds = if name == "patterns" {
                 Holds::Patterns
             } else if let Some(class_name) = l.field("class").str() {
@@ -153,7 +262,7 @@ impl Layout {
             } else {
                 Holds::Any
             };
-            lists.push(List { name, start: start.checked_sub(1)?, len, holds, unique });
+            lists.push(List { name, start: start.checked_sub(1)?, len, holds, unique, weights });
         }
         let mut next = 0;
         for l in &lists {
@@ -168,6 +277,37 @@ impl Layout {
     /// The list place `place` (from 0) is in.
     pub fn list_of(&self, place: usize) -> Option<&List> {
         self.lists.iter().find(|l| l.places().contains(&place))
+    }
+
+    /// The list, logical slot index within that list, and `Slot` containing physical `place`.
+    pub fn slot_of(&self, place: usize) -> Option<(&List, usize, Slot)> {
+        let list = self.list_of(place)?;
+        let (idx, slot) = list.slot_at(place)?;
+        Some((list, idx, slot))
+    }
+
+    /// Whether `data` contains legacy/illegal ABD structure (non-empty `first`, or
+    /// non-conforming `standard` 4x-2x-1x layout).
+    pub fn needs_normalize(&self, data: &AutoBattle) -> bool {
+        self.lists.iter().any(|l| !l.is_normalized(data))
+    }
+
+    /// Clear `first` (places 0..3) and normalize every weighted list to its `weights` blocks.
+    pub fn normalize_places(&self, data: &mut AutoBattle) {
+        for list in &self.lists {
+            if list.name == "first" {
+                for p in list.places() {
+                    data.places[p] = Entry::Empty;
+                }
+            } else if list.is_weighted() && !list.is_normalized(data) {
+                let entries = list.logical_entries(data);
+                for (slot, entry) in list.slots().into_iter().zip(entries) {
+                    for p in slot.places() {
+                        data.places[p] = entry;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -377,6 +517,77 @@ pub fn update(content: &Content, side: &mut Side, edit: Edit) -> bool {
     data.places != before && data.write(content, side).is_ok()
 }
 
+fn write_slot(places: &mut [Entry; PLACES], slot: Slot, entry: Entry) {
+    for p in slot.places() {
+        places[p] = entry;
+    }
+}
+
+/// Put `chip` into the logical slot containing physical `place` (filling all its weighted places).
+pub fn put_slot(content: &Content, side: &mut Side, layout: &Layout, place: usize, chip: ChipHandle) -> bool {
+    let mut data = AutoBattle::of_side(content, side);
+    let before = data.places;
+    let Some((_, _, slot)) = layout.slot_of(place) else { return false };
+    write_slot(&mut data.places, slot, Entry::Chip(chip));
+    data.places != before && data.write(content, side).is_ok()
+}
+
+/// Empty the logical slot containing physical `place` (clearing all its weighted places).
+pub fn empty_slot(content: &Content, side: &mut Side, layout: &Layout, place: usize) -> bool {
+    let mut data = AutoBattle::of_side(content, side);
+    let before = data.places;
+    let Some((_, _, slot)) = layout.slot_of(place) else { return false };
+    write_slot(&mut data.places, slot, Entry::Empty);
+    data.places != before && data.write(content, side).is_ok()
+}
+
+/// Move a logical slot within its list (shifting intermediate logical slots and re-expanding weights).
+pub fn move_slot(content: &Content, side: &mut Side, layout: &Layout, from_place: usize, to_place: usize) -> bool {
+    let mut data = AutoBattle::of_side(content, side);
+    let before = data.places;
+    let (Some((list_a, from_idx, _)), Some((list_b, to_idx, _))) = (layout.slot_of(from_place), layout.slot_of(to_place)) else {
+        return false;
+    };
+    if list_a.start != list_b.start || from_idx == to_idx {
+        return false;
+    }
+    let mut entries = list_a.logical_entries(&data);
+    if from_idx < to_idx {
+        entries[from_idx..=to_idx].rotate_left(1);
+    } else {
+        entries[to_idx..=from_idx].rotate_right(1);
+    }
+    for (slot, entry) in list_a.slots().into_iter().zip(entries) {
+        write_slot(&mut data.places, slot, entry);
+    }
+    data.places != before && data.write(content, side).is_ok()
+}
+
+/// Swap the logical entries of two slots (re-expanding each to its destination slot's weight).
+pub fn swap_slot(content: &Content, side: &mut Side, layout: &Layout, a_place: usize, b_place: usize) -> bool {
+    let mut data = AutoBattle::of_side(content, side);
+    let before = data.places;
+    let (Some((list_a, idx_a, slot_a)), Some((list_b, idx_b, slot_b))) = (layout.slot_of(a_place), layout.slot_of(b_place)) else {
+        return false;
+    };
+    if slot_a.start == slot_b.start {
+        return false;
+    }
+    let entry_a = list_a.logical_entries(&data)[idx_a];
+    let entry_b = list_b.logical_entries(&data)[idx_b];
+    write_slot(&mut data.places, slot_a, entry_b);
+    write_slot(&mut data.places, slot_b, entry_a);
+    data.places != before && data.write(content, side).is_ok()
+}
+
+/// Normalize legacy/illegal ABD data (clear `first` and align `standard` to `4x-2x-1x`).
+pub fn normalize(content: &Content, side: &mut Side, layout: &Layout) -> bool {
+    let mut data = AutoBattle::of_side(content, side);
+    let before = data.places;
+    layout.normalize_places(&mut data);
+    data.places != before && data.write(content, side).is_ok()
+}
+
 /// Empty the side's places that point at a pattern record (whose records
 /// are the rules' default: nothing learned): whether any did.
 pub fn drop_patterns(content: &Content, side: &mut Side) -> bool {
@@ -436,13 +647,18 @@ mod tests {
             names,
             [
                 ("first", 0, 3, Holds::Chips(ChipClass::Standard), false),
-                ("standard", 3, 24, Holds::Chips(ChipClass::Standard), false),
+                ("standard", 3, 24, Holds::Chips(ChipClass::Standard), true),
                 ("mega", 27, 5, Holds::Chips(ChipClass::Mega), true),
                 ("giga", 32, 1, Holds::Chips(ChipClass::Giga), true),
                 ("patterns", 33, 8, Holds::Patterns, false),
                 ("program_advance", 41, 1, Holds::Chips(ChipClass::ProgramAdvance), true),
             ]
         );
+        let std_list = layout.lists.iter().find(|l| l.name == "standard").unwrap();
+        assert_eq!(std_list.weights, [4, 4, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+        assert!(layout.lists.iter().find(|l| l.name == "first").unwrap().is_hidden());
+        assert!(layout.lists.iter().find(|l| l.name == "patterns").unwrap().is_hidden());
+        assert!(!std_list.is_hidden());
         assert_eq!(layout.unrecordable.len(), 82, "EXE5 unrecordable count matches ROM table");
         for key in ["darkinvs", "chaoslrd", "dethphnx", "phoenix", "colonel", "leadraid"] {
             let h = ids::chip(&content, "exe5", key).unwrap();
@@ -555,11 +771,19 @@ mod tests {
             let sample_mega = of_class(&content, game, ChipClass::Mega)[0];
             let sample_giga = of_class(&content, game, ChipClass::Giga)[0];
             for (list, class) in held {
+                if list.is_hidden() {
+                    // `first` (places 0..3) cannot be written in normal gameplay and is rejected as invalid.
+                    update(&content, side, Edit::Put(list.start, cannon));
+                    assert_eq!(problems(side), [(Wrong::Invalid, Some(list.start))], "{game} {}", list.name);
+                    update(&content, side, Edit::Clear);
+                    continue;
+                }
                 let offered = of_class(&content, game, class);
                 assert!(offered.len() >= 10, "{game} {}: {offered:?}", list.name);
-                for batch in offered.chunks(list.len) {
-                    for (place, &chip) in list.places().zip(batch) {
-                        update(&content, side, Edit::Put(place, chip));
+                let slots = list.slots();
+                for batch in offered.chunks(slots.len()) {
+                    for (slot, &chip) in slots.iter().zip(batch) {
+                        put_slot(&content, side, &layout, slot.start, chip);
                     }
                     assert_eq!(problems(side), [], "{game} {}: {batch:?}", list.name);
                     update(&content, side, Edit::Clear);
@@ -569,14 +793,62 @@ mod tests {
                     ChipClass::Standard => sample_mega,
                     _ => cannon,
                 };
-                update(&content, side, Edit::Put(list.start, wrong));
-                assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: wrong }, Some(list.start))], "{game} {}", list.name);
+                put_slot(&content, side, &layout, list.start, wrong);
+                let expected: Vec<(Wrong, Option<usize>)> = slots[0].places().map(|p| (Wrong::ChipNotAllowed { chip: wrong }, Some(p))).collect();
+                assert_eq!(problems(side), expected, "{game} {}", list.name);
                 if class == ChipClass::Standard {
-                    update(&content, side, Edit::Put(list.start, sample_giga));
-                    assert_eq!(problems(side), [(Wrong::ChipNotAllowed { chip: sample_giga }, Some(list.start))], "{game} {}", list.name);
+                    put_slot(&content, side, &layout, list.start, sample_giga);
+                    let expected_giga: Vec<(Wrong, Option<usize>)> = slots[0].places().map(|p| (Wrong::ChipNotAllowed { chip: sample_giga }, Some(p))).collect();
+                    assert_eq!(problems(side), expected_giga, "{game} {}", list.name);
                 }
                 update(&content, side, Edit::Clear);
             }
+            // Standard 4x-2x-1x rules: partial 4x block is invalid; duplicate chip across two standard slots is refused.
+            let std_slots = layout.lists.iter().find(|l| l.name == "standard").unwrap().slots();
+            update(&content, side, Edit::Put(std_slots[0].start, cannon));
+            assert_eq!(problems(side), [(Wrong::Invalid, Some(std_slots[0].start))], "{game}: partial 4x standard block");
+            update(&content, side, Edit::Clear);
+
+            put_slot(&content, side, &layout, std_slots[0].start, cannon);
+            put_slot(&content, side, &layout, std_slots[2].start, cannon);
+            let dup_std: Vec<(Wrong, Option<usize>)> = std_slots[0]
+                .places()
+                .chain(std_slots[2].places())
+                .map(|p| (Wrong::Copies { chip: cannon, count: Count { used: 2, limit: 1 } }, Some(p)))
+                .collect();
+            assert_eq!(problems(side), dup_std, "{game}: duplicate chip across standard weighted slots");
+            update(&content, side, Edit::Clear);
+
+            // Moving a standard chip from 4x slot to 2x slot re-expands weights cleanly.
+            let sword = ids::chip(&content, game, "sword").unwrap();
+            let areagrab = ids::chip(&content, game, "areagrab").unwrap();
+            put_slot(&content, side, &layout, std_slots[0].start, cannon);
+            put_slot(&content, side, &layout, std_slots[1].start, sword);
+            put_slot(&content, side, &layout, std_slots[2].start, areagrab);
+            assert!(move_slot(&content, side, &layout, std_slots[0].start, std_slots[2].start));
+            let after_move = AutoBattle::of_side(&content, side);
+            assert_eq!(&after_move.places[3..7], &[Entry::Chip(sword); 4]);
+            assert_eq!(&after_move.places[7..11], &[Entry::Chip(areagrab); 4]);
+            assert_eq!(&after_move.places[11..13], &[Entry::Chip(cannon); 2]);
+            assert_eq!(problems(side), [], "{game}: moved standard weighted slots stay valid");
+            update(&content, side, Edit::Clear);
+
+            // Legacy illegal ABD (non-empty `first` + non-weighted `standard`) is flagged and fixed by `normalize`.
+            update(&content, side, Edit::Put(0, cannon));
+            update(&content, side, Edit::Put(3, sword));
+            update(&content, side, Edit::Put(4, sword));
+            update(&content, side, Edit::Put(5, areagrab));
+            assert!(layout.needs_normalize(&AutoBattle::of_side(&content, side)));
+            assert!(!problems(side).is_empty());
+            assert!(normalize(&content, side, &layout));
+            let normalized = AutoBattle::of_side(&content, side);
+            assert!(!layout.needs_normalize(&normalized));
+            assert_eq!(&normalized.places[0..3], &[Entry::Empty; 3]);
+            assert_eq!(&normalized.places[3..7], &[Entry::Chip(sword); 4]);
+            assert_eq!(&normalized.places[7..11], &[Entry::Chip(areagrab); 4]);
+            assert_eq!(problems(side), [], "{game}: normalized ABD is valid");
+            update(&content, side, Edit::Clear);
+
             // Duplicate Mega chips in places 28..=32 are refused with `Wrong::Copies { limit: 1 }`.
             let mega_start = layout.lists.iter().find(|l| l.name == "mega").unwrap().start;
             update(&content, side, Edit::Put(mega_start, sample_mega));
@@ -594,9 +866,9 @@ mod tests {
             // Unrecordable chips stay selectable & free of blocking problems when placed in the matching list.
             for &unrec in &layout.unrecordable {
                 let class = content.chip(unrec).class;
-                let target_list = layout.lists.iter().find(|l| l.holds == Holds::Chips(class)).unwrap();
+                let target_list = layout.lists.iter().find(|l| !l.is_hidden() && l.holds == Holds::Chips(class)).unwrap();
                 assert!(of_class(&content, game, class).contains(&unrec), "{game}: unrecordable chip {} still offered", content.defs.chip(unrec).key);
-                update(&content, side, Edit::Put(target_list.start, unrec));
+                put_slot(&content, side, &layout, target_list.start, unrec);
                 assert_eq!(problems(side), [], "{game}: unrecordable chip remains placeable without blocking problem");
                 update(&content, side, Edit::Clear);
             }
@@ -611,7 +883,7 @@ mod tests {
                 // EXE4 standard dark chips are offered and valid in Standard ABD lists.
                 let drkcanon = ids::chip(&content, "exe4", "drkcanon").unwrap();
                 assert!(of_class(&content, "exe4", ChipClass::Standard).contains(&drkcanon));
-                update(&content, side, Edit::Put(0, drkcanon));
+                put_slot(&content, side, &layout, std_slots[0].start, drkcanon);
                 assert_eq!(problems(side), []);
                 update(&content, side, Edit::Clear);
             }

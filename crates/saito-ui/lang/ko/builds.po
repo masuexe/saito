@@ -140,6 +140,9 @@ msgstr "전체"
 msgid "Clear"
 msgstr "비우기"
 
+msgid "Fix"
+msgstr "수정"
+
 msgid "Clear the folder?"
 msgstr "폴더를 비우시겠습니까?"
 
