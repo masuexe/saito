@@ -372,3 +372,15 @@ msgstr "CS수정: 전체"
 
 msgid "CS Fix: {}/{}"
 msgstr "CS수정: {}/{}"
+
+msgid "All Guard: Off (LC)"
+msgstr "올 가드: 무효 (어드컬)"
+
+msgid "All Guard: On"
+msgstr "올 가드: 유효"
+
+msgid "Dark Cut-In: LC"
+msgstr "선 다크 컷인: 어드컬"
+
+msgid "Dark Cut-In: Original"
+msgstr "선 다크 컷인: 원작"

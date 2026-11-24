@@ -269,6 +269,12 @@ fn room_settings(shell: &Shell, view: &ReplaysView, game: &str, ready: &Ready, i
         let total = saito_match::cs_prob_fix::effects(game).len() as i32;
         parts.push(view.invoke_cs_prob_word(count, total).into());
     }
+    if game == "exe4" {
+        parts.push(view.invoke_all_guard_word(m.all_guard_disabled).into());
+    }
+    if game == "exe5" {
+        parts.push(view.invoke_dark_cut_in_word(m.dark_cut_in_fix).into());
+    }
     parts.join(" · ")
 }
 

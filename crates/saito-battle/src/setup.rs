@@ -57,6 +57,14 @@ pub mod effects {
     /// SearchMan (V1/SP/DS), ShakPar (1-3), or BigNoise, the AI must fire its
     /// 3-shot buster 8 times before attempting another chip.
     pub const ABD_DS: u32 = 0x80_0000;
+    /// EXE4 Legacy Collection rule: disables the All Guard patch card effect
+    /// (`076-all-guard-1-2` + `077-all-guard-2-2` no longer raise permanent guard).
+    pub const NO_ALL_GUARD: u32 = 0x0100_0000;
+    /// EXE5 Legacy Collection rule: when a dimming chip cut-in is refused by
+    /// `rules_chip_cost` (e.g. Light MegaMan cutting in with a dimming Dark Chip),
+    /// play its fizzle sparkle and consume the chip from hand instead of leaving
+    /// it in hand for repeated `heal_on_use` triggers.
+    pub const CONSUME_REFUSED_CUT_IN: u32 = 0x0200_0000;
 }
 
 /// Custom gauge speed (NaviStats+0x08).

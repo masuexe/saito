@@ -318,6 +318,12 @@ export global ReplaysView {
         }
         return @tr("CS Fix: {}/{}", count, total);
     }
+    pure public function all-guard-word(disabled: bool) -> string {
+        return disabled ? @tr("All Guard: Off (LC)") : @tr("All Guard: On");
+    }
+    pure public function dark-cut-in-word(fix: bool) -> string {
+        return fix ? @tr("Dark Cut-In: LC") : @tr("Dark Cut-In: Original");
+    }
 }
 
 // ---- The list -------------------------------------------------------------------------------------------

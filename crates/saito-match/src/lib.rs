@@ -256,6 +256,10 @@ pub struct Match {
     pub abd_mode: AbdMode,
     /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6 (`NONE` by default).
     pub cs_prob_fix: CsProbFix,
+    /// EXE4 Legacy Collection rule: disable the All Guard patch card effect (`false` = Original GBA).
+    pub all_guard_disabled: bool,
+    /// EXE5 Legacy Collection rule: consume a refused dimming dark chip cut-in after one trigger (`false` = Original GBA).
+    pub dark_cut_in_fix: bool,
 }
 
 /// The custom screen's time limits a match may set, in seconds, besides
@@ -354,6 +358,8 @@ impl Match {
             random_battle: None,
             abd_mode: AbdMode::Original,
             cs_prob_fix: CsProbFix::NONE,
+            all_guard_disabled: false,
+            dark_cut_in_fix: false,
         })
     }
 
@@ -433,6 +439,12 @@ impl Match {
         }
         if self.abd_mode == AbdMode::DoubleTeamDs && self.game == "exe5" {
             effects |= saito_battle::setup::effects::ABD_DS;
+        }
+        if self.all_guard_disabled && self.game == "exe4" {
+            effects |= saito_battle::setup::effects::NO_ALL_GUARD;
+        }
+        if self.dark_cut_in_fix && self.game == "exe5" {
+            effects |= saito_battle::setup::effects::CONSUME_REFUSED_CUT_IN;
         }
         let settings = BattleSettings { stage: first.stage, background: first.background, effects };
         let transformed_sides: Option<[Side; 2]> = if self.abd_mode != AbdMode::Original && AbdMode::supported(&self.game) {

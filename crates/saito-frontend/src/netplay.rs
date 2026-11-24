@@ -104,6 +104,8 @@ pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby:
         random_battle: settings.random_battle,
         abd_mode: settings.abd_mode,
         cs_prob_fix: settings.cs_prob_fix,
+        all_guard_disabled: settings.all_guard_disabled,
+        dark_cut_in_fix: settings.dark_cut_in_fix,
     };
     let m = m.stated(content, seed)?;
     Ok((Set::of(content, &m, seed), m))

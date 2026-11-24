@@ -1426,7 +1426,26 @@ fn cut_in(b: &mut Battle, r: ObjectRef) {
     let controller = match action {
         NaviAction::Engine(super::EngineAction::DimmingChip) => actions::dimming_chip::spawn_controller(b, r, &a),
         NaviAction::Engine(super::EngineAction::HandOffChip) => actions::hand_off_chip::spawn_controller(b, r, &a),
-        _ => return,
+        _ => {
+            if b.setup.settings.effects & crate::setup::effects::CONSUME_REFUSED_CUT_IN != 0 {
+                let side = b.objects.get(r).alliance;
+                if let Some(actions::instant::Effect::Runs(f)) = a.instant {
+                    let o = b.objects.get(r);
+                    let spec = saito_content_api::InstantChipSpec {
+                        panel: o.panel,
+                        element: a.element,
+                        z: o.pos.z,
+                        damage: (a.damage as u32 | (a.hit_param as u32) << 16).wrapping_add(a.extra as u32 & 0xFF),
+                    };
+                    crate::behavior::call_hook(b, f, saito_content_api::HookCall::InstantChip { user: r, spec });
+                }
+                b.hands[side as usize].advance();
+                if super::next_chip(b, r).is_none() {
+                    ai_mut(b, r).requests &= !(request::CHIP | request::CHARGED_CHIP);
+                }
+            }
+            return;
+        }
     };
     let side = b.objects.get(r).alliance;
     b.cut_in_dimming(side, controller, r);

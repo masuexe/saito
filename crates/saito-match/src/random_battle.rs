@@ -433,6 +433,8 @@ mod tests {
                 random_battle: Some(rank),
                 abd_mode: crate::AbdMode::Original,
                 cs_prob_fix: crate::CsProbFix::NONE,
+                all_guard_disabled: false,
+                dark_cut_in_fix: false,
             };
             let round = m.round(&content, 42);
             assert_ne!(round.settings.effects & saito_battle::setup::effects::RANDOM, 0);

@@ -612,6 +612,8 @@ impl Maker {
             random_battle: None,
             abd_mode: saito_match::AbdMode::Original,
             cs_prob_fix: saito_match::CsProbFix::NONE,
+            all_guard_disabled: false,
+            dark_cut_in_fix: false,
         };
         let hp_fact = content.defs.fact_name(PlayerFact::BaseHp).zip(hp);
         if let Some((name, hp)) = hp_fact {

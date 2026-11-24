@@ -383,3 +383,15 @@ msgstr "CS修复：全修"
 
 msgid "CS Fix: {}/{}"
 msgstr "CS修复：{}/{}"
+
+msgid "All Guard: Off (LC)"
+msgstr "全面防御：无效（合集）"
+
+msgid "All Guard: On"
+msgstr "全面防御：生效"
+
+msgid "Dark Cut-In: LC"
+msgstr "善插暗黑：合集"
+
+msgid "Dark Cut-In: Original"
+msgstr "善插暗黑：原版"

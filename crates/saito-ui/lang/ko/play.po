@@ -439,3 +439,15 @@ msgstr "대전 기본"
 
 msgid "CS Prob Fix: Battle Default"
 msgstr "CS 확률 수정: 대전 기본"
+
+msgid "All Guard: {}"
+msgstr "올 가드: {}"
+
+msgid "Off (LC)"
+msgstr "무효 (어드컬)"
+
+msgid "On (Original)"
+msgstr "유효 (원작)"
+
+msgid "Dark Cut-In: {}"
+msgstr "선 다크 컷인: {}"

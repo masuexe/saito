@@ -210,6 +210,12 @@ export global PlayView {
     in property <bool> cs-prob-recommended: false;
     in property <bool> cs-prob-dialog: false;
     in property <[CsProbEntry]> cs-prob-items;
+    // EXE4 Legacy Collection All Guard patch card restriction (true = Off / LC, false = On / Original).
+    in property <bool> all-guard-supported: false;
+    in property <bool> all-guard-disabled: true;
+    // EXE5 Legacy Collection Light MegaMan dimming dark chip cut-in fix (true = LC, false = Original).
+    in property <bool> dark-cut-in-supported: false;
+    in property <bool> dark-cut-in-fix: true;
 
     // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
     // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
@@ -1210,22 +1216,27 @@ component LobbyBody inherits Rectangle {
             property <bool> show-random: PlayView.random-supported;
             property <bool> show-abd: PlayView.abd-supported;
             property <bool> show-cs-prob: PlayView.cs-prob-supported;
+            property <bool> show-extra-rule: PlayView.all-guard-supported || PlayView.dark-cut-in-supported;
             property <length> gap: Theme.sideways ? 6px : 10px;
             property <length> row-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
                 + (self.show-abd ? self.gap + abd-btn.width : 0px)
                 + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
+                + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px)
                 + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
             property <length> top-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
                 + (self.show-abd ? self.gap + abd-btn.width : 0px)
-                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px);
-            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd || self.show-cs-prob) && self.top-w > self.width;
+                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
+                + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px);
+            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd || self.show-cs-prob || self.show-extra-rule) && self.top-w > self.width;
             property <length> extra-w: (self.show-random ? random-btn.width : 0px)
                 + (self.show-random && self.show-abd ? self.gap : 0px)
                 + (self.show-abd ? abd-btn.width : 0px)
                 + ((self.show-random || self.show-abd) && self.show-cs-prob ? self.gap : 0px)
-                + (self.show-cs-prob ? cs-prob-btn.width : 0px);
+                + (self.show-cs-prob ? cs-prob-btn.width : 0px)
+                + ((self.show-random || self.show-abd || self.show-cs-prob) && self.show-extra-rule ? self.gap : 0px)
+                + (self.show-extra-rule ? extra-rule-btn.width : 0px);
             property <length> spec-row-y: self.wrap-top ? 80px : 40px;
             property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
             x: Theme.sideways ? (connection.width + 14px) : 0px;
@@ -1287,8 +1298,24 @@ component LobbyBody inherits Rectangle {
                             : @tr("CS Prob Fix: Custom ({}/{})", PlayView.cs-prob-count, PlayView.cs-prob-total);
             }
 
+            extra-rule-btn := Button {
+                x: parent.wrap-top
+                    ? (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width + parent.gap : parent.show-abd ? abd-btn.x + abd-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
+                    : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                y: parent.wrap-top ? 40px : 0px;
+                height: Theme.sideways ? 28px : 34px;
+                compact: true;
+                visible: parent.show-extra-rule;
+                enabled: parent.show-extra-rule && PlayView.host;
+                nav: parent.show-extra-rule && PlayView.host ? "lobby.extra-rule" : "";
+                kind: (PlayView.all-guard-supported && PlayView.all-guard-disabled) || (PlayView.dark-cut-in-supported && PlayView.dark-cut-in-fix) ? ButtonKind.normal : ButtonKind.ghost;
+                text: PlayView.all-guard-supported
+                    ? @tr("All Guard: {}", PlayView.all-guard-disabled ? @tr("Off (LC)") : @tr("On (Original)"))
+                    : @tr("Dark Cut-In: {}", PlayView.dark-cut-in-fix ? @tr("Legacy Collection") : @tr("Original"));
+            }
+
             spec-vis := Button {
-                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-extra-rule ? extra-rule-btn.x + extra-rule-btn.width : parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: Theme.phone ? parent.spec-row-y : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;

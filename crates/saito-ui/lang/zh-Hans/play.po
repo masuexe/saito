@@ -439,3 +439,15 @@ msgstr "对战默认"
 
 msgid "CS Prob Fix: Battle Default"
 msgstr "CS概率修复：对战默认"
+
+msgid "All Guard: {}"
+msgstr "全面防御：{}"
+
+msgid "Off (LC)"
+msgstr "无效（合集）"
+
+msgid "On (Original)"
+msgstr "生效（原版）"
+
+msgid "Dark Cut-In: {}"
+msgstr "善插暗黑：{}"

@@ -459,6 +459,10 @@ pub struct Settings {
     pub abd_mode: saito_match::AbdMode,
     /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6.
     pub cs_prob_fix: saito_match::CsProbFix,
+    /// EXE4 Legacy Collection rule: disable the All Guard patch card effect.
+    pub all_guard_disabled: bool,
+    /// EXE5 Legacy Collection rule: consume a refused dimming dark chip cut-in after one trigger.
+    pub dark_cut_in_fix: bool,
 }
 
 /// A part of a round as the lobby names it: its name, or none (from the
@@ -485,6 +489,8 @@ impl Settings {
             random_battle: None,
             abd_mode: saito_match::AbdMode::Original,
             cs_prob_fix: saito_match::CsProbFix::NONE,
+            all_guard_disabled: false,
+            dark_cut_in_fix: false,
         }
     }
 
@@ -513,6 +519,8 @@ impl Settings {
             random_battle: m.random_battle,
             abd_mode: m.abd_mode,
             cs_prob_fix: m.cs_prob_fix,
+            all_guard_disabled: m.all_guard_disabled,
+            dark_cut_in_fix: m.dark_cut_in_fix,
         }
     }
 
@@ -578,6 +586,12 @@ impl Settings {
         if !self.cs_prob_fix.is_empty() {
             w.put(&0x20u8);
             w.put(&self.cs_prob_fix.bits());
+        }
+        if self.all_guard_disabled && self.game == "exe4" {
+            w.put(&0x40u8);
+        }
+        if self.dark_cut_in_fix && self.game == "exe5" {
+            w.put(&0x41u8);
         }
         if !self.ruleset.limits.is_empty() {
             w.put(&0x30u8);
@@ -679,6 +693,8 @@ impl Settings {
         let mut random_battle = None;
         let mut abd_mode = saito_match::AbdMode::Original;
         let mut cs_prob_fix = saito_match::CsProbFix::NONE;
+        let mut all_guard_disabled = false;
+        let mut dark_cut_in_fix = false;
         let mut custom_limits = saito_match::ruleset::Limits::default();
         while !r.is_empty() {
             let v: u8 = r.get().map_err(bad)?;
@@ -717,6 +733,16 @@ impl Settings {
                     giga_total: read_opt(9)?,
                     patch_card_mb: read_opt(10)?,
                 };
+            } else if v == 0x40 {
+                if game != "exe4" {
+                    return Err(format!("all guard option is not supported for {game}"));
+                }
+                all_guard_disabled = true;
+            } else if v == 0x41 {
+                if game != "exe5" {
+                    return Err(format!("dark cut-in option is not supported for {game}"));
+                }
+                dark_cut_in_fix = true;
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
@@ -739,7 +765,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, cs_prob_fix })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
     }
 
     /// The settings' hash, of their bytes.
@@ -1293,6 +1319,22 @@ impl Lobby {
             return false;
         }
         self.propose(Settings { cs_prob_fix, ..self.mine.clone() })
+    }
+
+    /// Change whether EXE4 All Guard patch card effect is disabled (Legacy Collection), the host alone.
+    pub fn set_all_guard_disabled(&mut self, all_guard_disabled: bool) -> bool {
+        if self.mine.game != "exe4" {
+            return false;
+        }
+        self.propose(Settings { all_guard_disabled, ..self.mine.clone() })
+    }
+
+    /// Change whether EXE5 refused dimming dark chip cut-in is consumed after one trigger (Legacy Collection), the host alone.
+    pub fn set_dark_cut_in_fix(&mut self, dark_cut_in_fix: bool) -> bool {
+        if self.mine.game != "exe5" {
+            return false;
+        }
+        self.propose(Settings { dark_cut_in_fix, ..self.mine.clone() })
     }
 
     /// Ready (or not) to play the settings as they stand. A player whose

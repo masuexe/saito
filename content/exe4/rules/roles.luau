@@ -162,9 +162,9 @@ local roles: RolesSpec = {
         end,
         -- All Guard (0x0800D8E4: NaviStats +0x28 at 1, the rules' stat `all_guard`): as the navi's abilities reset
         -- (its init, 0x0800D8C2), the guard the reset took down goes up again: every hit that doesn't break guards is
-        -- turned aside (0x08012B84).
+        -- turned aside (0x08012B84). Disabled when `effects::NO_ALL_GUARD` (0x01000000, Legacy Collection) is set.
         abilities_reset = function(navi: Object)
-            if battle.navi(navi.alliance).all_guard then
+            if battle.navi(navi.alliance).all_guard and bit32.band(battle.effects(), 0x01000000) == 0 then
                 navi:set_status("guard", true)
             end
         end,

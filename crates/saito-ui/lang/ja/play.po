@@ -439,3 +439,15 @@ msgstr "対戦デフォルト"
 
 msgid "CS Prob Fix: Battle Default"
 msgstr "CS確率修正：対戦デフォルト"
+
+msgid "All Guard: {}"
+msgstr "オールガード：{}"
+
+msgid "Off (LC)"
+msgstr "無効（アドコレ）"
+
+msgid "On (Original)"
+msgstr "有効（原作）"
+
+msgid "Dark Cut-In: {}"
+msgstr "善ダークカットイン：{}"

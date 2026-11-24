@@ -193,6 +193,14 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
         out.push(b'C');
         out.extend_from_slice(&m.cs_prob_fix.bits().to_le_bytes());
     }
+    if m.all_guard_disabled {
+        out.push(b'G');
+        out.push(1);
+    }
+    if m.dark_cut_in_fix {
+        out.push(b'D');
+        out.push(1);
+    }
     Ok(out)
 }
 
@@ -226,9 +234,13 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
     let mut random_battle = None;
     let mut abd_mode = crate::AbdMode::Original;
     let mut cs_prob_fix = crate::CsProbFix::NONE;
+    let mut all_guard_disabled = false;
+    let mut dark_cut_in_fix = false;
     let mut seen_random = false;
     let mut seen_abd = false;
     let mut seen_cs_prob_fix = false;
+    let mut seen_all_guard = false;
+    let mut seen_dark_cut_in = false;
     while bytes.len() - at >= 2 {
         match bytes[at] {
             b'R' if !seen_random => {
@@ -257,11 +269,27 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 seen_cs_prob_fix = true;
                 at += 3;
             }
+            b'G' if !seen_all_guard => {
+                if content.game() != "exe4" {
+                    return Err(format!("all guard option is not supported for {}", content.game()));
+                }
+                all_guard_disabled = bytes[at + 1] != 0;
+                seen_all_guard = true;
+                at += 2;
+            }
+            b'D' if !seen_dark_cut_in => {
+                if content.game() != "exe5" {
+                    return Err(format!("dark cut-in option is not supported for {}", content.game()));
+                }
+                dark_cut_in_fix = bytes[at + 1] != 0;
+                seen_dark_cut_in = true;
+                at += 2;
+            }
             _ => break,
         }
     }
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, cs_prob_fix })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
 }
 
 
@@ -512,6 +540,129 @@ mod tests {
         bad4.cs_prob_fix = crate::CsProbFix::from_bits(1);
         let bytes = match_bytes(&exe4, &bad4).unwrap();
         assert!(read_match(&exe4, &bytes).is_err());
+    }
+
+    #[test]
+    fn exe4_all_guard_and_exe5_dark_cut_in_roundtrip_and_simulate() {
+        use saito_battle::battle::{fight, mode};
+        use saito_battle::custom::{FolderChip, SavedFolder};
+        use saito_battle::input::{PlayerTick, keys};
+        use saito_battle::Battle;
+
+        // ---- S-094: EXE4 All Guard option ----
+        let exe4 = crate::testing::exe4_content();
+        let live4 = crate::pick::live(&exe4, "exe4", 17, None).unwrap();
+        let mut m4 = live4.clone();
+        m4.all_guard_disabled = true;
+        let bytes4 = match_bytes(&exe4, &m4).unwrap();
+        let back4 = read_match(&exe4, &bytes4).unwrap();
+        assert!(back4.all_guard_disabled);
+        assert_ne!(back4.round(&exe4, 17).settings.effects & saito_battle::setup::effects::NO_ALL_GUARD, 0);
+
+        // Install both halves of All Guard (076 + 077) on side 0.
+        let c1 = crate::ids::entry(&exe4, "exe4", "patch_cards", "076-all-guard-1-2").unwrap();
+        let c2 = crate::ids::entry(&exe4, "exe4", "patch_cards", "077-all-guard-2-2").unwrap();
+        let mut with_ag = live4.clone();
+        with_ag.sides[0]
+            .set_fact(
+                &exe4,
+                "patch_cards",
+                &[
+                    saito_battle::rules::Fact::Record(vec![
+                        ("card", saito_battle::rules::Fact::Value(saito_content_api::Value::Def(saito_content_api::Registry::Entry, c1.0))),
+                        ("slot", saito_battle::rules::Fact::Value(saito_content_api::Value::Int(2))),
+                    ]),
+                    saito_battle::rules::Fact::Record(vec![
+                        ("card", saito_battle::rules::Fact::Value(saito_content_api::Value::Def(saito_content_api::Registry::Entry, c2.0))),
+                        ("slot", saito_battle::rules::Fact::Value(saito_content_api::Value::Int(3))),
+                    ]),
+                ],
+            )
+            .unwrap();
+        let has_guard = |disabled: bool| {
+            let mut m = with_ag.clone();
+            m.all_guard_disabled = disabled;
+            let mut b = Battle::new(m.round(&exe4, 7), exe4.clone());
+            for _ in 0..30 {
+                b.tick(&[PlayerTick::default(), PlayerTick::default()], Default::default());
+            }
+            let p0 = b.player(0).unwrap();
+            let cid = b.objects.get(p0).collision.unwrap();
+            b.collision.get(cid).f1 & saito_battle::collision::f1::GUARD != 0
+        };
+        assert!(has_guard(false), "EXE4 Original GBA: All Guard must raise guard");
+        assert!(!has_guard(true), "EXE4 Legacy Collection: All Guard must be disabled");
+
+        // ---- S-093: EXE5 Light MegaMan dimming dark chip cut-in ----
+        let exe5 = exe5_content();
+        let live5 = crate::pick::live(&exe5, "exe5", 17, None).unwrap();
+        let mut m5 = live5.clone();
+        m5.dark_cut_in_fix = true;
+        let bytes5 = match_bytes(&exe5, &m5).unwrap();
+        let back5 = read_match(&exe5, &bytes5).unwrap();
+        assert!(back5.dark_cut_in_fix);
+        assert_ne!(back5.round(&exe5, 17).settings.effects & saito_battle::setup::effects::CONSUME_REFUSED_CUT_IN, 0);
+
+        // Set up side 0 (Light MegaMan with darkinvs) vs side 1 (with roll, a dimming chip).
+        let darkinvs = crate::ids::chip(&exe5, "exe5", "darkinvs").unwrap();
+        let roll = crate::ids::chip(&exe5, "exe5", "roll").unwrap();
+        let cannon = crate::ids::chip(&exe5, "exe5", "cannon").unwrap();
+        let code_of = |c| exe5.defs.chip(c).record.codes[0];
+        let mut f0 = [FolderChip::new(cannon, code_of(cannon)); 30];
+        f0[0] = FolderChip::new(darkinvs, code_of(darkinvs));
+        let mut f1 = [FolderChip::new(cannon, code_of(cannon)); 30];
+        f1[0] = FolderChip::new(roll, code_of(roll));
+        let mut m5_sim = live5.clone();
+        m5_sim.sides[0].set_folder(&exe5, &SavedFolder { chips: f0, regular: Some(0), tags: None }.into()).unwrap();
+        m5_sim.sides[1].set_folder(&exe5, &SavedFolder { chips: f1, regular: Some(0), tags: None }.into()).unwrap();
+
+        let run_cut_in = |fix: bool| -> (u16, usize) {
+            let mut m = m5_sim.clone();
+            m.dark_cut_in_fix = fix;
+            let mut b = Battle::new(m.round(&exe5, 0x5EED), exe5.clone());
+            let mut last = [None; 2];
+            for _ in 0..3000 {
+                if b.round.mode == mode::FIGHTING && b.fight.state == fight::FIGHTING {
+                    break;
+                }
+                let input = [0, 1].map(|side| {
+                    last[side] = saito_battle::scenario::custom_choice(&b, side, last[side]);
+                    PlayerTick::buttons(0).with_choice(last[side])
+                });
+                b.tick(&input, Default::default());
+            }
+            // Give side 0 ChipRecovery = 50 and lower HP so heal_on_use is observable.
+            b.stats[0].chip_recovery = 50;
+            let p0 = b.player(0).unwrap();
+            let start_hp = 500;
+            b.objects.get_mut(p0).hp = start_hp;
+            // Side 1 uses Roll (dimming).
+            b.tick(&[PlayerTick::default(), PlayerTick::buttons(keys::A)], Default::default());
+            // Wait until side 1's dimming is ShowingName, then side 0 presses A to cut in with DarkInvs.
+            let mut cut_in_done = false;
+            for _ in 0..40 {
+                let p0_btn = if !cut_in_done && b.dimming[1].state == saito_battle::dimming::DimmingState::ShowingName {
+                    cut_in_done = true;
+                    keys::A
+                } else {
+                    0
+                };
+                b.tick(&[PlayerTick::buttons(p0_btn), PlayerTick::default()], Default::default());
+            }
+            assert!(cut_in_done, "side 1 dimming never entered ShowingName");
+            let p0 = b.player(0).unwrap();
+            let healed = b.objects.get(p0).hp.saturating_sub(start_hp);
+            let remaining = b.hands[0].remaining() as usize;
+            (healed, remaining)
+        };
+
+        let (healed_orig, rem_orig) = run_cut_in(false);
+        assert_eq!(healed_orig, 50, "Original GBA: heal_on_use triggers on cut-in");
+        assert!(rem_orig >= 1, "Original GBA: refused DarkInvs stays in hand");
+
+        let (healed_lc, rem_lc) = run_cut_in(true);
+        assert_eq!(healed_lc, 50, "Legacy Collection: heal_on_use triggers once");
+        assert_eq!(rem_lc, rem_orig - 1, "Legacy Collection: refused DarkInvs is consumed from hand");
     }
 
     /// Where fact `name` of a side starts in its compact form: the bytes of

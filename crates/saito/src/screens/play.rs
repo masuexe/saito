@@ -304,6 +304,10 @@ struct Live {
     abd_mode: saito_match::AbdMode,
     /// EXE5 / EXE6 per-effect ChargeShot Addition probability fix bitmask.
     cs_prob_fix: saito_match::CsProbFix,
+    /// EXE4 Legacy Collection All Guard patch card restriction.
+    all_guard_disabled: bool,
+    /// EXE5 Legacy Collection Light MegaMan dimming dark chip cut-in fix.
+    dark_cut_in_fix: bool,
     bars: i32,
     ping: i32,
     note: Option<LobbyNote>,
@@ -820,6 +824,12 @@ impl Play {
         if saito_match::cs_prob_fix::supported(game) {
             settings.cs_prob_fix = saito_match::CsProbFix::recommended(game);
         }
+        if game == "exe4" {
+            settings.all_guard_disabled = true;
+        }
+        if game == "exe5" {
+            settings.dark_cut_in_fix = true;
+        }
         Some(settings)
     }
 
@@ -1124,6 +1134,19 @@ impl Play {
         });
     }
 
+    fn toggle_extra_rule(&mut self, shell: &mut Shell) {
+        if !self.is_host() {
+            return;
+        }
+        self.change_settings(shell, |s| {
+            if s.game == "exe4" {
+                s.all_guard_disabled = !s.all_guard_disabled;
+            } else if s.game == "exe5" {
+                s.dark_cut_in_fix = !s.dark_cut_in_fix;
+            }
+        });
+    }
+
     fn set_cs_prob_fix(&mut self, shell: &mut Shell, fix: saito_match::CsProbFix) {
         if !self.is_host() {
             return;
@@ -1378,6 +1401,8 @@ impl Play {
             random_battle: settings.random_battle,
             abd_mode: settings.abd_mode,
             cs_prob_fix: settings.cs_prob_fix,
+            all_guard_disabled: settings.all_guard_disabled,
+            dark_cut_in_fix: settings.dark_cut_in_fix,
             bars: if reconnecting.is_some() { 0 } else { steady.map_or(ping.map_or(0, |p| p.quality().bars() as i32), |s| s.0) },
             ping: if reconnecting.is_some() { -1 } else { steady.map_or(ping.map_or(-1, |p| p.ms.round() as i32), |s| s.1) },
             // (A build the settings can't play: the lobby's own check, typed; while the host waits, the same check
@@ -1447,6 +1472,10 @@ impl Play {
         view.set_cs_prob_count(live.cs_prob_fix.count(&settings.game) as i32);
         view.set_cs_prob_total(cs_total);
         view.set_cs_prob_recommended(live.cs_prob_fix.is_recommended(&settings.game));
+        view.set_all_guard_supported(settings.game == "exe4");
+        view.set_all_guard_disabled(live.all_guard_disabled);
+        view.set_dark_cut_in_supported(settings.game == "exe5");
+        view.set_dark_cut_in_fix(live.dark_cut_in_fix);
         let cs_prob_changed = live.cs_prob_fix != self.live.cs_prob_fix;
         if self.cs_prob_dialog && cs_prob_changed {
             view.set_cs_prob_items(cs_prob_items(shell, &settings.game, live.cs_prob_fix));
@@ -2203,7 +2232,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
@@ -2371,6 +2400,7 @@ impl Screen for Play {
             "lobby.stage" => self.open_stage_dialog(shell),
             "lobby.random-battle" => self.cycle_random_battle(shell),
             "lobby.abd-mode" => self.cycle_abd_mode(shell),
+            "lobby.extra-rule" => self.toggle_extra_rule(shell),
             "lobby.cs-prob" => self.open_cs_prob_dialog(shell),
             "cs-prob.none" => self.set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
             "cs-prob.recommended" => {

@@ -384,3 +384,15 @@ msgstr "CS修正：全修正"
 
 msgid "CS Fix: {}/{}"
 msgstr "CS修正：{}/{}"
+
+msgid "All Guard: Off (LC)"
+msgstr "オールガード：無効（アドコレ）"
+
+msgid "All Guard: On"
+msgstr "オールガード：有効"
+
+msgid "Dark Cut-In: LC"
+msgstr "善ダークカットイン：アドコレ"
+
+msgid "Dark Cut-In: Original"
+msgstr "善ダークカットイン：原作"
