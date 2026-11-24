@@ -97,6 +97,7 @@ interface RoomState {
 	places: Partial<Record<Role, string>>;
 	sockets: Partial<Record<Role, WebSocket>>;
 	forgetTimer?: NodeJS.Timeout;
+	joinReleaseTimer?: NodeJS.Timeout;
 }
 
 const VERSION = "1";
@@ -109,6 +110,9 @@ const FORGET_AFTER_MS: Record<Kind, number> = {
 	invite: 10 * 60 * 1000,
 	reconnect: 30 * 1000,
 };
+const JOIN_GRACE_MS = Math.max(0, Number(process.env.JOIN_GRACE_MS ?? String(10 * 1000)));
+const WS_HEARTBEAT_INTERVAL_MS = Math.max(1000, Number(process.env.WS_HEARTBEAT_INTERVAL_MS ?? String(15 * 1000)));
+const WS_IDLE_TIMEOUT_MS = Math.max(5000, Number(process.env.WS_IDLE_TIMEOUT_MS ?? String(45 * 1000)));
 const CODE_TRIES = 8;
 const TURN_TTL_SECONDS = 4 * 60 * 60;
 const TURN_LIMIT_MAX = Number(process.env.TURN_LIMIT_PER_MINUTE ?? "10");
@@ -155,9 +159,14 @@ const replayStore = new ReplayStore({
 
 const rooms = new Map<string, RoomState>();
 const metaBySocket = new WeakMap<WebSocket, PeerMeta>();
+const lastSeenBySocket = new WeakMap<WebSocket, number>();
 const rateBuckets = new Map<string, number[]>();
 const spectateRooms = new Map<string, SpectateRoom>();
 const listSubscribers = new Set<WebSocket>();
+
+function touchSocket(ws: WebSocket): void {
+	lastSeenBySocket.set(ws, Date.now());
+}
 
 function other(role: Role): Role {
 	return role === "host" ? "join" : "host";
@@ -260,7 +269,7 @@ function scheduleForget(room: RoomState): void {
 		const hostOpen = room.sockets.host?.readyState === WebSocket.OPEN;
 		const joinOpen = room.sockets.join?.readyState === WebSocket.OPEN;
 		if (!hostOpen && !joinOpen) {
-			rooms.delete(room.key);
+			forgetRoom(room);
 		}
 	}, FORGET_AFTER_MS[room.kind]);
 }
@@ -272,10 +281,63 @@ function cancelForget(room: RoomState): void {
 	}
 }
 
+function cancelJoinRelease(room: RoomState): void {
+	if (room.joinReleaseTimer) {
+		clearTimeout(room.joinReleaseTimer);
+		room.joinReleaseTimer = undefined;
+	}
+}
+
+function scheduleJoinRelease(room: RoomState, peer: string): void {
+	if (room.kind !== "invite") return;
+	cancelJoinRelease(room);
+	room.joinReleaseTimer = setTimeout(() => {
+		room.joinReleaseTimer = undefined;
+		if (rooms.get(room.key) !== room) return;
+		if (room.sockets.join?.readyState === WebSocket.OPEN) return;
+		if (room.places.join !== peer) return;
+		delete room.places.join;
+		if (room.places.host === undefined && room.places.join === undefined) {
+			forgetRoom(room);
+		}
+	}, JOIN_GRACE_MS);
+}
+
 function forgetRoom(room: RoomState): void {
 	cancelForget(room);
+	cancelJoinRelease(room);
 	rooms.delete(room.key);
 }
+
+// Periodically ping open signaling & spectate-host sockets and terminate
+// half-open zombies (e.g. mobile sleep / Wi-Fi drop without TCP FIN/RST).
+setInterval(() => {
+	const now = Date.now();
+	const check = (ws: WebSocket | undefined) => {
+		if (!ws || ws.readyState !== WebSocket.OPEN) return;
+		const seen = lastSeenBySocket.get(ws) ?? now;
+		if (now - seen >= WS_IDLE_TIMEOUT_MS) {
+			try {
+				ws.terminate();
+			} catch {
+				// Ignore
+			}
+			return;
+		}
+		try {
+			ws.ping();
+		} catch {
+			// Ignore
+		}
+	};
+	for (const room of rooms.values()) {
+		check(room.sockets.host);
+		check(room.sockets.join);
+	}
+	for (const room of spectateRooms.values()) {
+		check(room.hostWs);
+	}
+}, WS_HEARTBEAT_INTERVAL_MS).unref();
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -570,9 +632,12 @@ function handleSpectateHostUpgrade(
 			}
 		}
 		targetRoom.hostWs = ws;
+		touchSocket(ws);
+		ws.on("pong", () => touchSocket(ws));
 		tell(ws, JSON.stringify({ type: "welcome", code: targetRoom.code, spectators: targetRoom.watchers.size }));
 
 		ws.on("message", (data: RawData, isBinary: boolean) => {
+			touchSocket(ws);
 			if (isBinary) return;
 			const text = typeof data === "string" ? data : data.toString("utf8");
 			if (text === "ping") {
@@ -880,39 +945,68 @@ server.on("upgrade", (req, socket, head) => {
 		roomKey = code;
 	}
 
-	let room = rooms.get(roomKey);
-	if (creatingInvite) {
-		room = { key: roomKey, kind, code, places: {}, sockets: {} };
-		rooms.set(roomKey, room);
-	} else if (!room) {
-		if (kind === "invite") {
+	const existingRoom = rooms.get(roomKey);
+	if (!creatingInvite) {
+		if (!existingRoom && kind === "invite") {
 			refuseUpgrade(req, socket, head, "not-found", "no room has that code");
 			return;
 		}
-		room = { key: roomKey, kind, code, places: {}, sockets: {} };
-		rooms.set(roomKey, room);
+		if (existingRoom) {
+			const roles: Role[] = ["host", "join"];
+			const preRole =
+				roles.find((r) => existingRoom.places[r] === peer) ??
+				roles.find((r) => existingRoom.places[r] === undefined);
+			if (preRole === undefined) {
+				refuseUpgrade(req, socket, head, "full", "the room is full");
+				return;
+			}
+		}
 	}
 
-	const roles: Role[] = ["host", "join"];
-	const role = roles.find((r) => room.places[r] === peer) ?? roles.find((r) => room.places[r] === undefined);
-	if (role === undefined) {
-		refuseUpgrade(req, socket, head, "full", "the room is full");
-		return;
-	}
-
-	room.places[role] = peer;
-	cancelForget(room);
-
-	const both = room.places.host !== undefined && room.places.join !== undefined;
 	const client = clientIp(req);
-	const otherRole = other(role);
-	const otherWs = room.sockets[otherRole];
-	const otherOpen = otherWs?.readyState === WebSocket.OPEN;
-
-	const ice = both ? buildIceServers(client, room.key, role) : undefined;
-	const theirs = both && otherOpen ? buildIceServers(client, room.key, otherRole) : undefined;
 
 	wss.handleUpgrade(req, socket, head, (ws) => {
+		let room = rooms.get(roomKey);
+		if (creatingInvite) {
+			if (room) {
+				tell(ws, JSON.stringify({ type: "error", reason: "busy", message: "room code collision" }));
+				ws.close(CLOSE.busy, "room code collision");
+				return;
+			}
+			room = { key: roomKey, kind, code, places: {}, sockets: {} };
+			rooms.set(roomKey, room);
+		} else if (!room) {
+			if (kind === "invite") {
+				tell(ws, JSON.stringify({ type: "error", reason: "not-found", message: "no room has that code" }));
+				ws.close(CLOSE["not-found"], "no room has that code");
+				return;
+			}
+			room = { key: roomKey, kind, code, places: {}, sockets: {} };
+			rooms.set(roomKey, room);
+		}
+
+		const roles: Role[] = ["host", "join"];
+		const role = roles.find((r) => room.places[r] === peer) ?? roles.find((r) => room.places[r] === undefined);
+		if (role === undefined) {
+			tell(ws, JSON.stringify({ type: "error", reason: "full", message: "the room is full" }));
+			ws.close(CLOSE.full, "the room is full");
+			return;
+		}
+
+		room.places[role] = peer;
+		cancelForget(room);
+		if (role === "join") {
+			cancelJoinRelease(room);
+		}
+
+		const both = room.places.host !== undefined && room.places.join !== undefined;
+		const otherRole = other(role);
+		const otherWs = room.sockets[otherRole];
+		const otherOpen = otherWs?.readyState === WebSocket.OPEN;
+
+		const ice = both ? buildIceServers(client, room.key, role) : undefined;
+		const theirs = both && otherOpen ? buildIceServers(client, room.key, otherRole) : undefined;
+
 		const old = room.sockets[role];
 		if (old && old !== ws) {
 			const oldMeta = metaBySocket.get(old);
@@ -926,6 +1020,8 @@ server.on("upgrade", (req, socket, head) => {
 
 		room.sockets[role] = ws;
 		metaBySocket.set(ws, { roomKey: room.key, role, replaced: false });
+		touchSocket(ws);
+		ws.on("pong", () => touchSocket(ws));
 
 		const welcome =
 			kind === "invite"
@@ -939,6 +1035,7 @@ server.on("upgrade", (req, socket, head) => {
 		}
 
 		ws.on("message", (data: RawData, isBinary: boolean) => {
+			touchSocket(ws);
 			if (isBinary) return;
 			const text = typeof data === "string" ? data : data.toString("utf8");
 			if (text === "ping") {
@@ -959,6 +1056,9 @@ server.on("upgrade", (req, socket, head) => {
 			if (said.type === "signal") {
 				tell(currentRoom.sockets[other(meta.role)], JSON.stringify({ type: "signal", data: said.data }));
 			} else if (said.type === "leave") {
+				if (meta.role === "join") {
+					cancelJoinRelease(currentRoom);
+				}
 				delete currentRoom.places[meta.role];
 				if (currentRoom.sockets[meta.role] === ws) {
 					delete currentRoom.sockets[meta.role];
@@ -986,6 +1086,9 @@ server.on("upgrade", (req, socket, head) => {
 			if (!meta.replaced) {
 				meta.replaced = true;
 				tell(currentRoom.sockets[other(meta.role)], JSON.stringify({ type: "peer", present: false }));
+				if (currentRoom.kind === "invite" && meta.role === "join" && currentRoom.places.join === peer) {
+					scheduleJoinRelease(currentRoom, peer);
+				}
 			}
 			const anyOpen =
 				currentRoom.sockets.host?.readyState === WebSocket.OPEN ||

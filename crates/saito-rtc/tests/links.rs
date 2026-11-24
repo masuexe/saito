@@ -764,3 +764,55 @@ fn a_room_link_relays_through_the_welcomes_turn_server() {
     run(&mut sides, Duration::from_secs(15), |s| s.iter().all(|s| s.error.is_some()));
     assert!(sides.iter().all(|s| s.error.as_ref().is_some_and(|e| e.kind == ErrorKind::CantConnect)), "{:?}", sides.each_ref().map(|s| s.error.clone()));
 }
+
+/// An invite joiner that drops its WebSocket without sending `leave` (e.g.
+/// app crash or network loss) holds its place only for the grace window; once
+/// that elapses, another player can join the waiting host's room and connect
+/// immediately (even if the first joiner had already sent an offer).
+#[test]
+fn abandoned_joiner_releases_slot_and_host_accepts_next_joiner() {
+    let server = Server::start();
+    server.set_join_grace(Duration::from_millis(250));
+    let url = server.url();
+    let (mut host, code) = invite(&url, config());
+
+    // First joiner enters, sends a valid WebRTC offer (generation 1) so the
+    // host adopts generation 1, then drops its TCP socket without sending `leave`.
+    let mut offer_pc = saito_rtc::PeerConnection::offer(&config()).unwrap();
+    let offer_sdp = loop {
+        if let Some(saito_rtc::PeerEvent::Description(sdp)) = offer_pc.poll() {
+            break sdp;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let mut ghost = Client::open(&signal::room_url(&url, &code, "ghost-peer")).unwrap();
+    assert!(matches!(ghost.next(Duration::from_secs(5)), Some(FromServer::Welcome { role: Some(Role::Join), peer: true, .. })));
+    let offer_msg = serde_json::json!({
+        "type": "signal",
+        "data": { "kind": "offer", "generation": 1, "sdp": offer_sdp }
+    });
+    ghost.send_text(&offer_msg.to_string());
+    let start = Instant::now();
+    while host.generation() < 1 {
+        assert!(start.elapsed() < Duration::from_secs(5), "host never answered ghost offer");
+        host.poll().unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(host.generation(), 1);
+    drop(offer_pc);
+    drop(ghost);
+
+    // Immediately after the abrupt disconnect (within grace), another peer is
+    // still refused so a transient blip can reclaim its place.
+    let e = refused(Link::join_room(&url, &code, config()).unwrap());
+    assert_eq!(e.kind, ErrorKind::RoomFull);
+
+    // After the grace window expires, the abandoned join slot is released and
+    // a new joiner connects on generation 1 and trades datagrams normally.
+    std::thread::sleep(Duration::from_millis(350));
+    host.poll().unwrap();
+    let next_joiner = Link::join_room(&url, &code, config()).unwrap();
+    let mut sides = [Side::new(host), Side::new(next_joiner)];
+    connected(&mut sides);
+    through(&mut sides, Some(&server), None);
+}

@@ -3242,6 +3242,13 @@ impl Play {
             self.show_room_browser(shell);
             return;
         }
+        // Ignore duplicate clicks while already joining the same room so a second
+        // attempt doesn't race ahead of the first socket's `leave` and get RoomFull.
+        if matches!(self.stage, Stage::Meeting)
+            && self.session.as_ref().is_some_and(|s| matches!(&s.way, Way::Code(c) if c == &code))
+        {
+            return;
+        }
         if let Some(game) = known_game.filter(|g| !g.is_empty() && shell.game() != Some(*g)) {
             self.room_error = UserError::OtherGame { game: Shell::game_name(game) }.line(&shell.ui());
             shell.sound.play(Cue::Refused);

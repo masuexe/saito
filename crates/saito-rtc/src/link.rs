@@ -675,12 +675,23 @@ impl Link {
     }
 
     /// The other is in a room (or not): a joiner that isn't connected dials
-    /// it (what it sent before it came, or while it was away, is lost).
+    /// it (what it sent before it came, or while it was away, is lost). A host
+    /// waiting for its first connection clears any stale attempt from a prior
+    /// joiner so the incoming joiner's generation 1 offer is accepted.
     fn peer_here(&mut self, now: Instant, present: bool) {
-        if present && self.role == Some(Role::Join) && !self.open {
-            self.pc = None;
-            self.dialed = None;
-            self.next_dial = Some(now);
+        if present && !self.open {
+            match self.role {
+                Some(Role::Join) => {
+                    self.pc = None;
+                    self.dialed = None;
+                    self.next_dial = Some(now);
+                }
+                Some(Role::Host) if !self.ever_open => {
+                    self.pc = None;
+                    self.generation = 0;
+                }
+                _ => {}
+            }
         }
     }
 

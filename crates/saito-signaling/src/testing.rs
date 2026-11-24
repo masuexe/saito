@@ -37,6 +37,9 @@ type Data = serde_json::Value;
 /// How long an invite room with no socket is kept (the Worker's ten
 /// minutes).
 const INVITE_ROOM_KEPT: Duration = Duration::from_secs(10 * 60);
+/// How long a disconnected joiner's place in an invite room is held before
+/// being released for another player.
+const DEFAULT_JOIN_GRACE: Duration = Duration::from_secs(10);
 
 /// What a client's thread is told to do.
 enum Out {
@@ -68,6 +71,8 @@ struct Rooms {
     list_subs: HashMap<u64, Sender<Out>>,
     /// Maximum spectators per room (0 means default 30).
     max_spectators: usize,
+    /// Grace window before a disconnected invite joiner's place is freed.
+    join_grace: Option<Duration>,
 }
 
 struct DelayedChunk {
@@ -216,11 +221,22 @@ impl Rooms {
 }
 
 impl Rooms {
-    /// Forget the rooms whose time ran out.
+    /// Forget the rooms whose time ran out, and release disconnected invite
+    /// joiners whose grace window has elapsed.
     fn expire(&mut self, now: Instant) {
+        let grace = self.join_grace.unwrap_or(DEFAULT_JOIN_GRACE);
+        for ((kind, _), room) in &mut self.rooms {
+            if *kind == Kind::Invite
+                && !room.sockets.contains_key(&Role::Join)
+                && room.join_gone_since.is_some_and(|since| now.duration_since(since) >= grace)
+            {
+                room.places.remove(&Role::Join);
+                room.join_gone_since = None;
+            }
+        }
         self.rooms.retain(|(kind, _), room| {
             let kept = if *kind == Kind::Invite { INVITE_ROOM_KEPT } else { RECONNECT_ROOM_KEPT };
-            room.empty_since.is_none_or(|since| now.duration_since(since) < kept)
+            !room.places.is_empty() && room.empty_since.is_none_or(|since| now.duration_since(since) < kept)
         });
     }
 }
@@ -234,6 +250,8 @@ struct Room {
     sockets: HashMap<Role, (u64, Sender<Out>)>,
     /// Since when no socket is in it.
     empty_since: Option<Instant>,
+    /// Since when an invite room's joiner disconnected without leaving.
+    join_gone_since: Option<Instant>,
 }
 
 fn other(role: Role) -> Role {
@@ -407,6 +425,12 @@ impl Server {
     pub fn set_max_spectators(&self, max: usize) {
         self.rooms.lock().unwrap().max_spectators = max;
     }
+
+    /// Override how long a disconnected invite joiner's place is held before
+    /// being freed for another player (for tests).
+    pub fn set_join_grace(&self, grace: Duration) {
+        self.rooms.lock().unwrap().join_grace = Some(grace);
+    }
 }
 
 fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &AtomicU64) {
@@ -495,6 +519,9 @@ fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &Atomic
         };
         room.places.insert(role, peer);
         room.empty_since = None;
+        if role == Role::Join {
+            room.join_gone_since = None;
+        }
         if let Some((_, old)) = room.sockets.insert(role, (id, tx)) {
             let _ = old.send(Out::Close);
         }
@@ -518,7 +545,8 @@ fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &Atomic
     // too, if it left; and the room, once both have left.
     let mut all = rooms.lock().unwrap();
     let Some(room) = all.rooms.get_mut(&key) else { return };
-    if room.sockets.get(&role).is_some_and(|(i, _)| *i == id) {
+    let active = room.sockets.get(&role).is_some_and(|(i, _)| *i == id);
+    if active {
         room.sockets.remove(&role);
         if let Some((_, them)) = room.sockets.get(&other(role)) {
             let _ = them.send(Out::Text(said(&FromServer::Peer { present: false, ice_servers: Vec::new() })));
@@ -529,9 +557,14 @@ fn serve(stream: TcpStream, version: u32, rooms: &Mutex<Rooms>, relayed: &Atomic
     }
     if left {
         room.places.remove(&role);
+        if role == Role::Join {
+            room.join_gone_since = None;
+        }
         if room.places.is_empty() {
             all.rooms.remove(&key);
         }
+    } else if active && key.0 == Kind::Invite && role == Role::Join {
+        room.join_gone_since = Some(Instant::now());
     }
 }
 
@@ -913,6 +946,12 @@ impl Client {
             }
         }
         None
+    }
+
+    /// Send a raw text message on the socket (for protocol/regression tests).
+    pub fn send_text(&mut self, text: &str) {
+        let _ = self.ws.send(Message::text(text.to_string()));
+        let _ = self.ws.flush();
     }
 
     /// Give the place in the room up, and close.

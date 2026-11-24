@@ -156,9 +156,17 @@ const RECONNECT_CODE = /^[0-9a-f]{32}$/;
 const PEER = /^[A-Za-z0-9_-]{1,64}$/;
 /** How long a room with no socket is kept, by kind. */
 const FORGET_AFTER_MS: Record<Kind, number> = { invite: 10 * 60 * 1000, reconnect: 30 * 1000 };
+/** How long a disconnected joiner's place in an invite room is held for a
+ * transient WebSocket reconnect before being freed for another player. */
+const JOIN_GRACE_MS = 10 * 1000;
 /** How many codes a new room tries before the server says it is busy (a
  * code in use is one in some 887 million a room). */
 const CODE_TRIES = 8;
+
+interface JoinGone {
+	peer: string;
+	releaseAt: number;
+}
 
 /** Cloudflare's public STUN server: what a client is given when there are no
  * TURN credentials. */
@@ -452,6 +460,15 @@ export class Room extends DurableObject<Env> {
 				}
 				places = {};
 			}
+			// Release an abandoned invite joiner slot whose grace window has elapsed.
+			if (kind === "invite" && places.join !== undefined) {
+				const joinGone = await this.ctx.storage.get<JoinGone>("joinGone");
+				const joinOpen = this.ctx.getWebSockets("join").some((s) => s.readyState === WebSocket.OPEN);
+				if (joinGone && !joinOpen && places.join === joinGone.peer && Date.now() >= joinGone.releaseAt) {
+					delete places.join;
+					await this.ctx.storage.delete("joinGone");
+				}
+			}
 			const roles: Role[] = ["host", "join"];
 			const role = roles.find((r) => places[r] === peer) ?? roles.find((r) => places[r] === undefined);
 			if (role === undefined) {
@@ -459,7 +476,11 @@ export class Room extends DurableObject<Env> {
 			}
 			places[role] = peer;
 			await this.ctx.storage.put("places", places);
-			await this.ctx.storage.deleteAlarm();
+			await this.ctx.storage.delete("forgetAt");
+			if (role === "join") {
+				await this.ctx.storage.delete("joinGone");
+			}
+			await this.syncAlarm();
 			return { role, both: places.host !== undefined && places.join !== undefined };
 		});
 		if (taken instanceof Response) {
@@ -521,6 +542,9 @@ export class Room extends DurableObject<Env> {
 			await this.ctx.blockConcurrencyWhile(async () => {
 				const places: Places = (await this.ctx.storage.get<Places>("places")) ?? {};
 				delete places[role];
+				if (role === "join") {
+					await this.ctx.storage.delete("joinGone");
+				}
 				if (places.host === undefined && places.join === undefined) {
 					// Both left: the room is over, and its code free.
 					await this.forget();
@@ -547,9 +571,10 @@ export class Room extends DurableObject<Env> {
 	}
 
 	/** A socket went: the other client hears it (unless the same client is
-	 * back on another), and a room with no socket left is forgotten in a
-	 * while (its kind's; one forgotten already, both having left, is
-	 * nothing to wait for). */
+	 * back on another), an invite joiner's place is released after
+	 * JOIN_GRACE_MS if it doesn't return, and a room with no socket left is
+	 * forgotten in a while (its kind's; one forgotten already, both having
+	 * left, is nothing to wait for). */
 	async gone(ws: WebSocket): Promise<void> {
 		const attachment = ws.deserializeAttachment() as Attachment;
 		const { role, kind, replaced } = attachment;
@@ -559,9 +584,41 @@ export class Room extends DurableObject<Env> {
 				tell(them, JSON.stringify({ type: "peer", present: false }));
 			}
 		}
+		const now = Date.now();
 		const open = this.ctx.getWebSockets().filter((s) => s !== ws && s.readyState === WebSocket.OPEN);
-		if (open.length === 0 && (await this.ctx.storage.get<Places>("places")) !== undefined) {
-			await this.ctx.storage.setAlarm(Date.now() + FORGET_AFTER_MS[kind]);
+		await this.ctx.blockConcurrencyWhile(async () => {
+			const places = await this.ctx.storage.get<Places>("places");
+			if (places === undefined) {
+				return;
+			}
+			if (!replaced && kind === "invite" && role === "join" && places.join !== undefined) {
+				const joinOpen = open.some((s) => (s.deserializeAttachment() as Attachment).role === "join");
+				if (!joinOpen) {
+					await this.ctx.storage.put("joinGone", { peer: places.join, releaseAt: now + JOIN_GRACE_MS } satisfies JoinGone);
+				}
+			}
+			if (open.length === 0) {
+				await this.ctx.storage.put("forgetAt", now + FORGET_AFTER_MS[kind]);
+			}
+			await this.syncAlarm();
+		});
+	}
+
+	/** Schedule the Durable Object alarm for the earliest pending deadline
+	 * (joiner slot release or empty room expiry), or clear it if none. */
+	async syncAlarm(): Promise<void> {
+		const joinGone = await this.ctx.storage.get<JoinGone>("joinGone");
+		const forgetAt = await this.ctx.storage.get<number>("forgetAt");
+		const next =
+			joinGone && forgetAt !== undefined
+				? Math.min(joinGone.releaseAt, forgetAt)
+				: joinGone
+					? joinGone.releaseAt
+					: forgetAt;
+		if (next !== undefined) {
+			await this.ctx.storage.setAlarm(next);
+		} else {
+			await this.ctx.storage.deleteAlarm();
 		}
 	}
 
@@ -569,12 +626,39 @@ export class Room extends DurableObject<Env> {
 	 * (The places are all a room stores.) */
 	async forget(): Promise<void> {
 		await this.ctx.storage.deleteAlarm();
-		await this.ctx.storage.delete("places");
+		await this.ctx.storage.delete(["places", "joinGone", "forgetAt"]);
 	}
 
 	async alarm(): Promise<void> {
-		if (this.ctx.getWebSockets().every((s) => s.readyState !== WebSocket.OPEN)) {
-			await this.forget();
-		}
+		const now = Date.now();
+		await this.ctx.blockConcurrencyWhile(async () => {
+			const places = await this.ctx.storage.get<Places>("places");
+			if (places === undefined) {
+				await this.forget();
+				return;
+			}
+			const joinGone = await this.ctx.storage.get<JoinGone>("joinGone");
+			if (joinGone && now >= joinGone.releaseAt) {
+				const joinOpen = this.ctx.getWebSockets("join").some((s) => s.readyState === WebSocket.OPEN);
+				if (!joinOpen && places.join === joinGone.peer) {
+					delete places.join;
+				}
+				await this.ctx.storage.delete("joinGone");
+				if (places.host === undefined && places.join === undefined) {
+					await this.forget();
+					return;
+				}
+				await this.ctx.storage.put("places", places);
+			}
+			const forgetAt = await this.ctx.storage.get<number>("forgetAt");
+			if (forgetAt !== undefined && now >= forgetAt) {
+				if (this.ctx.getWebSockets().every((s) => s.readyState !== WebSocket.OPEN)) {
+					await this.forget();
+					return;
+				}
+				await this.ctx.storage.delete("forgetAt");
+			}
+			await this.syncAlarm();
+		});
 	}
 }
