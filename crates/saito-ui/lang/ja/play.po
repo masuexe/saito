@@ -433,3 +433,9 @@ msgstr "CS確率修正：カスタム ({}/{})"
 
 msgid "Custom ({}/{})"
 msgstr "カスタム ({}/{})"
+
+msgid "Battle Default"
+msgstr "対戦デフォルト"
+
+msgid "CS Prob Fix: Battle Default"
+msgstr "CS確率修正：対戦デフォルト"

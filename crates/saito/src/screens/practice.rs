@@ -476,7 +476,11 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
         return PracticeRow { option, value: session.dummys as i32, text: name.into(), ..Default::default() };
     }
     if option == PracticeOption::CsProbFix {
-        let count = session.cs_prob_fix.count(&session.game) as i32;
+        let count = if session.cs_prob_fix.is_recommended(&session.game) {
+            -1
+        } else {
+            session.cs_prob_fix.count(&session.game) as i32
+        };
         let total = saito_match::cs_prob_fix::effects(&session.game).len() as i32;
         return PracticeRow { option, value: count, dummys_value: total, ..Default::default() };
     }
@@ -1628,6 +1632,11 @@ impl Screen for Practice {
             },
             "menu.rows.option" | "menu.rows.dummys" => self.open_option(shell, index, side_of(id)),
             "cs-prob.none" => set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
+            "cs-prob.recommended" => {
+                if let Some(game) = shell.practice.session.as_ref().map(|s| s.game.clone()) {
+                    set_cs_prob_fix(shell, saito_match::CsProbFix::recommended(&game));
+                }
+            }
             "cs-prob.all" => {
                 if let Some(game) = shell.practice.session.as_ref().map(|s| s.game.clone()) {
                     set_cs_prob_fix(shell, saito_match::CsProbFix::all(&game));

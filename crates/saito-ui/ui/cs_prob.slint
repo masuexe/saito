@@ -46,7 +46,7 @@ export component CsProbDialog inherits DialogFrame {
     if root.editable: Button {
         x: 0;
         y: root.quick-y;
-        width: (root.inner-width - 8px) / 2;
+        width: (root.inner-width - 16px) / 3;
         height: root.quick-h;
         compact: true;
         nav: root.nav-prefix + "none";
@@ -55,9 +55,20 @@ export component CsProbDialog inherits DialogFrame {
     }
 
     if root.editable: Button {
-        x: (root.inner-width - 8px) / 2 + 8px;
+        x: (root.inner-width - 16px) / 3 + 8px;
         y: root.quick-y;
-        width: (root.inner-width - 8px) / 2;
+        width: (root.inner-width - 16px) / 3;
+        height: root.quick-h;
+        compact: true;
+        nav: root.nav-prefix + "recommended";
+        kind: ButtonKind.ghost;
+        text: @tr("Battle Default");
+    }
+
+    if root.editable: Button {
+        x: 2 * ((root.inner-width - 16px) / 3 + 8px);
+        y: root.quick-y;
+        width: (root.inner-width - 16px) / 3;
         height: root.quick-h;
         compact: true;
         nav: root.nav-prefix + "all";

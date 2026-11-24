@@ -62,6 +62,12 @@ pub const EXE6: [EffectEntry; 13] = [
     EffectEntry { bit: 0x1000, variant_id: "shot/chip-destruction", rare: true },
 ];
 
+/// EXE5 recommended battle preset: Reset (`charged-uninstalling`) and Chip Destruction (`chip-destruction`).
+pub const EXE5_RECOMMENDED: u16 = 0x0200 | 0x0400;
+
+/// EXE6 recommended battle preset: Freeze (`charged-freezing`) and Paralyze (`charged-paralyzing`).
+pub const EXE6_RECOMMENDED: u16 = 0x0008 | 0x0100;
+
 /// Per-effect bitmask of ChargeShot Addition probability fixes (0 = all original).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CsProbFix(pub u16);
@@ -91,6 +97,26 @@ impl CsProbFix {
             "exe6" => 0x1FFF,
             _ => 0,
         }
+    }
+
+    /// Recommended battle default bitmask for `game` (0 for unsupported games).
+    pub fn recommended_mask(game: &str) -> u16 {
+        match game {
+            "exe5" => EXE5_RECOMMENDED,
+            "exe6" => EXE6_RECOMMENDED,
+            _ => 0,
+        }
+    }
+
+    /// Recommended battle default preset for `game`.
+    pub fn recommended(game: &str) -> CsProbFix {
+        CsProbFix(Self::recommended_mask(game))
+    }
+
+    /// True if `self` matches the recommended battle default preset for `game`.
+    pub fn is_recommended(self, game: &str) -> bool {
+        let mask = Self::recommended_mask(game);
+        mask != 0 && self.0 == mask
     }
 
     /// Every supported effect for `game` enabled.
@@ -172,6 +198,9 @@ mod tests {
             assert!(CsProbFix::all(game).is_all(game));
             assert_eq!(CsProbFix::all(game).count(game), effects(game).len());
             assert!(CsProbFix::all(game).allowed_for(game));
+            assert!(CsProbFix::recommended(game).is_recommended(game));
+            assert!(CsProbFix::recommended(game).allowed_for(game));
+            assert_eq!(CsProbFix::recommended(game).count(game), 2);
         }
         assert!(!supported("exe4"));
         assert!(CsProbFix::NONE.allowed_for("exe4"));

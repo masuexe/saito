@@ -1171,6 +1171,7 @@ impl Play {
         view.set_cs_prob_supported(total > 0);
         view.set_cs_prob_count(fix.count(&game) as i32);
         view.set_cs_prob_total(total);
+        view.set_cs_prob_recommended(fix.is_recommended(&game));
         if self.cs_prob_dialog {
             view.set_cs_prob_items(cs_prob_items(shell, &game, fix));
         }
@@ -1457,6 +1458,7 @@ impl Play {
         view.set_cs_prob_supported(cs_total > 0);
         view.set_cs_prob_count(live.cs_prob_fix.count(&settings.game) as i32);
         view.set_cs_prob_total(cs_total);
+        view.set_cs_prob_recommended(live.cs_prob_fix.is_recommended(&settings.game));
         let cs_prob_changed = live.cs_prob_fix != self.live.cs_prob_fix;
         if self.cs_prob_dialog && cs_prob_changed {
             view.set_cs_prob_items(cs_prob_items(shell, &settings.game, live.cs_prob_fix));
@@ -2380,6 +2382,11 @@ impl Screen for Play {
             "lobby.abd-mode" => self.cycle_abd_mode(shell),
             "lobby.cs-prob" => self.open_cs_prob_dialog(shell),
             "cs-prob.none" => self.set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
+            "cs-prob.recommended" => {
+                if let Some(game) = self.match_settings().map(|s| s.game) {
+                    self.set_cs_prob_fix(shell, saito_match::CsProbFix::recommended(&game));
+                }
+            }
             "cs-prob.all" => {
                 if let Some(game) = self.match_settings().map(|s| s.game) {
                     self.set_cs_prob_fix(shell, saito_match::CsProbFix::all(&game));

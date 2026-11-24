@@ -433,3 +433,9 @@ msgstr "CS概率修复：自定义 ({}/{})"
 
 msgid "Custom ({}/{})"
 msgstr "自定义 ({}/{})"
+
+msgid "Battle Default"
+msgstr "对战默认"
+
+msgid "CS Prob Fix: Battle Default"
+msgstr "CS概率修复：对战默认"

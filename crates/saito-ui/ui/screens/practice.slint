@@ -250,7 +250,7 @@ component MenuRow inherits Rectangle {
     property <bool> select: root.pictured || root.entry.option == PracticeOption.music || root.entry.option == PracticeOption.dummys-build || root.entry.option == PracticeOption.cs-prob-fix;
     property <string> label: PracticeView.label(root.entry.option);
     property <string> value: root.entry.option == PracticeOption.cs-prob-fix
-        ? (root.entry.value == 0 ? @tr("Original") : root.entry.value >= root.entry.dummys-value ? @tr("All Fixed") : @tr("Custom ({}/{})", root.entry.value, root.entry.dummys-value))
+        ? (root.entry.value == 0 ? @tr("Original") : root.entry.value == -1 ? @tr("Battle Default") : root.entry.value >= root.entry.dummys-value ? @tr("All Fixed") : @tr("Custom ({}/{})", root.entry.value, root.entry.dummys-value))
         : (root.option && root.entry.text != "" ? root.entry.text : PracticeView.value(root.entry.option, root.entry.value));
     property <string> dummys-value: root.entry.dummys-text != "" ? root.entry.dummys-text : PracticeView.value(root.entry.option, root.entry.dummys-value);
     // The value's box: sized for the longest value in the longest language (a longer one the stepper fits to it,

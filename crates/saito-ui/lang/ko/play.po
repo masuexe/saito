@@ -433,3 +433,9 @@ msgstr "CS 확률 수정: 사용자 지정 ({}/{})"
 
 msgid "Custom ({}/{})"
 msgstr "사용자 지정 ({}/{})"
+
+msgid "Battle Default"
+msgstr "대전 기본"
+
+msgid "CS Prob Fix: Battle Default"
+msgstr "CS 확률 수정: 대전 기본"

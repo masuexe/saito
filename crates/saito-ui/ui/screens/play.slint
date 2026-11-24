@@ -207,6 +207,7 @@ export global PlayView {
     in property <bool> cs-prob-supported: false;
     in property <int> cs-prob-count: 0;
     in property <int> cs-prob-total: 0;
+    in property <bool> cs-prob-recommended: false;
     in property <bool> cs-prob-dialog: false;
     in property <[CsProbEntry]> cs-prob-items;
 
@@ -1279,9 +1280,11 @@ component LobbyBody inherits Rectangle {
                 kind: PlayView.cs-prob-count > 0 ? ButtonKind.normal : ButtonKind.ghost;
                 text: PlayView.cs-prob-count == 0
                     ? @tr("CS Prob Fix: Original")
-                    : PlayView.cs-prob-count >= PlayView.cs-prob-total
-                        ? @tr("CS Prob Fix: All Fixed")
-                        : @tr("CS Prob Fix: Custom ({}/{})", PlayView.cs-prob-count, PlayView.cs-prob-total);
+                    : PlayView.cs-prob-recommended
+                        ? @tr("CS Prob Fix: Battle Default")
+                        : PlayView.cs-prob-count >= PlayView.cs-prob-total
+                            ? @tr("CS Prob Fix: All Fixed")
+                            : @tr("CS Prob Fix: Custom ({}/{})", PlayView.cs-prob-count, PlayView.cs-prob-total);
             }
 
             spec-vis := Button {
