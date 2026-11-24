@@ -323,3 +323,52 @@ msgstr "최근 리플레이를 불러오는 중…"
 
 msgid "No recent replays on the server yet."
 msgstr "서버에 최근 리플레이가 아직 없습니다."
+
+# Room settings recorded in a replay
+msgid "Room"
+msgstr "방 설정"
+
+msgid "Single"
+msgstr "단판"
+
+msgid "Triple"
+msgstr "3판 2선승"
+
+msgid "First to {}"
+msgstr "{}선승"
+
+msgid "Unlimited"
+msgstr "시간 무제한"
+
+msgid "{}s"
+msgstr "{}초"
+
+msgid "Open setups"
+msgstr "빌드 공개"
+
+msgid "Closed setups"
+msgstr "빌드 비공개"
+
+msgid "Random: {}"
+msgstr "랜덤: {}"
+
+msgid "ABD: Original"
+msgstr "ABD: 원작"
+
+msgid "ABD: 5DS"
+msgstr "ABD: 5DS"
+
+msgid "ABD: Off"
+msgstr "ABD: 끔"
+
+msgid "CS Fix: Original"
+msgstr "CS수정: 원작"
+
+msgid "CS Fix: Default"
+msgstr "CS수정: 기본"
+
+msgid "CS Fix: All"
+msgstr "CS수정: 전체"
+
+msgid "CS Fix: {}/{}"
+msgstr "CS수정: {}/{}"

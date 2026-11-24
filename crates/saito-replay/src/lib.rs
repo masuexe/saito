@@ -307,6 +307,9 @@ pub struct Info {
     /// Optional encoded client-local stage background & BGM presentation settings
     /// (backwards-compatible trailing string in `SINF`; empty = default).
     pub presentation: String,
+    /// Optional lobby ruleset identifier (e.g. `"preset:masters"`, `"own:Cup"`)
+    /// (backwards-compatible trailing string in `SINF` after `presentation`; empty = unspecified).
+    pub ruleset: String,
 }
 
 impl Info {
@@ -314,7 +317,7 @@ impl Info {
     /// setups, at no stated time, by players without names: for the rest
     /// to be filled in.
     pub fn of(kind: MatchKind, side: u8) -> Info {
-        Info { when: 0, side, kind, open_setups: true, names: Default::default(), presentation: String::new() }
+        Info { when: 0, side, kind, open_setups: true, names: Default::default(), presentation: String::new(), ruleset: String::new() }
     }
 }
 
@@ -406,7 +409,8 @@ impl Header {
         };
         let names = [i.string()?, i.string()?];
         let presentation = if i.rest.is_empty() { String::new() } else { i.string()? };
-        let info = Info { when, side, kind, open_setups, names, presentation };
+        let ruleset = if i.rest.is_empty() { String::new() } else { i.string()? };
+        let info = Info { when, side, kind, open_setups, names, presentation, ruleset };
         i.done()?;
         let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
         b.what = "input";
@@ -547,8 +551,11 @@ impl<W: Write> Writer<W> {
         for name in &info.names {
             string(&mut i, name);
         }
-        if !info.presentation.is_empty() {
+        if !info.presentation.is_empty() || !info.ruleset.is_empty() {
             string(&mut i, &info.presentation);
+        }
+        if !info.ruleset.is_empty() {
+            string(&mut i, &info.ruleset);
         }
         section(&mut b, TAG_INFO, &i);
         section(&mut b, TAG_MATCH, match_bytes);
@@ -782,7 +789,8 @@ impl Replay {
         };
         let names = [i.string()?, i.string()?];
         let presentation = if i.rest.is_empty() { String::new() } else { i.string()? };
-        let info = Info { when, side, kind, open_setups, names, presentation };
+        let ruleset = if i.rest.is_empty() { String::new() } else { i.string()? };
+        let info = Info { when, side, kind, open_setups, names, presentation, ruleset };
         i.done()?;
         let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
         b.what = "input";

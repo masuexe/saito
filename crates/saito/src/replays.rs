@@ -66,6 +66,8 @@ pub struct Summary {
     /// The engine, the game and the content it plays on.
     pub head: saito_replay::Head,
     pub info: Info,
+    /// The match in `saito-match`'s binary (for reading recorded room settings without playing the replay).
+    pub match_bytes: Vec<u8>,
     /// Its length, in ticks.
     pub ticks: u32,
     /// Its rounds (each one's first tick).
@@ -74,7 +76,7 @@ pub struct Summary {
 
 impl Summary {
     fn of(replay: Replay) -> Summary {
-        Summary { ticks: replay.ticks.len() as u32, rounds: replay.round_starts(), head: replay.head, info: replay.info }
+        Summary { ticks: replay.ticks.len() as u32, rounds: replay.round_starts(), head: replay.head, info: replay.info, match_bytes: replay.match_bytes }
     }
 }
 

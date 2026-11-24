@@ -89,6 +89,7 @@ export global ReplaysView {
     in property <string> result;
     in property <int> result-tone;
     in property <string> length;
+    in property <string> settings;
     in property <string> reason;
     // Compatibility notice for playable legacy replays (shown when `reason` is empty).
     in property <string> notice;
@@ -273,6 +274,49 @@ export global ReplaysView {
     }
     pure public function legacy-kernel(version: string) -> string {
         return @tr("Recorded on v{} · exact replay kernel", version);
+    }
+    // Room settings summary tokens for the selected replay detail panel.
+    pure public function first-to-word(n: int) -> string {
+        if n == 1 {
+            return @tr("Single");
+        }
+        if n == 2 {
+            return @tr("Triple");
+        }
+        return @tr("First to {}", n);
+    }
+    pure public function custom-time-word(seconds: int) -> string {
+        if seconds <= 0 {
+            return @tr("Unlimited");
+        }
+        return @tr("{}s", seconds);
+    }
+    pure public function open-setups-word(open: bool) -> string {
+        return open ? @tr("Open setups") : @tr("Closed setups");
+    }
+    pure public function random-battle-word(rank: string) -> string {
+        return @tr("Random: {}", rank);
+    }
+    pure public function abd-mode-word(mode: int) -> string {
+        if mode == 1 {
+            return @tr("ABD: 5DS");
+        }
+        if mode == 2 {
+            return @tr("ABD: Off");
+        }
+        return @tr("ABD: Original");
+    }
+    pure public function cs-prob-word(count: int, total: int) -> string {
+        if count == 0 {
+            return @tr("CS Fix: Original");
+        }
+        if count == -1 {
+            return @tr("CS Fix: Default");
+        }
+        if count >= total {
+            return @tr("CS Fix: All");
+        }
+        return @tr("CS Fix: {}/{}", count, total);
     }
 }
 
@@ -540,6 +584,43 @@ component Facts inherits Rectangle {
         stacked: root.stacked;
     }
 
+    // Room settings summary (shown when available and playable).
+    Rectangle {
+        x: 0;
+        y: root.first + 3 * root.pitch;
+        width: root.width;
+        height: root.stacked ? 46px : 38px;
+        visible: ReplaysView.reason == "" && ReplaysView.settings != "";
+
+        Text {
+            x: 0;
+            y: 0;
+            width: root.stacked ? parent.width : 108px;
+            height: root.stacked ? 14px : 20px;
+            text: @tr("Room");
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: root.stacked ? 12px : 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            x: root.stacked ? 0px : 120px;
+            y: root.stacked ? 14px : 2px;
+            width: parent.width - self.x;
+            height: root.stacked ? 32px : 36px;
+            text: ReplaysView.settings;
+            color: Theme.text;
+            font-family: Theme.body;
+            font-size: 12px;
+            font-weight: 500;
+            wrap: word-wrap;
+            overflow: elide;
+            vertical-alignment: top;
+        }
+    }
+
     Note {
         x: 0;
         y: root.stacked ? root.first : 64px;
@@ -552,7 +633,9 @@ component Facts inherits Rectangle {
 
     Note {
         x: 0;
-        y: root.stacked ? root.first + 3 * root.pitch : 122px;
+        y: root.stacked
+            ? root.first + 3 * root.pitch + (ReplaysView.settings != "" ? 48px : 0px)
+            : 122px + (ReplaysView.settings != "" ? 42px : 0px);
         width: root.width;
         height: root.stacked ? max(0px, root.height - self.y) : 36px;
         visible: ReplaysView.reason == "" && ReplaysView.notice != "";
@@ -608,7 +691,7 @@ component DetailPanel inherits Rectangle {
         x: root.beside ? root.pad + root.still-width + 12px : 16px;
         y: root.beside ? root.pad - 4px : 352px;
         width: root.beside ? root.inner - root.still-width - 12px : parent.width - 32px;
-        height: root.beside ? root.still-height + 4px : 160px;
+        height: root.beside ? root.still-height + 4px : 204px;
         visible: ReplaysView.selected;
         stacked: root.beside;
     }
@@ -742,7 +825,7 @@ component DetailSheet inherits Rectangle {
     property <bool> queue: ReplaysView.tab == 2;
     property <length> inner: self.width - 32px;
     property <length> still-height: self.inner * 2 / 3;
-    property <length> notice-room: ReplaysView.reason == "" && ReplaysView.notice != "" ? 36px : 0px;
+    property <length> notice-room: (ReplaysView.reason == "" && ReplaysView.notice != "" ? 36px : 0px) + (ReplaysView.reason == "" && ReplaysView.settings != "" ? 42px : 0px);
     arrive := Tween {
         duration: Theme.quick;
     }

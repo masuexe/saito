@@ -226,6 +226,52 @@ fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// Concise summary of the room settings recorded in a replay's `SINF` and `SMTC` sections.
+fn room_settings(shell: &Shell, view: &ReplaysView, game: &str, ready: &Ready, info: &Info, match_bytes: &[u8]) -> String {
+    let Ok(m) = saito_match::binary::read_match(ready.content(), match_bytes) else {
+        return String::new();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if !info.ruleset.is_empty() {
+        let label = match crate::rulesets::name_of_text(&info.ruleset) {
+            Some(saito_match::ruleset::Name::Preset(id)) => {
+                let graphics = ready.graphics(shell.i18n.code);
+                let names = crate::games::Names::of(ready.content(), &graphics);
+                names.text("rulesets", &format!("preset.{id}")).unwrap_or(id)
+            }
+            Some(saito_match::ruleset::Name::Own(own)) => own,
+            _ => info.ruleset.clone(),
+        };
+        if !label.is_empty() {
+            parts.push(label);
+        }
+    }
+    let first_to = m.first_to();
+    if first_to > 0 {
+        parts.push(view.invoke_first_to_word(first_to as i32).into());
+    }
+    parts.push(view.invoke_custom_time_word(m.custom_screen_time.unwrap_or(0) as i32).into());
+    if info.kind == MatchKind::Online {
+        parts.push(view.invoke_open_setups_word(info.open_setups).into());
+    }
+    if let Some(rank) = m.random_battle {
+        parts.push(view.invoke_random_battle_word(format!("Rank {}", rank.as_u8()).into()).into());
+    }
+    if saito_match::abd_mode::supported(game) {
+        parts.push(view.invoke_abd_mode_word(m.abd_mode.as_u8() as i32).into());
+    }
+    if saito_match::cs_prob_fix::supported(game) {
+        let count = if m.cs_prob_fix.is_recommended(game) {
+            -1
+        } else {
+            m.cs_prob_fix.count(game) as i32
+        };
+        let total = saito_match::cs_prob_fix::effects(game).len() as i32;
+        parts.push(view.invoke_cs_prob_word(count, total).into());
+    }
+    parts.join(" · ")
+}
+
 /// The selected replay's still: the frame (or WASM-rendered pixels) the thread made, shown in the screen's `Picture`.
 #[derive(Default)]
 struct Still {
@@ -999,6 +1045,7 @@ impl Replays {
                 view.set_selected(false);
                 view.set_playable(false);
                 view.set_still(false);
+                view.set_settings(Default::default());
                 view.set_notice(Default::default());
                 view.set_notice_exact(false);
                 view.set_feed_saved(false);
@@ -1021,6 +1068,7 @@ impl Replays {
             view.set_result(score_text.into());
             view.set_result_tone(0);
             view.set_length(clock(time_of(item.ticks as u64), false).into());
+            view.set_settings(Default::default());
             view.set_reason(Default::default());
             let kb = (item.size.max(1024) as f64 / 1024.0).round() as u64;
             let notice = if !self.feed.status.is_empty() {
@@ -1039,10 +1087,11 @@ impl Replays {
             view.set_selected(missing.is_some());
             view.set_playable(false);
             view.set_still(false);
+            view.set_settings(Default::default());
             view.set_notice(Default::default());
             view.set_notice_exact(false);
             if let Some(file) = missing {
-                for set in [ReplaysView::set_right_name, ReplaysView::set_played, ReplaysView::set_result, ReplaysView::set_length] {
+                for set in [ReplaysView::set_right_name, ReplaysView::set_played, ReplaysView::set_result, ReplaysView::set_length, ReplaysView::set_settings] {
                     set(&view, Default::default());
                 }
                 view.set_reason(view.invoke_missing(file.as_str().into()));
@@ -1099,6 +1148,11 @@ impl Replays {
         view.set_result(result.into());
         view.set_result_tone(tone);
         view.set_length(length.into());
+        let settings = match (&reason, &entry.read, &on) {
+            (None, Ok(s), Some((on, _, _))) => room_settings(shell, &view, &game, on, &s.info, &s.match_bytes),
+            _ => String::new(),
+        };
+        view.set_settings(settings.into());
         // Its still: the one made, or asked for now. Until its own is there the box is empty: the still of the
         // replay selected before is another replay's picture, however short the wait.
         let made = self.still.frame.as_ref().is_some_and(|(path, _)| *path == entry.path);

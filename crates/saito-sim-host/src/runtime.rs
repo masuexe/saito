@@ -249,6 +249,7 @@ mod native {
                 open_setups: meta.open_setups,
                 names: meta.names,
                 presentation: String::new(),
+                ruleset: String::new(),
             };
             let mut viewer = WasmViewer {
                 guest,

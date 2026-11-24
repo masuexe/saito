@@ -335,3 +335,52 @@ msgstr "最近のリプレイを読み込み中…"
 
 msgid "No recent replays on the server yet."
 msgstr "サーバーに最近のリプレイはまだありません。"
+
+# Room settings recorded in a replay
+msgid "Room"
+msgstr "ルール設定"
+
+msgid "Single"
+msgstr "シングル"
+
+msgid "Triple"
+msgstr "トリプル"
+
+msgid "First to {}"
+msgstr "{}本先取"
+
+msgid "Unlimited"
+msgstr "時間無制限"
+
+msgid "{}s"
+msgstr "{}秒"
+
+msgid "Open setups"
+msgstr "構築公開"
+
+msgid "Closed setups"
+msgstr "構築非公開"
+
+msgid "Random: {}"
+msgstr "ランダム：{}"
+
+msgid "ABD: Original"
+msgstr "ABD：原作"
+
+msgid "ABD: 5DS"
+msgstr "ABD：5DS"
+
+msgid "ABD: Off"
+msgstr "ABD：無効"
+
+msgid "CS Fix: Original"
+msgstr "CS修正：原作"
+
+msgid "CS Fix: Default"
+msgstr "CS修正：標準"
+
+msgid "CS Fix: All"
+msgstr "CS修正：全修正"
+
+msgid "CS Fix: {}/{}"
+msgstr "CS修正：{}/{}"

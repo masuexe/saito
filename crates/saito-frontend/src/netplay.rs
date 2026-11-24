@@ -816,7 +816,7 @@ mod tests {
         // Each one's info is its agreement's: an online match with open
         // setups, recorded from its own side, by the names the lobby had.
         for (side, replay) in [&a, &b].into_iter().enumerate() {
-            let info = saito_replay::Info { when: 1_790_000_000, side: side as u8, kind: saito_replay::MatchKind::Online, open_setups: true, names: names[side].clone(), presentation: String::new() };
+            let info = saito_replay::Info { when: 1_790_000_000, side: side as u8, kind: saito_replay::MatchKind::Online, open_setups: true, names: names[side].clone(), presentation: String::new(), ruleset: String::new() };
             assert_eq!(replay.info, info, "side {side}");
         }
         assert_eq!(names[0], names[1]);

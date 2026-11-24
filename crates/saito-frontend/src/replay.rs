@@ -94,7 +94,12 @@ impl Recorder {
         when: u64,
         presentation: String,
     ) -> Result<Recorder, String> {
-        let info = Info { when, side: agreed.side as u8, kind: MatchKind::Online, open_setups: agreed.open_setups(), names: agreed.names.clone(), presentation };
+        let ruleset = match &agreed.settings.ruleset.name {
+            saito_match::ruleset::Name::Preset(id) => format!("preset:{id}"),
+            saito_match::ruleset::Name::Own(name) => format!("own:{name}"),
+            saito_match::ruleset::Name::Theirs => String::new(),
+        };
+        let info = Info { when, side: agreed.side as u8, kind: MatchKind::Online, open_setups: agreed.open_setups(), names: agreed.names.clone(), presentation, ruleset };
         let m = Match { seed: Some(agreed.seed), ..agreed.m.clone() };
         Recorder::new(out, content, &m, &info)
     }
