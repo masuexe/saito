@@ -521,7 +521,8 @@ impl Export {
         };
         // What the thread plays from: the game as the window shows it, shared.
         let game = game_for_thread(shell, &ready, true);
-        let music = crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background);
+        let presentation = crate::screens::play::stage::replay_presentation(&shell.games, &ready, &replay);
+        let music = if presentation.is_some() { None } else { crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background) };
         let sides = SIDES[self.sides];
         // The chapters ("Round 1"...) and the sound's tracks (each side's player) in the words the window shows.
         let titles = {
@@ -587,7 +588,13 @@ impl Export {
                 // (`saito_video::export`, its viewer with the backgrounds' music.)
                 let result = saito_frontend::viewer::Viewer::open_with_compat(&game, &replay, options.view, music, compat)
                     .map_err(saito_video::Error::Replay)
-                    .and_then(|mut viewer| saito_video::write_mp4(&mut viewer, &options, to, &mut progress))
+                    .and_then(|mut viewer| {
+                        if let Some(pres) = presentation {
+                            viewer.wait_backgrounds(&pres.extra_backgrounds);
+                            viewer.set_round_presentation(Some(pres.resolver));
+                        }
+                        saito_video::write_mp4(&mut viewer, &options, to, &mut progress)
+                    })
                     .and_then(|made| made.body.finish(made.head).map_err(saito_video::Error::Disk));
                 share(&told).done = Some(result);
             };

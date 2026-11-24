@@ -1267,6 +1267,7 @@ impl Replays {
         self.close_sheet(shell);
         self.opening = Some(path.to_path_buf());
         self.opening_ready = other.clone();
+        let presentation = crate::screens::play::stage::replay_presentation(&shell.games, &ready, &replay);
         shell.start_battle(BattleStart {
             owner: ScreenId::Replays,
             kind: BattleKind::Replay,
@@ -1280,7 +1281,7 @@ impl Replays {
             full: false,
             music: crate::battle::BattleMusic::Background,
             gate: None,
-            presentation: None,
+            presentation,
         });
     }
 

@@ -24,7 +24,7 @@
 mod list;
 mod session;
 mod spectate;
-mod stage;
+pub(crate) mod stage;
 // (The screenshot pass's second player is the `tour` feature's; without it Play hears nothing of it.)
 #[cfg(any(test, feature = "tour"))]
 #[cfg_attr(not(feature = "tour"), allow(dead_code, unused_imports))]
@@ -1839,7 +1839,7 @@ impl Play {
 /// A recorder of the match the lobby agreed, to a new file in the replays folder: its info is the agreement's
 /// (an online match, from this player's side, by the names the lobby had, open setups where they were
 /// agreed). None if the file can't be made (why is in the log).
-fn recorder(content: &std::sync::Arc<saito_battle::Content>, agreed: &Agreement, game: &str) -> Option<(Recorder, std::path::PathBuf)> {
+fn recorder(content: &std::sync::Arc<saito_battle::Content>, agreed: &Agreement, game: &str, presentation: String) -> Option<(Recorder, std::path::PathBuf)> {
     let dir = crate::paths::replays();
     let made = (|| -> Result<(Recorder, std::path::PathBuf), String> {
         saito_files::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -1847,7 +1847,7 @@ fn recorder(content: &std::sync::Arc<saito_battle::Content>, agreed: &Agreement,
         let stamp = chrono::DateTime::from_timestamp(when as i64, 0).map(|t| t.with_timezone(&chrono::Local).format("%Y%m%d-%H%M%S").to_string()).unwrap_or_default();
         let path = dir.join(format!("{stamp}-{game}.{}", saito_frontend::replay::EXTENSION));
         let file = saito_files::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let rec = Recorder::of_agreement(Box::new(std::io::BufWriter::new(file)), content, agreed, when)?;
+        let rec = Recorder::of_agreement_with_presentation(Box::new(std::io::BufWriter::new(file)), content, agreed, when, presentation)?;
         Ok((rec, path))
     })();
     made.map_err(|why| crate::errors::log("making a match's replay file", &why)).ok()
@@ -2855,7 +2855,7 @@ impl Screen for Play {
                 // (Not in the screenshot pass, which keeps nothing, unless it is told where the replays go.)
                 if (!shell.still || std::env::var_os("SAITO_REPLAYS").is_some())
                     && let (Some(agreed), Some((game, ready)), Some(b)) = (&self.agreed, shell.ready(), shell.battle.as_mut())
-                    && let Some((recorder, path)) = recorder(ready.content(), agreed, &game)
+                    && let Some((recorder, path)) = recorder(ready.content(), agreed, &game, self.stage_config.encode_presentation())
                 {
                     if let Err(why) = b.stage.player.record(recorder) {
                         crate::errors::log("recording the match", &why);

@@ -340,7 +340,11 @@ impl Preload {
     /// The viewer of `replay` under compatibility mode `compat`.
     pub fn viewer_compat(mut self, replay: &crate::replay::Replay, view: Option<u8>, compat: crate::replay::Compat) -> Result<crate::viewer::Viewer, crate::replay::Refused> {
         let audio = self.audio.take().or_else(|| self.sound.take().map(|parts| self.audio_of(parts)));
-        crate::viewer::Viewer::with_compat(&self.content, replay, view, self.renderer, self.text, audio, compat)
+        let mut viewer = crate::viewer::Viewer::with_compat(&self.content, replay, view, self.renderer, self.text, audio, compat)?;
+        if let Some(resolver) = self.round_presentation.take() {
+            viewer.set_round_presentation(Some(resolver));
+        }
+        Ok(viewer)
     }
 
     fn run(&mut self, i: usize) {

@@ -186,6 +186,46 @@ impl StageConfig {
         self.rounds.clear();
     }
 
+    /// Encode non-default stage/BGM configuration for recording in a replay's `SINF` section (`S-088`).
+    /// Returns an empty string for [`StageMode::Default`] so default replays carry no extra metadata.
+    pub fn encode_presentation(&self) -> String {
+        match self.mode {
+            StageMode::Default => String::new(),
+            StageMode::Random => "v1|random".into(),
+            StageMode::Escalating => "v1|escalating".into(),
+            StageMode::Custom => {
+                let used_len = self.rounds.iter().rposition(|r| !r.is_default()).map_or(0, |last| last + 1);
+                if used_len == 0 {
+                    "v1|custom|".into()
+                } else {
+                    let encoded: Vec<String> = self.rounds[..used_len].iter().map(encode_round).collect();
+                    format!("v1|custom|{}", encoded.join(";"))
+                }
+            }
+        }
+    }
+
+    /// Decode a recorded replay presentation string produced by [`StageConfig::encode_presentation`].
+    pub fn decode_presentation(raw: &str) -> Option<StageConfig> {
+        let rest = raw.strip_prefix("v1|")?;
+        if rest == "random" {
+            return Some(StageConfig { mode: StageMode::Random, rounds: Vec::new() });
+        }
+        if rest == "escalating" {
+            return Some(StageConfig { mode: StageMode::Escalating, rounds: Vec::new() });
+        }
+        if let Some(rounds_raw) = rest.strip_prefix("custom|") {
+            let max_rounds = saito_match::rounds_for(saito_match::MAX_FIRST_TO);
+            let rounds = if rounds_raw.is_empty() {
+                Vec::new()
+            } else {
+                rounds_raw.split(';').take(max_rounds).map(decode_round).collect()
+            };
+            return Some(StageConfig { mode: StageMode::Custom, rounds });
+        }
+        None
+    }
+
     /// Build the client-local [`BattlePresentation`] attached when an online match starts loading.
     pub fn build_presentation(&self, games: &Games, ready: &Ready, seed: u32, first_to: u8) -> BattlePresentation {
         let content = ready.content().clone();
@@ -333,6 +373,14 @@ impl StageConfig {
             }
         }
     }
+}
+
+/// Rebuild the [`BattlePresentation`] recorded in `replay.info.presentation` (`S-088`), if any.
+pub(crate) fn replay_presentation(games: &Games, ready: &Ready, replay: &saito_frontend::replay::Replay) -> Option<BattlePresentation> {
+    let cfg = StageConfig::decode_presentation(&replay.info.presentation)?;
+    let m = saito_match::binary::read_match(ready.content(), &replay.match_bytes).ok()?;
+    let seed = m.seed.unwrap_or(0);
+    Some(cfg.build_presentation(games, ready, seed, m.first_to()))
 }
 
 /// Canonicalizes a background selection index from `practice::background_list(content, game)`
@@ -859,5 +907,37 @@ mod tests {
             .map(|p| audio.driver_of(BankId(p)).unwrap().player(MUSIC_PLAYER).filter(|pl| pl.is_playing()).and_then(|pl| pl.song()))
             .collect();
         assert_eq!(playing, [None, Some(SongId(song_num(&games, "exe4", "tournament-battle")))]);
+    }
+
+    #[test]
+    fn replay_presentation_roundtrips_through_replay_info() {
+        let cases = [
+            (StageConfig { mode: StageMode::Default, rounds: vec![] }, false),
+            (StageConfig { mode: StageMode::Random, rounds: vec![] }, true),
+            (StageConfig { mode: StageMode::Escalating, rounds: vec![] }, true),
+            (
+                StageConfig {
+                    mode: StageMode::Custom,
+                    rounds: vec![
+                        RoundCustom {
+                            bg: RoundBg::Named("exe6:graveyard".into()),
+                            bgm: RoundBgm::Theme { game: "exe4".into(), song: "tournament-battle".into() },
+                        },
+                        RoundCustom { bg: RoundBg::Random, bgm: RoundBgm::Random },
+                    ],
+                },
+                true,
+            ),
+        ];
+        for (cfg, non_empty) in cases {
+            let encoded = cfg.encode_presentation();
+            assert_eq!(!encoded.is_empty(), non_empty, "{cfg:?}");
+            if non_empty {
+                let decoded = StageConfig::decode_presentation(&encoded).expect("decode");
+                assert_eq!(decoded, cfg);
+            } else {
+                assert_eq!(StageConfig::decode_presentation(&encoded), None);
+            }
+        }
     }
 }

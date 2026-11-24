@@ -304,6 +304,9 @@ pub struct Info {
     pub open_setups: bool,
     /// The players' names by side; empty where none is known.
     pub names: [String; 2],
+    /// Optional encoded client-local stage background & BGM presentation settings
+    /// (backwards-compatible trailing string in `SINF`; empty = default).
+    pub presentation: String,
 }
 
 impl Info {
@@ -311,7 +314,7 @@ impl Info {
     /// setups, at no stated time, by players without names: for the rest
     /// to be filled in.
     pub fn of(kind: MatchKind, side: u8) -> Info {
-        Info { when: 0, side, kind, open_setups: true, names: Default::default() }
+        Info { when: 0, side, kind, open_setups: true, names: Default::default(), presentation: String::new() }
     }
 }
 
@@ -401,7 +404,9 @@ impl Header {
             1 => true,
             n => return Err(format!("the info's open setups is {n}, not 0 or 1")),
         };
-        let info = Info { when, side, kind, open_setups, names: [i.string()?, i.string()?] };
+        let names = [i.string()?, i.string()?];
+        let presentation = if i.rest.is_empty() { String::new() } else { i.string()? };
+        let info = Info { when, side, kind, open_setups, names, presentation };
         i.done()?;
         let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
         b.what = "input";
@@ -541,6 +546,9 @@ impl<W: Write> Writer<W> {
         i.push(info.open_setups as u8);
         for name in &info.names {
             string(&mut i, name);
+        }
+        if !info.presentation.is_empty() {
+            string(&mut i, &info.presentation);
         }
         section(&mut b, TAG_INFO, &i);
         section(&mut b, TAG_MATCH, match_bytes);
@@ -772,7 +780,9 @@ impl Replay {
             1 => true,
             n => return Err(format!("the info's open setups is {n}, not 0 or 1")),
         };
-        let info = Info { when, side, kind, open_setups, names: [i.string()?, i.string()?] };
+        let names = [i.string()?, i.string()?];
+        let presentation = if i.rest.is_empty() { String::new() } else { i.string()? };
+        let info = Info { when, side, kind, open_setups, names, presentation };
         i.done()?;
         let match_bytes = b.section(TAG_MATCH, "match")?.rest.to_vec();
         b.what = "input";

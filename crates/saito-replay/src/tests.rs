@@ -5,7 +5,7 @@ fn head() -> Head {
 }
 
 fn info() -> Info {
-    Info { when: 1_790_000_000, side: 1, kind: MatchKind::Online, open_setups: false, names: ["Lan".into(), String::new()] }
+    Info { when: 1_790_000_000, side: 1, kind: MatchKind::Online, open_setups: false, names: ["Lan".into(), String::new()], presentation: String::new() }
 }
 
 /// OK's number in a word's choice (bits 13 to 18: `PlayerTick::word`).
@@ -95,7 +95,7 @@ fn the_info_says_the_kind_of_match_and_open_setups() {
         let r = Replay::read(&written_with(&info, &ticks())).unwrap();
         assert_eq!(r.info, info);
     }
-    let blank = Info { when: 0, side: 1, kind: MatchKind::Offline, open_setups: true, names: Default::default() };
+    let blank = Info { when: 0, side: 1, kind: MatchKind::Offline, open_setups: true, names: Default::default(), presentation: String::new() };
     assert_eq!(Info::of(MatchKind::Offline, 1), blank);
     // The info's body: when (8 bytes), the side, the kind, open setups.
     let bytes = written(&[]);

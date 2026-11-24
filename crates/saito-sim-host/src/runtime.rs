@@ -248,6 +248,7 @@ mod native {
                 kind: if meta.kind == 1 { MatchKind::Online } else { MatchKind::Offline },
                 open_setups: meta.open_setups,
                 names: meta.names,
+                presentation: String::new(),
             };
             let mut viewer = WasmViewer {
                 guest,

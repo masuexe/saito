@@ -82,7 +82,19 @@ impl Recorder {
     /// match passes the flag on by making the recorder here, and a viewer
     /// reads it back as `Replay::info.open_setups` (`Viewer::info`).
     pub fn of_agreement(out: Box<dyn Write + Send>, content: &Arc<Content>, agreed: &crate::lobby::Agreement, when: u64) -> Result<Recorder, String> {
-        let info = Info { when, side: agreed.side as u8, kind: MatchKind::Online, open_setups: agreed.open_setups(), names: agreed.names.clone() };
+        Recorder::of_agreement_with_presentation(out, content, agreed, when, String::new())
+    }
+
+    /// Same as [`Recorder::of_agreement`], recording an optional client-local stage/BGM
+    /// presentation configuration in the replay's `SINF` section.
+    pub fn of_agreement_with_presentation(
+        out: Box<dyn Write + Send>,
+        content: &Arc<Content>,
+        agreed: &crate::lobby::Agreement,
+        when: u64,
+        presentation: String,
+    ) -> Result<Recorder, String> {
+        let info = Info { when, side: agreed.side as u8, kind: MatchKind::Online, open_setups: agreed.open_setups(), names: agreed.names.clone(), presentation };
         let m = Match { seed: Some(agreed.seed), ..agreed.m.clone() };
         Recorder::new(out, content, &m, &info)
     }

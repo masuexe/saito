@@ -68,7 +68,8 @@
 
 use crate::driver::Place;
 use crate::game::{Graphics, Loaded};
-use crate::player::{Clock, MOST_SAMPLES, tick_at, time_of};
+use crate::player::{Clock, MOST_SAMPLES, RoundContext, RoundResolver, tick_at, time_of};
+use crate::preload::SoundParts;
 use crate::replay::{Compat, End, Info, Refused, Replay, ReplayPlayer};
 use crate::session::Session;
 use saito_audio::{BattleAudio, RoundMusic, SoundCue};
@@ -189,6 +190,10 @@ pub struct BattlePart {
     /// Each tick's round's background: the music its cues play by
     /// ([`BattleAudio::round`]).
     backgrounds: Vec<BackgroundId>,
+    /// Whether this replay uses a custom per-round presentation resolver.
+    has_presentation: bool,
+    /// Per-part sound bank/song changes at 1-based tick offset `ran` when `has_presentation` is true.
+    sound_changes: Vec<(u32, SoundParts)>,
     /// The part's ticks played before each state was kept.
     kept_after: Vec<u32>,
     /// By sound: the sound at each state, once it played the part.
@@ -269,10 +274,16 @@ impl ConsoleSound {
         let side = self.sound;
         let mut sounds = Vec::with_capacity(part.kept_after.len());
         let mut kept = part.kept_after.iter().copied().peekable();
+        let mut changes = part.sound_changes.iter().peekable();
         let mut start = 0;
         for ((ran, ends), &background) in (1..).zip(&part.ends).zip(&part.backgrounds) {
             let end = ends[side] as usize;
-            self.audio.round(background);
+            if let Some((_, (banks, songs))) = changes.next_if(|(at, _)| *at == ran) {
+                self.audio.set_round_music(None);
+                self.audio.set_songs(banks.clone(), songs.clone());
+            } else if !part.has_presentation {
+                self.audio.round(background);
+            }
             self.audio.handle(&part.cues[side][start..end]);
             start = end;
             self.scratch.clear();
@@ -358,6 +369,10 @@ pub struct Viewer {
     ticks: [Vec<[f32; 2]>; SOUNDS],
     cues: Vec<SoundCue>,
     group: [Vec<[f32; 2]>; 3],
+    /// Optional per-round stage background & BGM presentation resolver (recorded in `info.presentation`).
+    presentation: Option<RoundResolver>,
+    presentation_key: Option<(u8, u8, u8)>,
+    presentation_sound: Option<SoundParts>,
 }
 
 /// The viewer's sounds, all running every tick so that what is heard after
@@ -566,9 +581,72 @@ impl Viewer {
             ticks: Default::default(),
             cues: Vec::new(),
             group: Default::default(),
+            presentation: None,
+            presentation_key: None,
+            presentation_sound: None,
         };
         viewer.keyframes.push(viewer.state());
         Ok(viewer)
+    }
+
+    /// Install or clear a per-round presentation resolver (custom stage background & BGM).
+    /// Also waits for any extra backgrounds if requested via [`Viewer::wait_backgrounds`].
+    pub fn set_round_presentation(&mut self, resolver: Option<RoundResolver>) {
+        self.presentation = resolver;
+        self.presentation_key = None;
+        self.presentation_sound = None;
+        if self.presentation.is_some() {
+            for sound in self.audio.iter_mut().flatten() {
+                sound.set_round_music(None);
+            }
+            self.apply_round_presentation();
+            if self.position() == 0
+                && let Some(first) = self.keyframes.first_mut()
+            {
+                first.audio = self.audio.clone();
+            }
+        } else {
+            self.renderer.set_background_override(None);
+        }
+    }
+
+    /// Ensure extra backgrounds used by a presentation resolver are extracted before rendering
+    /// (used by synchronous paths such as MP4 export).
+    pub fn wait_backgrounds(&mut self, backgrounds: &[BackgroundId]) {
+        if !backgrounds.is_empty() {
+            self.renderer.graphics().wait_backgrounds(&self.session.battle.content, backgrounds.iter().copied());
+        }
+    }
+
+    fn apply_round_presentation(&mut self) -> Option<SoundParts> {
+        let score = self.session.battle.setup.score;
+        let key = (score.round, score.wins, score.losses);
+        if self.presentation_key == Some(key) {
+            return None;
+        }
+        let resolver = self.presentation.as_mut()?;
+        let max_rounds = self.session.battle.setup.rounds() as u8;
+        let first_to = max_rounds.saturating_add(1) / 2;
+        let look = resolver(RoundContext {
+            round: score.round,
+            wins: score.wins,
+            losses: score.losses,
+            max_rounds,
+            first_to,
+            default_background: self.session.battle.setup.settings.background,
+        });
+        self.presentation_key = Some(key);
+        self.renderer.set_background_override(look.background);
+        if let Some(bg) = look.background {
+            self.renderer.graphics().want_backgrounds(&self.session.battle.content, [bg]);
+        }
+        self.presentation_sound = look.sound.clone();
+        if let Some((banks, songs)) = &look.sound {
+            for sound in self.audio.iter_mut().flatten() {
+                sound.set_songs(banks.clone(), songs.clone());
+            }
+        }
+        look.sound
     }
 
     // ---- What it plays -----------------------------------------------------
@@ -974,18 +1052,36 @@ impl Viewer {
     /// own, the parts going from one to the next as they are made.
     pub fn index_battle(&mut self, ticks: u32) -> BattlePart {
         let from = self.position();
-        let (mut cues, mut ends, mut backgrounds, mut kept_after) = (<[Vec<SoundCue>; SOUNDS]>::default(), Vec::new(), Vec::new(), Vec::new());
-        let part = self.index_ticks(ticks, |ticked, layers, ran, kept| {
+        let has_presentation = self.presentation.is_some();
+        let (mut cues, mut ends, mut backgrounds, mut sound_changes, mut kept_after) = (<[Vec<SoundCue>; SOUNDS]>::default(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut last_key = if from == 0 { None } else { self.presentation_key };
+        let mut states = Vec::new();
+        let mut ran = 0;
+        while ran < ticks && self.play(false) {
+            ran += 1;
+            let kept = self.due(self.position());
+            if kept {
+                states.push(self.state());
+            }
+            if has_presentation && self.presentation_key != last_key {
+                last_key = self.presentation_key;
+                if let Some(sound) = self.presentation_sound.clone() {
+                    sound_changes.push((ran, sound));
+                }
+            }
+            let t = ticked(&self.session);
+            let layers = self.session.driver.layers();
             for (sound, cues) in cues.iter_mut().enumerate() {
-                sound_cues(ticked, layers, sound, cues);
+                sound_cues(t, layers, sound, cues);
             }
             ends.push(cues.each_ref().map(|c| c.len() as u32));
-            backgrounds.push(ticked.setup.settings.background);
+            backgrounds.push(t.setup.settings.background);
             if kept {
                 kept_after.push(ran);
             }
-        });
-        BattlePart { part, from, cues, ends, backgrounds, kept_after, sounds: Default::default() }
+        }
+        let part = IndexPart { states, reached: self.reached.min(self.position()), whole: self.whole, diverged: self.session.diverged.clone() };
+        BattlePart { part, from, cues, ends, backgrounds, has_presentation, sound_changes, kept_after, sounds: Default::default() }
     }
 
     /// Play up to `ticks` ticks on from where the viewer is, the states it
@@ -1209,6 +1305,10 @@ impl Viewer {
         if self.session.new_round {
             self.renderer.reset();
         }
+        let custom_presentation = self.presentation.is_some();
+        if custom_presentation {
+            self.apply_round_presentation();
+        }
         // (Both consoles' HUDs: the renderer follows each.)
         self.renderer.observe(&self.session.battle);
         if let Some(audio) = &mut self.audio {
@@ -1216,7 +1316,9 @@ impl Viewer {
             for (k, sound) in audio.iter_mut().enumerate() {
                 self.cues.clear();
                 sound_cues(ticked, self.session.driver.layers(), k, &mut self.cues);
-                sound.round(ticked.setup.settings.background);
+                if !custom_presentation {
+                    sound.round(ticked.setup.settings.background);
+                }
                 sound.handle(&self.cues);
                 self.ticks[k].clear();
                 sound.tick(&mut self.ticks[k]);
@@ -1279,6 +1381,31 @@ impl Viewer {
         };
         put(state, session, renderer, audio, *view, rounds);
         self.level();
+        if self.presentation.is_some() {
+            // Re-apply background override for the restored round without clobbering restored audio state.
+            let score = self.session.battle.setup.score;
+            let key = (score.round, score.wins, score.losses);
+            if self.presentation_key != Some(key)
+                && let Some(resolver) = self.presentation.as_mut()
+            {
+                let max_rounds = self.session.battle.setup.rounds() as u8;
+                let first_to = max_rounds.saturating_add(1) / 2;
+                let look = resolver(RoundContext {
+                    round: score.round,
+                    wins: score.wins,
+                    losses: score.losses,
+                    max_rounds,
+                    first_to,
+                    default_background: self.session.battle.setup.settings.background,
+                });
+                self.presentation_key = Some(key);
+                self.renderer.set_background_override(look.background);
+                if let Some(bg) = look.background {
+                    self.renderer.graphics().want_backgrounds(&self.session.battle.content, [bg]);
+                }
+                self.presentation_sound = look.sound;
+            }
+        }
     }
 
     /// The host's levels on the sound as it stands (a kept state's sound has the levels it was kept with).

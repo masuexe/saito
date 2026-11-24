@@ -153,7 +153,7 @@ pub struct RoundContext {
 }
 
 /// Callback resolving client-local background and BGM overrides per round.
-pub type RoundResolver = Box<dyn FnMut(RoundContext) -> RoundLook>;
+pub type RoundResolver = Box<dyn FnMut(RoundContext) -> RoundLook + Send>;
 
 pub struct Player {
     session: Session,

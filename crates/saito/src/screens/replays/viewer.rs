@@ -1003,7 +1003,15 @@ impl Watching {
         {
             let game = game_for_thread(shell, &ready, true);
             let music = crate::music::round_music(&shell.games, &ready, &crate::music::Music::Background);
-            self.indexing = Indexing::start(game, music, self.path.clone(), self.viewer.compat()).map_or(IndexThread::Done, IndexThread::Going);
+            let presentation = if !self.viewer.info().presentation.is_empty() {
+                crate::replays::read(&self.path)
+                    .ok()
+                    .and_then(|r| crate::screens::play::stage::replay_presentation(&shell.games, &ready, &r))
+                    .map(|p| p.resolver)
+            } else {
+                None
+            };
+            self.indexing = Indexing::start(game, music, presentation, self.path.clone(), self.viewer.compat()).map_or(IndexThread::Done, IndexThread::Going);
         }
         self.index_on();
     }

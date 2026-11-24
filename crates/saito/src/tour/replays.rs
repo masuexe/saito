@@ -144,7 +144,7 @@ pub(super) fn make(shell: &Shell, dir: &Path) -> Result<(), String> {
         if side == 1 {
             names.swap(0, 1);
         }
-        let info = Info { when, side, kind: if online { MatchKind::Online } else { MatchKind::Offline }, open_setups, names };
+        let info = Info { when, side, kind: if online { MatchKind::Online } else { MatchKind::Offline }, open_setups, names, presentation: String::new() };
         let ticks = cut.map(|part| (replay.ticks.len() as f32 * part) as usize);
         save(&format!("{i:02}.saitoreplay"), &written(replay, &info, ticks), when)?;
     }

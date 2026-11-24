@@ -395,6 +395,7 @@ mod tests {
             kind: crate::replay::MatchKind::Offline,
             open_setups: true,
             names: ["A".into(), "B".into()],
+            presentation: String::new(),
         };
         let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
