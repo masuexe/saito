@@ -112,6 +112,7 @@ fn enhancements_of(cfg: EnhancementsConfig) -> Enhancements {
         fill: cfg.fill,
         reduce_flashes: cfg.reduce_flashes,
         hide_aura_number: cfg.hide_aura_number,
+        hd_chip_art: cfg.hd_chip_art,
     }
 }
 

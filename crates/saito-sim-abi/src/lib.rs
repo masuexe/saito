@@ -79,6 +79,8 @@ pub struct EnhancementsConfig {
     pub reduce_flashes: bool,
     #[serde(default)]
     pub hide_aura_number: bool,
+    #[serde(default)]
+    pub hd_chip_art: bool,
 }
 
 /// Request to render a 240×160 still frame from a replay (`saito_sim_still`).
