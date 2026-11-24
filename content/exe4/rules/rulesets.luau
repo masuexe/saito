@@ -28,7 +28,22 @@ return {
     -- rules is known as "masters class". mixed rules is known as "unrestricted". get rid of version only rules").
     presets = {
         { id = "masters", versions = "one_per_build" },
-        { id = "senior", versions = "one_per_build", only = { patch_cards = {} } },
+        {
+            id = "senior",
+            versions = "one_per_build",
+            only = {
+                patch_cards = {
+                    "028-pet-menu-color-change",
+                    "029-pet-menu-color-change",
+                    "030-pet-menu-color-change",
+                    "059-megaman-color-change",
+                    "060-megaman-color-change",
+                    "088-pet-menu-color-change",
+                    "089-megaman-color-change",
+                    "090-megaman-color-change",
+                },
+            },
+        },
         { id = "unrestricted", versions = "mixed" },
     },
 }

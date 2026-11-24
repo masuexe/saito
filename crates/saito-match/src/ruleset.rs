@@ -1176,7 +1176,8 @@ mod tests {
             assert_eq!(r.first().groups_chosen(&r, category), Some(groups.to_vec()));
             assert_eq!(r.first().groups_chosen(&r, chips), Some(groups.to_vec()));
             let senior = r.preset("senior").unwrap();
-            assert!(senior.one_per_build && senior.allowed_count(cards) == 0);
+            let senior_cards = if game == "exe4" { 8 } else { 0 };
+            assert!(senior.one_per_build && senior.allowed_count(cards) == senior_cards, "{game}");
             // A new build of each group plays under Masters class; one version's alone (the page's quick choice)
             // refuses the other's.
             let builds = Builds::of(&content, game).unwrap();
