@@ -1733,17 +1733,58 @@ export component Bars inherits Rectangle {
 // ---- Scrolling ------------------------------------------------------------------------------------------
 
 // The scrollbar's thumb, in the 12 reserved at a scrolling thing's right whether or not it shows.
+// Dragging the thumb or clicking the track scrolls the list or page.
 component Thumb inherits Rectangle {
     in property <length> view;
     in property <length> content;
     in property <length> scroll;
-    width: 4px;
+    callback scroll-to(length);
+    property <bool> scrollable: root.content > root.view + 0.5px;
+    property <length> min-thumb: min(24px, root.height);
+    property <length> thumb-h: root.content > 0px ? clamp(root.height * root.view / root.content, root.min-thumb, root.height) : 0px;
+    property <length> travel: max(0px, root.height - root.thumb-h);
+    property <length> max-scroll: max(0px, root.content - root.view);
+    property <length> thumb-y: root.max-scroll > 0px ? root.travel * clamp(root.scroll, 0px, root.max-scroll) / root.max-scroll : 0px;
+    property <bool> dragging;
+    property <length> grab-offset;
+    property <bool> hot: touch.has-hover || root.dragging;
+    width: 12px;
+    function jump-to(y: length) {
+        if root.travel > 0px {
+            root.scroll-to(root.max-scroll * clamp(y, 0px, root.travel) / root.travel);
+        }
+    }
     Rectangle {
-        x: 0;
-        y: root.content > 0 ? parent.height * root.scroll / root.content : 0px;
-        height: root.content > 0 ? parent.height * root.view / root.content : 0px;
-        visible: root.content > root.view + 0.5px;
-        background: Theme.line;
+        x: root.hot ? parent.width - 6px : parent.width - 4px;
+        y: root.thumb-y;
+        width: root.hot ? 6px : 4px;
+        height: root.thumb-h;
+        visible: root.scrollable;
+        background: root.dragging ? Theme.cursor : touch.has-hover ? Theme.muted : Theme.line;
+    }
+
+    touch := TouchArea {
+        enabled: root.scrollable;
+        mouse-cursor: !root.scrollable ? MouseCursor.default : root.dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                if self.mouse-y >= root.thumb-y && self.mouse-y <= root.thumb-y + root.thumb-h {
+                    root.grab-offset = self.mouse-y - root.thumb-y;
+                    root.dragging = true;
+                } else {
+                    root.grab-offset = root.thumb-h / 2;
+                    root.dragging = true;
+                    root.jump-to(self.mouse-y - root.grab-offset);
+                }
+            } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                root.dragging = false;
+            }
+        }
+        moved => {
+            if root.dragging && self.pressed {
+                root.jump-to(self.mouse-y - root.grab-offset);
+            }
+        }
     }
 }
 
@@ -1842,10 +1883,17 @@ component Scroller inherits Rectangle {
     }
 
     Thumb {
-        x: parent.width - 4px;
+        x: parent.width - 12px;
+        y: 0;
+        height: parent.height;
         view: root.height;
         content: root.content-height;
         scroll: root.scroll - root.offset;
+        scroll-to(y) => {
+            root.slid = 0px;
+            root.focus-y = 1px;
+            root.content-y = -clamp(y, 0px, max(0px, root.content-height - root.height));
+        }
 
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
