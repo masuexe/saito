@@ -579,6 +579,33 @@ impl Settings {
             w.put(&0x20u8);
             w.put(&self.cs_prob_fix.bits());
         }
+        if !self.ruleset.limits.is_empty() {
+            w.put(&0x30u8);
+            let l = &self.ruleset.limits;
+            let mut mask = 0u16;
+            let fields: [Option<u32>; 11] = [
+                l.standard_copies,
+                l.mb_tier_copies[0],
+                l.mb_tier_copies[1],
+                l.mb_tier_copies[2],
+                l.mb_tier_copies[3],
+                l.mb_tier_copies[4],
+                l.mega_copies,
+                l.mega_total,
+                l.giga_copies,
+                l.giga_total,
+                l.patch_card_mb,
+            ];
+            for (bit, val) in fields.iter().enumerate() {
+                if val.is_some() {
+                    mask |= 1u16 << bit;
+                }
+            }
+            w.put(&mask);
+            for val in fields.into_iter().flatten() {
+                w.uvarint(val as u64);
+            }
+        }
         out
     }
 
@@ -652,6 +679,7 @@ impl Settings {
         let mut random_battle = None;
         let mut abd_mode = saito_match::AbdMode::Original;
         let mut cs_prob_fix = saito_match::CsProbFix::NONE;
+        let mut custom_limits = saito_match::ruleset::Limits::default();
         while !r.is_empty() {
             let v: u8 = r.get().map_err(bad)?;
             if v == 0 {
@@ -670,6 +698,25 @@ impl Settings {
                     return Err(format!("cs prob fix ({bits:#06x}) is not supported for {game}"));
                 }
                 cs_prob_fix = fix;
+            } else if v == 0x30 {
+                let mask: u16 = r.get().map_err(bad)?;
+                let mut read_opt = |bit: u16| -> Result<Option<u32>, String> {
+                    if mask & (1u16 << bit) != 0 {
+                        let n = r.uvarint().map_err(bad)?;
+                        u32::try_from(n).map(Some).map_err(|_| "limit value overflow".to_string())
+                    } else {
+                        Ok(None)
+                    }
+                };
+                custom_limits = saito_match::ruleset::Limits {
+                    standard_copies: read_opt(0)?,
+                    mb_tier_copies: [read_opt(1)?, read_opt(2)?, read_opt(3)?, read_opt(4)?, read_opt(5)?],
+                    mega_copies: read_opt(6)?,
+                    mega_total: read_opt(7)?,
+                    giga_copies: read_opt(8)?,
+                    giga_total: read_opt(9)?,
+                    patch_card_mb: read_opt(10)?,
+                };
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
@@ -684,7 +731,9 @@ impl Settings {
             return Err(format!("a match of {game}, and this side has {}'s content", content.game()));
         }
         // (Named as this side names its rules: a preset's, else the other player's.)
-        let ruleset = rulesets.named_here(Ruleset::of_names(rulesets, content, RulesetName::Theirs, one_per_build, &banned, &banned_by)?);
+        let mut parsed_ruleset = Ruleset::of_names(rulesets, content, RulesetName::Theirs, one_per_build, &banned, &banned_by)?;
+        parsed_ruleset.limits = custom_limits;
+        let ruleset = rulesets.named_here(parsed_ruleset);
         // (The rounds as a match's checks hold them: a stage stated is a
         // link battle's, and one left is the rules' to pick.)
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {

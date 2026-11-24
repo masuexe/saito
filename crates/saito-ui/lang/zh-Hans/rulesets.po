@@ -100,3 +100,49 @@ msgstr "{}的程序"
 
 msgid "Banned for all navis"
 msgstr "对所有领航员禁止"
+
+msgid "Limits"
+msgstr "限制调整"
+
+msgid "Default"
+msgstr "默认"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "{n} adjusted"
+msgid_plural "{n} adjusted"
+msgstr[0] "{n} 项调整"
+
+msgid "Standard chip max copies"
+msgstr "标准芯片单张上限"
+
+msgid "≤ 19 MB chip max copies"
+msgstr "≤ 19 MB 芯片单张上限"
+
+msgid "20–29 MB chip max copies"
+msgstr "20–29 MB 芯片单张上限"
+
+msgid "30–39 MB chip max copies"
+msgstr "30–39 MB 芯片单张上限"
+
+msgid "40–49 MB chip max copies"
+msgstr "40–49 MB 芯片单张上限"
+
+msgid "≥ 50 MB chip max copies"
+msgstr "≥ 50 MB 芯片单张上限"
+
+msgid "Mega chip max copies"
+msgstr "MEGA 芯片单张上限"
+
+msgid "Mega chips total limit"
+msgstr "MEGA 芯片总计上限"
+
+msgid "Giga chip max copies"
+msgstr "GIGA 芯片单张上限"
+
+msgid "Giga chips total limit"
+msgstr "GIGA 芯片总计上限"
+
+msgid "Patch cards max MB"
+msgstr "改造卡最大 MB 限制"

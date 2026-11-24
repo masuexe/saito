@@ -799,6 +799,7 @@ pub struct Checked {
     /// What is wrong with the build, typed; empty: it can be played.
     pub problems: Vec<Problem>,
     battle: Option<Battle>,
+    limits: crate::ruleset::Limits,
 }
 
 impl Checked {
@@ -806,7 +807,7 @@ impl Checked {
     /// checks and the game's rules find with it, of any side's and of a
     /// build's.
     pub fn of(content: &Arc<Content>, game: &str, side: &Side) -> Checked {
-        let none = |problems: Vec<Problem>| Checked { game: game.to_string(), problems, battle: None };
+        let none = |problems: Vec<Problem>| Checked { game: game.to_string(), problems, battle: None, limits: Default::default() };
         let m = match Match::empty(content, game) {
             Ok(m) => Match { sides: [side.clone(), side.clone()], ..m },
             Err(e) => return none(vec![Problem { side: None, field: None, entry: None, what: Wrong::Match, text: e }]),
@@ -819,21 +820,107 @@ impl Checked {
             Ok(mut b) => {
                 let mut problems = check::validated(&mut b, 0);
                 problems.extend(check::built(&mut b, 0));
-                Checked { game: game.to_string(), problems, battle: Some(b) }
+                Checked { game: game.to_string(), problems, battle: Some(b), limits: Default::default() }
             }
             Err(e) => none(vec![Problem { side: Some(0), field: None, entry: None, what: Wrong::Internal, text: e }]),
         }
     }
 
     /// `side` checked as a build of `game` under `ruleset`: [`Checked::of`]'s
-    /// problems, then one for each definition the build holds that the
-    /// ruleset doesn't allow ([`crate::ruleset::Ruleset::problems`]). What a
-    /// lobby asks of a player's build, and a build screen with a ruleset
-    /// picked.
+    /// problems (adjusted for `ruleset.limits`), then one for each definition
+    /// the build holds that the ruleset doesn't allow ([`crate::ruleset::Ruleset::problems`]).
     pub fn under(content: &Arc<Content>, game: &str, side: &Side, rulesets: &crate::ruleset::Rulesets, ruleset: &crate::ruleset::Ruleset) -> Checked {
         let mut checked = Checked::of(content, game, side);
+        checked.limits = ruleset.limits.clone();
+        if !ruleset.limits.is_empty() {
+            checked.apply_limits(content, side);
+        }
         checked.problems.extend(ruleset.problems(rulesets, content, side));
         checked
+    }
+
+    fn apply_limits(&mut self, content: &Arc<Content>, side: &Side) {
+        use saito_battle::content::{ChipClass, ChipFlags};
+        let limits = self.limits.clone();
+        let game = self.game.clone();
+        let folder = side.folder(content);
+        // Filter out base-game problems whose limits are overridden by the ruleset.
+        self.problems.retain(|p| match (&p.field, &p.what) {
+            (Some(f), Wrong::Copies { chip, .. }) if f == "folder" => limits.effective_copies(&game, content.chip(*chip)).is_none(),
+            (Some(f), Wrong::Class { class: ChipClass::Mega, .. }) if f == "folder" => limits.mega_total.is_none(),
+            (Some(f), Wrong::Class { class: ChipClass::Giga, .. }) if f == "folder" => limits.giga_total.is_none(),
+            (Some(f), Wrong::Budget(_)) if f == crate::facts::PATCH_CARDS => limits.patch_card_mb.is_none(),
+            _ => true,
+        });
+        if limits.has_copy_overrides(&game) {
+            let mut counts: std::collections::HashMap<ChipHandle, u32> = std::collections::HashMap::new();
+            for fc in folder.chips() {
+                *counts.entry(fc.id).or_default() += 1;
+            }
+            for (&chip, &used) in &counts {
+                if let Some(limit) = limits.effective_copies(&game, content.chip(chip))
+                    && used > limit
+                {
+                    self.problems.push(Problem {
+                        side: Some(0),
+                        field: Some("folder".into()),
+                        entry: None,
+                        what: Wrong::Copies { chip, count: Count { used, limit } },
+                        text: format!("folder holds {used} copies of {}, limit {limit}", content.defs.chip(chip).key),
+                    });
+                }
+            }
+        }
+        if let Some(limit) = limits.mega_total {
+            let used = folder
+                .chips()
+                .filter(|fc| {
+                    let r = content.chip(fc.id);
+                    r.class == ChipClass::Mega && !r.flags.has(ChipFlags::DARK)
+                })
+                .count() as u32;
+            if used > limit {
+                self.problems.push(Problem {
+                    side: Some(0),
+                    field: Some("folder".into()),
+                    entry: None,
+                    what: Wrong::Class { class: ChipClass::Mega, count: Count { used, limit } },
+                    text: format!("folder holds {used} Mega chips, limit {limit}"),
+                });
+            }
+        }
+        if let Some(limit) = limits.giga_total {
+            let used = folder
+                .chips()
+                .filter(|fc| {
+                    let r = content.chip(fc.id);
+                    r.class == ChipClass::Giga && !r.flags.has(ChipFlags::DARK)
+                })
+                .count() as u32;
+            if used > limit {
+                self.problems.push(Problem {
+                    side: Some(0),
+                    field: Some("folder".into()),
+                    entry: None,
+                    what: Wrong::Class { class: ChipClass::Giga, count: Count { used, limit } },
+                    text: format!("folder holds {used} Giga chips, limit {limit}"),
+                });
+            }
+        }
+        if let Some(limit) = limits.patch_card_mb
+            && matches!(game.as_str(), "exe5" | "exe6")
+            && let Some(overview) = self.overview(content, side)
+            && let Some(list) = overview.lists.iter().find(|l| l.field == crate::facts::PATCH_CARDS)
+            && list.count.used > limit
+        {
+            self.problems.push(Problem {
+                side: Some(0),
+                field: Some(crate::facts::PATCH_CARDS.into()),
+                entry: None,
+                what: Wrong::Budget(Count { used: list.count.used, limit }),
+                text: format!("the patch cards are {} MB, past {limit}", list.count.used),
+            });
+        }
     }
 
     /// Whether the build can be played.
@@ -861,7 +948,9 @@ impl Checked {
     /// doesn't allow goes in, and is the build's problem under it:
     /// [`Checked::under`]). None: the round doesn't start.
     pub fn folder_view(&mut self, content: &Content, folder: &Folder) -> Option<View> {
-        View::of(content, &self.game, self.battle.as_mut()?, 0, folder)
+        let mut view = View::of(content, &self.game, self.battle.as_mut()?, 0, folder)?;
+        view.apply_limits(content, &self.game, folder, &self.limits);
+        Some(view)
     }
 
     /// What the rules say of `folder`'s Regular and tag chips
@@ -931,7 +1020,12 @@ impl Checked {
             .iter()
             .filter_map(|d| {
                 let (Data::Str(field), Data::Str(cost)) = (d.field("field"), d.field("cost")) else { return None };
-                let count = Count { used: d.field("used").int()?.try_into().ok()?, limit: d.field("limit").int()?.try_into().ok()? };
+                let mut count = Count { used: d.field("used").int()?.try_into().ok()?, limit: d.field("limit").int()?.try_into().ok()? };
+                if field == crate::facts::PATCH_CARDS
+                    && let Some(limit) = self.limits.patch_card_mb
+                {
+                    count.limit = limit;
+                }
                 // (A list's entry is the rules' place, from 1.)
                 let entry = match d.field("entry").int() {
                     Some(n) => Some(usize::try_from(n).ok()?.checked_sub(1)?),

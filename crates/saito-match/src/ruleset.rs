@@ -55,8 +55,8 @@ use crate::build::Builds;
 use crate::check::Problem;
 use crate::facts::{self, Stated};
 use crate::{Side, Wrong, ids};
-use saito_battle::content::{ChipClass, Content, PlayerFact};
-use serde::Deserialize;
+use saito_battle::content::{ChipClass, ChipData, ChipFlags, Content, PlayerFact};
+use serde::{Deserialize, Serialize};
 use serde::de::IntoDeserializer;
 use saito_content_api::{ChipHandle, Data, DataKey, FieldType, FormHandle, NaviHandle, Registry};
 use std::collections::{BTreeMap, BTreeSet};
@@ -191,8 +191,127 @@ impl Name {
     }
 }
 
-/// A ruleset: its name, whether each build must be one group's, and for each category (by its fact's name) the
-/// items it doesn't allow. A category that holds nothing back isn't in
+fn is_all_none(arr: &[Option<u32>; 5]) -> bool {
+    arr.iter().all(Option::is_none)
+}
+
+/// Optional numeric limit overrides for a custom ruleset (`S-086`).
+/// `None` preserves the game's original limit.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// EXE4 / EXE5 Standard chip max copies per chip (game default: 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_copies: Option<u32>,
+    /// EXE6 per-MB-tier max copies: `[<=19, 20..=29, 30..=39, 40..=49, >=50]` (game defaults: `[5, 4, 3, 2, 1]`).
+    #[serde(default, skip_serializing_if = "is_all_none")]
+    pub mb_tier_copies: [Option<u32>; 5],
+    /// Max copies of a single Mega chip (game default: 1 in EXE4/5, MB-tier in EXE6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mega_copies: Option<u32>,
+    /// Max total Mega chips in a folder (`None` = navi's Mega limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mega_total: Option<u32>,
+    /// Max copies of a single Giga chip (game default: 1 in EXE4/5, MB-tier in EXE6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub giga_copies: Option<u32>,
+    /// Max total Giga chips in a folder (`None` = navi's Giga limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub giga_total: Option<u32>,
+    /// EXE5 / EXE6 Patch card max total MB (game default: 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_card_mb: Option<u32>,
+}
+
+impl Limits {
+    pub const EXE6_MB_DEFAULTS: [u32; 5] = [5, 4, 3, 2, 1];
+    pub const DEFAULT_STANDARD_COPIES: u32 = 4;
+    pub const DEFAULT_MEGA_COPIES: u32 = 1;
+    pub const DEFAULT_GIGA_COPIES: u32 = 1;
+    pub const DEFAULT_PATCH_CARD_MB: u32 = 80;
+
+    pub fn is_empty(&self) -> bool {
+        self.standard_copies.is_none()
+            && self.mb_tier_copies.iter().all(Option::is_none)
+            && self.mega_copies.is_none()
+            && self.mega_total.is_none()
+            && self.giga_copies.is_none()
+            && self.giga_total.is_none()
+            && self.patch_card_mb.is_none()
+    }
+
+    /// Number of overridden limits relevant to `game`.
+    pub fn count_for(&self, game: &str) -> usize {
+        let mut n = 0;
+        if matches!(game, "exe4" | "exe5") && self.standard_copies.is_some() {
+            n += 1;
+        }
+        if game == "exe6" {
+            n += self.mb_tier_copies.iter().filter(|v| v.is_some()).count();
+        }
+        if self.mega_copies.is_some() {
+            n += 1;
+        }
+        if self.mega_total.is_some() {
+            n += 1;
+        }
+        if self.giga_copies.is_some() {
+            n += 1;
+        }
+        if self.giga_total.is_some() {
+            n += 1;
+        }
+        if matches!(game, "exe5" | "exe6") && self.patch_card_mb.is_some() {
+            n += 1;
+        }
+        n
+    }
+
+    pub fn mb_tier(mb: u8) -> usize {
+        match mb {
+            0..=19 => 0,
+            20..=29 => 1,
+            30..=39 => 2,
+            40..=49 => 3,
+            _ => 4,
+        }
+    }
+
+    /// Overridden per-chip copy limit for `record` in `game`, or `None` if the game's default applies.
+    pub fn effective_copies(&self, game: &str, record: &ChipData) -> Option<u32> {
+        if record.flags.has(ChipFlags::DARK) {
+            return None;
+        }
+        match record.class {
+            ChipClass::Standard => {
+                if game == "exe6" {
+                    self.mb_tier_copies[Self::mb_tier(record.mb)]
+                } else {
+                    self.standard_copies
+                }
+            }
+            ChipClass::Mega => {
+                self.mega_copies.or_else(|| (game == "exe6").then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
+            }
+            ChipClass::Giga => {
+                self.giga_copies.or_else(|| (game == "exe6").then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether any per-chip copy limit override applies in `game`.
+    pub fn has_copy_overrides(&self, game: &str) -> bool {
+        if game == "exe6" {
+            self.mb_tier_copies.iter().any(Option::is_some) || self.mega_copies.is_some() || self.giga_copies.is_some()
+        } else {
+            self.standard_copies.is_some() || self.mega_copies.is_some() || self.giga_copies.is_some()
+        }
+    }
+}
+
+/// A ruleset: its name, whether each build must be one group's, for each category (by its fact's name) the
+/// items it doesn't allow, and optional numeric limit overrides. A category that holds nothing back isn't in
 /// `banned`, so two rulesets that allow the same are equal.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ruleset {
@@ -206,6 +325,8 @@ pub struct Ruleset {
     /// holds back for the records of each key besides what it holds back for
     /// all. None empty.
     banned_by: BTreeMap<String, KeyedBans>,
+    /// Optional numeric limit overrides (`S-086`).
+    pub limits: Limits,
 }
 
 /// What a ruleset holds back of a category per record's key
@@ -417,13 +538,13 @@ fn named_by(content: &Content, side: &Side, fact: &str, field: Option<&str>, reg
 impl Ruleset {
     /// A ruleset that allows everything, named `name`, versions mixed.
     pub fn open(name: Name) -> Ruleset {
-        Ruleset { name, one_per_build: false, banned: BTreeMap::new(), banned_by: BTreeMap::new() }
+        Ruleset { name, one_per_build: false, banned: BTreeMap::new(), banned_by: BTreeMap::new(), limits: Limits::default() }
     }
 
-    /// Whether it allows what `other` does: the same Versions and the same
-    /// items held back, whatever either is named.
+    /// Whether it allows what `other` does: the same Versions, items held back,
+    /// and custom numeric limits, whatever either is named.
     pub fn same_rules(&self, other: &Ruleset) -> bool {
-        self.one_per_build == other.one_per_build && self.banned == other.banned && self.banned_by == other.banned_by
+        self.one_per_build == other.one_per_build && self.banned == other.banned && self.banned_by == other.banned_by && self.limits == other.limits
     }
 
     /// Whether it allows item `item` of category `fact`.
@@ -1399,5 +1520,54 @@ mod tests {
             in_folder.set_allowed("folder", &Item::of(cannon.0), false);
             assert!(in_folder.problems(&r, &content, &side).iter().all(|p| p.field.as_deref() == Some("folder")), "{game}");
         }
+    }
+
+    #[test]
+    fn custom_limits_override_copies_totals_and_patch_card_mb() {
+        use crate::build::Checked;
+        use saito_battle::custom::FolderChip;
+
+        // EXE5: raise standard copies to 6 and Mega total to 6; lower patch card MB to 10.
+        let content5 = exe5_content();
+        let r5 = Rulesets::of(&content5, "exe5").unwrap();
+        let mut side5 = Builds::of(&content5, "exe5").unwrap().new_build(&content5, "protoman").unwrap();
+        let cannon5 = crate::ids::chip(&content5, "exe5", "cannon").unwrap();
+        let cannon_code = content5.defs.chip(cannon5).record.codes[0];
+        let mut folder5 = side5.folder(&content5);
+        for slot in &mut folder5.chips[..6] {
+            *slot = Some(FolderChip::new(cannon5, cannon_code));
+        }
+        side5.set_folder(&content5, &folder5).unwrap();
+
+        let default5 = Ruleset::open(Name::Own("Default".into()));
+        let checked_default = Checked::under(&content5, "exe5", &side5, &r5, &default5);
+        assert!(checked_default.problems.iter().any(|p| matches!(p.what, Wrong::Copies { chip, .. } if chip == cannon5)));
+
+        let mut custom5 = Ruleset::open(Name::Own("Custom".into()));
+        custom5.limits.standard_copies = Some(6);
+        custom5.limits.mega_total = Some(8);
+        custom5.limits.patch_card_mb = Some(100);
+        let mut checked_custom = Checked::under(&content5, "exe5", &side5, &r5, &custom5);
+        assert!(!checked_custom.problems.iter().any(|p| matches!(p.what, Wrong::Copies { chip, .. } if chip == cannon5)));
+        let view5 = checked_custom.folder_view(&content5, &folder5).unwrap();
+        assert_eq!(view5.mega.limit, 8);
+        let overview5 = checked_custom.overview(&content5, &side5).unwrap();
+        assert_eq!(overview5.lists.iter().find(|l| l.field == crate::facts::PATCH_CARDS).unwrap().count.limit, 100);
+
+        // EXE6: MB-tier copy limit override (<=19 MB from 5 down to 2).
+        let content6 = exe6_content();
+        let r6 = Rulesets::of(&content6, "exe6").unwrap();
+        let mut side6 = Builds::of(&content6, "exe6").unwrap().new_build(&content6, "gregar").unwrap();
+        let cannon6 = crate::ids::chip(&content6, "exe6", "cannon").unwrap();
+        let cannon6_code = content6.defs.chip(cannon6).record.codes[0];
+        let mut folder6 = side6.folder(&content6);
+        for slot in &mut folder6.chips[..3] {
+            *slot = Some(FolderChip::new(cannon6, cannon6_code));
+        }
+        side6.set_folder(&content6, &folder6).unwrap();
+        let mut custom6 = Ruleset::open(Name::Own("Tight".into()));
+        custom6.limits.mb_tier_copies[0] = Some(2);
+        let checked6 = Checked::under(&content6, "exe6", &side6, &r6, &custom6);
+        assert!(checked6.problems.iter().any(|p| matches!(p.what, Wrong::Copies { chip, count } if chip == cannon6 && count.limit == 2)));
     }
 }

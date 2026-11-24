@@ -102,3 +102,49 @@ msgstr "{}のプログラム"
 
 msgid "Banned for all navis"
 msgstr "すべてのナビで使用不可"
+
+msgid "Limits"
+msgstr "制限調整"
+
+msgid "Default"
+msgstr "デフォルト"
+
+msgid "Reset"
+msgstr "リセット"
+
+msgid "{n} adjusted"
+msgid_plural "{n} adjusted"
+msgstr[0] "{n} 件変更"
+
+msgid "Standard chip max copies"
+msgstr "スタンダードチップ同名上限"
+
+msgid "≤ 19 MB chip max copies"
+msgstr "19 MB以下 チップ同名上限"
+
+msgid "20–29 MB chip max copies"
+msgstr "20–29 MB チップ同名上限"
+
+msgid "30–39 MB chip max copies"
+msgstr "30–39 MB チップ同名上限"
+
+msgid "40–49 MB chip max copies"
+msgstr "40–49 MB チップ同名上限"
+
+msgid "≥ 50 MB chip max copies"
+msgstr "50 MB以上 チップ同名上限"
+
+msgid "Mega chip max copies"
+msgstr "メガクラス同名上限"
+
+msgid "Mega chips total limit"
+msgstr "メガクラス合計上限"
+
+msgid "Giga chip max copies"
+msgstr "ギガクラス同名上限"
+
+msgid "Giga chips total limit"
+msgstr "ギガクラス合計上限"
+
+msgid "Patch cards max MB"
+msgstr "改造カード最大MB"

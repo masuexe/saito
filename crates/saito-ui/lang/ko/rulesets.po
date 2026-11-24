@@ -98,3 +98,49 @@ msgstr "{}의 프로그램"
 
 msgid "Banned for all navis"
 msgstr "모든 내비에서 금지됨"
+
+msgid "Limits"
+msgstr "제한 조정"
+
+msgid "Default"
+msgstr "기본값"
+
+msgid "Reset"
+msgstr "초기화"
+
+msgid "{n} adjusted"
+msgid_plural "{n} adjusted"
+msgstr[0] "{n}개 조정됨"
+
+msgid "Standard chip max copies"
+msgstr "스탠다드 칩 최대 매수"
+
+msgid "≤ 19 MB chip max copies"
+msgstr "≤ 19 MB 칩 최대 매수"
+
+msgid "20–29 MB chip max copies"
+msgstr "20–29 MB 칩 최대 매수"
+
+msgid "30–39 MB chip max copies"
+msgstr "30–39 MB 칩 최대 매수"
+
+msgid "40–49 MB chip max copies"
+msgstr "40–49 MB 칩 최대 매수"
+
+msgid "≥ 50 MB chip max copies"
+msgstr "≥ 50 MB 칩 최대 매수"
+
+msgid "Mega chip max copies"
+msgstr "메가 칩 단일 최대 매수"
+
+msgid "Mega chips total limit"
+msgstr "메가 칩 총합 제한"
+
+msgid "Giga chip max copies"
+msgstr "기가 칩 단일 최대 매수"
+
+msgid "Giga chips total limit"
+msgstr "기가 칩 총합 제한"
+
+msgid "Patch cards max MB"
+msgstr "개조 카드 최대 MB"

@@ -59,6 +59,8 @@ struct RulesetFile {
     restrictions: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     restrictions_by: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    #[serde(default, skip_serializing_if = "saito_match::ruleset::Limits::is_empty")]
+    limits: saito_match::ruleset::Limits,
 }
 
 /// Check that the parsed file identifies saito's ruleset format and schema.
@@ -118,7 +120,9 @@ pub fn read(rulesets: &Rulesets, content: &Content, text: &str) -> Result<Rulese
     };
     let banned: Vec<(String, Vec<String>)> = f.restrictions.into_iter().collect();
     let banned_by: Vec<(String, Vec<(String, Vec<String>)>)> = f.restrictions_by.into_iter().map(|(fact, keys)| (fact, keys.into_iter().collect())).collect();
-    Ruleset::of_names(rulesets, content, Name::Own(f.title), one_per_build, &banned, &banned_by)
+    let mut ruleset = Ruleset::of_names(rulesets, content, Name::Own(f.title), one_per_build, &banned, &banned_by)?;
+    ruleset.limits = f.limits;
+    Ok(ruleset)
 }
 
 /// A ruleset as its `.saitoruleset` file's JSON text: the player's own, named as it is (a preset's id where it is one).
@@ -136,6 +140,7 @@ pub fn text(content: &Content, game: &str, ruleset: &Ruleset) -> String {
         version_mode: if ruleset.one_per_build { ONE_PER_BUILD } else { MIXED }.to_string(),
         restrictions: ruleset.banned_names(content).into_iter().collect(),
         restrictions_by: ruleset.banned_by_names(content).into_iter().map(|(fact, keys)| (fact, keys.into_iter().collect())).collect(),
+        limits: ruleset.limits.clone(),
     };
     serde_json::to_string_pretty(&f).expect("a ruleset serializes") + "\n"
 }
@@ -250,5 +255,23 @@ mod tests {
         assert_eq!(read(&r, &content, &text), Ok(own));
         assert!(read(&r, &content, &text.replacen("\"protoman\":", "\"megaman\":", 1)).is_err());
         assert!(!super::text(&content, "exe5", r.preset("unrestricted").unwrap()).contains("restrictions_by"));
+    }
+
+    #[test]
+    fn a_ruleset_reads_back_its_custom_limits() {
+        let content = exe6_content();
+        let r = rulesets("exe6");
+        let mut own = r.preset("unrestricted").unwrap().clone();
+        own.name = Name::Own("Custom Limits".into());
+        own.limits.mb_tier_copies[0] = Some(6);
+        own.limits.mega_copies = Some(2);
+        own.limits.mega_total = Some(8);
+        own.limits.giga_copies = Some(2);
+        own.limits.giga_total = Some(2);
+        own.limits.patch_card_mb = Some(100);
+        let saved = text(&content, "exe6", &own);
+        assert!(saved.contains("\"limits\""), "{saved}");
+        assert_eq!(read(&r, &content, &saved), Ok(own));
+        assert!(!text(&content, "exe6", r.preset("unrestricted").unwrap()).contains("\"limits\""));
     }
 }

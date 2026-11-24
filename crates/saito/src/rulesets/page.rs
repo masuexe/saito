@@ -18,8 +18,8 @@ use crate::rulesets::{NAME_LENGTH, Pickable, shown_name, store};
 use crate::shell::{Dialog, Shell};
 use crate::sound::Cue;
 use saito_content_api::{ChipHandle, EntryHandle, FormHandle, NaviHandle, Registry};
-use saito_match::ruleset::{Category, Item, Name, Rulesets};
-use saito_ui::{ButtonKind, DialogButton, RulesetCategory, RulesetChoice, RulesetItem, RulesetKey, RulesetProgram, RulesetSection, RulesetView};
+use saito_match::ruleset::{Category, Item, Limits, Name, Rulesets};
+use saito_ui::{ButtonKind, DialogButton, RulesetCategory, RulesetChoice, RulesetItem, RulesetKey, RulesetLimitRow, RulesetProgram, RulesetSection, RulesetView};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,6 +36,17 @@ pub const RULESET_FILES: &str = "rulesets";
 
 /// The tag of the question DELETE asks (`Screen::answered`: 1 deletes).
 pub const DELETE: &str = "rules.delete";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LimitKind {
+    StandardCopies,
+    MbTier(usize),
+    MegaCopies,
+    MegaTotal,
+    GigaCopies,
+    GigaTotal,
+    PatchCardMb,
+}
 
 /// What the page did that the screen that opened it hears of.
 #[derive(Debug)]
@@ -151,6 +162,142 @@ impl Page {
         (0..self.rulesets.categories.len()).filter(|&i| self.rulesets.categories[i].within.is_none()).collect()
     }
 
+    fn is_limits(&self) -> bool {
+        self.category >= self.listed().len()
+    }
+
+    fn limit_kinds(&self) -> Vec<LimitKind> {
+        match self.rulesets.game() {
+            "exe4" => vec![
+                LimitKind::StandardCopies,
+                LimitKind::MegaCopies,
+                LimitKind::MegaTotal,
+                LimitKind::GigaCopies,
+                LimitKind::GigaTotal,
+            ],
+            "exe5" => vec![
+                LimitKind::StandardCopies,
+                LimitKind::MegaCopies,
+                LimitKind::MegaTotal,
+                LimitKind::GigaCopies,
+                LimitKind::GigaTotal,
+                LimitKind::PatchCardMb,
+            ],
+            _ => vec![
+                LimitKind::MbTier(0),
+                LimitKind::MbTier(1),
+                LimitKind::MbTier(2),
+                LimitKind::MbTier(3),
+                LimitKind::MbTier(4),
+                LimitKind::MegaCopies,
+                LimitKind::MegaTotal,
+                LimitKind::GigaCopies,
+                LimitKind::GigaTotal,
+                LimitKind::PatchCardMb,
+            ],
+        }
+    }
+
+    fn show_limits(&mut self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<RulesetView>();
+        let say = ui.global::<saito_ui::BuildWords>();
+        let game = self.rulesets.game();
+        let limits = &self.shown.ruleset.limits;
+        let rows: Vec<RulesetLimitRow> = self
+            .limit_kinds()
+            .into_iter()
+            .map(|kind| match kind {
+                LimitKind::StandardCopies => {
+                    let v = limits.standard_copies.unwrap_or(Limits::DEFAULT_STANDARD_COPIES);
+                    RulesetLimitRow { label: view.get_limit_standard_copies(), value: v.to_string().into(), custom: limits.standard_copies.is_some() }
+                }
+                LimitKind::MbTier(t) => {
+                    let label = match t {
+                        0 => view.get_limit_mb_0(),
+                        1 => view.get_limit_mb_1(),
+                        2 => view.get_limit_mb_2(),
+                        3 => view.get_limit_mb_3(),
+                        _ => view.get_limit_mb_4(),
+                    };
+                    let v = limits.mb_tier_copies[t].unwrap_or(Limits::EXE6_MB_DEFAULTS[t]);
+                    RulesetLimitRow { label, value: v.to_string().into(), custom: limits.mb_tier_copies[t].is_some() }
+                }
+                LimitKind::MegaCopies => {
+                    let (value, custom) = match limits.mega_copies {
+                        Some(v) => (v.to_string().into(), true),
+                        None if game == "exe6" => (view.get_default_word(), false),
+                        None => (Limits::DEFAULT_MEGA_COPIES.to_string().into(), false),
+                    };
+                    RulesetLimitRow { label: view.get_limit_mega_copies(), value, custom }
+                }
+                LimitKind::MegaTotal => {
+                    let (value, custom) = match limits.mega_total {
+                        Some(v) => (v.to_string().into(), true),
+                        None => (view.get_default_word(), false),
+                    };
+                    RulesetLimitRow { label: view.get_limit_mega_total(), value, custom }
+                }
+                LimitKind::GigaCopies => {
+                    let (value, custom) = match limits.giga_copies {
+                        Some(v) => (v.to_string().into(), true),
+                        None if game == "exe6" => (view.get_default_word(), false),
+                        None => (Limits::DEFAULT_GIGA_COPIES.to_string().into(), false),
+                    };
+                    RulesetLimitRow { label: view.get_limit_giga_copies(), value, custom }
+                }
+                LimitKind::GigaTotal => {
+                    let (value, custom) = match limits.giga_total {
+                        Some(v) => (v.to_string().into(), true),
+                        None => (view.get_default_word(), false),
+                    };
+                    RulesetLimitRow { label: view.get_limit_giga_total(), value, custom }
+                }
+                LimitKind::PatchCardMb => {
+                    let v = limits.patch_card_mb.unwrap_or(Limits::DEFAULT_PATCH_CARD_MB);
+                    RulesetLimitRow { label: view.get_limit_patch_mb(), value: say.invoke_megabytes(v as i32), custom: limits.patch_card_mb.is_some() }
+                }
+            })
+            .collect();
+        view.set_limits_shown(true);
+        view.set_paired(false);
+        view.set_limits_custom(limits.count_for(game) > 0);
+        view.set_limits(ModelRc::new(VecModel::from(rows)));
+        self.rows.clear();
+        self.keys.clear();
+        self.programs.clear();
+        self.choices.set_vec(Vec::new());
+    }
+
+    fn step_limit(&mut self, shell: &mut Shell, index: i32, by: i32) -> Outcome {
+        let Some(&kind) = self.limit_kinds().get(index.max(0) as usize) else { return Outcome::Nothing };
+        let game = self.rulesets.game().to_string();
+        let step_fixed = |slot: &mut Option<u32>, default: u32, step: i32, max: i32| {
+            let cur = slot.unwrap_or(default) as i32;
+            let next = (cur + by * step).clamp(0, max) as u32;
+            *slot = (next != default).then_some(next);
+        };
+        let step_opt = |slot: &mut Option<u32>, base: i32, max: i32| {
+            *slot = match *slot {
+                None if by > 0 => Some((base + 1).clamp(0, max) as u32),
+                None => Some((base - 1).clamp(0, max) as u32),
+                Some(0) if by < 0 => None,
+                Some(v) => Some((v as i32 + by).clamp(0, max) as u32),
+            };
+        };
+        self.change(shell, |r, _| match kind {
+            LimitKind::StandardCopies => step_fixed(&mut r.limits.standard_copies, Limits::DEFAULT_STANDARD_COPIES, 1, 30),
+            LimitKind::MbTier(t) => step_fixed(&mut r.limits.mb_tier_copies[t], Limits::EXE6_MB_DEFAULTS[t], 1, 30),
+            LimitKind::MegaCopies if game == "exe6" => step_opt(&mut r.limits.mega_copies, 1, 30),
+            LimitKind::MegaCopies => step_fixed(&mut r.limits.mega_copies, Limits::DEFAULT_MEGA_COPIES, 1, 30),
+            LimitKind::MegaTotal => step_opt(&mut r.limits.mega_total, 5, 30),
+            LimitKind::GigaCopies if game == "exe6" => step_opt(&mut r.limits.giga_copies, 1, 30),
+            LimitKind::GigaCopies => step_fixed(&mut r.limits.giga_copies, Limits::DEFAULT_GIGA_COPIES, 1, 30),
+            LimitKind::GigaTotal => step_opt(&mut r.limits.giga_total, 1, 30),
+            LimitKind::PatchCardMb => step_fixed(&mut r.limits.patch_card_mb, Limits::DEFAULT_PATCH_CARD_MB, 5, 500),
+        })
+    }
+
     fn category(&self) -> &Category {
         let listed = self.listed();
         &self.rulesets.categories[listed[self.category.min(listed.len().saturating_sub(1))]]
@@ -174,7 +321,7 @@ impl Page {
         view.set_editable(self.editable());
         view.set_deletable(self.editable());
         view.set_versions(if ruleset.one_per_build { 0 } else { 1 });
-        let categories: Vec<RulesetCategory> = self
+        let mut categories: Vec<RulesetCategory> = self
             .listed()
             .into_iter()
             .map(|i| {
@@ -188,6 +335,10 @@ impl Page {
                 RulesetCategory { name: name.into(), note }
             })
             .collect();
+        categories.push(RulesetCategory {
+            name: view.get_limits_word(),
+            note: view.invoke_limits_note(ruleset.limits.count_for(self.rulesets.game()) as i32),
+        });
         // (On a phone held sideways they are the header's tabs.)
         let tabs: Vec<saito_ui::Tab> = categories.iter().map(|c| saito_ui::Tab { text: c.name.clone(), enabled: true, flagged: false }).collect();
         view.set_categories(ModelRc::new(VecModel::from(categories)));
@@ -205,8 +356,12 @@ impl Page {
 
     /// The category shown's quick choices and its items, filtered by the search.
     fn show_items(&mut self, shell: &Shell, names: &Names) {
+        if self.is_limits() {
+            return self.show_limits(shell);
+        }
         let ui = shell.ui();
         let view = ui.global::<RulesetView>();
+        view.set_limits_shown(false);
         let kit = self.kit.clone();
         let rulesets = self.rulesets.clone();
         let category = self.category().clone();
@@ -625,13 +780,16 @@ impl Page {
         match id {
             "rules.categories" => {
                 self.choose_category(shell, index);
-                if !self.keys.is_empty() {
+                if self.is_limits() {
+                    shell.nav.focus("rules.limits.row", 0);
+                } else if !self.keys.is_empty() {
                     shell.nav.focus("rules.pair.keys", 0);
                 } else if !self.rows.is_empty() {
                     shell.nav.focus("rules.items", 0);
                 }
                 Outcome::Nothing
             }
+            "rules.limits.reset" => self.change(shell, |r, _| r.limits = Limits::default()),
             "rules.category" => {
                 let ui = shell.ui();
                 let names: Vec<String> = ui.global::<RulesetView>().get_categories().iter().map(|c| c.name.to_string()).collect();
@@ -733,16 +891,17 @@ impl Page {
     }
 
     /// Left or Right on one of the page's steppers.
-    pub fn step(&mut self, shell: &mut Shell, id: &str, _index: i32, by: i32) -> Outcome {
+    pub fn step(&mut self, shell: &mut Shell, id: &str, index: i32, by: i32) -> Outcome {
         match id {
             "rules.versions" => self.change(shell, |r, _| r.one_per_build = by < 0),
             "rules.category" => {
-                let count = self.listed().len() as i32;
+                let count = (self.listed().len() + 1) as i32;
                 if count > 0 {
                     self.choose_category(shell, (self.category as i32 + by).rem_euclid(count));
                 }
                 Outcome::Nothing
             }
+            "rules.limits.row" => self.step_limit(shell, index, by),
             _ => Outcome::Nothing,
         }
     }
@@ -816,7 +975,7 @@ impl Page {
 
     /// Show category `index`.
     fn choose_category(&mut self, shell: &mut Shell, index: i32) {
-        let index = (index.max(0) as usize).min(self.listed().len().saturating_sub(1));
+        let index = (index.max(0) as usize).min(self.listed().len());
         if index == self.category {
             return;
         }

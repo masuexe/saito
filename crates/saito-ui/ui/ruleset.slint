@@ -18,7 +18,7 @@ import { Theme, I18n } from "theme.slint";
 import { Nav, Focusable, NavKind } from "nav.slint";
 import { Shell, Page, PadButton, Hint } from "shell.slint";
 import { Arrive } from "motion.slint";
-import { Button, ButtonKind, Field, Seg, Select, Label, Value, Message, ListView, ScrollPage, PanelBack, RowTouch, RowBack, Pill, AllNone, TabBar, Tab } from "widgets.slint";
+import { Button, ButtonKind, Field, Seg, Select, Label, Value, Message, ListView, ScrollPage, PanelBack, RowTouch, RowBack, Pill, AllNone, TabBar, Tab, Stepper, WordButton } from "widgets.slint";
 import { VersionTag, VersionMark } from "build.slint";
 
 // A category in the list: its name, and how much it allows.
@@ -76,6 +76,13 @@ export struct RulesetProgram {
     note: string,
 }
 
+// A row of the Limits category ("限制调整"): one numeric limit with its label, shown value, and whether it differs from default.
+export struct RulesetLimitRow {
+    label: string,
+    value: string,
+    custom: bool,
+}
+
 // A quick choice of the category's version-own items: a version's (its name and color: `version`), or All.
 export struct RulesetChoice {
     text: string,
@@ -121,6 +128,10 @@ export global RulesetView {
     in property <string> programs-note;
     // (The head's note of a paired category: its own count, and its inner category's bans.)
     in property <string> head-note;
+    // The "Limits" category ("限制调整", S-086): numeric limit overrides for folder copies, Mega/Giga totals, and patch card MB.
+    in property <bool> limits-shown;
+    in property <[RulesetLimitRow]> limits;
+    in property <bool> limits-custom;
     // The reserved line: why something can't be changed here, in the error red; or quietly, a note.
     in property <string> message;
     in property <bool> message-quiet;
@@ -174,6 +185,26 @@ export global RulesetView {
     }
     // What the system's file dialogs say they ask for.
     out property <string> ruleset-files: @tr("Ruleset files");
+    out property <string> limits-word: @tr("Limits");
+    out property <string> default-word: @tr("Default");
+    out property <string> reset-word: I18n.upper(@tr("Reset"));
+    out property <string> limit-standard-copies: @tr("Standard chip max copies");
+    out property <string> limit-mb-0: @tr("≤ 19 MB chip max copies");
+    out property <string> limit-mb-1: @tr("20–29 MB chip max copies");
+    out property <string> limit-mb-2: @tr("30–39 MB chip max copies");
+    out property <string> limit-mb-3: @tr("40–49 MB chip max copies");
+    out property <string> limit-mb-4: @tr("≥ 50 MB chip max copies");
+    out property <string> limit-mega-copies: @tr("Mega chip max copies");
+    out property <string> limit-mega-total: @tr("Mega chips total limit");
+    out property <string> limit-giga-copies: @tr("Giga chip max copies");
+    out property <string> limit-giga-total: @tr("Giga chips total limit");
+    out property <string> limit-patch-mb: @tr("Patch cards max MB");
+    public pure function limits-note(n: int) -> string {
+        if n == 0 {
+            return @tr("Default");
+        }
+        return @tr("{n} adjusted" | "{n} adjusted" % n);
+    }
     public pure function delete-title(name: string) -> string {
         return @tr("Delete {}?", name);
     }
@@ -692,24 +723,35 @@ export component RulesetPage inherits Page {
         category-picks := AllNone {
             x: root.inner-x + root.inner-width - self.width + 6px;
             y: root.picks-y;
+            visible: !RulesetView.limits-shown;
             all-nav: "rules.all";
             none-nav: "rules.none";
-            set: RulesetView.editable ? 0 : -1;
+            set: RulesetView.editable && !RulesetView.limits-shown ? 0 : -1;
             all: RulesetView.category-all;
             none: RulesetView.category-none;
+        }
+
+        WordButton {
+            x: root.inner-x + root.inner-width - self.width + self.pad;
+            y: root.picks-y;
+            visible: RulesetView.limits-shown && RulesetView.editable && RulesetView.limits-custom;
+            nav: "rules.limits.reset";
+            text: RulesetView.reset-word;
+            enabled: RulesetView.limits-shown && RulesetView.editable && RulesetView.limits-custom;
         }
 
         version-picks := VersionPicks {
             x: category-picks.x - 12px - self.width;
             y: root.picks-y;
-            visible: RulesetView.choices.length > 0;
+            visible: !RulesetView.limits-shown && RulesetView.choices.length > 0;
         }
 
         Field {
             x: root.search-x;
             y: root.search-y;
             width: Theme.sideways ? max(0px, root.words-x - 12px - self.x) : root.inner-width;
-            nav: "rules.search";
+            visible: !RulesetView.limits-shown;
+            nav: RulesetView.limits-shown ? "" : "rules.search";
             text: RulesetView.search;
             placeholder: @tr("Search");
         }
@@ -723,7 +765,7 @@ export component RulesetPage inherits Page {
             y: root.items-y;
             width: root.inner-width;
             height: root.items-bottom - root.items-y;
-            visible: !RulesetView.paired;
+            visible: !RulesetView.paired && !RulesetView.limits-shown;
             nav: "rules.items";
             content-height: !root.sectioned ? max(0px, ceil(RulesetView.items.length / root.columns) * root.pitch - Theme.list-gap)
                 : Theme.phone ? RulesetView.sections.length * root.section-head + RulesetView.items.length * root.pitch
@@ -778,7 +820,7 @@ export component RulesetPage inherits Page {
             y: root.items-y;
             width: root.inner-width;
             height: root.items-bottom - root.items-y;
-            visible: RulesetView.paired;
+            visible: RulesetView.paired && !RulesetView.limits-shown;
             nav: "rules.pair";
             content-height: Theme.phone ? root.programs-y + 30px + RulesetView.programs.length * root.pitch : max(root.keys-height, 30px + ceil(RulesetView.programs.length / root.program-columns) * root.pitch);
             for line[i] in RulesetView.keys: Rectangle {
@@ -847,6 +889,44 @@ export component RulesetPage inherits Page {
                 height: Theme.list-row;
                 line: line;
                 nav-index: i;
+            }
+        }
+
+        // ---- Limits ("限制调整", S-086): numeric limit steppers for folder copies, Mega/Giga totals, and patch card MB.
+        limits-page := ScrollPage {
+            x: root.inner-x;
+            y: Theme.sideways ? root.items-y : root.search-y;
+            width: root.inner-width;
+            height: root.items-bottom - self.y;
+            visible: RulesetView.limits-shown;
+            nav: "rules.limits";
+            content-height: RulesetView.limits.length * 48px;
+            for row[i] in RulesetView.limits: Rectangle {
+                x: 0px;
+                y: i * 48px;
+                width: limits-page.view-width;
+                height: 44px;
+                Text {
+                    x: 8px;
+                    width: max(0px, st.x - 16px - self.x);
+                    text: row.label;
+                    color: row.custom ? Theme.cursor : Theme.text;
+                    font-family: Theme.body;
+                    font-size: Theme.handheld ? 14px : 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                st := Stepper {
+                    x: parent.width - self.width - 4px;
+                    y: (parent.height - self.height) / 2;
+                    nav: "rules.limits.row";
+                    nav-index: i;
+                    value: row.value;
+                    value-width: Theme.phone ? 84px : 108px;
+                    enabled: RulesetView.editable;
+                }
             }
         }
 

@@ -200,6 +200,120 @@ impl View {
     pub fn entry_problems<'a>(&'a self, content: &Content, folder: &Folder, entry: usize) -> Vec<&'a Problem> {
         self.problems.iter().filter(|p| about_entry(content, folder, entry, p)).collect()
     }
+
+    /// Adjust limits, problems, and per-chip refusals according to custom ruleset [`crate::ruleset::Limits`].
+    pub fn apply_limits(&mut self, content: &Content, game: &str, folder: &Folder, limits: &crate::ruleset::Limits) {
+        use saito_battle::content::{ChipClass, ChipFlags};
+        if limits.is_empty() {
+            return;
+        }
+        if let Some(limit) = limits.mega_total {
+            self.mega.limit = limit;
+        }
+        if let Some(limit) = limits.giga_total {
+            self.giga.limit = limit;
+        }
+        let mut counts: HashMap<ChipHandle, u32> = HashMap::new();
+        for fc in folder.chips() {
+            *counts.entry(fc.id).or_default() += 1;
+        }
+        // Refresh problems for overridden limits.
+        self.problems.retain(|p| match p.what {
+            Wrong::Copies { chip, .. } => limits.effective_copies(game, content.chip(chip)).is_none(),
+            Wrong::Class { class: ChipClass::Mega, .. } => limits.mega_total.is_none(),
+            Wrong::Class { class: ChipClass::Giga, .. } => limits.giga_total.is_none(),
+            _ => true,
+        });
+        if limits.has_copy_overrides(game) {
+            for (&chip, &used) in &counts {
+                if let Some(limit) = limits.effective_copies(game, content.chip(chip))
+                    && used > limit
+                {
+                    self.problems.push(Problem {
+                        side: Some(0),
+                        field: Some("folder".into()),
+                        entry: None,
+                        what: Wrong::Copies { chip, count: Count { used, limit } },
+                        text: format!("folder holds {used} copies of {}, limit {limit}", content.defs.chip(chip).key),
+                    });
+                }
+            }
+        }
+        if let Some(limit) = limits.mega_total
+            && self.mega.used > limit
+        {
+            self.problems.push(Problem {
+                side: Some(0),
+                field: Some("folder".into()),
+                entry: None,
+                what: Wrong::Class { class: ChipClass::Mega, count: Count { used: self.mega.used, limit } },
+                text: format!("folder holds {} Mega chips, limit {limit}", self.mega.used),
+            });
+        }
+        if let Some(limit) = limits.giga_total
+            && self.giga.used > limit
+        {
+            self.problems.push(Problem {
+                side: Some(0),
+                field: Some("folder".into()),
+                entry: None,
+                what: Wrong::Class { class: ChipClass::Giga, count: Count { used: self.giga.used, limit } },
+                text: format!("folder holds {} Giga chips, limit {limit}", self.giga.used),
+            });
+        }
+        // Recompute per-chip refusals for chips whose copy/class limit is overridden.
+        let full = self.chips >= self.size;
+        for id in (0..content.defs.chips.len() as u16).map(ChipHandle) {
+            if !crate::ids::in_game(content, game, &content.defs.chip(id).key) {
+                continue;
+            }
+            if matches!(self.refused.get(&id), Some(Wrong::ChipNotAllowed { .. })) {
+                continue;
+            }
+            let record = content.chip(id);
+            let copy_overridden = limits.effective_copies(game, record);
+            let class_overridden = match record.class {
+                ChipClass::Mega if !record.flags.has(ChipFlags::DARK) => limits.mega_total.is_some(),
+                ChipClass::Giga if !record.flags.has(ChipFlags::DARK) => limits.giga_total.is_some(),
+                _ => false,
+            };
+            if copy_overridden.is_none() && !class_overridden {
+                continue;
+            }
+            // Clear stale refusal of the overridden kind, then re-check in priority order.
+            let keep_other = match self.refused.get(&id) {
+                Some(Wrong::Dark(_)) => true,
+                Some(Wrong::Copies { .. }) if copy_overridden.is_none() => true,
+                Some(Wrong::Class { .. }) if !class_overridden => true,
+                _ => false,
+            };
+            if !keep_other {
+                self.refused.remove(&id);
+            }
+            if full {
+                self.refused.entry(id).or_insert(Wrong::FolderSize(Count { used: self.chips, limit: self.size }));
+                continue;
+            }
+            let used = counts.get(&id).copied().unwrap_or(0);
+            if let Some(limit) = copy_overridden
+                && used >= limit
+            {
+                self.refused.insert(id, Wrong::Copies { chip: id, count: Count { used, limit } });
+                continue;
+            }
+            if class_overridden {
+                match record.class {
+                    ChipClass::Mega if self.mega.used >= self.mega.limit => {
+                        self.refused.entry(id).or_insert(Wrong::Class { class: ChipClass::Mega, count: self.mega });
+                    }
+                    ChipClass::Giga if self.giga.used >= self.giga.limit => {
+                        self.refused.entry(id).or_insert(Wrong::Class { class: ChipClass::Giga, count: self.giga });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Whether `problem`, one of `folder`'s, is entry `entry`'s: one the rules tie to it (or a ruleset: each entry of a
