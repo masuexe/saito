@@ -337,15 +337,17 @@ export component Button inherits Rectangle {
     // words, on a desktop; an upright phone's is the standard 40, to be tapped (sideways it stays compact, its tap
     // reaching to 44 as every control's). (docs/design/app-ui.md §2.87: three sizes, compact, standard and big.)
     in property <bool> compact;
+    // Tight horizontal padding for narrow fixed-width buttons (e.g. -20 / -1 / +1 / +20 steppers).
+    in property <bool> tight;
     // Its right side square, uncut: the left half of a split button, whose arrow beside it has the cut (WATCH).
     in property <bool> square;
     property <bool> small: root.compact && !Theme.phone;
-    property <length> inset: root.small ? 12px : 16px;
-    property <length> notch: root.square ? 0px : (root.small ? 7px : 9px);
+    property <length> inset: root.tight ? 6px : root.small ? 12px : 16px;
+    property <length> notch: root.square ? 0px : (root.small || root.tight ? 7px : 9px);
     out property <bool> focused: hit.focused;
     // As wide as its text asks (what it is where no `width` is given it: a layout that gives it another on a
     // phone alone reads this for the desktop's).
-    out property <length> natural-width: root.small ? max(32px, label.preferred-width + 2 * root.inset) : max(120px, label.preferred-width + 32px);
+    out property <length> natural-width: root.small || root.tight ? max(32px, label.preferred-width + 2 * root.inset) : max(120px, label.preferred-width + 32px);
     property <bool> over: Theme.audit && label.preferred-width > label.width + 0.5px;
     property <brush> fill-main: hit.has-hover ? Theme.action.brighter(12%) : Theme.action;
     property <brush> fill-ghost: hit.has-hover && root.enabled ? Theme.tint : transparent;

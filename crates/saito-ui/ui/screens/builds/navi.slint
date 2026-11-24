@@ -572,9 +572,10 @@ export component NaviTab inherits Rectangle {
             alignment: start;
             spacing: 4px;
             Button {
-                width: 40px;
+                width: max(44px, self.natural-width);
                 height: 34px;
                 compact: true;
+                tight: true;
                 enabled: NaviView.has-base-hp && !NaviView.base-hp-min;
                 nav: NaviView.has-base-hp ? "base-hp-step" : "";
                 nav-index: 0;
@@ -582,9 +583,10 @@ export component NaviTab inherits Rectangle {
             }
 
             Button {
-                width: 34px;
+                width: max(36px, self.natural-width);
                 height: 34px;
                 compact: true;
+                tight: true;
                 enabled: NaviView.has-base-hp && !NaviView.base-hp-min;
                 nav: NaviView.has-base-hp ? "base-hp-step" : "";
                 nav-index: 1;
@@ -602,9 +604,10 @@ export component NaviTab inherits Rectangle {
             }
 
             Button {
-                width: 34px;
+                width: max(36px, self.natural-width);
                 height: 34px;
                 compact: true;
+                tight: true;
                 enabled: NaviView.has-base-hp && !NaviView.base-hp-max;
                 nav: NaviView.has-base-hp ? "base-hp-step" : "";
                 nav-index: 2;
@@ -612,9 +615,10 @@ export component NaviTab inherits Rectangle {
             }
 
             Button {
-                width: 40px;
+                width: max(44px, self.natural-width);
                 height: 34px;
                 compact: true;
+                tight: true;
                 enabled: NaviView.has-base-hp && !NaviView.base-hp-max;
                 nav: NaviView.has-base-hp ? "base-hp-step" : "";
                 nav-index: 3;
