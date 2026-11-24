@@ -182,10 +182,12 @@ impl PatchCards {
         let content = draft.content();
         let slots = draft.kit.builds.slots.clone();
         let wanted = self.search.to_lowercase();
+        let slot_filter = slots.as_ref().filter(|s| s.field == FIELD).map(|s| (s, self.slot));
         let rows: Vec<Card> = draft.with_words(shell, |words| {
             let mut found: Vec<(String, u32, Card)> = self
                 .cards
                 .iter()
+                .filter(|&&h| slot_filter.is_none_or(|(s, slot)| s.own(content, h) == Some(slot)))
                 .filter_map(|&h| {
                     let name = words.names.entry(h);
                     (wanted.is_empty() || name.to_lowercase().contains(&wanted)).then(|| {
@@ -664,6 +666,7 @@ impl PatchCards {
 
     /// The cursor is on the build's row `i`.
     fn on_card(&mut self, shell: &mut Shell, draft: &mut Draft, i: usize) {
+        let prev = self.slot;
         self.slot = i;
         self.in_library = false;
         self.described = Some(Described::Installed(i));
@@ -673,6 +676,12 @@ impl PatchCards {
         view.set_slot(i as i32);
         view.set_in_library(false);
         let budget = PatchCards::budget(draft);
+        if PatchCards::slotted(draft) && prev != i {
+            self.row = 0;
+            self.list(shell, draft, budget.as_ref());
+            self.show_library(shell, draft, budget.as_ref());
+            shell.nav.list_to_top(&ui, "lib.rows");
+        }
         self.show_detail(shell, draft, budget.as_ref());
     }
 
