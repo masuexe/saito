@@ -219,6 +219,9 @@ pub struct Renderer {
     /// Optional floating chip ghost and drop target indicator overlaid on the
     /// rendered frame during desktop drag-and-drop (`Renderer::set_drag_overlay`).
     drag_overlay: Option<crate::custom::DragOverlay>,
+    /// Local pointer peek scroll (`0..=custom::SLIDE`) sliding the local custom
+    /// screen left while dragged (`Renderer::set_custom_peek`).
+    custom_peek: u32,
     /// The version of the console whose screen is drawn, as its game's
     /// pack names its versions (EXE5's "protoman", "colonel"), for a game
     /// whose versions the engine doesn't tell apart: which chips are the
@@ -298,6 +301,7 @@ impl Renderer {
             targets: Vec::new(),
             column_rect: None,
             drag_overlay: None,
+            custom_peek: 0,
             console_version: None,
             enhancements: Enhancements::NONE,
             font: None,
@@ -416,6 +420,7 @@ impl Renderer {
         self.other_hud = HudState::default();
         self.scenery = StageClock::default();
         self.drag_overlay = None;
+        self.custom_peek = 0;
     }
 
     /// A frame of a battle held where it stands (a host's menu over it: no
@@ -491,6 +496,11 @@ impl Renderer {
     /// on top of subsequent frames.
     pub fn set_drag_overlay(&mut self, overlay: Option<crate::custom::DragOverlay>) {
         self.drag_overlay = overlay;
+    }
+
+    /// Set the local custom screen's pointer peek scroll (`0..=custom::SLIDE`).
+    pub fn set_custom_peek(&mut self, scroll: u32) {
+        self.custom_peek = scroll.min(crate::custom::SLIDE);
     }
 
     pub fn camera_sub(&self, b: &Battle, layers: Layers) -> i32 {
@@ -695,12 +705,13 @@ impl Renderer {
             // `Seat::clip`.)
             let clip = seat.clip(b, screen_layers, &seats, size);
             list.clip = clip;
-            let (found, col) = crate::custom::draw(b, screen_layer, own_game, &graphics, emblem, *emblem_palette, (seat, sprite_fade), smooth, (&mut *hud, &mut *names), scratch, &mut list, &mut text, &mut self.problems);
+            let peek = if !seat.mirrored() && seat.side as usize == local { self.custom_peek } else { 0 };
+            let (found, col) = crate::custom::draw(b, screen_layer, own_game, &graphics, emblem, *emblem_palette, (seat, sprite_fade, peek), smooth, (&mut *hud, &mut *names), scratch, &mut list, &mut text, &mut self.problems);
             targets.extend(found.into_iter().map(|(t, r)| (seat.side, t, r)));
             if let Some(col_rect) = col {
                 raw_column = Some((seat.side, col_rect));
             }
-            crate::hud::draw(b, own_game, &graphics, hud_of(seat), &shared[k], (seat, &view, screen_layer), self.custom_gauge, smooth, (&mut *hud, &mut self.scratch), &mut list, &mut text, &mut self.problems);
+            crate::hud::draw(b, own_game, &graphics, hud_of(seat), &shared[k], (seat, &view, screen_layer, peek), self.custom_gauge, smooth, (&mut *hud, &mut self.scratch), &mut list, &mut text, &mut self.problems);
             list.clip = None;
             if let Some([x0, x1]) = clip {
                 hud.keep_columns(x0 as i32..x1 as i32);

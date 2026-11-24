@@ -237,7 +237,7 @@ const DIGIT_UNKNOWN: usize = 10;
 /// The enemy names' cells (`sub_801E574`: 9 a name, 4 names at most).
 const ENEMY_NAME_CELLS: usize = 9;
 /// The window's offset off the screen.
-const SLIDE: u32 = 0x78;
+pub const SLIDE: u32 = 0x78;
 /// The field and the sprites move down 1.5 pixels a tick of the slide
 /// (`sub_8026B04`: the camera's Y, 16.16).
 const CAMERA_STEP: i32 = 0x18000;
@@ -330,10 +330,23 @@ fn cleared_out(k: u32) -> usize {
 /// The window's placement for a screen in this phase, and as its layer
 /// hides it (SELECT).
 pub fn placement(s: &Screen, layer: Option<&ScreenLayer>) -> Placement {
+    placement_with_peek(s, layer, 0)
+}
+
+/// Like [`placement`], plus an optional local pointer peek scroll (`0..=SLIDE`)
+/// that smoothly slides the custom screen off to the left while dragged.
+pub fn placement_with_peek(s: &Screen, layer: Option<&ScreenLayer>, peek: u32) -> Placement {
     // SELECT: the tick after it takes the window off the layer and
     // scrolls the layer out; a key brings it back.
     if layer.and_then(|l| l.hidden()) == Some(HiddenStage::Waiting) {
         return Placement { slid: SLIDE_TICKS, ..Placement::OUT };
+    }
+    if peek > 0 && s.phase == Phase::Choosing && layer.and_then(|l| l.hidden()).is_none() {
+        let scroll = peek.min(SLIDE);
+        if scroll >= SLIDE {
+            return Placement { slid: SLIDE_TICKS, ..Placement::OUT };
+        }
+        return Placement { scroll, from: (scroll / 8) as usize, to: COLUMNS, slid: SLIDE_TICKS };
     }
     match s.phase {
         Phase::Opening { tick: 0 } => Placement { scroll: 0, from: COLUMNS, to: COLUMNS, slid: 0 },
@@ -355,10 +368,15 @@ pub fn placement(s: &Screen, layer: Option<&ScreenLayer>) -> Placement {
 /// layer's scroll): 120 less the scroll, from the slide's first tick until
 /// the result is sent. On `side`'s console (`layer`, its layer).
 pub fn hud_shift(b: &Battle, layer: Option<&ScreenLayer>, side: u8) -> i32 {
+    hud_shift_with_peek(b, layer, side, 0)
+}
+
+/// Like [`hud_shift`], accounting for a local pointer peek scroll (`peek`).
+pub fn hud_shift_with_peek(b: &Battle, layer: Option<&ScreenLayer>, side: u8, peek: u32) -> i32 {
     let Some((_, s)) = screen_of(b, side) else { return 0 };
     match s.phase {
         Phase::Opening { tick: 0 } | Phase::ProgramAdvance { .. } | Phase::Sending { .. } => 0,
-        _ => SLIDE as i32 - placement(s, layer).scroll as i32,
+        _ => SLIDE as i32 - placement_with_peek(s, layer, peek).scroll as i32,
     }
 }
 
@@ -3079,7 +3097,7 @@ pub fn draw<'a>(
     graphics: &crate::graphics::Graphics<'a>,
     emblem: &'a Tiles,
     emblem_palette: Palette,
-    (seat, sprite_fade): (crate::seat::Seat, Fade),
+    (seat, sprite_fade, peek): (crate::seat::Seat, Fade, u32),
     smooth: crate::smooth::Smooth,
     (out_hud, out_names): (&mut Layer, &mut Layer),
     (scratch_hud, scratch_names): (&mut Layer, &mut Layer),
@@ -3119,7 +3137,10 @@ pub fn draw<'a>(
         hud: &assets.hud,
         graphics: graphics.clone(),
     };
-    let place = placement(screen, layer);
+    let place = placement_with_peek(screen, layer, peek);
+    let peek_active = peek > 0 && screen.phase == Phase::Choosing && layer.and_then(|l| l.hidden()).is_none();
+    let peek_shift = if peek_active { peek.min(SLIDE) as i32 } else { 0 };
+    let peek_hidden = peek_active && peek >= SLIDE;
     // (Where it mirrors, a sliding window is drawn whole where it comes to
     // rest and put where it is by the mirror: the mirrored window slides in
     // and out whole, its columns the console hasn't shown yet nearest the
@@ -3244,7 +3265,7 @@ pub fn draw<'a>(
     // (A screen without the names' bar draws no names: EXE4's. Nor a
     // window leaving over the other console's screen; in its half, beside
     // the other player's window, they don't show.)
-    if names_shown(b, screen, layer) && !a.name_bar.is_empty() && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
+    if !peek_hidden && names_shown(b, screen, layer) && !a.name_bar.is_empty() && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
         crate::hud::keep_to(seat, Anchor::TOP_RIGHT, (&mut *hud_layer, &mut *names_layer), list, text);
         upright.push(crate::seat::Block::whole(draw_names(&v, &w, hud_layer, names_layer, text, problems)));
         crate::hud::keep_to(seat, Anchor::TOP_LEFT, (&mut *hud_layer, &mut *names_layer), list, text);
@@ -3270,59 +3291,75 @@ pub fn draw<'a>(
     // 0x0801E3FC, then 0x0801E41E: the cursor is over the frame); else
     // after the cursor (EXE6's `sub_8026CCC`).
     let regular_first = b.content.rules().custom_screen.states_in_choosing;
-    // (The Regular chip's frame: as shapes where the game's graphics have its drawings,
-    // by its frame, 16 tiles each.)
-    if drawn.regular && regular_first {
-        let parts = drawn_parts(vec![regular_part(&v, a)], &a.shapes.regular, 16, text, &mut tags, queue.len());
-        queue.extend(parts);
-        sprite_ends(&queue);
-    }
-    // The offered form's flying icon (EXE5's soul choice's: its state 9's
-    // routines draw it before the screen's others).
-    if window_view(b, screen) == Some(WindowView::OfferFlight)
-        && let Some(at) = b.offer_flight(v.side)
-    {
-        queue.extend(offered_flight(&v, at, problems));
-        sprite_ends(&queue);
-    }
-    // Its capsule's mix's (state 0x3C's).
-    queue.extend(capsule_flight(&v, graphics, problems));
-    sprite_ends(&queue);
-    if let Some(frame) = drawn.cursor {
-        let parts = drawn_parts(cursor_parts(&v, a, frame), &a.shapes.cursor, 1, text, &mut tags, queue.len());
-        queue.extend(parts);
-        sprite_ends(&queue);
-    }
-    // (Not once the rising form list panel reaches it.)
-    let covered = |p: &SpritePart| rise.is_some_and(|r| !Rect::new(p.x, p.y, p.width as i32, p.height as i32).intersect(r.rect).is_empty());
-    if let Some(part) = element_part(&v, a, place).filter(|p| !covered(p)) {
-        let parts = framed_element(part, a, text, &mut tags, queue.len());
-        queue.extend(parts);
-        sprite_ends(&queue);
-    }
-    // (A screen with an emblem of its own draws it on the window's map.)
-    if let Some((x, spin)) = drawn.emblem.filter(|_| a.window_emblem.is_none()) {
-        let part = emblem_part(&v, emblem, x, spin);
-        if let Some(why) = known_emblem(b, graphics, side) {
-            // (Where the sprite is.)
-            problems.known(part.x, part.y, 32, 32, why);
+    let shift_opt = |part: Option<SpritePart<'a>>| -> Option<SpritePart<'a>> {
+        part.map(|mut p| {
+            p.x -= peek_shift;
+            p
+        })
+    };
+    let shift_parts = |mut parts: Vec<SpritePart<'a>>| -> Vec<SpritePart<'a>> {
+        if peek_shift != 0 {
+            for p in &mut parts {
+                p.x -= peek_shift;
+            }
         }
-        queue.push(part);
+        parts
+    };
+    if !peek_hidden {
+        // (The Regular chip's frame: as shapes where the game's graphics have its drawings,
+        // by its frame, 16 tiles each.)
+        if drawn.regular && regular_first {
+            let parts = drawn_parts(shift_parts(vec![regular_part(&v, a)]), &a.shapes.regular, 16, text, &mut tags, queue.len());
+            queue.extend(parts);
+            sprite_ends(&queue);
+        }
+        // The offered form's flying icon (EXE5's soul choice's: its state 9's
+        // routines draw it before the screen's others).
+        if window_view(b, screen) == Some(WindowView::OfferFlight)
+            && let Some(at) = b.offer_flight(v.side)
+        {
+            queue.extend(shift_opt(offered_flight(&v, at, problems)));
+            sprite_ends(&queue);
+        }
+        // Its capsule's mix's (state 0x3C's).
+        queue.extend(shift_opt(capsule_flight(&v, graphics, problems)));
         sprite_ends(&queue);
-    }
-    if drawn.regular && !regular_first {
-        let parts = drawn_parts(vec![regular_part(&v, a)], &a.shapes.regular, 16, text, &mut tags, queue.len());
-        queue.extend(parts);
-        sprite_ends(&queue);
-    }
-    if drawn.held {
-        queue.extend(held_part(&v, graphics, problems));
-        sprite_ends(&queue);
-    }
-    if let Some(frame) = drawn.form_list_cursor {
-        let parts = drawn_parts(form_list_cursor_parts(&v, a, frame), &a.shapes.form_list_cursor, 1, text, &mut tags, queue.len());
-        queue.extend(parts);
-        sprite_ends(&queue);
+        if let Some(frame) = drawn.cursor {
+            let parts = drawn_parts(shift_parts(cursor_parts(&v, a, frame)), &a.shapes.cursor, 1, text, &mut tags, queue.len());
+            queue.extend(parts);
+            sprite_ends(&queue);
+        }
+        // (Not once the rising form list panel reaches it.)
+        let covered = |p: &SpritePart| rise.is_some_and(|r| !Rect::new(p.x, p.y, p.width as i32, p.height as i32).intersect(r.rect).is_empty());
+        if let Some(part) = element_part(&v, a, place).filter(|p| !covered(p)) {
+            let parts = framed_element(part, a, text, &mut tags, queue.len());
+            queue.extend(parts);
+            sprite_ends(&queue);
+        }
+        // (A screen with an emblem of its own draws it on the window's map.)
+        if let Some((x, spin)) = drawn.emblem.filter(|_| a.window_emblem.is_none()) {
+            let part = emblem_part(&v, emblem, x + peek_shift as u32, spin);
+            if let Some(why) = known_emblem(b, graphics, side) {
+                // (Where the sprite is.)
+                problems.known(part.x, part.y, 32, 32, why);
+            }
+            queue.push(part);
+            sprite_ends(&queue);
+        }
+        if drawn.regular && !regular_first {
+            let parts = drawn_parts(shift_parts(vec![regular_part(&v, a)]), &a.shapes.regular, 16, text, &mut tags, queue.len());
+            queue.extend(parts);
+            sprite_ends(&queue);
+        }
+        if drawn.held {
+            queue.extend(shift_opt(held_part(&v, graphics, problems)));
+            sprite_ends(&queue);
+        }
+        if let Some(frame) = drawn.form_list_cursor {
+            let parts = drawn_parts(shift_parts(form_list_cursor_parts(&v, a, frame)), &a.shapes.form_list_cursor, 1, text, &mut tags, queue.len());
+            queue.extend(parts);
+            sprite_ends(&queue);
+        }
     }
     if mirrored {
         // The window as its console draws it, put in the right half: the

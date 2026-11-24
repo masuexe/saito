@@ -743,7 +743,7 @@ pub fn draw<'a>(
     graphics: &crate::graphics::Graphics<'a>,
     state: &HudState,
     shared: &'a SharedGlyphs,
-    (seat, view, screen_layer): (Seat, &View, Option<&saito_battle::custom::Layer>),
+    (seat, view, screen_layer, custom_peek): (Seat, &View, Option<&saito_battle::custom::Layer>, u32),
     custom_gauge: bool,
     smooth: Smooth,
     (layer, scratch): (&mut Layer, &mut Layer),
@@ -773,7 +773,7 @@ pub fn draw<'a>(
     // the right of a screen of both, at the top right: the box flipped, its
     // digits in their cells' mirrored place.
     keep_to(seat, Anchor::TOP_LEFT, (&mut *layer, &mut *scratch), list, text);
-    let shift = crate::custom::hud_shift(b, screen_layer, local);
+    let shift = crate::custom::hud_shift_with_peek(b, screen_layer, local, custom_peek);
     if let Some(r) = player.filter(|_| !hide_boxes && !b.hud_hidden.hp_box) {
         let shown = state.hp.map(|h| h.shown).unwrap_or(b.objects.get(r).hp);
         let pal = &hud.hp_palettes[color.min(2)];
@@ -2907,7 +2907,7 @@ mod tests {
             let state = HudState::default();
             let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
             let view = crate::render::Renderer::view(&b);
-            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
+            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None, 0), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
             let pal = assets.hud.hp_palettes[0];
             assert_eq!((at(&layer, lit, 0), at(&layer, dark, 0)), (pal[2], CLEAR), "{seat:?}: the outer frame cell's lit half");
             assert_eq!(at(&layer, digits + 8, 0), pal[1], "{seat:?}: the digits' cells");
@@ -3360,7 +3360,7 @@ mod tests {
             let state = HudState::default();
             let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
             let view = crate::render::Renderer::view(&b);
-            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
+            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None, 0), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
             let items: Vec<_> = text.into_items().into_iter().filter_map(|(_, it)| it.drawn.is_some().then_some(it)).collect();
             assert_eq!(items.len(), 1, "{seat:?}");
             assert_eq!(items[0].rect.x, 8 + expected_dx);

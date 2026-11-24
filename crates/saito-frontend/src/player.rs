@@ -362,9 +362,11 @@ impl Player {
         let Some(layer) = self.session.driver.layers()[side as usize & 1] else {
             return crate::pointer::DragContext::default();
         };
-        let hidden = p.screen.phase == Phase::Choosing && layer.hidden().is_some();
-        if !self.drag_enabled || p.screen.phase != Phase::Choosing || !matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. }) {
-            return crate::pointer::DragContext { hidden, ..crate::pointer::DragContext::default() };
+        let can_peek = p.screen.phase == Phase::Choosing
+            && layer.hidden().is_none()
+            && matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. });
+        if !self.drag_enabled || !can_peek {
+            return crate::pointer::DragContext { can_peek, ..crate::pointer::DragContext::default() };
         }
         let mut draggable_slots: u16 = 0;
         let mut capsule_slots: u16 = 0;
@@ -404,7 +406,7 @@ impl Player {
         }
         crate::pointer::DragContext {
             enabled: true,
-            hidden: false,
+            can_peek: true,
             picks: p.screen.selection().len() as u8,
             locked_first: is_locked_first_pick(p.screen, p.folder, &p.view),
             draggable_slots,
@@ -608,7 +610,8 @@ impl Player {
     /// the picture takes the pointer, and that a phone's pad gives way.
     pub fn takes_pointer(&mut self) -> bool {
         let side = self.session.battle.setup.local_side;
-        self.session.driver.layer_mut(side).is_some() && self.renderer.targets(side).next().is_some()
+        self.session.driver.layer_mut(side).is_some()
+            && (self.renderer.targets(side).next().is_some() || self.pointer.is_peeking() || self.pointer.peek_scroll() > 0)
     }
 
     /// Run one tick with `buttons` held, whatever the clock or the pause
@@ -667,8 +670,12 @@ impl Player {
                 .battle
                 .presented(side)
                 .is_some_and(|p| p.screen.phase == saito_battle::custom::Phase::Choosing);
+            let hidden = self.session.driver.layers()[side as usize & 1].is_some_and(|l| l.hidden().is_some());
             if !in_choosing {
                 self.pointer.cancel_drag();
+                self.pointer.cancel_peek();
+            } else if hidden {
+                self.pointer.cancel_peek();
             }
         }
         if self.session.fresh {
@@ -900,6 +907,7 @@ impl Player {
     pub fn frame(&mut self) -> Frame {
         let overlay = self.current_drag_overlay();
         self.renderer.set_drag_overlay(overlay);
+        self.renderer.set_custom_peek(self.pointer.peek_scroll());
         self.renderer.render(&self.session.battle, self.session.driver.layers())
     }
 

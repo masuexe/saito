@@ -214,10 +214,6 @@ pub enum Gesture {
     DragBegin(DragSource),
     /// Desktop mouse drag released on destination (`to`).
     Drop { from: DragSource, to: DropTarget },
-    /// Leftward pointer drag on the custom screen: hides the window to peek at the field, as SELECT does.
-    Hide,
-    /// Rightward pointer drag while the custom screen is hidden: brings the window back.
-    Reveal,
 }
 
 /// The most gestures a layer keeps for its next ticks.
@@ -1061,11 +1057,6 @@ impl Layer {
             Gesture::QuickUnite(target) => self.quick_unite(target, p),
             Gesture::DragBegin(_) => Pointed::Took,
             Gesture::Drop { from, to } => self.handle_drop(from, to, p),
-            Gesture::Hide => {
-                self.sub = Sub::Hidden(HiddenStage::Hiding);
-                Pointed::Took
-            }
-            Gesture::Reveal => Pointed::Nothing,
             Gesture::Click(_) | Gesture::Describe(_) => Pointed::Nothing,
         }
     }
@@ -1699,7 +1690,6 @@ impl Layer {
         match self.gesture {
             Some(Gesture::Click(_)) => keys::A,
             Some(Gesture::TakeBack) => keys::B,
-            Some(Gesture::Reveal) => keys::SELECT,
             _ => 0,
         }
     }

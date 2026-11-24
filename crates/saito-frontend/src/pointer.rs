@@ -25,14 +25,18 @@ use saito_render::textlayer::Rect;
 pub const LONG_PRESS: u32 = 30;
 /// Pointer movement distance (in frame pixels) required to begin dragging on desktop.
 pub const DRAG_THRESHOLD: f32 = 5.0;
-/// Horizontal pointer movement distance (in frame pixels) required to hide or reveal the custom screen.
-pub const HIDE_DRAG_THRESHOLD: f32 = 20.0;
+/// Leftward horizontal drag distance (in frame pixels) required to begin peeking behind the custom screen.
+pub const PEEK_THRESHOLD: f32 = 6.0;
+/// Maximum leftward peek scroll distance (in frame pixels), matching `saito_render::custom::SLIDE`.
+pub const PEEK_MAX: f32 = saito_render::custom::SLIDE as f32;
+/// Pixels per tick the custom screen slides back after releasing a peek drag.
+pub const PEEK_RETURN_STEP: f32 = 16.0;
 
 /// Desktop drag capabilities & layout metadata computed from the current custom screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DragContext {
     pub enabled: bool,
-    pub hidden: bool,
+    pub can_peek: bool,
     pub picks: u8,
     pub locked_first: bool,
     pub draggable_slots: u16,
@@ -98,7 +102,8 @@ struct Press {
     start: (f32, f32),
     drag_source: Option<DragSource>,
     dragging: bool,
-    swiped: bool,
+    peeking: bool,
+    peek_origin_x: f32,
     drop: DropTarget,
 }
 
@@ -111,6 +116,7 @@ pub struct ScreenPointer {
     press: Option<Press>,
     at: Option<(i32, i32)>,
     hovering: bool,
+    peek_scroll: f32,
 }
 
 fn resolve_drop(x: f32, y: f32, from: DragSource, ctx: &DragContext, at: &impl Fn(f32, f32) -> Option<Target>) -> DropTarget {
@@ -190,7 +196,8 @@ impl ScreenPointer {
                     start: (e.x, e.y),
                     drag_source,
                     dragging: false,
-                    swiped: false,
+                    peeking: false,
+                    peek_origin_x: e.x,
                     drop: DropTarget::Outside,
                 });
                 self.over = under;
@@ -201,6 +208,9 @@ impl ScreenPointer {
             (PointerKind::Down, PointerButton::Other) => None,
             (PointerKind::Up, PointerButton::Primary) => {
                 let press = self.press.take()?;
+                if press.peeking {
+                    return None;
+                }
                 if press.dragging {
                     let from = press.drag_source?;
                     let to = resolve_drop(e.x, e.y, from, ctx, &at);
@@ -213,7 +223,9 @@ impl ScreenPointer {
             // it tracks drop hotzones rather than cancelling on target exit.)
             (PointerKind::Moved, _) => match &mut self.press {
                 Some(press) => {
-                    if !press.dragging {
+                    if press.peeking {
+                        self.peek_scroll = (press.peek_origin_x - e.x).clamp(0.0, PEEK_MAX);
+                    } else if !press.dragging {
                         let dx = e.x - press.start.0;
                         let dy = e.y - press.start.1;
                         if let Some(src) = press.drag_source
@@ -224,17 +236,12 @@ impl ScreenPointer {
                             press.drop = resolve_drop(e.x, e.y, src, ctx, &at);
                             return Some(Gesture::DragBegin(src));
                         }
-                        if press.drag_source.is_none() && !press.swiped && dx.abs() > dy.abs() {
-                            if !ctx.hidden && dx <= -HIDE_DRAG_THRESHOLD {
-                                press.swiped = true;
-                                press.off = true;
-                                return Some(Gesture::Hide);
-                            }
-                            if ctx.hidden && dx >= HIDE_DRAG_THRESHOLD {
-                                press.swiped = true;
-                                press.off = true;
-                                return Some(Gesture::Reveal);
-                            }
+                        if press.drag_source.is_none() && ctx.can_peek && dx <= -PEEK_THRESHOLD && dx.abs() > dy.abs() {
+                            press.peeking = true;
+                            press.off = true;
+                            press.peek_origin_x = press.start.0 - PEEK_THRESHOLD + self.peek_scroll;
+                            self.peek_scroll = (press.peek_origin_x - e.x).clamp(0.0, PEEK_MAX);
+                            return None;
                         }
                         press.off |= under != press.target;
                     } else if let Some(src) = press.drag_source {
@@ -255,8 +262,10 @@ impl ScreenPointer {
             (PointerKind::Left, _) => {
                 if let Some(press) = &mut self.press {
                     press.off = true;
-                    if press.dragging {
-                        press.drop = DropTarget::Outside;
+                    if press.dragging || press.peeking {
+                        if press.dragging {
+                            press.drop = DropTarget::Outside;
+                        }
                         self.hovering = false;
                         return None;
                     }
@@ -298,6 +307,24 @@ impl ScreenPointer {
         }
     }
 
+    /// Current leftward peek scroll of the custom screen (in frame pixels, `0..=PEEK_MAX`).
+    pub fn peek_scroll(&self) -> u32 {
+        self.peek_scroll.round() as u32
+    }
+
+    /// Whether a peek drag is currently held down.
+    pub fn is_peeking(&self) -> bool {
+        self.press.is_some_and(|p| p.peeking)
+    }
+
+    /// Cancel an in-progress peek drag and reset any residual peek scroll.
+    pub fn cancel_peek(&mut self) {
+        if self.press.is_some_and(|p| p.peeking) {
+            self.press = None;
+        }
+        self.peek_scroll = 0.0;
+    }
+
     /// The mouse moved over `under`: over it, if it is another target than
     /// the one it was over; off the targets, away, at each move (a key may
     /// have brought the cursor back since the last).
@@ -310,11 +337,14 @@ impl ScreenPointer {
     }
 
     /// A tick of the battle's: a press held still on a target long enough
-    /// describes it.
+    /// describes it, and a released peek drag slides smoothly back to 0.
     pub fn tick(&mut self) -> Option<Gesture> {
+        if self.press.is_none_or(|p| !p.peeking) && self.peek_scroll > 0.0 {
+            self.peek_scroll = (self.peek_scroll - PEEK_RETURN_STEP).max(0.0);
+        }
         let press = self.press.as_mut()?;
         press.held = press.held.saturating_add(1);
-        if !press.dragging && !press.off && !press.described && press.held >= LONG_PRESS {
+        if !press.dragging && !press.peeking && !press.off && !press.described && press.held >= LONG_PRESS {
             press.described = true;
             return press.target.map(Gesture::Describe);
         }
@@ -483,7 +513,7 @@ mod tests {
         let col = Rect::new(100, 16, 24, 80); // rows 0..5, 16px each: row 0 = y 16..32, row 1 = y 32..48
         let ctx = DragContext {
             enabled: true,
-            hidden: false,
+            can_peek: true,
             picks: 2,
             locked_first: false,
             draggable_slots: 1 << 1,
@@ -549,7 +579,7 @@ mod tests {
     fn long_press_describe_transitions_cleanly_into_drag() {
         let ctx = DragContext {
             enabled: true,
-            hidden: false,
+            can_peek: true,
             picks: 1,
             locked_first: false,
             draggable_slots: 1 << 1,
@@ -580,30 +610,48 @@ mod tests {
     }
 
     #[test]
-    fn leftward_drag_hides_custom_screen_and_rightward_drag_reveals() {
-        let open = DragContext { enabled: true, hidden: false, draggable_slots: 1 << 1, ..DragContext::default() };
-        let hidden = DragContext { enabled: false, hidden: true, ..DragContext::default() };
+    fn leftward_drag_peeks_custom_screen_and_springs_back_on_release() {
+        let open = DragContext { enabled: true, can_peek: true, draggable_slots: 1 << 1, ..DragContext::default() };
         let mut s = ScreenPointer::default();
 
-        // Leftward drag on blank area emits Gesture::Hide once and suppresses Click on release.
-        assert_eq!(s.event_with_drag(p(PointerKind::Down, 80.0, 50.0), at, &open), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 70.0, 50.0), at, &open), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 55.0, 52.0), at, &open), Some(Gesture::Hide));
-        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 30.0, 52.0), at, &open), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Up, 30.0, 52.0), at, &open), None);
+        // Leftward drag on blank area follows pointer smoothly and clamps to PEEK_MAX.
+        assert_eq!(s.event_with_drag(p(PointerKind::Down, 100.0, 60.0), at, &open), None);
+        assert_eq!(s.peek_scroll(), 0);
+        // Below PEEK_THRESHOLD: does not start peeking yet.
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 96.0, 60.0), at, &open), None);
+        assert!(!s.is_peeking());
+        assert_eq!(s.peek_scroll(), 0);
+        // Past PEEK_THRESHOLD (6px): enters peeking and tracks distance smoothly.
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 64.0, 62.0), at, &open), None);
+        assert!(s.is_peeking());
+        assert_eq!(s.peek_scroll(), 30);
+        // Dragging further left clamps at PEEK_MAX (120).
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, -50.0, 62.0), at, &open), None);
+        assert_eq!(s.peek_scroll(), 120);
+        // Dragging back right while still holding reduces peek_scroll.
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 44.0, 62.0), at, &open), None);
+        assert_eq!(s.peek_scroll(), 50);
+        // Releasing suppresses Click and lets tick() slide smoothly back to 0.
+        assert_eq!(s.event_with_drag(p(PointerKind::Up, 44.0, 62.0), at, &open), None);
+        assert!(!s.is_peeking());
+        assert_eq!(s.peek_scroll(), 50);
+        assert_eq!(s.tick(), None);
+        assert_eq!(s.peek_scroll(), 34);
+        for _ in 0..4 {
+            s.tick();
+        }
+        assert_eq!(s.peek_scroll(), 0);
 
-        // Mostly vertical drag does not trigger Hide (releasing still acts as a normal blank click).
-        assert_eq!(s.event_with_drag(p(PointerKind::Down, 80.0, 50.0), at, &open), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 55.0, 90.0), at, &open), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Up, 55.0, 90.0), at, &open), Some(Gesture::Click(None)));
+        // Mostly vertical drag does not trigger peek (releasing still acts as a normal blank click).
+        assert_eq!(s.event_with_drag(p(PointerKind::Down, 80.0, 60.0), at, &open), None);
+        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 65.0, 100.0), at, &open), None);
+        assert!(!s.is_peeking());
+        assert_eq!(s.event_with_drag(p(PointerKind::Up, 65.0, 100.0), at, &open), Some(Gesture::Click(None)));
 
-        // Rightward drag while hidden emits Gesture::Reveal and suppresses Click on release.
-        assert_eq!(s.event_with_drag(p(PointerKind::Down, 40.0, 50.0), at, &hidden), None);
-        assert_eq!(s.event_with_drag(p(PointerKind::Moved, 65.0, 50.0), at, &hidden), Some(Gesture::Reveal));
-        assert_eq!(s.event_with_drag(p(PointerKind::Up, 65.0, 50.0), at, &hidden), None);
-
-        // Dragging a draggable chip slot leftward still starts chip drag instead of Hide.
+        // Dragging a draggable chip slot leftward still starts chip drag instead of peeking.
         assert_eq!(s.event_with_drag(p(PointerKind::Down, 10.0, 10.0), at, &open), Some(Gesture::Over(CHIP)));
         assert_eq!(s.event_with_drag(p(PointerKind::Moved, 0.0, 10.0), at, &open), Some(Gesture::DragBegin(DragSource::Slot(1))));
+        assert!(!s.is_peeking());
+        assert_eq!(s.peek_scroll(), 0);
     }
 }
