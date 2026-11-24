@@ -531,8 +531,8 @@ export component NaviTab inherits Rectangle {
     }
 
     // Under the navi's facts, one after the other: the choices (the user: "the light/dark switcher should be above the
-    // souls"), then customizable base HP (when offered), then the selector's facts of forms. A phone's forms scroll in
-    // the room the panel has; a desktop's are all shown, nothing to scroll.
+    // souls"), then customizable base HP (when offered), then the selector's facts of forms, which scroll in the room
+    // the panel leaves whenever they don't fit.
     choices := VerticalLayout {
         x: root.panel-x + root.pad;
         y: root.body-y;
@@ -633,7 +633,7 @@ export component NaviTab inherits Rectangle {
         x: root.panel-x + root.pad;
         y: root.forms-y;
         width: root.panel-width - 2 * root.pad + 12px;
-        height: Theme.handheld ? max(0px, root.panel-height - root.pad - self.y) : forms-list.preferred-height;
+        height: max(0px, root.panel-height - root.pad - self.y);
         nav: "form";
         content-height: forms-list.preferred-height;
         forms-list := VerticalLayout {
