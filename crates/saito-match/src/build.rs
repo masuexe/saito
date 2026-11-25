@@ -1815,7 +1815,8 @@ mod tests {
         let bugged = (0..4 * 49u8)
             .map(|at| {
                 let mut side = clean.clone();
-                set_navicust(&content, &mut side, &[PlacedProgram { program: megfldr1, color: 0, x: at % 7, y: at / 7 % 7, rotation: at / 49, compressed: false }], 2);
+                // (Color 1 is green, the obtainable color of MegFldr1 in EXE5.)
+                set_navicust(&content, &mut side, &[PlacedProgram { program: megfldr1, color: 1, x: at % 7, y: at / 7 % 7, rotation: at / 49, compressed: false }], 2);
                 side
             })
             .find(|side| bugs(side).is_some_and(|(bugs, _)| bugs == [level("custom_damage", 1)]))

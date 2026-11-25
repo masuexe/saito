@@ -348,6 +348,12 @@ export global BuildWords {
     public pure function mixed() -> string {
         return @tr("Mixed versions");
     }
+    public pure function unobtainable() -> string {
+        return @tr("Illegal data (unobtainable in normal play)");
+    }
+    public pure function ds-only() -> string {
+        return @tr("5DS-only content (not allowed in GBA rules)");
+    }
     public pure function range(value: int, least: int, most: int) -> string {
         return @tr("{} is outside {} to {}", value, least, most);
     }

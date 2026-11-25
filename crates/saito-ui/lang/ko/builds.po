@@ -690,3 +690,9 @@ msgstr "이미 배치됨"
 
 msgid "Illegal ABD data: {} is required in Standard unless all Standard slots are full"
 msgstr "불법 ABD 데이터: 스탠다드 슬롯이 가득 차지 않은 경우 {}가 필요합니다"
+
+msgid "Illegal data (unobtainable in normal play)"
+msgstr "불법 데이터 (일반 플레이로 획득 불가)"
+
+msgid "5DS-only content (not allowed in GBA rules)"
+msgstr "5DS 전용 데이터 (GBA 규칙에서 사용 불가)"

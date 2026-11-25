@@ -321,6 +321,8 @@ impl Page {
         view.set_editable(self.editable());
         view.set_deletable(self.editable());
         view.set_versions(if ruleset.one_per_build { 0 } else { 1 });
+        view.set_has_ds(self.rulesets.legality.has_ds_only());
+        view.set_ds_mode(if ruleset.allow_ds { 1 } else { 0 });
         let mut categories: Vec<RulesetCategory> = self
             .listed()
             .into_iter()
@@ -868,6 +870,10 @@ impl Page {
                 let one = !self.shown.ruleset.one_per_build;
                 self.change(shell, |r, _| r.one_per_build = one)
             }
+            "rules.ds" => {
+                let ds = !self.shown.ruleset.allow_ds;
+                self.change(shell, |r, _| r.allow_ds = ds)
+            }
             "rules.duplicate" => self.duplicate(shell),
             "rules.export" => self.export(shell),
             "rules.import" => self.import(shell),
@@ -894,6 +900,7 @@ impl Page {
     pub fn step(&mut self, shell: &mut Shell, id: &str, index: i32, by: i32) -> Outcome {
         match id {
             "rules.versions" => self.change(shell, |r, _| r.one_per_build = by < 0),
+            "rules.ds" => self.change(shell, |r, _| r.allow_ds = by > 0),
             "rules.category" => {
                 let count = (self.listed().len() + 1) as i32;
                 if count > 0 {
@@ -910,6 +917,7 @@ impl Page {
     pub fn choose(&mut self, shell: &mut Shell, id: &str, _index: i32, choice: i32) -> Outcome {
         match id {
             "rules.versions" => self.change(shell, |r, _| r.one_per_build = choice == 0),
+            "rules.ds" => self.change(shell, |r, _| r.allow_ds = choice == 1),
             "rules.category" => {
                 self.choose_category(shell, choice);
                 Outcome::Nothing

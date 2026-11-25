@@ -27,6 +27,7 @@ pub mod ruleset;
 pub mod facts;
 pub mod file;
 pub mod folders;
+pub mod legality;
 #[cfg(test)]
 mod double_attacks;
 #[cfg(test)]

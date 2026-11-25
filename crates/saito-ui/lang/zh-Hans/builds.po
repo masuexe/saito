@@ -707,3 +707,9 @@ msgstr "已放入"
 
 msgid "Illegal ABD data: {} is required in Standard unless all Standard slots are full"
 msgstr "非法 ABD 数据：标准栏位未满时必须包含 {}"
+
+msgid "Illegal data (unobtainable in normal play)"
+msgstr "非法数据（正常流程无法获得）"
+
+msgid "5DS-only content (not allowed in GBA rules)"
+msgstr "仅限 5DS 规则可用（GBA 规则下不可用）"

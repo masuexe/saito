@@ -11,7 +11,7 @@ local sword_slash_sprite = asset.sprite("sword-slash")
 local SWORD_SLASH = new.effect { sprite = sword_slash_sprite, anim = 2, palette = 0, steps = 12 }
 
 local chip: Chip = {
-    codes = { "C", "L", "S" },
+    codes = { "C", "L", "S", "*" },
     element = "null",
     family = "sword",
     class = "standard",

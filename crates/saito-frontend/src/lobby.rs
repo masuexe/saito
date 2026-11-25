@@ -620,6 +620,9 @@ impl Settings {
                 w.uvarint(val as u64);
             }
         }
+        if self.ruleset.allow_ds {
+            w.put(&0x42u8);
+        }
         out
     }
 
@@ -695,6 +698,7 @@ impl Settings {
         let mut cs_prob_fix = saito_match::CsProbFix::NONE;
         let mut all_guard_disabled = false;
         let mut dark_cut_in_fix = false;
+        let mut allow_ds = false;
         let mut custom_limits = saito_match::ruleset::Limits::default();
         while !r.is_empty() {
             let v: u8 = r.get().map_err(bad)?;
@@ -743,6 +747,11 @@ impl Settings {
                     return Err(format!("dark cut-in option is not supported for {game}"));
                 }
                 dark_cut_in_fix = true;
+            } else if v == 0x42 {
+                if !rulesets.legality.has_ds_only() {
+                    return Err(format!("5DS option is not supported for {game}"));
+                }
+                allow_ds = true;
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
@@ -759,6 +768,7 @@ impl Settings {
         // (Named as this side names its rules: a preset's, else the other player's.)
         let mut parsed_ruleset = Ruleset::of_names(rulesets, content, RulesetName::Theirs, one_per_build, &banned, &banned_by)?;
         parsed_ruleset.limits = custom_limits;
+        parsed_ruleset.allow_ds = allow_ds;
         let ruleset = rulesets.named_here(parsed_ruleset);
         // (The rounds as a match's checks hold them: a stage stated is a
         // link battle's, and one left is the rules' to pick.)

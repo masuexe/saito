@@ -2789,6 +2789,7 @@ export type Status = StatusDef
 --   list's entries cost `used` together, `limit` at most: the patch cards' MB); `off_board` (a piece not on its
 --   board); `overlap` (a piece over the piece at entry `other`, from 1); `slot` (the entry `def`, of one of the
 --   game's collections, sits in slot `value` and belongs in slot `own`, both from 0: a build's alone, the rules'
+--   `build_check`); `unobtainable` (a chip+code or NaviCust program+color that cannot be obtained in normal play:
 --   `build_check`); `invalid` (anything else no save holds).
 export type SetupProblem = {
     kind: string,
@@ -2805,6 +2806,7 @@ export type SetupProblem = {
     other: number?,
     def: any?,
     own: number?,
+    color: string?,
 }
 
 -- A folder a tool asks the rules of (`battle.checked_folder`); `offered`: the chips a `folder_view` is asked whether

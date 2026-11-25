@@ -182,7 +182,10 @@ impl Folder {
         draft.with_words(shell, |words| {
             let wanted = self.search.to_lowercase();
             let found: Vec<ChipInfo> = self.chips.iter().filter(|c| wanted.is_empty() || words.names.chip(c.chip).to_lowercase().contains(&wanted)).cloned().collect();
-            self.rows = build::sorted(content, &found, SORTS[self.sort.min(SORTS.len() - 1)], self.descending, &|chip| words.names.chip(chip));
+            self.rows = build::sorted(content, &found, SORTS[self.sort.min(SORTS.len() - 1)], self.descending, &|chip| words.names.chip(chip))
+                .into_iter()
+                .filter(|r| draft.chip_code_allowed(r.id, r.code))
+                .collect();
         });
     }
 

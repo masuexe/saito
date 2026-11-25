@@ -14,6 +14,8 @@ local emotion = require("@self/emotion")
 local exe5 = require("@self/api")
 local folder = require("@self/folder")
 local fresh_stats = require("@self/fresh_stats")
+local legality = require("@self/legality")
+local legality_check = require("@exelib/legality")
 local chaos_charge = require("@self/souls/chaos_charge")
 local light_dark = require("@self/light_dark")
 local navicust = require("@self/navicust")
@@ -569,12 +571,14 @@ local rules: Rules = {
             return out
         end,
         -- What is wrong with a side's setup as a player's build, beside what `validate` says of any setup: dark
-        -- MegaMan's base HP cap (./save).
+        -- MegaMan's base HP cap (./save) and unobtainable chips/programs (./legality).
         build_check = function(side: number): { SetupProblem }
             local out: { SetupProblem } = {}
-            save.build_check(side, function(p: SetupProblem)
+            local function problem(p: SetupProblem)
                 table.insert(out, p)
-            end)
+            end
+            save.build_check(side, problem)
+            legality_check.build_check(legality, rules.setup_of(side), problem)
             return out
         end,
     },

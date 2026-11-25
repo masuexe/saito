@@ -149,6 +149,8 @@ impl Words<'_> {
             Wrong::NotAllowed { registry, item, .. } => say.invoke_not_allowed(self.item(*registry, item).into()),
             // (By the versions alone: every thing of them the build holds is in the mix, and none is the one at fault.)
             Wrong::Mixed { .. } => say.invoke_mixed(),
+            Wrong::Unobtainable => say.invoke_unobtainable(),
+            Wrong::DsOnly => say.invoke_ds_only(),
             Wrong::Internal => say.invoke_internal(),
         };
         said.into()
@@ -300,7 +302,7 @@ mod tests {
         for kind in Wrong::RULES_KINDS {
             let typed = Wrong::of_rules(&content, kind, &saito_content_api::Data::Nil);
             // (Without its numbers a kind is `Invalid`, which has its sentence too.)
-            assert!(matches!(typed, Wrong::Invalid | Wrong::RegularEntry | Wrong::TagEntries | Wrong::TagRegular | Wrong::NoTags | Wrong::NotTaken | Wrong::Missing | Wrong::Twice | Wrong::OffBoard), "{kind}: {typed:?}");
+            assert!(matches!(typed, Wrong::Invalid | Wrong::RegularEntry | Wrong::TagEntries | Wrong::TagRegular | Wrong::NoTags | Wrong::NotTaken | Wrong::Missing | Wrong::Twice | Wrong::OffBoard | Wrong::Unobtainable), "{kind}: {typed:?}");
         }
     }
 }

@@ -104,6 +104,9 @@ export global RulesetView {
     in property <bool> deletable;
     // Version exclusives: 0 one version's alone in a build, 1 the versions' mixed.
     in property <int> versions;
+    // Whether the game has DS-only content (EXE5), and whether 5DS content is allowed: 0 GBA, 1 5DS.
+    in property <bool> has-ds;
+    in property <int> ds-mode;
     in property <[RulesetCategory]> categories;
     // The same, as a phone held sideways has them: tabs in the header (their names, set in capitals by the tab bar).
     in property <[Tab]> tabs;
@@ -579,7 +582,7 @@ export component RulesetPage inherits Page {
             text: I18n.upper(@tr("Version exclusives"));
         }
 
-        Seg {
+        versions-seg := Seg {
             x: Theme.phone || Theme.sideways ? 0px : versions-label.x + versions-label.width + 12px;
             y: Theme.phone ? 20px : Theme.sideways ? 0px : versions-label.y + 2px;
             nav: "rules.versions";
@@ -587,6 +590,17 @@ export component RulesetPage inherits Page {
             second: I18n.upper(@tr("Mix versions"));
             chosen: RulesetView.versions;
             enabled: RulesetView.editable;
+        }
+
+        Seg {
+            x: Theme.phone ? 0px : versions-seg.x + versions-seg.width + 12px;
+            y: Theme.phone ? 76px : versions-seg.y;
+            visible: RulesetView.has-ds;
+            nav: "rules.ds";
+            first: "GBA";
+            second: "5DS";
+            chosen: RulesetView.ds-mode;
+            enabled: RulesetView.editable && RulesetView.has-ds;
         }
 
         delete := Button {

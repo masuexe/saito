@@ -6,7 +6,7 @@
 local elemrage = require("@self/elemrage")
 
 local chip: Chip = {
-    codes = { "E", "K", "W" },
+    codes = { "E", "K", "W", "*" },
     element = "null",
     family = "null",
     class = "standard",

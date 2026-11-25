@@ -110,6 +110,12 @@ pub enum Wrong {
     /// matching occurs and is not permitted you should just mark everything
     /// that's mixed and matched as an error").
     Mixed { groups: Vec<String>, items: Vec<(Registry, crate::ruleset::Item)> },
+    /// A chip+code or NaviCust program+color that exists in ROM tables but
+    /// cannot be obtained in normal play (`build_check`).
+    Unobtainable,
+    /// Content that is only legally obtainable in the DS release (EXE5 Double
+    /// Team DS), used under a GBA ruleset (`Ruleset::problems`).
+    DsOnly,
     /// Anything else no save holds.
     Invalid,
 
@@ -123,7 +129,7 @@ impl Wrong {
     /// [`Wrong::Mixed`]: `build::Checked::under` adds them), not the game's
     /// rules': a build has it only by the ruleset it is checked under.
     pub fn of_ruleset(&self) -> bool {
-        matches!(self, Wrong::NotAllowed { .. } | Wrong::Mixed { .. })
+        matches!(self, Wrong::NotAllowed { .. } | Wrong::Mixed { .. } | Wrong::DsOnly)
     }
 
     /// A problem of the rules' (`saito_battle::rules::Problem`: its kind's
@@ -168,6 +174,7 @@ impl Wrong {
                 "off_board" => Wrong::OffBoard,
                 "overlap" => Wrong::Overlap { other: usize::try_from(number("other")?).ok()?.checked_sub(1)? },
                 "slot" => Wrong::Slot { entry: entry()?, slot: number("value")?.try_into().ok()?, own: number("own")?.try_into().ok()? },
+                "unobtainable" => Wrong::Unobtainable,
                 _ => return None,
             })
         };
@@ -176,7 +183,7 @@ impl Wrong {
 
     /// The kinds of the rules' problems this crate types (what a game's
     /// rules may name a problem: core.d.luau's `SetupProblem`).
-    pub const RULES_KINDS: [&'static str; 22] = [
+    pub const RULES_KINDS: [&'static str; 23] = [
         "folder_size",
         "chip_not_allowed",
         "chip_code",
@@ -198,6 +205,7 @@ impl Wrong {
         "off_board",
         "overlap",
         "slot",
+        "unobtainable",
         "invalid",
     ];
 }

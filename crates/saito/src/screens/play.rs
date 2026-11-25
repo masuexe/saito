@@ -853,7 +853,7 @@ impl Play {
     /// The link is open: the lobby over it, the practice battle ended. A host's starts on the settings it set
     /// while it waited, which the joiner takes.
     fn enter_lobby(&mut self, shell: &mut Shell) {
-        let (Some((_, ready)), Ok(side)) = (shell.ready(), self.side(shell, self.joining())) else {
+        let (Some((_, ready)), Some(side)) = (shell.ready(), self.build().and_then(|b| b.side().cloned())) else {
             return self.ended(shell, Some(UserError::Other));
         };
         let (Some(rulesets), Some(settings)) = (builds::kit(shell).and_then(|kit| kit.rulesets()), self.waiting.take().or_else(|| self.opening_settings(shell))) else {
@@ -1446,7 +1446,7 @@ impl Play {
         let waiting = self.waiting.clone().filter(|_| matches!(self.stage, Stage::Waiting));
         if let Some(settings) = &waiting
             && self.wait_checked.as_ref().is_none_or(|(checked, ..)| checked != settings)
-            && let (Some((_, ready)), Some(rulesets), Ok(side)) = (shell.ready(), builds::kit(shell).and_then(|kit| kit.rulesets()), self.side(shell, false))
+            && let (Some((_, ready)), Some(rulesets), Some(side)) = (shell.ready(), builds::kit(shell).and_then(|kit| kit.rulesets()), self.build().and_then(|b| b.side().cloned()))
         {
             let problems = if settings.random_battle.is_some() {
                 Vec::new()

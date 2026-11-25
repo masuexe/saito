@@ -18,7 +18,7 @@ local SEED = seed.variant {
 }
 
 local chip: Chip = {
-    codes = { "H", "K", "P" },
+    codes = { "H", "K", "P", "*" },
     element = "null",
     family = "null",
     class = "standard",

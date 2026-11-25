@@ -7,7 +7,7 @@
 local wavepit = require("./wavepit/wavepit")
 
 local chip: Chip = {
-    codes = { "A", "F", "H" },
+    codes = { "A", "F", "H", "*" },
     element = "fire",
     family = "fire",
     class = "standard",

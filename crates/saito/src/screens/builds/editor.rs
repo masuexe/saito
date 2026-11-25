@@ -159,6 +159,21 @@ impl Draft {
         self.with_words(shell, |words| self.ruleset.as_ref().map(|made| made.shown(words.names))).unwrap_or_default()
     }
 
+    /// Whether the build's ruleset allows 5DS-only content (defaults to `false`, GBA).
+    pub fn allow_ds(&self) -> bool {
+        self.under().is_some_and(|p| p.ruleset.allow_ds)
+    }
+
+    /// Whether `(chip, code)` is legally pickable under the build's ruleset (hiding unobtainable and disallowed DS-only codes).
+    pub fn chip_code_allowed(&self, chip: saito_content_api::ChipHandle, code: saito_battle::content::ChipCode) -> bool {
+        self.kit.rulesets().is_none_or(|r| r.legality.chip_code_allowed(chip, code, self.allow_ds()))
+    }
+
+    /// Whether NaviCust `program` in `color` is legally pickable under the build's ruleset.
+    pub fn navicust_color_allowed(&self, program: saito_content_api::EntryHandle, color: &str) -> bool {
+        self.kit.rulesets().is_none_or(|r| r.legality.navicust_color_allowed(program, color, self.allow_ds()))
+    }
+
     /// Whether the build's ruleset allows definition `h` of the build's fact `fact` (a navi, a chip, a program, a
     /// soul, a Cross, a Cybeast, an auto battle place's chip): where it holds nothing of that fact back, or there is
     /// none, yes. What it doesn't allow is marked where it is offered, and refused where it would be added.

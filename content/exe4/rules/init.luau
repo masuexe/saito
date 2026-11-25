@@ -8,6 +8,8 @@ local auto_battle = require("@self/auto_battle")
 local dark_chips = require("@self/dark_chips")
 local folder = require("@self/folder")
 local fresh_stats = require("@self/fresh_stats")
+local legality = require("@self/legality")
+local legality_check = require("@exelib/legality")
 local light_dark = require("@self/light_dark")
 local patch_cards = require("@self/patch_cards")
 local navicust = require("@self/navicust")
@@ -316,6 +318,7 @@ local rules: Rules = {
             end
             save.build_check(side, problem)
             patch_cards.build_check(side, problem)
+            legality_check.build_check(legality, rules.setup_of(side), problem)
             return out
         end,
         -- What rules a folder a tool asks of breaks, and what they allow of one (./folder).

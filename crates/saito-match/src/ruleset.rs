@@ -327,6 +327,9 @@ pub struct Ruleset {
     banned_by: BTreeMap<String, KeyedBans>,
     /// Optional numeric limit overrides (`S-086`).
     pub limits: Limits,
+    /// Whether DS-only content (EXE5 Double Team DS chips/colors/programs/party) is allowed.
+    /// Defaults to `false` (GBA).
+    pub allow_ds: bool,
 }
 
 /// What a ruleset holds back of a category per record's key
@@ -351,6 +354,8 @@ pub struct Rulesets {
     /// The rulesets ready-made, in order: the first is a player's until
     /// they pick another.
     pub presets: Vec<Ruleset>,
+    /// Build legality data (`rules/legality`: unobtainable and DS-only entries).
+    pub legality: crate::legality::Legality,
 }
 
 /// A list's items (none of another kind of value).
@@ -538,13 +543,17 @@ fn named_by(content: &Content, side: &Side, fact: &str, field: Option<&str>, reg
 impl Ruleset {
     /// A ruleset that allows everything, named `name`, versions mixed.
     pub fn open(name: Name) -> Ruleset {
-        Ruleset { name, one_per_build: false, banned: BTreeMap::new(), banned_by: BTreeMap::new(), limits: Limits::default() }
+        Ruleset { name, one_per_build: false, banned: BTreeMap::new(), banned_by: BTreeMap::new(), limits: Limits::default(), allow_ds: false }
     }
 
     /// Whether it allows what `other` does: the same Versions, items held back,
-    /// and custom numeric limits, whatever either is named.
+    /// custom numeric limits, and DS allowance, whatever either is named.
     pub fn same_rules(&self, other: &Ruleset) -> bool {
-        self.one_per_build == other.one_per_build && self.banned == other.banned && self.banned_by == other.banned_by && self.limits == other.limits
+        self.one_per_build == other.one_per_build
+            && self.banned == other.banned
+            && self.banned_by == other.banned_by
+            && self.limits == other.limits
+            && self.allow_ds == other.allow_ds
     }
 
     /// Whether it allows item `item` of category `fact`.
@@ -718,6 +727,63 @@ impl Ruleset {
                 let listed: Vec<String> = items.iter().map(|(r, h)| shown(content, *r, h)).collect();
                 let text = format!("mixes the versions {} ({})", groups.join(" and "), listed.join(", "));
                 out.push(Problem { side: Some(0), field: None, entry: None, what: Wrong::Mixed { groups, items }, text });
+            }
+        }
+        if !self.allow_ds && rulesets.legality.has_ds_only() {
+            let ds = &rulesets.legality.ds_only;
+            let folder = side.folder(content);
+            for (i, slot) in folder.chips.iter().enumerate() {
+                if let Some(fc) = slot
+                    && ds.has_chip_code(fc.id, fc.code)
+                {
+                    let name = ids::shown(content, Registry::Chip, fc.id.0);
+                    out.push(Problem {
+                        side: Some(0),
+                        field: Some("folder".to_string()),
+                        entry: Some(i),
+                        what: Wrong::DsOnly,
+                        text: format!("{name} {} is only available in 5DS", fc.code.letter()),
+                    });
+                }
+            }
+            if let Some(Stated::List(parts)) = side.facts.get(content, "navicust_programs") {
+                for (i, record) in parts.iter().enumerate() {
+                    let Stated::Record(fields) = record else { continue };
+                    let get = |n: &str| fields.iter().find(|(k, _)| k == n).map(|(_, v)| v);
+                    let Some(Stated::Def(Registry::Entry, Some(h))) = get("program") else { continue };
+                    let entry = saito_content_api::EntryHandle(*h);
+                    let color = match get("color") {
+                        Some(Stated::Variant(Some(c))) => c.as_str(),
+                        _ => "",
+                    };
+                    if ds.has_navicust_color(entry, color) {
+                        let name = ids::shown(content, Registry::Entry, *h);
+                        out.push(Problem {
+                            side: Some(0),
+                            field: Some("navicust_programs".to_string()),
+                            entry: Some(i),
+                            what: Wrong::DsOnly,
+                            text: format!("{name} ({color}) is only available in 5DS"),
+                        });
+                    }
+                }
+            }
+            for fact in &ds.facts {
+                let already = out.iter().any(|p| p.field.as_deref() == Some(fact.as_str()));
+                if already {
+                    continue;
+                }
+                if let Some(Stated::List(items)) = side.facts.get(content, fact)
+                    && !items.is_empty()
+                {
+                    out.push(Problem {
+                        side: Some(0),
+                        field: Some(fact.clone()),
+                        entry: None,
+                        what: Wrong::DsOnly,
+                        text: format!("{fact} is only available in 5DS"),
+                    });
+                }
             }
         }
         out
@@ -928,7 +994,8 @@ impl Rulesets {
             categories.push(Category { fact: fact.clone(), registry, of, items, by, within });
         }
         let groups = groups(content, game, &builds);
-        let mut out = Rulesets { game: game.to_string(), categories, groups, presets: Vec::new() };
+        let legality = crate::legality::Legality::of(content, game);
+        let mut out = Rulesets { game: game.to_string(), categories, groups, presets: Vec::new(), legality };
         for p in items(data.field("presets")) {
             let Data::Str(id) = p.field("id") else { return Err(format!("{module}: a preset has its `id`")) };
             let mut ruleset = Ruleset::open(Name::Preset(id.clone()));
@@ -937,6 +1004,9 @@ impl Rulesets {
                 Data::Str(v) if v == "mixed" => false,
                 _ => return Err(format!("{module}: preset {id}: its `versions` is \"one_per_build\" or \"mixed\"")),
             };
+            if p.field("ds") == &Data::Bool(true) {
+                ruleset.allow_ds = true;
+            }
             if let Data::Map(only) = p.field("only") {
                 for (fact, allowed) in only {
                     let DataKey::Str(fact) = fact else { continue };
@@ -1417,7 +1487,8 @@ mod tests {
         assert!(!checked.ready() && checked.problems.iter().any(|p| p.field.as_deref() == Some("party") && p.at(1)), "{:?}", checked.problems);
         let names = ruleset.banned_names(&content);
         assert_eq!(names, [("party.programs".to_string(), vec!["p-spport".to_string()])]);
-        let back = Ruleset::of_names(&r, &content, ruleset.name.clone(), ruleset.one_per_build, &names, &[]).unwrap();
+        let mut back = Ruleset::of_names(&r, &content, ruleset.name.clone(), ruleset.one_per_build, &names, &[]).unwrap();
+        back.allow_ds = ruleset.allow_ds;
         assert!(back.same_rules(&ruleset));
     }
 
@@ -1475,7 +1546,9 @@ mod tests {
         // By name, and back.
         let (names, by) = (ruleset.banned_names(&content), ruleset.banned_by_names(&content));
         assert_eq!(by, [("party.programs".to_string(), vec![("meddy".to_string(), vec!["p-spport".to_string()]), ("protoman".to_string(), vec!["p-btlpk2".to_string()])])]);
-        assert_eq!(Ruleset::of_names(&r, &content, ruleset.name.clone(), false, &names, &by).unwrap(), ruleset);
+        let mut back_by = Ruleset::of_names(&r, &content, ruleset.name.clone(), false, &names, &by).unwrap();
+        back_by.allow_ds = ruleset.allow_ds;
+        assert_eq!(back_by, ruleset);
         // What the categories can't hold: MegaMan in the party, as a key, a program's ban by a field it isn't kept by.
         assert!(Ruleset::of_names(&r, &content, ruleset.name.clone(), false, &[("party".into(), vec!["megaman".into()])], &[]).is_err());
         let megaman = [("party.programs".to_string(), vec![("megaman".to_string(), vec!["p-spport".to_string()])])];

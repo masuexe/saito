@@ -709,3 +709,9 @@ msgstr "配置済み"
 
 msgid "Illegal ABD data: {} is required in Standard unless all Standard slots are full"
 msgstr "不正ABDデータ：スタンダード枠が埋まっていない場合は{}が必須です"
+
+msgid "Illegal data (unobtainable in normal play)"
+msgstr "不正データ（通常プレイで入手不可）"
+
+msgid "5DS-only content (not allowed in GBA rules)"
+msgstr "5DS限定データ（GBAルールでは使用不可）"

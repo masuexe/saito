@@ -61,6 +61,8 @@ struct RulesetFile {
     restrictions_by: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     #[serde(default, skip_serializing_if = "saito_match::ruleset::Limits::is_empty")]
     limits: saito_match::ruleset::Limits,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    allow_ds: bool,
 }
 
 /// Check that the parsed file identifies saito's ruleset format and schema.
@@ -122,6 +124,7 @@ pub fn read(rulesets: &Rulesets, content: &Content, text: &str) -> Result<Rulese
     let banned_by: Vec<(String, Vec<(String, Vec<String>)>)> = f.restrictions_by.into_iter().map(|(fact, keys)| (fact, keys.into_iter().collect())).collect();
     let mut ruleset = Ruleset::of_names(rulesets, content, Name::Own(f.title), one_per_build, &banned, &banned_by)?;
     ruleset.limits = f.limits;
+    ruleset.allow_ds = f.allow_ds;
     Ok(ruleset)
 }
 
@@ -141,6 +144,7 @@ pub fn text(content: &Content, game: &str, ruleset: &Ruleset) -> String {
         restrictions: ruleset.banned_names(content).into_iter().collect(),
         restrictions_by: ruleset.banned_by_names(content).into_iter().map(|(fact, keys)| (fact, keys.into_iter().collect())).collect(),
         limits: ruleset.limits.clone(),
+        allow_ds: ruleset.allow_ds,
     };
     serde_json::to_string_pretty(&f).expect("a ruleset serializes") + "\n"
 }

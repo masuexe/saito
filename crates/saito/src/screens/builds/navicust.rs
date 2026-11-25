@@ -314,13 +314,29 @@ impl Navicust {
         (y - self.first) * self.columns + (x - self.first)
     }
 
-    /// The game's programs in its library's order, each once.
+    /// Indices into `d.colors[piece]` that are legally pickable under the build's ruleset.
+    fn legal_colors(&self, draft: &Draft, piece: u16) -> Vec<u8> {
+        let Some(Some(d)) = &self.data else { return Vec::new() };
+        d.colors
+            .get(&piece)
+            .map(|colors| {
+                colors
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| draft.navicust_color_allowed(EntryHandle(piece), c))
+                    .map(|(i, _)| i as u8)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The game's programs in its library's order, each once (hiding programs with no legally pickable colors).
     fn list(&mut self, draft: &Draft) {
         let Some(d) = self.grid(draft).cloned() else { return self.programs.clear() };
         let content = draft.content();
         let mut programs: Vec<((), EntryHandle)> = content.defs.entries_of(&d.collection).into_iter().map(|h| ((), h)).collect();
         draft.kit.order.entries(content, &d.collection, &mut programs);
-        self.programs = programs.iter().map(|&(_, h)| h.0).collect();
+        self.programs = programs.iter().map(|&(_, h)| h.0).filter(|&p| !self.legal_colors(draft, p).is_empty()).collect();
     }
 
     /// The list's rows: the programs whose names, as the window says them, hold the search (any case), all of them
@@ -332,15 +348,23 @@ impl Navicust {
         });
     }
 
-    /// The color chosen for `piece` (its place among its colors): the one chosen on its row, else that of the copy
-    /// the build has placed first, else its first.
+    /// The color chosen for `piece` (its place among `d.colors[piece]`): the one chosen on its row if still legal,
+    /// else that of the copy the build has placed first if legal, else its first legal color.
     fn color(&self, draft: &Draft, piece: u16) -> u8 {
-        if let Some(&c) = self.chosen.get(&piece) {
+        let legal = self.legal_colors(draft, piece);
+        if let Some(&c) = self.chosen.get(&piece)
+            && (legal.is_empty() || legal.contains(&c))
+        {
             return c;
         }
         let Some(Some(d)) = &self.data else { return 0 };
         let placed = grid::placed(draft.content(), draft.side()).into_iter().find(|p| p.piece == piece).and_then(|p| p.color);
-        placed.and_then(|name| d.colors.get(&piece)?.iter().position(|c| *c == name)).unwrap_or(0) as u8
+        if let Some(idx) = placed.and_then(|name| d.colors.get(&piece)?.iter().position(|c| *c == name)).map(|i| i as u8)
+            && (legal.is_empty() || legal.contains(&idx))
+        {
+            return idx;
+        }
+        legal.first().copied().unwrap_or(0)
     }
 
     /// Row `row`'s program in its color chosen.
@@ -348,21 +372,17 @@ impl Navicust {
         self.rows.get(row).map(|&piece| (piece, self.color(draft, piece)))
     }
 
-    /// How many colors `piece` comes in.
-    fn colors(&self, piece: u16) -> usize {
-        match &self.data {
-            Some(Some(d)) => d.colors.get(&piece).map_or(1, Vec::len).max(1),
-            _ => 1,
-        }
+    /// How many legally pickable colors `piece` comes in.
+    fn colors(&self, draft: &Draft, piece: u16) -> usize {
+        self.legal_colors(draft, piece).len().max(1)
     }
 
-    /// Choose color `color` for row `row`'s program: its row and the strip show it, and the next copy taken is of it.
+    /// Choose legal swatch `color` for row `row`'s program: its row and the strip show it, and the next copy taken is of it.
     fn choose_color(&mut self, shell: &mut Shell, draft: &Draft, row: usize, color: usize) {
         let Some(&piece) = self.rows.get(row) else { return };
-        if color >= self.colors(piece) {
-            return;
-        }
-        self.chosen.insert(piece, color as u8);
+        let legal = self.legal_colors(draft, piece);
+        let Some(&real) = legal.get(color) else { return };
+        self.chosen.insert(piece, real);
         self.show_list(shell, draft);
         self.show_strip(shell, draft);
     }
@@ -506,10 +526,16 @@ impl Navicust {
                 .iter()
                 .map(|&piece| {
                     let color = self.color(draft, piece);
+                    let legal = self.legal_colors(draft, piece);
                     let name = d.colors.get(&piece).and_then(|c| c.get(color as usize)).cloned();
                     // (The ruleset holds a program back whole: each of its colors' parts with it.)
                     let allowed = draft.allows(grid::PIECES_FIELD, piece);
-                    let colors: Vec<ProgramColor> = d.colors.get(&piece).into_iter().flatten().map(|c| ProgramColor { tone: tone(Some(c)) }).collect();
+                    let colors: Vec<ProgramColor> = legal
+                        .iter()
+                        .filter_map(|&idx| d.colors.get(&piece)?.get(idx as usize))
+                        .map(|c| ProgramColor { tone: tone(Some(c)) })
+                        .collect();
+                    let swatch = legal.iter().position(|&idx| idx == color).unwrap_or(0) as i32;
                     let copies: Vec<&grid::Placed> = parts.iter().filter(|p| p.piece == piece && p.color == name).collect();
                     // (The build's problems are about a placed copy of it: the game's rules', or the ruleset holds it back.)
                     let flagged = !Navicust::problems(draft, piece).is_empty();
@@ -532,7 +558,7 @@ impl Navicust {
                         state,
                         copies: copies.len() as i32,
                         colors: ModelRc::new(VecModel::from(colors)),
-                        color: color as i32,
+                        color: swatch,
                         flagged,
                     }
                 })
@@ -541,7 +567,7 @@ impl Navicust {
         view.set_programs(ModelRc::new(VecModel::from(rows)));
         view.set_problems(draft.pane_line(shell, &self.fields(draft.content()), false).into());
         // (The rows' colors' column is as wide as the most of them, so their states line up.)
-        view.set_most_colors(self.rows.iter().map(|&piece| self.colors(piece)).max().unwrap_or(1) as i32);
+        view.set_most_colors(self.rows.iter().map(|&piece| self.colors(draft, piece)).max().unwrap_or(1) as i32);
     }
 
     /// What the NaviCust does and the bugs it brings (`own_overview`: each number it changes, the rules' own stats
@@ -965,27 +991,34 @@ impl Navicust {
         let ui = shell.ui();
         let view = ui.global::<NavicustView>();
         view.set_on_piece(on_piece);
-        view.set_on_colors(self.held.is_none() && self.focused_row(shell).and_then(|r| self.rows.get(r)).is_some_and(|&p| self.colors(p) > 1));
+        view.set_on_colors(self.held.is_none() && self.focused_row(shell).and_then(|r| self.rows.get(r)).is_some_and(|&p| self.colors(draft, p) > 1));
         let fault = program.map(|(piece, _)| draft.line(shell, Navicust::problems(draft, piece).into_iter().chain(self.unplaced(draft)))).unwrap_or_default();
         view.set_fault(fault.into());
         let Some((Some(d), (piece, color))) = self.data.as_ref().zip(program) else { return view.set_detail(ProgramDetail::default()) };
+        let legal = self.legal_colors(draft, piece);
         let detail = draft.with_words(shell, |words| {
-            let colors = d.colors.get(&piece).cloned().unwrap_or_default();
+            let all_colors = d.colors.get(&piece).cloned().unwrap_or_default();
+            let (shown_colors, shown_idx): (Vec<String>, i32) = if let Some(pos) = legal.iter().position(|&idx| idx == color) {
+                (legal.iter().filter_map(|&idx| all_colors.get(idx as usize).cloned()).collect(), pos as i32)
+            } else {
+                // Already-placed illegal color on the board: show its own color so the strip still describes it.
+                (all_colors.get(color as usize).cloned().into_iter().collect(), 0)
+            };
             let (shape, columns) = boxed(&d.shape(piece, false, 0));
             // (A program of one shape alone has no compressed shape: "there's only one form of it".)
             let (compressed, compressed_columns) = if d.compresses(piece) { boxed(&d.shape(piece, true, 0)) } else { (Vec::new(), 0) };
             ProgramDetail {
                 there: true,
                 name: words.names.entry(EntryHandle(piece)).into(),
-                tone: tone(colors.get(color as usize).map(String::as_str)),
+                tone: tone(all_colors.get(color as usize).map(String::as_str)),
                 plus: d.plus.contains(&piece),
                 description: words.names.description(EntryHandle(piece)).map(|t| crate::games::one_line(&t)).unwrap_or_default().into(),
                 shape: ModelRc::new(VecModel::from(shape)),
                 columns,
                 compressed: ModelRc::new(VecModel::from(compressed)),
                 compressed_columns,
-                colors: ModelRc::new(VecModel::from(colors.iter().map(|c| tone(Some(c))).collect::<Vec<_>>())),
-                color: color as i32,
+                colors: ModelRc::new(VecModel::from(shown_colors.iter().map(|c| tone(Some(c))).collect::<Vec<_>>())),
+                color: shown_idx,
             }
         });
         view.set_detail(detail);
@@ -1016,9 +1049,7 @@ impl Tab for Navicust {
             self.close_sheet(shell);
         }
         self.grid(draft);
-        if self.programs.is_empty() {
-            self.list(draft);
-        }
+        self.list(draft);
         self.search_list(shell, draft);
         shell.ui().global::<NavicustView>().set_search(self.search.as_str().into());
         self.changed(shell, draft);
@@ -1078,12 +1109,15 @@ impl Tab for Navicust {
     fn route(&mut self, shell: &mut Shell, draft: &mut Draft, action: Action) -> bool {
         let (Some(row), None) = (self.focused_row(shell), &self.held) else { return false };
         let Some(&piece) = self.rows.get(row) else { return false };
+        let legal = self.legal_colors(draft, piece);
+        let cur = self.color(draft, piece);
+        let pos = legal.iter().position(|&c| c == cur).unwrap_or(0);
         let to = match action {
-            Action::Left => (self.color(draft, piece) as usize).checked_sub(1),
-            Action::Right => Some(self.color(draft, piece) as usize + 1),
+            Action::Left => pos.checked_sub(1),
+            Action::Right => Some(pos + 1),
             _ => None,
         };
-        let Some(to) = to.filter(|&c| c < self.colors(piece)) else { return false };
+        let Some(to) = to.filter(|&c| c < legal.len()) else { return false };
         self.choose_color(shell, draft, row, to);
         true
     }

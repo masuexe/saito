@@ -401,6 +401,7 @@ pub fn random_folder_of(content: &Content, pool: &[ChipHandle], b: &mut Battle, 
 /// that work together), the rest drawn.
 pub fn random_folder_from(content: &Content, pool: &[ChipHandle], start: &[FolderChip], b: &mut Battle, side: u8, picks: &mut Picks) -> SavedFolder {
     assert!(!pool.is_empty(), "the rules let a folder hold no chip");
+    let legality = crate::legality::Legality::of(&b.content, b.content.game());
     let favored = [ChipCode(picks.below(26) as u8), ChipCode(picks.below(26) as u8)];
     let mut chips: Vec<FolderChip> = Vec::with_capacity(FOLDER_SIZE);
     chips.extend_from_slice(&start[..start.len().min(FOLDER_SIZE)]);
@@ -410,15 +411,19 @@ pub fn random_folder_from(content: &Content, pool: &[ChipHandle], start: &[Folde
         assert!(tries < 100_000, "no folder the rules accept in the content's chips");
         let id = pool[picks.below(pool.len())];
         let d = content.chip(id);
-        chips.push(FolderChip::new(id, d.codes[0]));
+        let allowed_codes: Vec<ChipCode> = d.codes.iter().copied().filter(|&c| legality.chip_code_allowed(id, c, false)).collect();
+        if allowed_codes.is_empty() {
+            continue;
+        }
+        chips.push(FolderChip::new(id, allowed_codes[0]));
         let kept = b.check_folder(side, &chips, None, None, false).is_empty();
         chips.pop();
         if !kept {
             continue;
         }
         let liked: Vec<ChipCode> =
-            d.codes.iter().copied().filter(|c| *c == ChipCode::ASTERISK || favored.contains(c)).collect();
-        let codes = if liked.is_empty() { &d.codes } else { &liked };
+            allowed_codes.iter().copied().filter(|c| *c == ChipCode::ASTERISK || favored.contains(c)).collect();
+        let codes = if liked.is_empty() { &allowed_codes } else { &liked };
         let code = codes[picks.below(codes.len())];
         chips.push(FolderChip::new(id, code));
     }
