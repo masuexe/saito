@@ -66,7 +66,7 @@ pub struct HdChipArtIndex {
 
 /// Pre-extracted EXE6 Legacy Collection HD Cross-selection bars (288×64 RGBA8 each) for one
 /// `(version, lang)` sheet (`exe6/data/ui/cross_*.pak` or `exe6f/data/ui/cross_*.pak`).
-/// Indexed as `state * 5 + number` where `state` is `0` = selected, `1` = marked/used, `2` = unselected.
+/// Indexed as `state * 5 + number` where `state` is `0` = selected (color), `1` = unselected (grey), `2` = marked/used (cyan).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HdCrossSheet {
     pub bars: std::sync::Arc<[Vec<u8>; 15]>,

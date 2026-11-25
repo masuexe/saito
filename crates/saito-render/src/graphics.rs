@@ -380,8 +380,8 @@ impl<'a> Graphics<'a> {
     }
 
     /// An EXE6 Legacy Collection HD Cross-selection bar (`288×64` RGBA8) for `version` (`"gregar"`
-    /// or `"falzar"`), Cross `number` (`0..5`), and `state` (`0` = selected, `1` = marked/used,
-    /// `2` = unselected) in the bundle's active language; `None` if unavailable.
+    /// or `"falzar"`), Cross `number` (`0..5`), and `state` (`0` = selected/color, `1` = unselected/grey,
+    /// `2` = marked/cyan) in the bundle's active language; `None` if unavailable.
     pub fn hd_cross_bar(&self, version: &str, number: usize, state: usize) -> Option<Arc<crate::pictures::Image>> {
         let cross = self.bundle.custom.hd_cross_art.as_ref()?;
         if number >= 5 || state >= 3 {

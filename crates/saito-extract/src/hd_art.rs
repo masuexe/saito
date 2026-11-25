@@ -32,7 +32,7 @@ const CROSS_LANGS: [(&str, &str); 3] = [
 ];
 
 /// Parse an EXE6 Legacy Collection `cross_*.pak` (640×640 BGRA8 at offset `0x20010`) into 15
-/// `288×64` RGBA8 bars (`state * 5 + number`: 0 = selected, 1 = marked/used, 2 = unselected).
+/// `288×64` RGBA8 bars (`state * 5 + number`: 0 = selected (color), 1 = unselected (grey), 2 = marked/used (cyan)).
 pub fn parse_cross_pak(pak: &[u8]) -> Option<HdCrossSheet> {
     if pak.len() < CROSS_PAK_MIN_LEN {
         return None;

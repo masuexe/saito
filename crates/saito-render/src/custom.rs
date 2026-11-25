@@ -1676,9 +1676,9 @@ impl Window {
             self.tiles.put_part(at, &own.form_names, FORM_NAME_TILES * name, FORM_NAME_TILES);
             if let Some(form) = w.forms[slot] {
                 let state = if slot != cursor {
-                    2
-                } else if w.marked[slot] {
                     1
+                } else if w.marked[slot] {
+                    2
                 } else {
                     0
                 };
