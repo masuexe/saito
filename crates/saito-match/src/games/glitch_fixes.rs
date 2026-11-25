@@ -25,13 +25,13 @@ fn start_fight(content: &Arc<Content>, game: &str) -> saito_battle::Battle {
 
 /// Advance until no dimming is active (at least one tick).
 fn wait_undimmed(b: &mut saito_battle::Battle) {
-    for _ in 0..300 {
+    for _ in 0..600 {
         b.tick(&Default::default(), Default::default());
         if !b.is_dimmed() && b.dimming.iter().all(|d| d.state == DimmingState::Idle) {
             break;
         }
     }
-    assert!(!b.is_dimmed(), "dimming did not finish in 300 ticks");
+    assert!(!b.is_dimmed(), "dimming did not finish in 600 ticks");
 }
 
 /// Put a single chip into `side`'s hand at cursor 0 with explicit base damage and Atk+ bonus.
@@ -383,4 +383,113 @@ fn exe6_trap_damage_override_uses_triggered_snapshot() {
         }
     }
     assert_eq!(counter_dmg, Some(100), "triggered AntiDmg counter must keep 100 damage after linked[1] cleared");
+}
+
+/// EXE4: ColdMan's punched IceCube sliding across its own caster's panel must pass through
+/// harmlessly (no friendly fire) and still damage the opponent.
+#[test]
+fn exe4_coldman_ice_cube_does_not_hit_caster() {
+    let content = exe4_content();
+    let mut m = crate::pick::live(&content, "exe4", 1, None).unwrap();
+    let megaman = crate::ids::navi(&content, "exe4", "megaman").unwrap();
+    for s in &mut m.sides {
+        s.set_fact(&content, "navi", &[Fact::Value(Value::Def(Registry::Navi, megaman.0))]).unwrap();
+        s.set_fact(&content, "karma", &number(500)).unwrap();
+    }
+    let mut setup = m.round(&content, 0x1234);
+    setup.custom_screen_limit = Some(1);
+    let mut b = saito_battle::Battle::new(setup, content.clone());
+    fight(&mut b);
+    for side in 0..2 {
+        b.stats[side].support = None;
+        b.stats[side].bugs = Default::default();
+    }
+
+    let p0 = b.player(0).unwrap();
+    let p1 = b.player(1).unwrap();
+    let normal = content.rules().panels.named("normal").unwrap();
+    for x in 1..=6 {
+        b.set_panel_type(x, 2, normal);
+    }
+    // Put P0 at (1, 2) to place RockCube at (2, 2), then move P0 ahead to (3, 2) and P1 to (5, 2).
+    let set_pos = |b: &mut saito_battle::Battle, p: saito_battle::object::ObjectRef, x: u8, y: u8| {
+        b.objects.get_mut(p).panel = saito_battle::object::PanelPos { x, y };
+        let (cx, cy) = saito_battle::kinds::player::panel_coordinates(x, y);
+        b.objects.get_mut(p).pos = saito_battle::object::Vec3 { x: cx, y: cy, z: 0 };
+        if let Some(c) = b.objects.get(p).collision {
+            b.collision.get_mut(c).panel = saito_battle::object::PanelPos { x, y };
+            b.collision.get_mut(c).barrier = 0;
+        }
+    };
+    set_pos(&mut b, p0, 1, 2);
+    set_pos(&mut b, p1, 5, 2);
+
+    let rockcube = crate::ids::chip(&content, "exe4", "rockcube").unwrap();
+    let coldman = crate::ids::chip(&content, "exe4", "coldman").unwrap();
+    give_chip(&mut b, 0, rockcube, 0, 0);
+    b.tick(&[PlayerTick { held: keys::A, ..Default::default() }, Default::default()], Default::default());
+    wait_undimmed(&mut b);
+
+    // Move P0 to (3, 2), right in front of the RockCube at (2, 2), leaving (1, 2) open for ColdMan.
+    set_pos(&mut b, p0, 3, 2);
+    let p0_hp_before = b.objects.get(p0).hp;
+    let p1_hp_before = b.objects.get(p1).hp;
+
+    give_chip(&mut b, 0, coldman, 100, 0);
+    b.tick(&[PlayerTick { held: keys::A, ..Default::default() }, Default::default()], Default::default());
+    wait_undimmed(&mut b);
+    // Let any post-dimming ticks settle damage if needed.
+    for _ in 0..20 {
+        b.tick(&Default::default(), Default::default());
+    }
+
+    assert_eq!(b.objects.get(p0).hp, p0_hp_before, "ColdMan IceCube must not deal friendly-fire damage to caster");
+    assert!(
+        b.objects.get(p1).hp < p1_hp_before,
+        "ColdMan IceCube should pass past caster and hit opponent (p1 hp: {} -> {}, p1 panel: {:?})",
+        p1_hp_before,
+        b.objects.get(p1).hp,
+        b.objects.get(p1).panel,
+    );
+}
+
+/// EXE4: DeltaRay has the `navi` flag so it can be boosted by Navi+20 and turned by AntiNavi.
+#[test]
+fn exe4_deltaray_has_navi_flag_and_triggers_anti_navi() {
+    let content = exe4_content();
+    let deltaray = crate::ids::chip(&content, "exe4", "deltaray").unwrap();
+    assert!(
+        content.chip(deltaray).flags.has(saito_battle::content::ChipFlags::NAVI),
+        "EXE4 DeltaRay must carry ChipFlags::NAVI (boostable by Navi+20)"
+    );
+
+    let mut m = crate::pick::live(&content, "exe4", 1, None).unwrap();
+    let megaman = crate::ids::navi(&content, "exe4", "megaman").unwrap();
+    for s in &mut m.sides {
+        s.set_fact(&content, "navi", &[Fact::Value(Value::Def(Registry::Navi, megaman.0))]).unwrap();
+        s.set_fact(&content, "karma", &number(500)).unwrap();
+    }
+    let mut setup = m.round(&content, 0x1234);
+    setup.custom_screen_limit = Some(1);
+    let mut b = saito_battle::Battle::new(setup, content.clone());
+    fight(&mut b);
+    for side in 0..2 {
+        b.stats[side].support = None;
+        b.stats[side].bugs = Default::default();
+    }
+
+    let antinavi = crate::ids::chip(&content, "exe4", "antinavi").unwrap();
+    give_chip(&mut b, 1, antinavi, 0, 0);
+    b.tick(&[Default::default(), PlayerTick { held: keys::A, ..Default::default() }], Default::default());
+    wait_undimmed(&mut b);
+    assert_eq!(b.linked[1].chip, Some(antinavi));
+
+    let p0 = b.player(0).unwrap();
+    let p0_hp_before = b.objects.get(p0).hp;
+    give_chip(&mut b, 0, deltaray, 260, 0);
+    b.tick(&[PlayerTick { held: keys::A, ..Default::default() }, Default::default()], Default::default());
+    wait_undimmed(&mut b);
+
+    assert!(b.linked[1].chip.is_none(), "AntiNavi should have sprung and turned DeltaRay");
+    assert!(b.objects.get(p0).hp < p0_hp_before, "Turned DeltaRay should strike its original caster");
 }

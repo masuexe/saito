@@ -32,6 +32,8 @@ return common.make {
     spark = sparks.aqua,
     is = collision.neutral_body,
     hits = collision.everything,
+    slide_is = collision.collision_3b,
+    slide_hits = collision.hits_navis,
     pushes = 0xFC,
     debris = rock_lib.debris,
     effects = { burst = rock_lib.effects.dust, puff = rock_lib.effects.puff },

@@ -22,6 +22,10 @@ export type Look = {
     spark: Spark,
     is: CollisionType,
     hits: CollisionType,
+    -- Optional collision types switched to once pushed/sliding (EXE4 uses these
+    -- so ColdMan's sliding IceCube passes harmlessly through its own caster).
+    slide_is: CollisionType?,
+    slide_hits: CollisionType?,
     -- Its final hit modifier's bits that push it.
     pushes: number,
     -- The debris its burst throws up (palette 1), the effect it leaves (16 pixels up), and the puff it goes in off
@@ -82,6 +86,9 @@ function ice_cube.make(look: Look): IceCube
             s.look = FORMED
         end
         if bit32.btest(me.collision.hit_mod_final, look.pushes) then
+            if look.slide_is and look.slide_hits then
+                me:setup_collision(look.slide_is, look.slide_hits, HIT_MOD)
+            end
             me:set_action(4)
         end
     end
