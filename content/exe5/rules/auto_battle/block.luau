@@ -89,6 +89,12 @@ function block.turn(side: number)
     state.auto_battle_places = places.turn(state.auto_battle_places)
 end
 
+-- Remove every occurrence of `chip` from side `side`'s runtime sent list for the remainder of the round.
+function block.remove_chip(side: number, chip: Chip)
+    local state = rules.state_of(side)
+    state.auto_battle_places = places.remove_chip(state.auto_battle_places, chip)
+end
+
 -- Record `r` (from 1) of side `side`'s data: past the setup's, one nothing has written (0xFF throughout).
 local function record(side: number, r: number): Record?
     local records = rules.setup_of(side).auto_battle_records

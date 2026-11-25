@@ -306,6 +306,9 @@ export global ReplaysView {
         }
         return @tr("ABD: Original");
     }
+    pure public function abd-cap-word(cap: int) -> string {
+        return @tr("ABD Cap: {}", cap);
+    }
     pure public function cs-prob-word(count: int, total: int) -> string {
         if count == 0 {
             return @tr("CS Fix: Original");

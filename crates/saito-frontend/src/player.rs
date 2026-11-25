@@ -285,6 +285,25 @@ impl Player {
         out.append(&mut self.session.spectate_round_starts);
     }
 
+    /// Drain settled per-round ABD Mega/Giga/Dark/PA chip usage summaries.
+    pub fn take_abd_rounds(&mut self) -> Vec<crate::driver::RoundAbdUsage> {
+        std::mem::take(&mut self.session.abd_rounds)
+    }
+
+    /// Snapshot the active unfinished round's ABD usage (if any tracked chip was used),
+    /// clearing it so subsequent calls do not double-record (used when leaving Practice early).
+    pub fn flush_current_abd_round(&mut self) -> Option<crate::driver::RoundAbdUsage> {
+        if self.session.finished {
+            return None;
+        }
+        let abd = crate::driver::RoundAbdUsage::from_battle(&self.session.battle);
+        if !abd.has_any() {
+            return None;
+        }
+        self.session.battle.abd_chip_uses = [Vec::new(), Vec::new()];
+        Some(abd)
+    }
+
     /// Why the recording stopped being written, if it has (a full disk).
     pub fn recording_failed(&self) -> Option<&str> {
         self.session.recorder.as_ref().and_then(|r| r.failed())

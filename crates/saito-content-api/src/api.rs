@@ -1776,6 +1776,8 @@ pub trait CoreApi {
     fn set_side_stat(&mut self, side: u8, index: u8, n: u8);
     /// `sub_800AB3A`: a side's statistics counter.
     fn side_stat(&self, side: u8, index: u8) -> u8;
+    /// Round usage count of tracked ABD high-class/dark chip `chip` owned by `side`.
+    fn abd_chip_uses(&self, side: u8, chip: crate::ChipHandle) -> u16;
     /// The damage-carry record of the side that takes the damage
     /// (`dword_203CFB0`; CopyDmg's): what that side took this tick and
     /// last tick, the object that set it, and the target that also takes

@@ -738,8 +738,8 @@ msgstr "各版本黑暗之魂 AI（ABD）性能说明"
 msgid "Common Rules (All Versions)"
 msgstr "通用规则（各版本共通）"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full."
-msgstr "标准记忆芯片池最多容纳 16 种不同芯片，按 4×、4×、2×、2×、1×12 的权重分配（共 24 格），另加 MEGA 最多 5 格、GIGA 1 格、程序强化 1 格。\n部分芯片在原作正常流程中无法写入 ABD（EXE4 有 22 种，EXE5 有 82 种，编辑器内标黄提示）；EXE4 在标准栏位未填满时必须包含黑暗剑。"
+msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
+msgstr "标准记忆芯片池最多容纳 16 种不同芯片，按 4×、4×、2×、2×、1×12 的权重分配（共 24 格），另加 MEGA 最多 5 格、GIGA 1 格、程序强化 1 格。\n部分芯片在原作正常流程中无法写入 ABD（EXE4 有 22 种，EXE5 有 82 种，编辑器内标黄提示）；EXE4 在标准栏位未填满时必须包含黑暗剑。\n每局联机与练习模式中 ABD 使用 MEGA/GIGA/黑暗/PA 芯片的次数会自动记录（可在设置中导出为 LOG/CSV/JSONL）；房主也可开启单局 ABD 上限（默认 5 次，3 次对应 EXE5 官方大会规则），达到上限后该芯片本局内将不再由 ABD 使用。"
 
 msgid "Original (GBA)"
 msgstr "原版（GBA）"

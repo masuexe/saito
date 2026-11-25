@@ -459,6 +459,9 @@ pub struct Settings {
     pub random_battle: Option<saito_match::RandomRank>,
     /// Dark Soul AI (Auto Battle Data) rule mode for EXE4 / EXE5 (`Original`, `LegacyCollection`, or `DoubleTeamDs`).
     pub abd_mode: saito_match::AbdMode,
+    /// Per-round hard cap on repeated uses of the same Mega / Giga / Dark / PA chip by ABD
+    /// (`None` = unlimited, `Some(1..=15)` = max uses per round, default when enabled is 5).
+    pub abd_chip_cap: Option<u8>,
     /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6.
     pub cs_prob_fix: saito_match::CsProbFix,
     /// EXE4 Legacy Collection rule: disable the All Guard patch card effect.
@@ -490,6 +493,7 @@ impl Settings {
             custom_screen_time: Some(saito_match::DEFAULT_CUSTOM_SCREEN_TIME),
             random_battle: None,
             abd_mode: saito_match::AbdMode::Original,
+            abd_chip_cap: None,
             cs_prob_fix: saito_match::CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,
@@ -520,6 +524,7 @@ impl Settings {
             custom_screen_time: m.custom_screen_time,
             random_battle: m.random_battle,
             abd_mode: m.abd_mode,
+            abd_chip_cap: m.abd_chip_cap,
             cs_prob_fix: m.cs_prob_fix,
             all_guard_disabled: m.all_guard_disabled,
             dark_cut_in_fix: m.dark_cut_in_fix,
@@ -584,6 +589,11 @@ impl Settings {
         }
         if self.abd_mode != saito_match::AbdMode::Original {
             w.put(&(0x10 | self.abd_mode.as_u8()));
+        }
+        if let Some(cap) = self.abd_chip_cap
+            && saito_match::abd_mode::chip_cap_allowed(&self.game, Some(cap))
+        {
+            w.put(&(0x50 | (cap & 0x0F)));
         }
         if !self.cs_prob_fix.is_empty() {
             w.put(&0x20u8);
@@ -697,6 +707,7 @@ impl Settings {
         }
         let mut random_battle = None;
         let mut abd_mode = saito_match::AbdMode::Original;
+        let mut abd_chip_cap = None;
         let mut cs_prob_fix = saito_match::CsProbFix::NONE;
         let mut all_guard_disabled = false;
         let mut dark_cut_in_fix = false;
@@ -749,6 +760,12 @@ impl Settings {
                     return Err(format!("dark cut-in option is not supported for {game}"));
                 }
                 dark_cut_in_fix = true;
+            } else if v & 0xF0 == 0x50 {
+                let cap = v & 0x0F;
+                if !saito_match::abd_mode::chip_cap_allowed(&game, Some(cap)) {
+                    return Err(format!("abd chip cap ({cap}) is not supported for {game}"));
+                }
+                abd_chip_cap = Some(cap);
             } else if v == 0x42 {
                 if !rulesets.legality.has_ds_only() {
                     return Err(format!("5DS option is not supported for {game}"));
@@ -777,7 +794,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
     }
 
     /// The settings' hash, of their bytes.
@@ -1392,6 +1409,14 @@ impl Lobby {
             return false;
         }
         self.propose(Settings { abd_mode, ..self.mine.clone() })
+    }
+
+    /// Change the per-round ABD high-class/dark chip repeat hard cap, the host alone.
+    pub fn set_abd_chip_cap(&mut self, abd_chip_cap: Option<u8>) -> bool {
+        if !saito_match::abd_mode::chip_cap_allowed(&self.mine.game, abd_chip_cap) {
+            return false;
+        }
+        self.propose(Settings { abd_chip_cap, ..self.mine.clone() })
     }
 
     /// Change the per-effect ChargeShot Addition probability fix bitmask, the host alone.
@@ -3724,6 +3749,7 @@ mod tests {
         let side5 = builds5.new_build(&exe5, &builds5.groups[0].id).unwrap();
         let mut host_settings = base5.clone();
         host_settings.abd_mode = AbdMode::DoubleTeamDs;
+        host_settings.abd_chip_cap = Some(5);
         let mut lobbies = [
             Lobby::new(Role::Host, &exe5, rules5.clone(), host_settings, side5.clone(), 101, Duration::from_secs(10)),
             Lobby::new(Role::Join, &exe5, rules5.clone(), base5, side5, 202, Duration::from_secs(10)),
@@ -3731,13 +3757,17 @@ mod tests {
         assert!(lobbies[0].problems().is_empty(), "host build usable: {:?}", lobbies[0].problems());
         run(&mut lobbies, now, 4, &mut |_, _| {});
         assert_eq!(lobbies[1].settings().abd_mode, AbdMode::DoubleTeamDs, "joiner adopts host abd_mode");
+        assert_eq!(lobbies[1].settings().abd_chip_cap, Some(5), "joiner adopts host abd_chip_cap");
         assert!(!lobbies[1].set_abd_mode(AbdMode::Original), "joiner cannot change abd_mode");
+        assert!(!lobbies[1].set_abd_chip_cap(None), "joiner cannot change abd_chip_cap");
         assert!(lobbies[0].set_ready(true));
         assert!(lobbies[1].set_ready(true));
         run(&mut lobbies, now, 20, &mut |_, _| {});
         load(&mut lobbies, now);
         let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
         assert_eq!(agreed[0].m.abd_mode, AbdMode::DoubleTeamDs);
+        assert_eq!(agreed[0].m.abd_chip_cap, Some(5));
+        assert_eq!(agreed[1].m.abd_chip_cap, Some(5));
         assert_eq!(agreed[1].m.abd_mode, AbdMode::DoubleTeamDs);
         let start0 = agreed[0].set.start();
         let start1 = agreed[1].set.start();

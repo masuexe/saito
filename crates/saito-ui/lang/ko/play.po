@@ -509,3 +509,15 @@ msgstr "상대가 준비를 마쳤습니다."
 
 msgid "Shared Random Folder (30 chips)"
 msgstr "공유 랜덤 폴더 (30장)"
+
+msgid "{} (Official)"
+msgstr "{}회 (공식 대회)"
+
+msgid "{} (Default)"
+msgstr "{}회 (기본값)"
+
+msgid "ABD Cap: {}"
+msgstr "ABD 상한: {}회"
+
+msgid "ABD Cap: Off"
+msgstr "ABD 상한: 끔"

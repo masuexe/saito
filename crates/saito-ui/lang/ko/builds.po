@@ -721,8 +721,8 @@ msgstr "버전별 다크 소울 AI(ABD) 사양 가이드"
 msgid "Common Rules (All Versions)"
 msgstr "공통 규칙 (전 버전)"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full."
-msgstr "스탠다드 풀은 최대 16종 칩을 4×, 4×, 2×, 2×, 1×12 가중치(총 24칸)로 배치하며, 메가 최대 5칸·기가 1칸·PA 1칸을 가집니다.\n일반 플레이로 ABD에 기록할 수 없는 칩(EXE4 22종, EXE5 82종)은 노란색 경고로 표시됩니다. EXE4는 스탠다드 16칸이 모두 채워지지 않은 경우 다크소드가 필수입니다."
+msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
+msgstr "스탠다드 풀은 최대 16종 칩을 4×, 4×, 2×, 2×, 1×12 가중치(총 24칸)로 배치하며, 메가 최대 5칸·기가 1칸·PA 1칸을 가집니다.\n일반 플레이로 ABD에 기록할 수 없는 칩(EXE4 22종, EXE5 82종)은 노란색 경고로 표시됩니다. EXE4는 스탠다드 16칸이 모두 채워지지 않은 경우 다크소드가 필수입니다.\n라운드별 ABD 메가/기가/다크/PA 사용 횟수는 자동 기록되며(설정에서 LOG/CSV/JSONL 내보내기 가능), 방장은 라운드당 사용 상한(기본 5회, 3회는 EXE5 공식 대회 기준)을 설정해 상한에 도달한 칩을 해당 라운드 실행 풀에서 제외할 수 있습니다."
 
 msgid "Original (GBA)"
 msgstr "오리지널 (GBA)"

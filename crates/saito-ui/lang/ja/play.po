@@ -509,3 +509,15 @@ msgstr "相手の準備が完了しました。"
 
 msgid "Shared Random Folder (30 chips)"
 msgstr "共通ランダムフォルダ（30枚）"
+
+msgid "{} (Official)"
+msgstr "{}回（公式大会）"
+
+msgid "{} (Default)"
+msgstr "{}回（既定）"
+
+msgid "ABD Cap: {}"
+msgstr "ABD上限: {}回"
+
+msgid "ABD Cap: Off"
+msgstr "ABD上限: なし"

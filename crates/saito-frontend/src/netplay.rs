@@ -109,6 +109,7 @@ pub fn netplay_setup_sides(content: &Arc<Content>, seed: u32, settings: &crate::
         custom_screen_time: settings.custom_screen_time,
         random_battle: settings.random_battle,
         abd_mode: settings.abd_mode,
+        abd_chip_cap: settings.abd_chip_cap,
         cs_prob_fix: settings.cs_prob_fix,
         all_guard_disabled: settings.all_guard_disabled,
         dark_cut_in_fix: settings.dark_cut_in_fix,
@@ -348,6 +349,8 @@ pub struct NetPlayer<C: Channel> {
     recording: Option<(u64, Vec<saito_replay::Tick>)>,
     /// Round >= 2 checkpoints captured at settled round transitions for live spectators.
     round_starts: Vec<crate::replay::RecordedRoundStart>,
+    /// Settled per-round ABD high-class/dark chip usage summaries.
+    abd_rounds: Vec<crate::driver::RoundAbdUsage>,
     /// Clock sync's skew and the lead, as the last frame read them before
     /// it decided (`NetStatus::skew`, `NetStatus::lead`).
     skew: i32,
@@ -381,6 +384,7 @@ impl<C: Channel> NetPlayer<C> {
             over: None,
             recording: None,
             round_starts: Vec::new(),
+            abd_rounds: Vec::new(),
             skew: 0,
             lead: 0,
             down: false,
@@ -537,6 +541,10 @@ impl<C: Channel> NetPlayer<C> {
             }
             let ended = watch.settled_end.take();
             if let Some((frame, ended)) = ended {
+                let abd = crate::driver::RoundAbdUsage::from_battle(&ended);
+                if abd.has_any() {
+                    self.abd_rounds.push(abd);
+                }
                 let after = self.set.after(&ended, side).expect("the round is over");
                 let last = self.recording.as_mut().and_then(|(_, r)| r.last_mut());
                 match after {
@@ -634,6 +642,10 @@ impl<C: Channel> Driver for NetPlayer<C> {
 
     fn take_round_starts(&mut self, out: &mut Vec<crate::replay::RecordedRoundStart>) {
         out.append(&mut self.round_starts);
+    }
+
+    fn take_abd_rounds(&mut self, out: &mut Vec<crate::driver::RoundAbdUsage>) {
+        out.append(&mut self.abd_rounds);
     }
 
     fn position(&self) -> String {

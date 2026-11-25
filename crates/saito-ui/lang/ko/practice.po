@@ -158,3 +158,6 @@ msgstr "레거시 컬렉션"
 
 msgid "DS"
 msgstr "DS판"
+
+msgid "ABD Chip Cap"
+msgstr "ABD 칩 상한"

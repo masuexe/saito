@@ -259,6 +259,9 @@ fn room_settings(shell: &Shell, view: &ReplaysView, game: &str, ready: &Ready, i
     }
     if saito_match::abd_mode::supported(game) {
         parts.push(view.invoke_abd_mode_word(m.abd_mode.as_u8() as i32).into());
+        if let Some(cap) = m.abd_chip_cap {
+            parts.push(view.invoke_abd_cap_word(cap as i32).into());
+        }
     }
     if saito_match::cs_prob_fix::supported(game) {
         let count = if m.cs_prob_fix.is_recommended(game) {
@@ -1342,6 +1345,7 @@ impl Replays {
             music: crate::battle::BattleMusic::Background,
             gate: None,
             presentation,
+            abd_log: None,
         });
     }
 

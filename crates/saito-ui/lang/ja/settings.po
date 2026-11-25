@@ -288,3 +288,12 @@ msgstr "リプレイの自動アップロード"
 
 msgid "Automatically upload finished online replays to the server's Recent Replays feed. Off by default."
 msgstr "オンライン対戦終了後、リプレイをサーバーの「最近のリプレイ」に自動アップロードします。初期設定はオフです。"
+
+msgid "ABD usage stats"
+msgstr "ABD使用統計"
+
+msgid "No records yet."
+msgstr "記録はまだありません。"
+
+msgid "{} rounds (GBA: {} · LC: {} · NDS: {})"
+msgstr "{} ラウンド（GBA: {} ・ アドコレ: {} ・ NDS: {}）"

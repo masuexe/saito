@@ -61,7 +61,7 @@ export component AbdGuideDialog inherits DialogFrame {
 
             GuideCard {
                 heading: @tr("Common Rules (All Versions)");
-                body: @tr("Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.");
+                body: @tr("Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit.");
             }
 
             GuideCard {

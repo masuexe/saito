@@ -1374,6 +1374,8 @@ declare battle: {
     set_side_stat: (side: number, index: number, n: number) -> (),
     -- `sub_800AB3A`: a side's statistics counter.
     side_stat: (side: number, index: number) -> number,
+    -- Round usage count of tracked ABD high-class/dark chip `chip` owned by `side`.
+    abd_chip_uses: (side: number, chip: Chip) -> number,
     -- The damage-carry record of the side that takes the damage
     -- (`dword_203CFB0`; CopyDmg's).
     damage_carry: (side: number) -> DamageCarry,

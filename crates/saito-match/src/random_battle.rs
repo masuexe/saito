@@ -500,6 +500,7 @@ mod tests {
                 custom_screen_time: Some(60),
                 random_battle: Some(rank),
                 abd_mode: crate::AbdMode::Original,
+                abd_chip_cap: None,
                 cs_prob_fix: crate::CsProbFix::NONE,
                 all_guard_disabled: false,
                 dark_cut_in_fix: false,

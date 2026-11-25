@@ -190,7 +190,7 @@ pub fn resolve(content: &Content, f: &MatchFile) -> Result<Match, Vec<String>> {
     let right = resolve_side(content, &f.game, &f.right, "right", &mut problems);
     match (left, right, backgrounds) {
         (Some(left), Some(right), Some(backgrounds)) if problems.is_empty() => {
-            Ok(Match { game: f.game.clone(), seed: f.seed, rounds, sides: [left, right], backgrounds, custom_screen_time: f.custom_screen_time, random_battle: None, abd_mode: crate::AbdMode::Original, cs_prob_fix: crate::CsProbFix::NONE, all_guard_disabled: false, dark_cut_in_fix: false })
+            Ok(Match { game: f.game.clone(), seed: f.seed, rounds, sides: [left, right], backgrounds, custom_screen_time: f.custom_screen_time, random_battle: None, abd_mode: crate::AbdMode::Original, abd_chip_cap: None, cs_prob_fix: crate::CsProbFix::NONE, all_guard_disabled: false, dark_cut_in_fix: false })
         }
         _ => Err(problems),
     }

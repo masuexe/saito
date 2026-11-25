@@ -55,6 +55,8 @@ export enum PracticeOption {
     random-battle,
     // EXE4 / EXE5 Dark Soul AI (ABD) mode (Original / Legacy Collection / DS).
     abd-mode,
+    // EXE4 / EXE5 per-round ABD Mega/Giga/Dark/PA chip repeat hard cap (Off or 1..9).
+    abd-cap,
     // EXE5 / EXE6 per-effect ChargeShot Addition probability fix.
     cs-prob-fix,
     input-display,
@@ -170,6 +172,9 @@ export global PracticeView {
         if option == PracticeOption.abd-mode {
             return @tr("Dark Soul AI");
         }
+        if option == PracticeOption.abd-cap {
+            return @tr("ABD Chip Cap");
+        }
         if option == PracticeOption.cs-prob-fix {
             return @tr("CS Prob Fix");
         }
@@ -210,6 +215,9 @@ export global PracticeView {
         }
         if option == PracticeOption.abd-mode {
             return value == 1 ? @tr("Legacy Collection") : value == 2 ? @tr("DS") : @tr("Original");
+        }
+        if option == PracticeOption.abd-cap {
+            return value <= 0 ? @tr("Off") : "\{value}";
         }
         if option == PracticeOption.cs-prob-fix {
             return value == 1 ? @tr("All Fixed") : @tr("Original");

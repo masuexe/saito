@@ -255,6 +255,9 @@ pub struct Match {
     /// EXE4 / EXE5 Dark Soul Auto Battle Data (ABD) behavior mode (`Original`, `LegacyCollection`,
     /// or `DoubleTeamDs` for EXE5). Defaults to [`AbdMode::Original`].
     pub abd_mode: AbdMode,
+    /// EXE4 / EXE5 per-round hard cap on repeated uses of the same Mega / Giga / Dark / PA chip
+    /// by ABD (`None` = unlimited, `Some(1..=15)` = max uses per round, default when enabled is 5).
+    pub abd_chip_cap: Option<u8>,
     /// Per-effect ChargeShot Addition probability fix bitmask for EXE5 / EXE6 (`NONE` by default).
     pub cs_prob_fix: CsProbFix,
     /// EXE4 Legacy Collection rule: disable the All Guard patch card effect (`false` = Original GBA).
@@ -358,6 +361,7 @@ impl Match {
             custom_screen_time: None,
             random_battle: None,
             abd_mode: AbdMode::Original,
+            abd_chip_cap: None,
             cs_prob_fix: CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,
@@ -440,6 +444,11 @@ impl Match {
         }
         if self.abd_mode == AbdMode::DoubleTeamDs && self.game == "exe5" {
             effects |= saito_battle::setup::effects::ABD_DS;
+        }
+        if let Some(cap) = self.abd_chip_cap
+            && abd_mode::chip_cap_allowed(&self.game, Some(cap))
+        {
+            effects = saito_battle::setup::effects::with_abd_chip_cap(effects, cap);
         }
         if self.all_guard_disabled && self.game == "exe4" {
             effects |= saito_battle::setup::effects::NO_ALL_GUARD;

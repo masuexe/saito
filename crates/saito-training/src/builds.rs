@@ -611,6 +611,7 @@ impl Maker {
             custom_screen_time: None,
             random_battle: None,
             abd_mode: saito_match::AbdMode::Original,
+            abd_chip_cap: None,
             cs_prob_fix: saito_match::CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,

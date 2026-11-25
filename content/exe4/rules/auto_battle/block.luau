@@ -81,6 +81,12 @@ function block.turn(side: number)
     state.auto_battle_places = places.turn(state.auto_battle_places)
 end
 
+-- Remove every occurrence of `chip` from side `side`'s runtime sent list for the remainder of the round.
+function block.remove_chip(side: number, chip: Chip)
+    local state = rules.state_of(side)
+    state.auto_battle_places = places.remove_chip(state.auto_battle_places, chip)
+end
+
 -- Chips whose ROM chip record lacks ABD learnability flag (byte 0x0E bit 2 in EXE4: US Red Sun / Blue Moon):
 -- kept available in the editor, but flagged as illegal ABD data since the original game cannot record them normally.
 block.UNRECORDABLE = {

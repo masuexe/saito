@@ -158,6 +158,18 @@ function places.turn(sent: { Place }): { Place }
     return packed
 end
 
+-- Remove every occurrence of `chip` from the round's runtime sent list (used when a chip reaches the
+-- room's per-round ABD high-class/dark chip repeat cap).
+function places.remove_chip(sent: { Place }, chip: Chip): { Place }
+    local kept: { Place } = {}
+    for _, p in sent do
+        if p.chip ~= chip then
+            table.insert(kept, copy(p))
+        end
+    end
+    return kept
+end
+
 -- A game's `validate`'s part for a setup's places: each place one thing (a chip, a pattern, a 0, or empty), a
 -- pattern one of the eight records, `first` (places 1..3) empty (cannot be written in normal gameplay), no chip among
 -- the 42 places that the game's AI can't play or that can't be obtained normally, each chip list held to its required

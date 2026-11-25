@@ -50,6 +50,8 @@ pub struct Session {
     pub spectate_recorder: Option<Recorder>,
     /// Round >= 2 checkpoints waiting to be published by the live spectator host.
     pub spectate_round_starts: Vec<crate::replay::RecordedRoundStart>,
+    /// Settled per-round ABD Mega/Giga/Dark/PA chip usage summaries waiting to be drained.
+    pub abd_rounds: Vec<crate::driver::RoundAbdUsage>,
 }
 
 impl Session {
@@ -73,6 +75,7 @@ impl Session {
             recorder: None,
             spectate_recorder: None,
             spectate_round_starts: Vec::new(),
+            abd_rounds: Vec::new(),
         }
     }
 
@@ -105,6 +108,12 @@ impl Session {
     /// Start over (a recording stops: the replay holds what was played
     /// before).
     pub fn restart(&mut self) {
+        if !self.finished {
+            let abd = crate::driver::RoundAbdUsage::from_battle(&self.battle);
+            if abd.has_any() {
+                self.abd_rounds.push(abd);
+            }
+        }
         self.recorder = None;
         self.spectate_recorder = None;
         self.spectate_round_starts.clear();
@@ -151,6 +160,7 @@ impl Session {
         IN_ENGINE.with(|f| f.set(true));
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.run_frame(input, &mut self.battle)));
         IN_ENGINE.with(|f| f.set(false));
+        self.driver.take_abd_rounds(&mut self.abd_rounds);
         if self.recorder.is_some() || self.spectate_recorder.is_some() {
             let mut settled = Vec::new();
             self.driver.take_recorded(&mut settled);
@@ -242,11 +252,19 @@ impl Session {
                 // (The ended round's last tick is still heard; what is
                 // shown is the next round, at its start, as a netplay
                 // peer shows it.)
+                let abd = crate::driver::RoundAbdUsage::from_battle(&self.battle);
+                if abd.has_any() {
+                    self.abd_rounds.push(abd);
+                }
                 self.sound = Some(heard(&self.battle, self.driver.layers()).into_iter().map(CueAction::Play).collect());
                 self.ended = Some(Box::new(std::mem::replace(&mut self.battle, *next)));
                 self.new_round = true;
             }
             Some(After::Over(result)) => {
+                let abd = crate::driver::RoundAbdUsage::from_battle(&self.battle);
+                if abd.has_any() {
+                    self.abd_rounds.push(abd);
+                }
                 self.result = Some(result);
                 self.stop(StopReason::Finished, format!("the match is over: {}", result_text(result)));
                 self.finished = true;

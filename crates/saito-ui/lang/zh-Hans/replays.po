@@ -395,3 +395,6 @@ msgstr "黑暗芯片打断：合集"
 
 msgid "Dark Cut-In: Original"
 msgstr "黑暗芯片打断：原版"
+
+msgid "ABD Cap: {}"
+msgstr "ABD 上限：{} 次"

@@ -287,3 +287,12 @@ msgstr "리플레이 자동 업로드"
 
 msgid "Automatically upload finished online replays to the server's Recent Replays feed. Off by default."
 msgstr "온라인 대전 종료 후 리플레이를 서버의 최근 리플레이 목록에 자동으로 업로드합니다. 기본값은 꺼짐입니다."
+
+msgid "ABD usage stats"
+msgstr "ABD 사용 통계"
+
+msgid "No records yet."
+msgstr "기록이 아직 없습니다."
+
+msgid "{} rounds (GBA: {} · LC: {} · NDS: {})"
+msgstr "{} 라운드 (GBA: {} · 컬렉션: {} · NDS: {})"

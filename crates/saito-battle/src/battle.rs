@@ -554,6 +554,21 @@ pub struct Battle {
     /// The panels each side's attacks were presented on during the tick
     /// ([`Battle::attacked_panels`]): no part of the simulation.
     pub(crate) attacked: crate::collision::AttackLog,
+    /// Per-side (by ABD owner) round usage counts of Mega / Giga / Dark / PA
+    /// chips invoked by Auto Battle Data (`start_chip_attack(..., kind = 2)`).
+    /// Cloned with rollback snapshots; hashed into `Battle::digest()` only when
+    /// `effects::ABD_CAP_MASK` is active so unlimited matches keep identical digests.
+    pub abd_chip_uses: [Vec<(ChipHandle, u16)>; 2],
+}
+
+/// Whether `chip` belongs to the Mega / Giga / Dark / Program Advance set
+/// tracked and optionally capped during Auto Battle Data (ABD) execution.
+pub fn is_abd_tracked_chip(content: &Content, chip: ChipHandle) -> bool {
+    let data = content.chip(chip);
+    matches!(
+        data.class,
+        crate::content::ChipClass::Mega | crate::content::ChipClass::Giga | crate::content::ChipClass::ProgramAdvance
+    ) || data.flags.has(crate::content::ChipFlags::DARK)
 }
 
 /// How a round ended (`sub_8007CA0`).
@@ -681,6 +696,31 @@ impl Battle {
     pub fn bump_side_stat(&mut self, side: u8, index: usize, n: u8) {
         let v = &mut self.side_stats[side as usize][index];
         *v = v.saturating_add(n);
+    }
+
+    /// Record one ABD invocation of `chip` owned by `side` if `chip` is a
+    /// Mega, Giga, Dark, or Program Advance chip. Returns the new round count
+    /// (or `0` for untracked Standard chips).
+    pub fn record_abd_chip_use(&mut self, side: u8, chip: ChipHandle) -> u16 {
+        if !is_abd_tracked_chip(&self.content, chip) {
+            return 0;
+        }
+        let list = &mut self.abd_chip_uses[(side & 1) as usize];
+        if let Some((_, count)) = list.iter_mut().find(|(c, _)| *c == chip) {
+            *count = count.saturating_add(1);
+            *count
+        } else {
+            list.push((chip, 1));
+            1
+        }
+    }
+
+    /// Round usage count of tracked ABD chip `chip` owned by `side`.
+    pub fn abd_chip_uses_of(&self, side: u8, chip: ChipHandle) -> u16 {
+        self.abd_chip_uses[(side & 1) as usize]
+            .iter()
+            .find(|(c, _)| *c == chip)
+            .map_or(0, |&(_, count)| count)
     }
 
     /// `sub_802CEA6`: clear a side's defensive-chip record. Its object
@@ -844,6 +884,7 @@ impl Battle {
             tool_answer: None,
             dimmed_key_reads: Default::default(),
             attacked: Default::default(),
+            abd_chip_uses: [Vec::new(), Vec::new()],
             setup,
         };
         // The navi's stats of its game's own are of the rules' `stats`: a

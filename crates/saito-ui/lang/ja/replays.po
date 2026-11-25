@@ -396,3 +396,6 @@ msgstr "善ダークカットイン：アドコレ"
 
 msgid "Dark Cut-In: Original"
 msgstr "善ダークカットイン：原作"
+
+msgid "ABD Cap: {}"
+msgstr "ABD上限: {}回"

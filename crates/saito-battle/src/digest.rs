@@ -220,6 +220,7 @@ impl Hash for Battle {
             tool_answer: _,
             dimmed_key_reads: _,
             attacked: _,
+            abd_chip_uses,
         } = self;
         setup.hash(h);
         stats.hash(h);
@@ -255,6 +256,9 @@ impl Hash for Battle {
         custom.hash(h);
         sides.hash(h);
         side_stats.hash(h);
+        if setup.settings.effects & crate::setup::effects::ABD_CAP_MASK != 0 {
+            abd_chip_uses.hash(h);
+        }
         navi_hit_counts.hash(h);
         linked.hash(h);
         triggered_linked.hash(h);

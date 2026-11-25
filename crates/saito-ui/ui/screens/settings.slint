@@ -57,6 +57,15 @@ export global SettingsView {
     in property <int> asking-key: -1;
     in property <int> asking-button: -1;
     in property <string> data-folder;
+    // Persistent ABD Mega/Giga/Dark/PA chip usage stats export controls (0 = LOG, 1 = CSV, 2 = JSONL).
+    in property <int> abd-stats-format: 0;
+    in property <string> abd-stats-summary;
+    in property <bool> abd-stats-has-records: false;
+    out property <string> abd-stats-empty: @tr("No records yet.");
+    out property <string> abd-stats-files: @tr("ABD usage stats");
+    pure public function abd-stats-note(total: int, gba: int, lc: int, nds: int) -> string {
+        return @tr("{} rounds (GBA: {} · LC: {} · NDS: {})", total, gba, lc, nds);
+    }
     in property <bool> can-send-nearby;
     in property <string> nearby-target;
     // About is shown in the page's place.
@@ -828,6 +837,34 @@ component SettingsPage inherits Page {
                         y: 4px;
                         nav: "set.folder";
                         text: I18n.upper(@tr("Show folder"));
+                    }
+                }
+
+                Rectangle {
+                    height: row-abd-stats.height;
+                    row-abd-stats := SettingLabel {
+                        label: @tr("ABD usage stats");
+                        note: SettingsView.abd-stats-summary;
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    abd-fmt := Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.abd-format";
+                        first: "LOG";
+                        second: "CSV";
+                        third: "JSONL";
+                        chosen: SettingsView.abd-stats-format;
+                    }
+
+                    Button {
+                        x: abd-fmt.x + abd-fmt.width + 8px;
+                        y: 4px;
+                        nav: "set.abd-export";
+                        enabled: SettingsView.abd-stats-has-records;
+                        text: I18n.upper(@tr("verb" => "Export"));
                     }
                 }
 

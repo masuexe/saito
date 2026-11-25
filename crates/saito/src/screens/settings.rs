@@ -80,7 +80,7 @@ fn group_of(id: &str) -> Option<i32> {
         "set.music" | "set.effects" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
-        "set.folder" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
+        "set.folder" | "set.abd-format" | "set.abd-export" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
         _ => return None,
     })
 }
@@ -344,6 +344,8 @@ pub struct Settings {
     nearby_target: String,
     /// Background `vol2.dat` compaction job started from Settings.
     importing_hd_art: Option<std::sync::mpsc::Receiver<Result<usize, String>>>,
+    /// Selected export format for persistent ABD usage stats (`LOG` / `CSV` / `JSONL`).
+    abd_format: crate::abd_stats::AbdExportFormat,
 }
 
 impl Settings {
@@ -395,6 +397,34 @@ impl Settings {
         shell.save_settings();
         self.show(shell);
     }
+
+    fn show_abd_stats(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<SettingsView>();
+        let records = crate::abd_stats::load_all();
+        let (total, gba, lc, nds) = crate::abd_stats::counts_summary(&records);
+        view.set_abd_stats_format(self.abd_format.as_index());
+        view.set_abd_stats_has_records(total > 0);
+        let summary = if total == 0 {
+            view.get_abd_stats_empty()
+        } else {
+            view.invoke_abd_stats_note(total as i32, gba as i32, lc as i32, nds as i32)
+        };
+        view.set_abd_stats_summary(summary);
+    }
+
+    fn export_abd_stats(&self, shell: &mut Shell) {
+        let fmt = self.abd_format;
+        let kind = shell.ui().global::<SettingsView>().get_abd_stats_files().to_string();
+        let Some(path) = shell.choose_save(&kind, &[fmt.extension()], fmt.default_filename()) else { return };
+        match crate::abd_stats::export_to(&path, fmt) {
+            Ok(_) => shell.saved(&path),
+            Err(why) => {
+                crate::errors::log("exporting ABD usage stats", &why);
+                shell.fail(crate::errors::UserError::Other);
+            }
+        }
+    }
 }
 
 impl Screen for Settings {
@@ -408,6 +438,7 @@ impl Screen for Settings {
         let view = ui.global::<SettingsView>();
         view.set_nearby_target(self.nearby_target.as_str().into());
         view.set_importing_hd_art(self.importing_hd_art.is_some());
+        self.show_abd_stats(shell);
         if self.about.is_open() {
             self.about.show(shell);
         }
@@ -471,6 +502,11 @@ impl Screen for Settings {
             }
             "set.touch-layout" => self.open_touch_editor(shell),
             "set.folder" => show_folder(&crate::paths::data()),
+            "set.abd-format" => {
+                self.abd_format = crate::abd_stats::AbdExportFormat::from_index((self.abd_format.as_index() + 1) % 3);
+                self.show_abd_stats(shell);
+            }
+            "set.abd-export" => self.export_abd_stats(shell),
             "set.nearby.send" => self.try_send_nearby(shell),
             "set.about" => self.about.open(shell),
             _ => {}
@@ -519,6 +555,10 @@ impl Screen for Settings {
                 shell.set_landscape_touch_pad(by > 0);
                 self.show(shell);
             }
+            "set.abd-format" => {
+                self.abd_format = crate::abd_stats::AbdExportFormat::from_index((self.abd_format.as_index() + by).rem_euclid(3));
+                self.show_abd_stats(shell);
+            }
             _ => {}
         }
     }
@@ -556,6 +596,10 @@ impl Screen for Settings {
             "set.landscape-pad" => {
                 shell.set_landscape_touch_pad(choice == 1);
                 self.show(shell);
+            }
+            "set.abd-format" => {
+                self.abd_format = crate::abd_stats::AbdExportFormat::from_index(choice);
+                self.show_abd_stats(shell);
             }
             _ => {}
         }

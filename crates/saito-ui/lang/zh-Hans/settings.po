@@ -287,3 +287,12 @@ msgstr "自动上传对战录像"
 
 msgid "Automatically upload finished online replays to the server's Recent Replays feed. Off by default."
 msgstr "联机对战结束后自动上传录像至服务器，用于「近日录像」浏览。默认关闭，随时可关。"
+
+msgid "ABD usage stats"
+msgstr "ABD 芯片使用统计"
+
+msgid "No records yet."
+msgstr "暂无记录。"
+
+msgid "{} rounds (GBA: {} · LC: {} · NDS: {})"
+msgstr "已记录 {} 局（GBA: {} · 合集: {} · NDS: {}）"

@@ -161,3 +161,6 @@ msgstr "アドコレ版"
 
 msgid "DS"
 msgstr "DS版"
+
+msgid "ABD Chip Cap"
+msgstr "ABDチップ上限"

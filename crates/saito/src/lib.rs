@@ -13,6 +13,7 @@
 
 #[cfg(target_os = "android")]
 mod activity;
+mod abd_stats;
 mod backgrounds;
 mod battle;
 mod builds;

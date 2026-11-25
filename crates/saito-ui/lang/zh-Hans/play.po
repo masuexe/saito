@@ -509,3 +509,15 @@ msgstr "对手已准备就绪。"
 
 msgid "Shared Random Folder (30 chips)"
 msgstr "双方共用随机卡组（30 枚）"
+
+msgid "{} (Official)"
+msgstr "{} 次（官方大会）"
+
+msgid "{} (Default)"
+msgstr "{} 次（默认）"
+
+msgid "ABD Cap: {}"
+msgstr "ABD 上限：{} 次"
+
+msgid "ABD Cap: Off"
+msgstr "ABD 上限：关闭"

@@ -189,6 +189,10 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
         out.push(b'A');
         out.push(m.abd_mode.as_u8());
     }
+    if let Some(cap) = m.abd_chip_cap {
+        out.push(b'K');
+        out.push(cap);
+    }
     if !m.cs_prob_fix.is_empty() {
         out.push(b'C');
         out.extend_from_slice(&m.cs_prob_fix.bits().to_le_bytes());
@@ -233,11 +237,13 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
     let sides = [side("left")?, side("right")?];
     let mut random_battle = None;
     let mut abd_mode = crate::AbdMode::Original;
+    let mut abd_chip_cap = None;
     let mut cs_prob_fix = crate::CsProbFix::NONE;
     let mut all_guard_disabled = false;
     let mut dark_cut_in_fix = false;
     let mut seen_random = false;
     let mut seen_abd = false;
+    let mut seen_abd_cap = false;
     let mut seen_cs_prob_fix = false;
     let mut seen_all_guard = false;
     let mut seen_dark_cut_in = false;
@@ -258,6 +264,15 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 }
                 abd_mode = mode;
                 seen_abd = true;
+                at += 2;
+            }
+            b'K' if !seen_abd_cap => {
+                let cap = bytes[at + 1];
+                if !crate::abd_mode::chip_cap_allowed(content.game(), Some(cap)) {
+                    return Err(format!("abd chip cap: {cap} is not supported for {}", content.game()));
+                }
+                abd_chip_cap = Some(cap);
+                seen_abd_cap = true;
                 at += 2;
             }
             b'C' if !seen_cs_prob_fix && bytes.len() - at >= 3 => {
@@ -289,7 +304,7 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
         }
     }
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
 }
 
 

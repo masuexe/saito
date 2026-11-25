@@ -418,8 +418,18 @@ local function playing(navi: Object, s: State, fam: Family)
         end
     elseif sub == 8 then
         local chip = s.entry_chip :: Chip
+        local cap = bit32.rshift(battle.effects(), 28)
+        local owner = auto_battle_side(navi, fam)
+        if cap > 0 and battle.abd_chip_uses(owner, chip) >= cap then
+            block.remove_chip(owner, chip)
+            s.mode = 0
+            return
+        end
         ai.use_chip(navi, chip)
         turn(navi, s, fam)
+        if cap > 0 and battle.abd_chip_uses(owner, chip) >= cap then
+            block.remove_chip(owner, chip)
+        end
         s.mode = 0
         if bit32.btest(battle.effects(), ABD_DS) and DS_COOLDOWN_CHIPS[chip.id :: string] then
             s.step, s.sub, s.shots = 8, 0, DS_COOLDOWN_BASE

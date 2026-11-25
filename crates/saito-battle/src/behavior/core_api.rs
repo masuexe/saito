@@ -1413,6 +1413,10 @@ impl CoreApi for Battle {
         self.side_stats[side as usize & 1][index as usize & 0xF]
     }
 
+    fn abd_chip_uses(&self, side: u8, chip: ChipHandle) -> u16 {
+        Battle::abd_chip_uses_of(self, side & 1, chip)
+    }
+
     fn damage_carry(&self, side: u8) -> saito_content_api::api::DamageCarryInfo {
         let c = &self.damage_carry[side as usize & 1];
         saito_content_api::api::DamageCarryInfo {
@@ -2514,6 +2518,16 @@ impl CoreApi for Battle {
 
     fn start_chip_attack(&mut self, o: ObjectRef, chip: ChipHandle, kind: u8) -> ApiResult<()> {
         self.actor_of(o)?;
+        if kind == 2 {
+            let obj = self.objects.get(o);
+            let actor_type = self.content.navi_record(obj.identity).actor_type;
+            let owner_side = if actor_type == crate::actor::ActorType::Player {
+                obj.alliance & 1
+            } else {
+                (obj.alliance ^ 1) & 1
+            };
+            self.record_abd_chip_use(owner_side, chip);
+        }
         let action = kinds::player::chip_use::chip_action(self, o, Some(chip));
         kinds::player::set_attack(self, o, action, kind);
         Ok(())

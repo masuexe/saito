@@ -106,6 +106,8 @@ pub struct BattleStart {
     pub gate: Option<Box<dyn FnMut(f32) -> f32>>,
     /// Client-local per-round stage background & BGM resolver (none: use `music` and set stages).
     pub presentation: Option<BattlePresentation>,
+    /// Metadata for persistent ABD Mega/Giga/Dark/PA chip usage logging (Online & Practice).
+    pub abd_log: Option<crate::abd_stats::AbdLogContext>,
 }
 
 /// What a battle's owner hears of it.
@@ -160,6 +162,8 @@ pub struct Battle {
     link: link::LinkHistory,
     /// A party battle's party beside it: the switches asked, and what the window shows (`battle/party.rs`).
     party: party::PartyState,
+    /// Persistent ABD usage logging context (Online & Practice EXE4/EXE5 battles).
+    pub abd_log: Option<crate::abd_stats::AbdLogContext>,
 }
 
 /// The keys of a phone's pad held sideways that are over the custom screen's window, by bit: SELECT, the four
@@ -184,11 +188,26 @@ impl Battle {
         if !self.stage.player.restart() {
             return false;
         }
+        self.flush_abd_rounds(false);
         self.hold.reset(&mut self.stage.player);
         self.over = false;
         self.stage.hold();
         self.stage.surface.stale = true;
         true
+    }
+
+    /// Drain completed (and optionally the active unfinished) round ABD usage records into `abd-stats.jsonl`.
+    pub fn flush_abd_rounds(&mut self, include_current: bool) {
+        let Some(ctx) = self.abd_log.as_ref() else { return };
+        let content = self.stage.player.battle().content.clone();
+        for usage in self.stage.player.take_abd_rounds() {
+            crate::abd_stats::record_round(&content, ctx, &usage);
+        }
+        if include_current
+            && let Some(usage) = self.stage.player.flush_current_abd_round()
+        {
+            crate::abd_stats::record_round(&content, ctx, &usage);
+        }
     }
 }
 
@@ -459,7 +478,7 @@ impl Shell {
         shell.set_connection_shown(false);
         shell.set_connection_open(false);
         self.keys.pressed.clear();
-        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default() });
+        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: start.abd_log });
         Some((start.owner, BattleEvent::Started))
     }
 
@@ -554,7 +573,8 @@ impl Shell {
 
     /// End the battle: the owner's screen shows again.
     pub fn end_battle(&mut self) {
-        let Some(b) = self.battle.take() else { return };
+        let Some(mut b) = self.battle.take() else { return };
+        b.flush_abd_rounds(b.kind == BattleKind::Practice);
         // The loading screens' check: a battle made ready loads no runtime and reads nothing while it plays.
         let late = b.stage.player.late();
         if late.runtimes > 0 || late.reads > 0 {
@@ -592,6 +612,7 @@ impl Shell {
         // (A party battle's switches are asked of the player; the battle's buttons alone go on.)
         let buttons = b.party.take_switches(&mut b.stage.player, b.viewer, held);
         let ran = b.stage.advance(now, buttons, &mut self.keys.pressed);
+        b.flush_abd_rounds(false);
         let ticks = Some(ran);
         // START in the fight: the game's pause is saito's menu (asked of the host: the game's own never runs).
         let asked = b.stage.player.take_pause_requests()[b.viewer.min(1) as usize] && b.playing();
@@ -831,7 +852,7 @@ mod tests {
         let m = short_set::of(&content, "exe6", 7);
         let driver = LivePlayer::new(Set::of(&content, &m, 7));
         let player = Player::with(graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None), None, None, Box::new(driver));
-        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default() };
+        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None };
         let play_out = |b: &mut Battle| {
             while {
                 let input = short_set::shooter(b.stage.player.battle(), 0, b.stage.player.ticks() as u32);
@@ -1094,7 +1115,7 @@ mod tests {
         saito_frontend::testing::scrolling_background(&mut graphics);
         let audio = saito_frontend::testing::audio(content);
         let player = Player::with(graphics.renderer(Enhancements::NONE, None), None, Some(audio), Box::new(driver));
-        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default() }
+        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None }
     }
 
     /// A practice session of Practice's own, as the editor's PRACTICE starts one: the menu open before the battle's

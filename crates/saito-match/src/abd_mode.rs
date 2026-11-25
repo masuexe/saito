@@ -118,6 +118,21 @@ pub fn available(game: &str) -> &'static [AbdMode] {
     AbdMode::available(game)
 }
 
+/// Default per-round hard cap on repeated uses of the same Mega/Giga/Dark/PA chip by ABD when enabled.
+pub const DEFAULT_CHIP_CAP: u8 = 5;
+/// Minimum allowed per-round ABD high-class chip cap.
+pub const MIN_CHIP_CAP: u8 = 1;
+/// Maximum allowed per-round ABD high-class chip cap (fits in 4 bits of `effects` and wire tag).
+pub const MAX_CHIP_CAP: u8 = 15;
+
+/// Whether `cap` is valid for `game` (`None` is always valid; `Some(1..=15)` only for EXE4/EXE5).
+pub fn chip_cap_allowed(game: &str, cap: Option<u8>) -> bool {
+    match cap {
+        None => true,
+        Some(n) => supported(game) && (MIN_CHIP_CAP..=MAX_CHIP_CAP).contains(&n),
+    }
+}
+
 const PLACES_FIELD: &str = "auto_battle_places";
 const PLACES: usize = 42;
 const FIRST_RANGE: std::ops::Range<usize> = 0..3;
@@ -592,5 +607,66 @@ mod tests {
         let (ds_max, ds_cd) = run_mode(AbdMode::DoubleTeamDs);
         assert!(orig_max < 0x80 && orig_cd == 0, "Original must never enter 5DS cooldown: max={orig_max:#x}");
         assert!(ds_max >= 0x87 && ds_cd >= 8, "5DS must run 8 buster bursts after darkthnd: max={ds_max:#x}, steps={ds_cd}");
+    }
+
+    #[test]
+    fn exe5_abd_chip_cap_tracks_and_hard_caps_dark_chips_and_roundtrips_binary() {
+        use saito_battle::Battle;
+        use saito_battle::custom::{FolderChip, SavedFolder};
+        use saito_battle::input::{PlayerTick, keys};
+
+        let content = exe5_content();
+        let mut base = crate::pick::live(&content, "exe5", 7, None).unwrap();
+        let darkinvs = ids::chip(&content, "exe5", "darkinvs").unwrap();
+        let cannon = ids::chip(&content, "exe5", "cannon").unwrap();
+        let darkthnd = ids::chip(&content, "exe5", "darkthnd").unwrap();
+        let code_of = |c: ChipHandle| content.defs.chip(c).record.codes[0];
+        let mut chips = [FolderChip::new(cannon, code_of(cannon)); 30];
+        chips[0] = FolderChip::new(darkinvs, code_of(darkinvs));
+        let folder = SavedFolder { chips, regular: Some(0), tags: None };
+        base.sides[0].set_folder(&content, &folder.into()).unwrap();
+        base.sides[0].set_fact(&content, "karma", &[Fact::Value(Value::Int(0))]).unwrap();
+        base.sides[0].set_fact(&content, "hp", &[Fact::Value(Value::Int(997))]).unwrap();
+        let mut places = [Place::Empty; PLACES];
+        for slot in 3..7 {
+            places[slot] = Place::Chip(darkthnd);
+        }
+        write_places(&content, &mut base.sides[0], &places);
+
+        // Binary roundtrip & validation.
+        let mut capped = base.clone();
+        capped.abd_chip_cap = Some(2);
+        let bytes = crate::binary::match_bytes(&content, &capped).unwrap();
+        let back = crate::binary::read_match(&content, &bytes).unwrap();
+        assert_eq!(back.abd_chip_cap, Some(2));
+        let round = capped.round(&content, 7);
+        assert_eq!(saito_battle::setup::effects::abd_chip_cap(round.settings.effects), 2);
+
+        let run_with_cap = |cap: Option<u8>| -> u16 {
+            let mut m = base.clone();
+            m.abd_chip_cap = cap;
+            let mut b = Battle::new(m.round(&content, 0x5EED), content.clone());
+            let mut last = [None; 2];
+            for _ in 0..3000 {
+                if b.round.mode == saito_battle::battle::mode::FIGHTING && b.fight.state == saito_battle::battle::fight::FIGHTING {
+                    break;
+                }
+                let input = [0, 1].map(|side| {
+                    last[side] = saito_battle::scenario::custom_choice(&b, side, last[side]);
+                    PlayerTick::buttons(0).with_choice(last[side])
+                });
+                b.tick(&input, Default::default());
+            }
+            b.tick(&[PlayerTick::buttons(keys::A), PlayerTick::buttons(0)], Default::default());
+            for _ in 0..580 {
+                b.tick(&[PlayerTick::buttons(0), PlayerTick::buttons(0)], Default::default());
+            }
+            b.abd_chip_uses_of(0, darkthnd)
+        };
+
+        let unlimited_uses = run_with_cap(None);
+        let capped_uses = run_with_cap(Some(2));
+        assert!(unlimited_uses > 2, "unlimited DarkInvs should use DarkThnd more than twice (got {unlimited_uses})");
+        assert_eq!(capped_uses, 2, "hard cap = 2 must stop DarkThnd at exactly 2 uses");
     }
 }

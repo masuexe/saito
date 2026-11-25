@@ -160,6 +160,13 @@ end
 -- 0x0800E554, 0x0800E574: a loss that has weighed long enough (0x0800EAA2, 0x0800EAB4: its seconds times its panels)
 -- is answered by the first chip of the data that answers it (./block's `answer`), used where the navi stands and
 -- turned last.
+local function enforce_cap(navi: Object, chip: Chip)
+    local cap = bit32.rshift(battle.effects(), 28)
+    if cap > 0 and battle.abd_chip_uses(navi.alliance, chip) >= cap then
+        block.remove_chip(navi.alliance, chip)
+    end
+end
+
 local function answer(navi: Object, s: State, ticks: number, count: number, loss: string, places: number): boolean
     if (ticks // 60) * count < ANSWERED_AT then
         return false
@@ -168,8 +175,14 @@ local function answer(navi: Object, s: State, ticks: number, count: number, loss
     if chip == nil then
         return false
     end
+    local cap = bit32.rshift(battle.effects(), 28)
+    if cap > 0 and battle.abd_chip_uses(navi.alliance, chip) >= cap then
+        block.remove_chip(navi.alliance, chip)
+        return false
+    end
     ai.use_chip(navi, chip)
     turn(navi, s)
+    enforce_cap(navi, chip)
     return true
 end
 
@@ -351,8 +364,15 @@ local function playing(navi: Object, s: State)
         return
     end
     if s.place_ready then
-        ai.use_chip(navi, s.place_chip :: Chip)
-        turn(navi, s)
+        local chip = s.place_chip :: Chip
+        local cap = bit32.rshift(battle.effects(), 28)
+        if cap > 0 and battle.abd_chip_uses(navi.alliance, chip) >= cap then
+            block.remove_chip(navi.alliance, chip)
+        else
+            ai.use_chip(navi, chip)
+            turn(navi, s)
+            enforce_cap(navi, chip)
+        end
     else
         s.misses += 1
     end

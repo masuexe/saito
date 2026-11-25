@@ -65,6 +65,22 @@ pub mod effects {
     /// play its fizzle sparkle and consume the chip from hand instead of leaving
     /// it in hand for repeated `heal_on_use` triggers.
     pub const CONSUME_REFUSED_CUT_IN: u32 = 0x0200_0000;
+    /// EXE4 / EXE5 per-round hard cap on repeated uses of the same Mega / Giga /
+    /// Dark / Program Advance chip by Auto Battle Data (ABD). Encoded in bits
+    /// 28..=31 (`0` = unlimited, `1..=15` = max uses per round) so unlimited
+    /// matches keep identical `RoundSetup` layout and digests.
+    pub const ABD_CAP_SHIFT: u32 = 28;
+    pub const ABD_CAP_MASK: u32 = 0xF000_0000;
+
+    /// Extract the per-round ABD high-class chip repeat cap from `effects` (`0` = off).
+    pub const fn abd_chip_cap(effects: u32) -> u8 {
+        ((effects & ABD_CAP_MASK) >> ABD_CAP_SHIFT) as u8
+    }
+
+    /// Encode a per-round ABD high-class chip repeat cap (`0` = off, `1..=15` = max uses).
+    pub const fn with_abd_chip_cap(effects: u32, cap: u8) -> u32 {
+        (effects & !ABD_CAP_MASK) | (((cap & 0x0F) as u32) << ABD_CAP_SHIFT)
+    }
 }
 
 /// Custom gauge speed (NaviStats+0x08).

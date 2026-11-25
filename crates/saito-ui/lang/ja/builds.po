@@ -740,8 +740,8 @@ msgstr "各バージョン ダークソウルAI（ABD）仕様ガイド"
 msgid "Common Rules (All Versions)"
 msgstr "共通ルール（全バージョン）"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full."
-msgstr "スタンダード枠は最大16種類で 4×・4×・2×・2×・1×12 の重み付け（計24枠）、加えてメガ最大5枠・ギガ1枠・PA1枠を持ちます。\n通常プレイでABDに記録できないチップ（EXE4は22種、EXE5は82種）は黄色警告で表示されます。EXE4ではスタンダード16枠が全て埋まっていない場合、ダークソードが必須です。"
+msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
+msgstr "スタンダード枠は最大16種類で 4×・4×・2×・2×・1×12 の重み付け（計24枠）、加えてメガ最大5枠・ギガ1枠・PA1枠を持ちます。\n通常プレイでABDに記録できないチップ（EXE4は22種、EXE5は82種）は黄色警告で表示されます。EXE4ではスタンダード16枠が全て埋まっていない場合、ダークソードが必須です。\n各ラウンドでのABDによるメガ・ギガ・ダーク・PA使用回数は自動記録され（設定からLOG/CSV/JSONL出力可能）、ホストは任意の回数上限（既定5回、3回はEXE5公式大会基準）を設定して上限到達チップをそのラウンドの実行プールから除外できます。"
 
 msgid "Original (GBA)"
 msgstr "オリジナル（GBA）"

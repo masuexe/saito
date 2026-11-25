@@ -80,3 +80,8 @@ pub fn log() -> PathBuf {
 pub fn settings() -> PathBuf {
     env_var("SAITO_SETTINGS", "SAITO_SETTINGS").unwrap_or_else(|| data().join("settings.toml"))
 }
+
+/// Persistent ABD Mega/Giga/Dark/PA chip usage log (JSONL): `$SAITO_ABD_STATS`, else `abd-stats.jsonl`.
+pub fn abd_stats() -> PathBuf {
+    env_var("SAITO_ABD_STATS", "SAITO_ABD_STATS").unwrap_or_else(|| data().join("abd-stats.jsonl"))
+}

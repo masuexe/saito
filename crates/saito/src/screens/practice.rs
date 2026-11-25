@@ -231,6 +231,7 @@ struct MenuChoices {
     folder_order: bool,
     random_battle: Option<saito_match::RandomRank>,
     abd_mode: saito_match::AbdMode,
+    abd_chip_cap: Option<u8>,
     cs_prob_fix: saito_match::CsProbFix,
     inputs: bool,
 }
@@ -308,6 +309,7 @@ struct Session {
     custom_builds: [Build; 2],
     random_battle: Option<saito_match::RandomRank>,
     abd_mode: saito_match::AbdMode,
+    abd_chip_cap: Option<u8>,
     cs_prob_fix: saito_match::CsProbFix,
     seed: u32,
     /// The game's places, what each is called in the language shown (Random not among them), and the two
@@ -354,7 +356,7 @@ struct Session {
 /// does in [`values`], [`value`] and `Practice::change_option`. The dummy's Level is shown under its Action while
 /// that is Fights alone, and its build and EDIT in a session of Practice's own ([`shown_rows`]). A row of two
 /// columns ([`paired`]) is under the Columns row, its headings.
-pub(crate) const ROWS: [PracticeOption; 20] = [
+pub(crate) const ROWS: [PracticeOption; 21] = [
     PracticeOption::Dummy,
     // (Who the dummy is, then what it does: the user, "add Dummy's build to its DUMMY group".)
     PracticeOption::DummysBuild,
@@ -378,6 +380,7 @@ pub(crate) const ROWS: [PracticeOption; 20] = [
     PracticeOption::ChipDraw,
     PracticeOption::RandomBattle,
     PracticeOption::AbdMode,
+    PracticeOption::AbdCap,
     PracticeOption::CsProbFix,
     PracticeOption::InputDisplay,
     // (Netplay's input delay, the one setting: the user, "practice mode should have the same input delay as netplay
@@ -434,6 +437,7 @@ fn values(option: PracticeOption, places: &Places, emotions: usize, abd_modes: u
         PracticeOption::Hp | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::InputDisplay => 2,
         PracticeOption::RandomBattle => 4,
         PracticeOption::AbdMode => abd_modes,
+        PracticeOption::AbdCap => 10,
         PracticeOption::InputDelay => MAX_INPUT_DELAY as usize + 1,
         PracticeOption::Added | PracticeOption::Dummy | PracticeOption::Stage | PracticeOption::Options | PracticeOption::Columns | PracticeOption::EditDummy | PracticeOption::CsProbFix => 0,
     }
@@ -448,6 +452,7 @@ fn value(
     options: Options,
     random_battle: Option<saito_match::RandomRank>,
     abd_mode: saito_match::AbdMode,
+    abd_chip_cap: Option<u8>,
     inputs: bool,
     place: [usize; 2],
     emotions: &[(Emotion, String)],
@@ -466,6 +471,7 @@ fn value(
         PracticeOption::ChipDraw => (options.chip_draw == ChipDraw::FolderOrder) as usize,
         PracticeOption::RandomBattle => random_battle.map_or(0, |r| r.as_u8() as usize),
         PracticeOption::AbdMode => abd_mode.as_u8() as usize,
+        PracticeOption::AbdCap => abd_chip_cap.map_or(0, usize::from),
         PracticeOption::InputDisplay => inputs as usize,
         // (The setting's, not the session's: `row`.)
         PracticeOption::InputDelay => 0,
@@ -495,7 +501,7 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
         let total = saito_match::cs_prob_fix::effects(&session.game).len() as i32;
         return PracticeRow { option, value: count, dummys_value: total, ..Default::default() };
     }
-    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions, actions_for(&session.game));
+    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.inputs, session.place, &session.emotions, actions_for(&session.game));
     let part = match option {
         PracticeOption::Arena => Some(ARENA),
         PracticeOption::Background => Some(BACKGROUND),
@@ -525,7 +531,7 @@ fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: b
             PracticeOption::DummysBuild => builds,
             PracticeOption::EditDummy => builds && !beside,
             PracticeOption::RandomBattle => random_supported,
-            PracticeOption::AbdMode => abd_supported,
+            PracticeOption::AbdMode | PracticeOption::AbdCap => abd_supported,
             PracticeOption::CsProbFix => cs_prob_supported,
             _ => true,
         })
@@ -691,6 +697,11 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
     } else {
         saito_match::AbdMode::Original
     };
+    let abd_chip_cap = if start.from.is_none() && saito_match::abd_mode::supported(&start.game) {
+        shell.practice.visit.menu.abd_chip_cap.filter(|&c| saito_match::abd_mode::chip_cap_allowed(&start.game, Some(c)))
+    } else {
+        None
+    };
     let custom_builds = [start.you.clone(), start.dummy.clone()];
     let custom_sides = [custom_builds[0].side_for(content, abd_mode), custom_builds[1].side_for(content, abd_mode)];
     let random_battle = if start.from.is_none() && saito_match::random_battle::supported(&start.game) {
@@ -713,6 +724,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         m.sides = custom_sides;
     }
     m.abd_mode = abd_mode;
+    m.abd_chip_cap = abd_chip_cap;
     let cs_prob_fix = if start.from.is_none() && saito_match::cs_prob_fix::supported(&start.game) {
         shell.practice.visit.menu.cs_prob_fix.clamp_for(&start.game)
     } else {
@@ -760,6 +772,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         custom_builds,
         random_battle,
         abd_mode,
+        abd_chip_cap,
         cs_prob_fix,
         seed: start.seed,
         places,
@@ -831,6 +844,13 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         music: crate::battle::BattleMusic::Picked,
         gate: None,
         presentation: None,
+        abd_log: saito_match::abd_mode::supported(&start.game).then(|| crate::abd_stats::AbdLogContext {
+            game: start.game.clone(),
+            mode: "practice",
+            abd_mode,
+            abd_chip_cap,
+            players: [shell.settings.name.clone(), start.dummy.name.clone()],
+        }),
     });
     shell.practice.session = Some(session);
     Ok(())
@@ -990,16 +1010,22 @@ fn restart_set(shell: &mut Shell, session: &mut Session) {
         session.m.random_battle = None;
     }
     session.m.abd_mode = session.abd_mode;
+    session.m.abd_chip_cap = session.abd_chip_cap;
     session.m.cs_prob_fix = session.cs_prob_fix;
     session.places.put(&mut session.m, session.place);
     let set = set_of(ready.content(), &session.m, session.seed);
     #[cfg(feature = "ai")]
     ai::want_chips(session, &set);
-    if let Some(b) = shell.battle.as_mut().filter(|b| b.owner == ScreenId::Practice)
-        && let Some(live) = b.stage.player.live_mut()
-    {
-        live.play_set(set);
-        b.restart();
+    if let Some(b) = shell.battle.as_mut().filter(|b| b.owner == ScreenId::Practice) {
+        b.flush_abd_rounds(true);
+        if let Some(log) = b.abd_log.as_mut() {
+            log.abd_mode = session.abd_mode;
+            log.abd_chip_cap = session.abd_chip_cap;
+        }
+        if let Some(live) = b.stage.player.live_mut() {
+            live.play_set(set);
+            b.restart();
+        }
     }
 }
 
@@ -1497,7 +1523,7 @@ impl Practice {
         };
         if let Some(option) = option.filter(|o| count(*o, &session) > 0) {
             let next = match change {
-                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions, actions_for(&session.game))[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
+                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.inputs, session.place, &session.emotions, actions_for(&session.game))[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
                 Change::To(at) => at.min(count(option, &session) - 1),
             };
             // (A session another screen started keeps its choices for its wait alone, not for the visit.)
@@ -1574,6 +1600,14 @@ impl Practice {
                     session.abd_mode = mode;
                     if keep {
                         shell.practice.visit.menu.abd_mode = mode;
+                    }
+                    restart_set(shell, &mut session);
+                }
+                PracticeOption::AbdCap => {
+                    let cap = (next > 0).then_some(next as u8).filter(|&c| saito_match::abd_mode::chip_cap_allowed(&session.game, Some(c)));
+                    session.abd_chip_cap = cap;
+                    if keep {
+                        shell.practice.visit.menu.abd_chip_cap = cap;
                     }
                     restart_set(shell, &mut session);
                 }
@@ -1871,41 +1905,42 @@ mod tests {
         let content = saito_match::testing::exe6_content();
         let (opponent, options, places, mut seen) = (Opponent::default(), Options::default(), Places::of(&content, "exe6"), 0);
         let emotions = emotions_of(&content, &Names { content: &content, strings: None });
-        let value = |option, opponent, level, options, random_battle, abd_mode, inputs, place| value(option, opponent, level, options, random_battle, abd_mode, inputs, place, &emotions, &ACTIONS);
+        let value = |option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, inputs, place| value(option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, inputs, place, &emotions, &ACTIONS);
         let values = |option, places: &Places| values(option, places, emotions.len(), 3, ACTIONS.len());
         for option in ROWS {
             if values(option, &places) > 0 {
                 let sides = 1 + paired(option) as usize;
                 seen += sides;
-                let had = value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, false, [0; 2]);
+                let had = value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, [0; 2]);
                 assert!(had[..sides].iter().all(|v| *v < values(option, &places)), "{option:?}");
             }
             // (A session another screen starts has the battle's options at their normal values and the places
             // Random: the first.)
-            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::RandomBattle | PracticeOption::AbdMode) {
-                assert_eq!(value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, false, [0; 2]), [0, 0], "{option:?}");
+            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::RandomBattle | PracticeOption::AbdMode | PracticeOption::AbdCap) {
+                assert_eq!(value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, [0; 2]), [0, 0], "{option:?}");
             }
         }
-        assert_eq!(seen, 16, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Random Battle, Dark Soul AI, Input display, Input delay");
+        assert_eq!(seen, 17, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Random Battle, Dark Soul AI, ABD Chip Cap, Input display, Input delay");
         // (Normal, then the game's emotions; a held one is its place after Normal, on its side.)
         assert_eq!(values(PracticeOption::Emotion, &places), 1 + emotions.len());
         let angry = Options { emotions: [None, Some(emotions[1].0)], ..options };
-        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, None, saito_match::AbdMode::Original, false, [0; 2]), [0, 2]);
+        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, None, saito_match::AbdMode::Original, None, false, [0; 2]), [0, 2]);
         assert_eq!(values(PracticeOption::InputDelay, &places), MAX_INPUT_DELAY as usize + 1, "0 to netplay's most");
         #[cfg(feature = "ai")]
         {
             assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::Ai, InFight::SecondPad]);
-            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, None, saito_match::AbdMode::Original, false, [0; 2]), [2, 0]);
+            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, None, saito_match::AbdMode::Original, None, false, [0; 2]), [2, 0]);
         }
         #[cfg(not(feature = "ai"))]
         assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad], "no Fights without the AI");
-        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, None, saito_match::AbdMode::Original, false, [0; 2]), [ACTIONS.len() - 1, 0]);
-        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, None, saito_match::AbdMode::Original, false, [0; 2]), [1, 0], "Normal at first");
-        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, None, saito_match::AbdMode::Original, false, [0; 2]), [0, 1]);
-        assert_eq!(value(PracticeOption::RandomBattle, opponent, NORMAL, options, Some(saito_match::RandomRank::Rank3), saito_match::AbdMode::Original, false, [0; 2]), [3, 0]);
-        assert_eq!(value(PracticeOption::AbdMode, opponent, NORMAL, options, None, saito_match::AbdMode::DoubleTeamDs, false, [0; 2]), [2, 0]);
-        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, None, saito_match::AbdMode::Original, true, [0; 2]), [1, 0]);
-        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, None, saito_match::AbdMode::Original, false, [3, 2]), [2, 0]);
+        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, None, saito_match::AbdMode::Original, None, false, [0; 2]), [ACTIONS.len() - 1, 0]);
+        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, [0; 2]), [1, 0], "Normal at first");
+        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, None, saito_match::AbdMode::Original, None, false, [0; 2]), [0, 1]);
+        assert_eq!(value(PracticeOption::RandomBattle, opponent, NORMAL, options, Some(saito_match::RandomRank::Rank3), saito_match::AbdMode::Original, None, false, [0; 2]), [3, 0]);
+        assert_eq!(value(PracticeOption::AbdMode, opponent, NORMAL, options, None, saito_match::AbdMode::DoubleTeamDs, None, false, [0; 2]), [2, 0]);
+        assert_eq!(value(PracticeOption::AbdCap, opponent, NORMAL, options, None, saito_match::AbdMode::Original, Some(5), false, [0; 2]), [5, 0]);
+        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, [3, 2]), [2, 0]);
         // (The arenas and the backgrounds after Random.)
         assert_eq!(values(PracticeOption::Arena, &places), 1 + places.arenas.len());
         assert_eq!(values(PracticeOption::Background, &places), 1 + saito_match::ids::pool_backgrounds(&content).len(), "every game's");
@@ -2115,7 +2150,7 @@ mod tests {
         visit.leave();
         assert!(visit.arrive(), "from elsewhere, a visit starts");
         assert_eq!(visit.build("exe6", 0), None, "Play's remembered build");
-        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, random_battle: Some(saito_match::RandomRank::Rank2), abd_mode: saito_match::AbdMode::LegacyCollection, cs_prob_fix: saito_match::CsProbFix::NONE, inputs: true };
+        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, random_battle: Some(saito_match::RandomRank::Rank2), abd_mode: saito_match::AbdMode::LegacyCollection, abd_chip_cap: Some(5), cs_prob_fix: saito_match::CsProbFix::NONE, inputs: true };
         visit.set_place("exe6", [3, 5]);
         visit.music = theme.clone();
         visit.menu = menu.clone();

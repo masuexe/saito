@@ -29,6 +29,26 @@ pub struct Step {
     pub frame: Option<u32>,
 }
 
+/// Settled per-round Auto Battle Data (ABD) Mega / Giga / Dark / PA chip usage counts
+/// (by ABD owner side) captured on round end for telemetry and export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoundAbdUsage {
+    /// 1-based round number within the set.
+    pub round: u8,
+    /// Per-side (by ABD owner) `(ChipHandle, count)` list.
+    pub uses: [Vec<(saito_content_api::ChipHandle, u16)>; 2],
+}
+
+impl RoundAbdUsage {
+    pub fn from_battle(b: &Battle) -> Self {
+        Self { round: b.round.round.max(1), uses: b.abd_chip_uses.clone() }
+    }
+
+    pub fn has_any(&self) -> bool {
+        self.uses.iter().any(|u| !u.is_empty())
+    }
+}
+
 pub trait Driver {
     /// A fresh battle at the start.
     fn start(&mut self) -> Battle;
@@ -175,6 +195,8 @@ pub trait Driver {
     /// Round transition checkpoints settled since the last call, for live
     /// spectating mid-set catch-up starting at round >= 2.
     fn take_round_starts(&mut self, _out: &mut Vec<crate::replay::RecordedRoundStart>) {}
+    /// Settled per-round ABD Mega/Giga/Dark/PA chip usage summaries completed since the last call.
+    fn take_abd_rounds(&mut self, _out: &mut Vec<RoundAbdUsage>) {}
     /// How a recording's replay shifts what the recording console's screen
     /// shows on the frame just played, against the original's, for the
     /// frame comparison: none from a driver that replays no recording.

@@ -2643,6 +2643,11 @@ fn battle_lib(lua: &Lua) -> mlua::Result<mlua::Table> {
         let (side, i) = (u8_arg(side, "side")? & 1, u8_arg(i, "stat")?);
         with(|api, _| Ok(api.side_stat(side, i)))
     });
+    lib_fn!(lua, t, "abd_chip_uses", |_, (side, chip): (LuaValue, LuaValue)| {
+        let side = u8_arg(side, "side")? & 1;
+        let chip = bound(|b| def_arg(b, &chip, Registry::Chip, "abd_chip_uses"))?;
+        with(|api, _| Ok(api.abd_chip_uses(side, saito_content_api::ChipHandle(chip))))
+    });
     lib_fn!(lua, t, "damage_carry", |lua, side: LuaValue| {
         let side = u8_arg(side, "side")? & 1;
         let r = with(|api, _| Ok(api.damage_carry(side)))?;

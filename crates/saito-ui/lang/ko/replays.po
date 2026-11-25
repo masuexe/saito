@@ -384,3 +384,6 @@ msgstr "선 다크 컷인: 어드컬"
 
 msgid "Dark Cut-In: Original"
 msgstr "선 다크 컷인: 원작"
+
+msgid "ABD Cap: {}"
+msgstr "ABD 상한: {}회"

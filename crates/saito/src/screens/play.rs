@@ -137,6 +137,10 @@ fn remembered_abd_mode(game: &str) -> String {
     format!("play.abd-mode.{game}")
 }
 
+fn remembered_abd_cap(game: &str) -> String {
+    format!("play.abd-cap.{game}")
+}
+
 /// Build the `CsProbEntry` model for `game`'s ChargeShot Addition probability fix dialog.
 pub(crate) fn cs_prob_items(shell: &Shell, game: &str, fix: saito_match::CsProbFix) -> ModelRc<saito_ui::CsProbEntry> {
     let entries = saito_match::cs_prob_fix::effects(game);
@@ -304,6 +308,8 @@ struct Live {
     random_battle: Option<saito_match::RandomRank>,
     /// EXE4 / EXE5 Dark Soul AI (Auto Battle Data) rule mode.
     abd_mode: saito_match::AbdMode,
+    /// EXE4 / EXE5 per-round ABD Mega/Giga/Dark/PA chip repeat hard cap (`None` = Off).
+    abd_chip_cap: Option<u8>,
     /// EXE5 / EXE6 per-effect ChargeShot Addition probability fix bitmask.
     cs_prob_fix: saito_match::CsProbFix,
     /// EXE4 Legacy Collection All Guard patch card restriction.
@@ -878,6 +884,10 @@ impl Play {
                 .and_then(saito_match::AbdMode::from_u8)
                 .filter(|m| m.allowed_for(game))
                 .unwrap_or(saito_match::AbdMode::LegacyCollection);
+            let cap_key = remembered_abd_cap(game);
+            settings.abd_chip_cap = remembered(&cap_key)
+                .and_then(|r| r.parse::<u8>().ok())
+                .filter(|&c| saito_match::abd_mode::chip_cap_allowed(game, Some(c)));
         }
         if saito_match::cs_prob_fix::supported(game) {
             settings.cs_prob_fix = saito_match::CsProbFix::recommended(game);
@@ -904,6 +914,15 @@ impl Play {
         }
         if saito_match::abd_mode::supported(&settings.game) {
             remembered.insert(remembered_abd_mode(&settings.game), settings.abd_mode.as_u8().to_string());
+            let cap_key = remembered_abd_cap(&settings.game);
+            match settings.abd_chip_cap {
+                Some(cap) => {
+                    remembered.insert(cap_key, cap.to_string());
+                }
+                None => {
+                    remembered.remove(&cap_key);
+                }
+            }
         }
         shell.save_settings();
     }
@@ -1002,6 +1021,13 @@ impl Play {
                 if said.go.get() { 1.0 } else { said.theirs.get().min(0.995) }
             })),
             presentation,
+            abd_log: saito_match::abd_mode::supported(&game).then(|| crate::abd_stats::AbdLogContext {
+                game: game.clone(),
+                mode: "online",
+                abd_mode: agreed.m.abd_mode,
+                abd_chip_cap: agreed.m.abd_chip_cap,
+                players: agreed.names.clone(),
+            }),
         });
         self.close_random_prep(shell);
         self.stage = Stage::Loading { seed: agreed.seed, gate };
@@ -1204,6 +1230,30 @@ impl Play {
         self.change_settings(shell, |s| {
             if saito_match::abd_mode::supported(&s.game) {
                 s.abd_mode = current.next_for(&s.game);
+            }
+        });
+    }
+
+    fn pick_abd_cap(&mut self, shell: &mut Shell) {
+        if !self.is_host() {
+            return;
+        }
+        let options: Vec<String> = {
+            let ui = shell.ui();
+            let view = ui.global::<PlayView>();
+            (0..=9i32).map(|c| view.invoke_abd_cap_choice(c).into()).collect()
+        };
+        let selected = self.live.abd_chip_cap.map_or(0, |c| (c as usize).min(9));
+        shell.pick("lobby.abd-cap", 0, options, selected);
+    }
+
+    fn set_abd_chip_cap(&mut self, shell: &mut Shell, cap: Option<u8>) {
+        if !self.is_host() {
+            return;
+        }
+        self.change_settings(shell, |s| {
+            if saito_match::abd_mode::chip_cap_allowed(&s.game, cap) {
+                s.abd_chip_cap = cap;
             }
         });
     }
@@ -1560,6 +1610,7 @@ impl Play {
             custom_time: settings.custom_screen_time,
             random_battle: settings.random_battle,
             abd_mode: settings.abd_mode,
+            abd_chip_cap: settings.abd_chip_cap,
             cs_prob_fix: settings.cs_prob_fix,
             all_guard_disabled: settings.all_guard_disabled,
             dark_cut_in_fix: settings.dark_cut_in_fix,
@@ -1664,6 +1715,7 @@ impl Play {
         view.set_abd_supported(saito_match::abd_mode::supported(&settings.game));
         view.set_abd_has_ds(saito_match::AbdMode::DoubleTeamDs.allowed_for(&settings.game));
         view.set_abd_mode(live.abd_mode.as_u8() as i32);
+        view.set_abd_chip_cap(live.abd_chip_cap.map_or(0, i32::from));
         let cs_total = saito_match::cs_prob_fix::effects(&settings.game).len() as i32;
         view.set_cs_prob_supported(cs_total > 0);
         view.set_cs_prob_count(live.cs_prob_fix.count(&settings.game) as i32);
@@ -2677,7 +2729,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.abd-cap" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("abd-guide.") => self.abd_guide_dialog,
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
@@ -2847,6 +2899,7 @@ impl Screen for Play {
             "lobby.stage" => self.open_stage_dialog(shell),
             "lobby.random-battle" => self.cycle_random_battle(shell),
             "lobby.abd-mode" => self.cycle_abd_mode(shell),
+            "lobby.abd-cap" => self.pick_abd_cap(shell),
             "lobby.abd-guide" => self.open_abd_guide_dialog(shell),
             "abd-guide.close" => self.close_abd_guide_dialog(shell),
             "lobby.extra-rule" => self.toggle_extra_rule(shell),
@@ -3040,6 +3093,10 @@ impl Screen for Play {
             "name.version" => self.choose_version(shell, choice.max(0) as usize),
             "lobby.open" => self.set_open(shell, choice == 1),
             "lobby.ruleset" => self.pick_ruleset(shell, choice, 0),
+            "lobby.abd-cap" => {
+                let cap = (choice > 0).then_some(choice.clamp(1, saito_match::abd_mode::MAX_CHIP_CAP as i32) as u8);
+                self.set_abd_chip_cap(shell, cap);
+            }
             "lobby.ruleset-sub" => self.set_ruleset_sub(shell, choice == 1),
             "lobby.ruleset-mixed" => self.set_ruleset_mixed(shell, choice == 1),
             "stage.list.bg" => self.choose_stage_bg(shell, index, choice),
