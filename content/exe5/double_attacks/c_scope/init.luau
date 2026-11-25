@@ -118,6 +118,11 @@ local function megaman_shots(me: Object)
         -- 0x0201566C
         if me.phase_init == 0 then
             me.anim, me.anim_loaded = ANIM_SHOOT, 0xFF
+            local overlay = me.related2
+            if overlay then
+                overlay.anim_loaded = 0xFF
+                overlay:step_sprite()
+            end
             double_attack.detach(s.held)
             double_attack.raise_arm(me, "held")
             me.phase_init = 4
@@ -135,6 +140,11 @@ local function megaman_shots(me: Object)
         -- 0x020156B0
         if me.phase_init == 0 then
             me.anim, me.anim_loaded = ANIM_SHOOT, 0xFF
+            local overlay = me.related2
+            if overlay then
+                overlay.anim_loaded = 0xFF
+                overlay:step_sprite()
+            end
             double_attack.detach(s.held)
             double_attack.raise_arm(me, "held")
             double_attack.detach(s.held2)

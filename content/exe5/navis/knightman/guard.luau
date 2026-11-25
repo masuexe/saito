@@ -121,6 +121,17 @@ local function update(me: Object, s: ActionState)
     local ahead = field.panel(me.panel_x + me.facing, me.panel_y)
     local side = if ahead then ahead.alliance else OFF_FIELD_SIDE
     if side == me.alliance or own(me).diving or battle.navi(me.alliance).navi == knightman then
+        local ps = party.supports(me.alliance)
+        if ps.knightman_pending > 0 and party.may_support(me.alliance, knightman) then
+            local m = party.member_of(me.alliance, knightman)
+            if m ~= nil then
+                local stats = battle.member(me.alliance, m) :: Navi
+                local hp = stats.hp
+                local pending = ps.knightman_pending
+                stats.hp = hp - (if hp > pending then pending else hp - 1)
+                ps.knightman_pending = 0
+            end
+        end
         me:set_request("guard", false)
         return finish(me)
     end

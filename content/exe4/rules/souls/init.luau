@@ -99,6 +99,7 @@ souls.state = {
     unite_step = schema.role("offer_flight.step", "u8"),
     unite_count = schema.role("offer_flight.count", "u8"),
     soul_hand_sent = "bool",
+    anti_magic_linked = "bool",
 } :: StateSchema
 for name, kind in screen do
     assert(souls.state[name] == nil, `a soul's screen field \`{name}\` is one of Double Soul's own`)

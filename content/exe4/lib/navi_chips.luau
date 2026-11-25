@@ -140,7 +140,11 @@ function navi_chips.anti_recovery(
         if not battle.dimmed() then
             local trap = battle.linked(bit32.bxor(user.alliance, 1)).chip
             if trap and trap.trap == "anti_recovery" then
-                local damage = int.u32(bit32.rshift(spec.damage, 1) * 3)
+                local base = bit32.band(spec.damage, 0x3FFF)
+                if bit32.btest(spec.damage, 0x8000) then
+                    base *= 2
+                end
+                local damage = int.u32(bit32.rshift(base, 1) * 3)
                 local c = navi_chip.spring_anti_recovery(user, damage, true)
                 dimming.start(user.alliance, true, c, user, nil)
                 -- (The dimming handler then finds the side's dimming registered and leaves it, its telop

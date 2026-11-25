@@ -37,6 +37,10 @@ function hooks.settle(me: Object)
         stats.mood = 0
     end
     me:set_navi_state("no_charge", false)
+    me:set_navi_state("uninterruptible", false)
+    me:set_navi_state("trap_armed", false)
+    me:set_request("anti_damage_triggered", false)
+    me:set_request("anti_sword_triggered", false)
     navi_status.clear_invulnerable(me)
 end
 

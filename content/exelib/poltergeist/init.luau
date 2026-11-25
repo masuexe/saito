@@ -16,8 +16,13 @@
 
 local poltergeist = {}
 
--- The obstacles it takes: registered field objects but those not `throwable`.
+-- The obstacles it takes: registered field objects but those not `throwable`
+-- or already dead/destroyed (prevents EXE4/EXE5 Poltergeist softlocks on dying
+-- VDoll/BlkBomb and throwing exploded TimeBombs).
 local function takes(o: Object): boolean
+    if o:status("dead") or o.action == 2 then
+        return false
+    end
     local identity = o.identity
     return identity == nil or identity.throwable ~= false
 end

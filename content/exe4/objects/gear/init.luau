@@ -96,6 +96,10 @@ end
 -- along its way, else the one under where it is going. A panel it may roll onto (on the field, solid, no body, its
 -- travel side's) it rolls on toward; any other turns it back.
 local function rolling(me: Object)
+    if not field.check(me.panel_x, me.panel_y, SOLID, 0) then
+        me:set_action(DESTROYED)
+        return
+    end
     local x, y
     if me.phase_init == 0 then
         battle.play_sound(ROLL)

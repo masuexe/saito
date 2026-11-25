@@ -103,9 +103,9 @@ fn drain_codes_add_their_argument() {
     assert_eq!(s.bugs.hp_drain, 5);
     let s = bugged(&b, 0x19, 3).unwrap();
     assert_eq!(s.bugs.custom_drain, 7, "at most 7");
-    // (A byte store of the halfword plus the argument.)
+    // Saturating halfword addition (fixes the original single-byte wraparound bug).
     let s = bugged(&b, 0x54, 0x20).unwrap();
-    assert_eq!(s.bugs.custom_damage, 0x0110);
+    assert_eq!(s.bugs.custom_damage, 0x0210);
 }
 
 #[test]

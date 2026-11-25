@@ -15,7 +15,7 @@ local glow = {}
 
 local made = common.make {
     id = "bugfix/glow",
-    offset = 1,
+    offset = 0,
     -- The navi's parts, stepping on.
     wear = function(me: Object, navi: Object)
         overlays.add_parts_of(me, navi, true)

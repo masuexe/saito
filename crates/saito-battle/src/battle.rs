@@ -524,6 +524,10 @@ pub struct Battle {
     /// Per-side registry of defensive chips and their linked objects
     /// (0x10 bytes per side at 0x02036720).
     pub linked: [LinkedRecord; 2],
+    /// Snapshot of `linked[side]` captured when a trap triggers, so overwriting
+    /// or breaking the trap slot before the counter runs cannot override or zero
+    /// the pending counter's damage.
+    pub triggered_linked: [Option<LinkedRecord>; 2],
     /// Per side: its dimming (`byte_203CF00`).
     pub dimming: [crate::dimming::DimmingRecord; 2],
     /// Per side: the player's rules, its rules and its systems' state
@@ -830,6 +834,7 @@ impl Battle {
             side_stats: [[0; 16]; 2],
             navi_hit_counts: [[0; 4]; 2],
             linked: [LinkedRecord::default(); 2],
+            triggered_linked: [None; 2],
             dimming: Default::default(),
             rules,
             sound: [Vec::new(), Vec::new()],

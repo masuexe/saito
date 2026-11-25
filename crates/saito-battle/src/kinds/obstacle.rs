@@ -429,9 +429,11 @@ fn push_on_any_hit_by_flip(b: &mut Battle, c: CollisionId) {
         4 | 8 => 1,
         _ => return,
     };
+    let push_sides = (i & 0x5 != 0) as u8 | (((i & 0xA != 0) as u8) << 1);
     let d = b.collision.get_mut(c);
     d.hit_mod_by_side[byte] |= ANY_HIT_PUSH;
     d.hit_mod_final |= ANY_HIT_PUSH;
+    d.push_sides |= push_sides;
 }
 
 fn push_on_any_hit(b: &mut Battle, c: CollisionId) {
@@ -986,6 +988,12 @@ fn push_vector_by_flip(b: &Battle, r: ObjectRef) -> PushVector {
             return PushVector { pusher: 0, dx: 0, dy: 0, panels: 0 };
         }
         1
+    } else if hits & PUSHERS[1] != 0 {
+        -1
+    } else if d.push_sides == 1 {
+        1
+    } else if d.push_sides == 3 {
+        return PushVector { pusher: 0, dx: 0, dy: 0, panels: 0 };
     } else {
         -1
     };

@@ -18,6 +18,10 @@ local MODE = 1
 -- for side 1's panels, clear for side 0's).
 local SOLID, BODIES, SIDE_1 = 0x10, 0x0F80_0000, 0x20
 
+type ControllerState = {
+    bonus: number,
+}
+
 -- 0x080E7288.
 local function effect(me: Object)
     if me.phase_init == 0 then
@@ -30,7 +34,7 @@ local function effect(me: Object)
         end
         local x = panels.closest_in_row(other, me.panel_y, need, forbid)
         if x ~= 0 then
-            local damage = bit32.bor(me.damage, bit32.lshift(me.stamina, 16))
+            local damage = dimming_chips.damage_plus(me, (me.state :: ControllerState).bonus)
             gear.spawn(x, me.panel_y, me.element, me.alliance, MODE, damage)
             battle.play_sound(SOUND)
         end
@@ -48,13 +52,18 @@ end
 local kind = new.kind {
     id = "metlger/controller",
     pool = "effect",
+    state = { bonus = "u16" },
     -- 0x080E7244.
     update = dimming_chips.phases { name = "MetlGer", effect = effect },
 }
 
 -- 0x080E72EC.
 local function hook(user: Object, spec: DimmingChipSpec): Object?
-    return dimming_chips.spawn(kind, user, spec, true)
+    local o = dimming_chips.spawn(kind, user, spec, true)
+    if o then
+        (o.state :: ControllerState).bonus = spec.bonus
+    end
+    return o
 end
 
 -- MetlGer1 (EXE4 chip 0x0AF).

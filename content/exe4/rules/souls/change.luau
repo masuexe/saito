@@ -108,6 +108,13 @@ local function prepare(me: Object, soul: FormDef, spec: Spec)
         me:set_status("drag", false)
         me:set_status("moving", false)
         me:set_request("revert_form", false)
+        local am = rules.state_of(me.alliance) :: { anti_magic_linked: boolean }
+        if am.anti_magic_linked then
+            am.anti_magic_linked = false
+            battle.clear_linked(me.alliance)
+        end
+        me:set_request("anti_damage_triggered", false)
+        me:set_request("anti_sword_triggered", false)
         if spec.prepare then
             spec.prepare(me)
         end

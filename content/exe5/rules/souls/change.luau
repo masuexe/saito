@@ -65,6 +65,7 @@ local function prepare(me: Object)
     flash(me)
     battle.play_sound(FLASH_SOUND)
     stop_moving(me)
+    me:set_navi_state("uninterruptible", false)
     me:set_navi_state("form_change_sprite_held", true)
     set_step(me, IMAGE)
 end

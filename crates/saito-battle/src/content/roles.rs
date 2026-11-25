@@ -780,6 +780,11 @@ impl Roles {
             .unwrap_or_else(|| panic!("the role banners.{} is not filled (the rules' roles, rules/roles.luau)", role.name()))
     }
 
+    /// The kind of `role`, if content filled it.
+    pub fn try_kind(&self, role: KindRole) -> Option<KindHandle> {
+        self.kinds.get(&role).copied()
+    }
+
     /// The kind of `role`; a role content hasn't filled is a panic naming
     /// it.
     pub fn kind(&self, role: KindRole) -> KindHandle {

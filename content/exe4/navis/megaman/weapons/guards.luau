@@ -17,6 +17,7 @@ local collision = require("../../../rules/collision")
 local guard = require("../../../lib/guard")
 local projectile = require("../../../objects/projectile")
 local shield = require("../../../objects/shield")
+local souls_hooks = require("../../../rules/souls/hooks")
 local sparks = require("../../../lib/sparks")
 
 local guards = {}
@@ -94,6 +95,7 @@ local ANTI_MAGIC = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: AntiMagicState)
         if me:request("anti_damage_triggered") or me:request("anti_sword_triggered") then
+            souls_hooks.set_anti_magic_linked(me.alliance, false)
             me:check_reactive_abort()
             return
         end
@@ -109,12 +111,14 @@ local ANTI_MAGIC = new.action {
                 owner = me,
                 object = nil,
             })
+            souls_hooks.set_anti_magic_linked(me.alliance, true)
             me.step_init = 4
             s.timer = ANTI_MAGIC_TICKS
         end
         local t = s.timer - 1
         s.timer = int.u16(t)
         if t < 0 then
+            souls_hooks.set_anti_magic_linked(me.alliance, false)
             battle.clear_linked(me.alliance)
             me:exit_attack()
         end

@@ -486,9 +486,11 @@ local function init(me: Object)
     dimming.hide_user(user)
     if not s.protoman then
         local proto = spawn(user, me.panel_x, me.panel_y, me.element, bit32.bor(me.damage, bit32.lshift(me.stamina, 16)), true)
-        if proto then
-            (proto.state :: State).partner = me
+        if not proto then
+            stand_in.leave(me)
+            return
         end
+        (proto.state :: State).partner = me
         s.partner = proto
     end
     me:set_lifecycle("update")

@@ -518,8 +518,11 @@ impl Side {
         }
         // A chip a button holds leaves the folder too (EXE5's Arm Change,
         // 0x080250C8: the Regular chip's flag stays as it is).
-        if let Some(SlotKind::Chip { index, .. }) = screen.hold.map(|h| screen.slots[h.chip as usize].kind) {
+        if let Some(SlotKind::Chip { index, regular }) = screen.hold.map(|h| screen.slots[h.chip as usize].kind) {
             folder.take(index as usize);
+            if regular {
+                folder.regular_pending = false;
+            }
             if let Some(t) = &mut console.tag_pair {
                 *t = t.wrapping_sub(1);
             }

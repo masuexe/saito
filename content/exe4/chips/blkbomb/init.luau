@@ -35,7 +35,7 @@ local LOOK: BlackBombLook = {
     end,
     identity = nil,
     tracked = false,
-    set_off_empties_hp = false,
+    set_off_empties_hp = true,
     bursts_as_freed = false,
     crush = "destroys",
     sprite = SPRITE,
@@ -68,15 +68,13 @@ destroyed = function(me: Object)
     if me.phase_init == 0 then
         me.phase_init = 4
         me.collision:set_region(nil)
-        if me.hp == 0 then
+        if me.hp == 0 and not (me.state :: { set_off: boolean }).set_off then
             battle.effect(me.pos, EXPLOSION)
-            if not (me.state :: { set_off: boolean }).set_off then
-                battle.play_sound(SOUND_HIT_BOMB)
-                if me:status("carried") then
-                    finish(me)
-                    return
-                end
-            end
+            battle.play_sound(SOUND_HIT_BOMB)
+        end
+        if me:status("carried") then
+            finish(me)
+            return
         end
     end
     if battle.dimmed() then

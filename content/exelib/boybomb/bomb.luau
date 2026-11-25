@@ -147,7 +147,7 @@ function bomb.make(look: BoyBombLook): BoyBomb
 
     -- EXE5's 0x080CD08E: it goes: a puff when a chip removed it (EXE5's), else it breaks (a sound, a spark).
     local function destroyed(me: Object)
-        if look.reserves_panel then
+        if look.reserves_panel or me:status("drag") or me:status("sliding") then
             me:unreserve_panel(me.future_panel_x, me.future_panel_y)
         end
         local p = me.pos

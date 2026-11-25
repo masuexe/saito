@@ -160,7 +160,9 @@ local function update(me: Object, s: State)
         return
     end
     battle.play_sound(SOUND)
-    me:set_status("untouchable", false)
+    if not me:navi_state("no_charge") then
+        me:set_status("untouchable", false)
+    end
     me:set_request("stun_strike", false)
     -- 0x08017432: flashing for 120 ticks.
     me:set_status_timer("flash", FLASH)

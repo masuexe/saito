@@ -147,6 +147,10 @@ pub struct CollisionData {
     /// and a flipped one's), which a push that reads by the hitter's flip
     /// takes (`PushSource::ByHitterFlip`, EXE5's); EXE6's keeps them unread.
     pub hit_mod_by_side: [u8; 2],
+    /// Sides (bit 0 = side 0, bit 1 = side 1) that pushed this body while
+    /// dimmed, preserved alongside `hit_mod_by_side` so BoyBomb pushes away
+    /// from the attacker after dimming ends instead of reversing.
+    pub push_sides: u8,
     /// The status its hits carry, and the one the hits it took landed.
     pub status_base: Option<StatusHandle>,
     pub status_final: Option<StatusHandle>,
@@ -455,6 +459,7 @@ impl Battle {
             s.hit_mod_final = 0;
             // (EXE5's clear, 0x08016B22, takes its two by-side bytes too.)
             s.hit_mod_by_side = [0; 2];
+            s.push_sides = 0;
             s.guard_dirs = 0;
         }
         s.status_final = None;
@@ -690,7 +695,7 @@ impl Battle {
         let w2 = (rd.secondary_weakness & hd.secondary_element != 0 || (rd.secondary_weakness == 0x80 && hs & 0x2000 != 0))
             as u8;
         let mut m = 1 + w1 + w2;
-        rm.acc.damage_multiplier = m - 1;
+        rm.acc.damage_multiplier = rm.acc.damage_multiplier.max(m - 1);
         let thaw = rd.f1 & f1::FROZEN != 0 && (rm.acc.hit_flags & 2 != 0 || hd.secondary_element == 0x10);
         if thaw {
             m += 1;

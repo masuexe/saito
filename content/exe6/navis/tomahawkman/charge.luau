@@ -49,6 +49,7 @@ local function setup(navi: Object): Action
     navi.attack_damage = weapon.charge_damage(navi, 0x64, 0x14)
     navi.hit_param = HIT_PARAM
     navi.attack_element = WOOD
+    navi.extra = 0
     local s = navi:action_state(charge.action) :: State
     s.raise, s.recover = RAISE_TICKS, RECOVER_TICKS
     return charge.action

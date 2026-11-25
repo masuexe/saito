@@ -98,8 +98,6 @@ local function init(me: Object)
     local c = me.collision
     c.status_base = status.paralyze_90
     c:present()
-    -- (0x08002DBE: its sprite unflipped after all.)
-    sprite:set_flip(0)
     me:set_lifecycle("update")
     tick(me)
 end

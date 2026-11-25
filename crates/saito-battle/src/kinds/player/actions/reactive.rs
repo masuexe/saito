@@ -63,7 +63,11 @@ pub(crate) fn counter(b: &mut Battle, r: ObjectRef) {
     let requests = ai(b, r).requests;
     drop_everything(b, r);
     let side = b.objects.get(r).alliance as usize & 1;
-    let rec = b.linked[side];
+    let rec = if requests & request::GUARD != 0 {
+        b.linked[side]
+    } else {
+        b.triggered_linked[side].take().unwrap_or(b.linked[side])
+    };
     let a = &mut ai_mut(b, r).attack;
     a.damage = rec.damage as u16;
     a.hit_param = (rec.damage >> 16) as u16;

@@ -210,6 +210,7 @@ impl Hash for Battle {
             side_stats,
             navi_hit_counts,
             linked,
+            triggered_linked,
             dimming,
             rules,
             sound: _,
@@ -256,6 +257,7 @@ impl Hash for Battle {
         side_stats.hash(h);
         navi_hit_counts.hash(h);
         linked.hash(h);
+        triggered_linked.hash(h);
         dimming.hash(h);
         rules.hash(h);
         // An engine error's message is left out: it is for people, and a

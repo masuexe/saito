@@ -86,7 +86,7 @@ local function update(me: Object, s: State)
             me.anim = 5
             me:open_counter_window()
             battle.play_sound(swords.swing)
-            attachment.attach(me, swords.blade, "related", NAVI_NUMBER)
+            attachment.attach(me, swords.blade, "related", swords.blade_anim(me))
             me:set_status("using_action", true)
             s.timer = SLASH_TICKS
             -- (Chip 0x38, Slasher, whose action this is alone.)

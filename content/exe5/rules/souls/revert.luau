@@ -36,6 +36,7 @@ function revert.update(me: Object, s: State)
             e.run_while_paused = true
         end
         stop_moving(me)
+        me:set_navi_state("uninterruptible", false)
         local stats = battle.navi(me.alliance)
         hooks.finish(me, stats.form)
         -- sub_800FC9E(0, 0): MegaMan's base sprite.

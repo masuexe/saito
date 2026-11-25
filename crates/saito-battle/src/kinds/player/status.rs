@@ -506,6 +506,8 @@ fn apply_damage_asking_at_zero(b: &mut Battle, r: ObjectRef) {
     }
     if !left && !super::hp_emptied(b, r) {
         fall(b, r);
+    } else if !left && b.objects.get(r).hp != 0 {
+        super::entry::show_hp_number(b, r);
     }
     counter_and_mood(b, r);
 }
@@ -1423,10 +1425,26 @@ fn can_cut_in(b: &Battle, r: ObjectRef) -> bool {
 /// in the hand. See docs/engine/chips.md §3.6.5.
 fn cut_in(b: &mut Battle, r: ObjectRef) {
     let (action, a) = super::chip_use::prepare_detached(b, r);
+    // SlashBehind temporarily flips the navi without CAN_TURN; cut-in chips
+    // should still fire facing the opponent rather than backwards.
+    let saved_flip = if ai(b, r).status & crate::actor::status::CAN_TURN == 0 {
+        let f = b.objects.get(r).flip;
+        if f != 0 {
+            b.objects.get_mut(r).flip = 0;
+            Some(f)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let controller = match action {
         NaviAction::Engine(super::EngineAction::DimmingChip) => actions::dimming_chip::spawn_controller(b, r, &a),
         NaviAction::Engine(super::EngineAction::HandOffChip) => actions::hand_off_chip::spawn_controller(b, r, &a),
         _ => {
+            if let Some(f) = saved_flip {
+                b.objects.get_mut(r).flip = f;
+            }
             if b.setup.settings.effects & crate::setup::effects::CONSUME_REFUSED_CUT_IN != 0 {
                 let side = b.objects.get(r).alliance;
                 if let Some(actions::instant::Effect::Runs(f)) = a.instant {
@@ -1447,6 +1465,9 @@ fn cut_in(b: &mut Battle, r: ObjectRef) {
             return;
         }
     };
+    if let Some(f) = saved_flip {
+        b.objects.get_mut(r).flip = f;
+    }
     let side = b.objects.get(r).alliance;
     b.cut_in_dimming(side, controller, r);
     crate::dimming::cut_in_flash(b, side);

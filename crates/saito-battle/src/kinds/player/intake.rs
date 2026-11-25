@@ -36,12 +36,12 @@ pub(super) fn collect_hits(b: &mut Battle, r: ObjectRef) {
     // (EXE5's takes the hit's NaviCust bug before the HP bug drains: the
     // navi's game's intake rules.)
     let bugs_first = b.game_rules().intake.bugs_before_drain;
+    drop_cursor_trap(b, r);
+    anti_damage_traps(b, r);
     if bugs_first {
         bug_navicust(b, r);
     }
     hp_bug_drain(b, r);
-    drop_cursor_trap(b, r);
-    anti_damage_traps(b, r);
     hit_bug(b, r);
     if !bugs_first {
         bug_navicust(b, r);
@@ -145,6 +145,7 @@ fn absorb_hit(c: &mut CollisionData) {
     c.hit_mod_final = 0;
     // (EXE5's by-side modifiers go with it: an absorbed hit pushes nothing.)
     c.hit_mod_by_side = [0; 2];
+    c.push_sides = 0;
     c.status_final = None;
     c.acc.inflicted_bugs = 0;
 }
@@ -417,6 +418,7 @@ fn anti_damage_traps(b: &mut Battle, r: ObjectRef) {
             }
             let ffc = coll(b, r).acc.hit_flags;
             if ffc & 0x2000 != 0 && ffc & rules.sword_spares == 0 {
+                b.triggered_linked[side] = Some(b.linked[side]);
                 ai_mut(b, r).requests |= ANTI_SWORD_TRIGGERED;
                 zero_trapped_hit(b, r);
                 return;
@@ -440,6 +442,9 @@ fn anti_damage_traps(b: &mut Battle, r: ObjectRef) {
             zero_trapped_hit(b, r);
         }
         return;
+    }
+    if chip.is_some() {
+        b.triggered_linked[side] = Some(b.linked[side]);
     }
     ai_mut(b, r).requests |=
         if trap == Trap::AntiDamage { crate::actor::request::ANTI_DAMAGE_TRIGGERED } else { crate::actor::request::BODY_GUARD_TRIGGERED };

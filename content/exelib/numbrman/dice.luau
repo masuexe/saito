@@ -201,14 +201,11 @@ function dice.make(spec: DiceSpec): Dice
     local function burst(me: Object)
         local s = me.state :: State
         me.collision:set_region(nil)
-        local damage, stamina
-        if spec.keeps_top_bit then
-            damage = bit32.band(s.face * me.damage, 0x7FFF) + bit32.band(me.damage, 0x8000)
-            stamina = me.stamina
-        else
-            local word = int.u32(s.face * me.damage + me.stamina * 0x10000)
-            damage, stamina = bit32.band(word, 0xFFFF), bit32.rshift(word, 16)
-        end
+        local DAMAGE_FLAGS = 0xF800
+        local base = bit32.band(me.damage, bit32.bnot(DAMAGE_FLAGS))
+        local flags = bit32.band(me.damage, DAMAGE_FLAGS)
+        local damage = bit32.bor(flags, math.min(s.face * base, 0x07FF))
+        local stamina = me.stamina
         local box = battle.hitbox(me, {
             panel_x = me.panel_x,
             panel_y = me.panel_y,

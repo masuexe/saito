@@ -162,7 +162,11 @@ impl Battle {
     pub(crate) fn register_dimming(&mut self, side: u8, chip: Option<ChipHandle>, controller: ObjectRef, user: ObjectRef) {
         // (The original's test is the chip's place in its table: the chips
         // past the Program Advances.)
-        let no_cut_in = chip.is_some_and(|h| self.content.chip(h).traits.has(ChipTraits::NO_CUT_IN));
+        let is_anti_recv = self
+            .roles()
+            .try_kind(crate::content::KindRole::AntiRecovery)
+            .is_some_and(|k| self.objects.get(controller).kind == k);
+        let no_cut_in = is_anti_recv || chip.is_some_and(|h| self.content.chip(h).traits.has(ChipTraits::NO_CUT_IN));
         self.start_dimming(side, no_cut_in, Some(controller), user);
     }
 
@@ -183,7 +187,12 @@ impl Battle {
     /// stays the other side, so the dimming ends when theirs does, and
     /// the cut-in chip can itself be cut in on.
     pub(crate) fn cut_in_dimming(&mut self, side: u8, controller: Option<ObjectRef>, user: ObjectRef) {
-        self.take_over_dimming(side, false, controller, user);
+        let is_anti_recv = controller.is_some_and(|c| {
+            self.roles()
+                .try_kind(crate::content::KindRole::AntiRecovery)
+                .is_some_and(|k| self.objects.get(c).kind == k)
+        });
+        self.take_over_dimming(side, is_anti_recv, controller, user);
     }
 
     /// `loc_800BF32`: `side` owns the dimming now; its record takes the

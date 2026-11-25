@@ -79,9 +79,7 @@ end
 local function swing(me: Object, s: State, spec: Spec)
     if me.step_init == 0 then
         me:set_animation(SWING_ANIM)
-        if not spec.plain then
-            me:refresh_form_overlay()
-        end
+        me:refresh_form_overlay()
         battle.clear_linked(me.alliance)
         battle.play_sound(spec.swing_sound)
         if spec.hold then

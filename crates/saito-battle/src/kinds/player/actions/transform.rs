@@ -293,7 +293,9 @@ pub(in crate::kinds::player) fn break_form(b: &mut Battle, r: ObjectRef) -> bool
         // The rules' (EXE5 DS's guard and dive end, 0x020606AA).
         let side = b.objects.get(r).alliance;
         b.rules_revert_finished(side, r);
-        b.clear_flags(battle_flags::DIMMED);
+        if b.dimming.iter().all(|d| d.state == crate::dimming::DimmingState::Idle) {
+            b.clear_flags(battle_flags::DIMMED);
+        }
         let a = &mut ai_mut(b, r).attack;
         a.step = 0;
         a.step_init = 0;
@@ -305,7 +307,9 @@ pub(in crate::kinds::player) fn break_form(b: &mut Battle, r: ObjectRef) -> bool
     if let Some(o) = b.objects.get(r).related[1] {
         form::normal_overlay_stepping(b, o);
     }
-    b.clear_flags(battle_flags::DIMMED);
+    if b.dimming.iter().all(|d| d.state == crate::dimming::DimmingState::Idle) {
+        b.clear_flags(battle_flags::DIMMED);
+    }
     // object_setCollisionRegion(1)
     coll_mut(b, r).region = b.anchor_region();
     let a = &mut ai_mut(b, r).attack;

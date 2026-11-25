@@ -27,7 +27,18 @@ end
 
 -- The status reset (0x0800E05C: the weapons, the soul's own routine) and 0x0800C5EA: the anger over (flag 0x200000,
 -- AIData +0x2E), the mood back to 0x80 (`sub_8015BEC`).
+function hooks.set_anti_magic_linked(side: number, on: boolean)
+    (rules.state_of(side) :: { anti_magic_linked: boolean }).anti_magic_linked = on
+end
+
 function hooks.settle(me: Object)
+    local st = rules.state_of(me.alliance) :: { anti_magic_linked: boolean }
+    if st.anti_magic_linked then
+        st.anti_magic_linked = false
+        battle.clear_linked(me.alliance)
+    end
+    me:set_request("anti_damage_triggered", false)
+    me:set_request("anti_sword_triggered", false)
     me:reset_status()
     navi_status.end_anger(me, "unless_zero")
 end

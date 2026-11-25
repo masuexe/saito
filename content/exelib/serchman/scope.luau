@@ -187,13 +187,13 @@ function scope.make(spec: Spec): Scope
             me.phase = ticks
         end
         if pressed(s, { "a" }) then
-            if pressed(s, { "b" }) then
+            if not s.sight and pressed(s, { "b" }) then
                 if spec.bonus_sound then
                     battle.play_sound(spec.bonus_sound)
                 end
                 bonus(me)
             end
-            s.late_b = 5
+            s.late_b = if s.sight then 0 else 5
             me.action, me.phase = 8, 0
             return
         end

@@ -30,6 +30,7 @@ local function setup(navi: Object): Action
     navi.attack_damage = DAMAGE
     navi.hit_param = HIT_PARAM
     navi.attack_element = AQUA
+    navi.extra = 0
     return SHOT
 end
 

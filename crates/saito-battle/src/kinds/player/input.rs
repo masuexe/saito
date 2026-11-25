@@ -233,6 +233,9 @@ fn decode_back_special(b: &mut Battle, r: ObjectRef) {
 fn decode_buster(b: &mut Battle, r: ObjectRef, f0: u32) {
     let special_holds = form_of(b, r).traits.has(crate::content::FormTraits::SPECIAL_HOLDS_BUSTER);
     let a = ai(b, r);
+    if b.game_rules().intake.no_charge_drive && a.status & status::NO_CHARGE != 0 {
+        return;
+    }
     if a.buster.is_none() || f0 & (request::BUSTER | request::CHARGED_SHOT) != 0 {
         return;
     }

@@ -51,7 +51,7 @@ counter.action = common.action_at {
     vanish_sound = asset.sound("trap-vanish"),
     throw_sound = asset.sound("boomerang"),
     puff = PUFF,
-    keeps_move = true,
+    keeps_move = false,
 }
 
 return counter

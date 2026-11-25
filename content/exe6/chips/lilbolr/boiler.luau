@@ -312,6 +312,7 @@ local function check_eruption(me: Object)
         end
     end
     s.erupting = true
+    obstacle.unregister(me)
     me.damage = bit32.bor(int.u16(me.max_hp - me.hp), bit32.band(me.damage, FLAGS))
     me.action = ERUPTING_OR_DESTROYED
     me.phase, me.phase_init = 0, 0

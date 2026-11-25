@@ -225,9 +225,8 @@ local function navi_bug(game: Game, side: number, navi: Object): ("edited" | "sp
         s[name] = level
         return "edited"
     elseif code == 0x54 then
-        -- (A byte store of the halfword plus the argument.)
         local d = s.custom_damage
-        s.custom_damage = bit32.bor(bit32.band(d, 0xFF00), bit32.band(d + arg, 0xFF))
+        s.custom_damage = math.min(d + arg, 0xFFFF)
         return "edited"
     end
     local special = game.specials[code]
