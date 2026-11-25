@@ -43,37 +43,53 @@ export component CsProbDialog inherits DialogFrame {
         wrap: word-wrap;
     }
 
-    if root.editable: Button {
+    if root.editable: Rectangle {
+        property <length> gap: Theme.phone ? 6px : 8px;
+        property <length> avail: self.width - 2 * self.gap;
+        property <length> total-natural: max(1px, btn-none.natural-width + btn-default.natural-width + btn-all.natural-width);
+        property <length> w0: Theme.phone ? self.avail * (btn-none.natural-width / self.total-natural) : self.avail / 3;
+        property <length> w1: Theme.phone ? self.avail * (btn-default.natural-width / self.total-natural) : self.avail / 3;
+        property <length> w2: self.avail - self.w0 - self.w1;
         x: 0;
         y: root.quick-y;
-        width: (root.inner-width - 16px) / 3;
+        width: root.inner-width;
         height: root.quick-h;
-        compact: true;
-        nav: root.nav-prefix + "none";
-        kind: ButtonKind.ghost;
-        text: @tr("All Original (100%)");
-    }
 
-    if root.editable: Button {
-        x: (root.inner-width - 16px) / 3 + 8px;
-        y: root.quick-y;
-        width: (root.inner-width - 16px) / 3;
-        height: root.quick-h;
-        compact: true;
-        nav: root.nav-prefix + "recommended";
-        kind: ButtonKind.ghost;
-        text: @tr("Battle Default");
-    }
+        btn-none := Button {
+            x: 0;
+            y: 0;
+            width: parent.w0;
+            height: parent.height;
+            compact: true;
+            tight: Theme.phone;
+            nav: root.nav-prefix + "none";
+            kind: ButtonKind.ghost;
+            text: @tr("All Original");
+        }
 
-    if root.editable: Button {
-        x: 2 * ((root.inner-width - 16px) / 3 + 8px);
-        y: root.quick-y;
-        width: (root.inner-width - 16px) / 3;
-        height: root.quick-h;
-        compact: true;
-        nav: root.nav-prefix + "all";
-        kind: ButtonKind.ghost;
-        text: @tr("All Fixed");
+        btn-default := Button {
+            x: parent.w0 + parent.gap;
+            y: 0;
+            width: parent.w1;
+            height: parent.height;
+            compact: true;
+            tight: Theme.phone;
+            nav: root.nav-prefix + "recommended";
+            kind: ButtonKind.ghost;
+            text: @tr("Battle Default");
+        }
+
+        btn-all := Button {
+            x: parent.w0 + parent.w1 + 2 * parent.gap;
+            y: 0;
+            width: parent.w2;
+            height: parent.height;
+            compact: true;
+            tight: Theme.phone;
+            nav: root.nav-prefix + "all";
+            kind: ButtonKind.ghost;
+            text: @tr("All Fixed");
+        }
     }
 
     scroll := ScrollPage {

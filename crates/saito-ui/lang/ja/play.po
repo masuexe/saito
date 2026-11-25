@@ -416,8 +416,8 @@ msgstr "ⒷためチャージS使用時に本来の確率（50% / 12.5%）へ修
 msgid "Host's ChargeShot Addition probability fix settings (read-only)."
 msgstr "ホストのCS追加効果確率修正設定（閲覧のみ）。"
 
-msgid "All Original (100%)"
-msgstr "すべて原作通り (100%)"
+msgid "All Original"
+msgstr "すべて原作"
 
 msgid "All Fixed"
 msgstr "すべて修正"

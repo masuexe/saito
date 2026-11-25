@@ -416,8 +416,8 @@ msgstr "选择在Ⓑ集气CS下哪些 CS 附加效果恢复正常触发概率（
 msgid "Host's ChargeShot Addition probability fix settings (read-only)."
 msgstr "房主设置的 CS 附加效果概率修复（只读）。"
 
-msgid "All Original (100%)"
-msgstr "全部原版 (100%)"
+msgid "All Original"
+msgstr "全部原版"
 
 msgid "All Fixed"
 msgstr "全部修复"
