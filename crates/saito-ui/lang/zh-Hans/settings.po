@@ -92,22 +92,22 @@ msgid "Soften sudden white-screen flashes in battle."
 msgstr "减弱战斗中的瞬间白屏闪烁，降低光敏不适。"
 
 msgid "Hide aura number"
-msgstr "隐藏梦罩数字"
+msgstr "隐藏梦之灵数字"
 
 msgid "Hide the 200 number on LifeAura."
-msgstr "隐藏梦幻护罩上的 200 数字。"
+msgstr "隐藏梦之灵上的 200 数字。"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"
 
 msgid "HD chip art"
-msgstr "高清卡图"
+msgstr "高清体验"
 
 msgid "Use Legacy Collection high-resolution chip artwork and element icons when available."
-msgstr "可用时使用合集版高清芯片卡图与属性图标。"
+msgstr "可用时使用合集版高清芯片卡图、属性图标及交错选择等高清素材。"
 
 msgid "HD art archive"
-msgstr "高清卡图文件"
+msgstr "高清体验文件"
 
 msgid "Select launcher/data/vol2.dat from Battle Network Legacy Collection Vol. 2."
 msgstr "选择《洛克人EXE 合集 Vol.2》中的 launcher/data/vol2.dat 文件。"

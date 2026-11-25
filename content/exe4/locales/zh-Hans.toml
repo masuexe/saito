@@ -59,8 +59,8 @@ language = "zh-Hans"
 "vulcan1" = { name = "火神炮1", description = "3连射火神炮\n击中时可贯穿\n后方1格！" }
 "vulcan2" = { name = "火神炮2", description = "5连射火神炮\n击中时可贯穿\n后方1格！" }
 "vulcan3" = { name = "火神炮3", description = "7连射火神炮\n击中时可贯穿\n后方1格！" }
-"atk-10" = { name = "攻击＋10", description = "在攻击芯片后\n选择\n攻击力将＋10" }
-"atk-30" = { name = "攻击＋30", description = "在攻击芯片后\n选择\n攻击力将＋30" }
+"atk-10" = { name = "攻击+10", description = "在攻击芯片后\n选择\n攻击力将+10" }
+"atk-30" = { name = "攻击+30", description = "在攻击芯片后\n选择\n攻击力将+30" }
 "spreader" = { name = "散射枪", description = "击中后\n在周围1格范围内\n引发爆炸！" }
 "heatshot" = { name = "热焰散弹", description = "击中后\n在后方1格范围内\n引发爆炸！" }
 "heat-v" = { name = "热焰V字", description = "击中后\n在斜后方2格范围内\n引发爆炸" }
@@ -68,7 +68,7 @@ language = "zh-Hans"
 "bubbler" = { name = "泡沫散弹", description = "击中后\n在后方1格范围内\n引发爆炸！" }
 "bub-v" = { name = "泡沫V字", description = "击中后\n在斜后方2格范围内\n引发爆炸" }
 "bublside" = { name = "泡沫侧击", description = "击中后\n在上下2格范围内\n引发爆炸" }
-"navi-20" = { name = "领航员＋20", description = "在领航员芯片后\n选择\n攻击力将＋20" }
+"navi-20" = { name = "领航员+20", description = "在领航员芯片后\n选择\n攻击力将+20" }
 "meteors1" = { name = "流星雨1", description = "对距离前方最近的\n敌方所在格子\n落下5发流星！" }
 "meteors2" = { name = "流星雨2", description = "对距离前方最近的\n敌方所在格子\n落下5发流星！" }
 "meteors3" = { name = "流星雨3", description = "对距离前方最近的\n敌方所在格子\n落下5发流星！" }
@@ -296,8 +296,8 @@ language = "zh-Hans"
 "mine" = { name = "隐形地雷", description = "在敌方区域设置\n看不见的\n地雷！" }
 "bassanly" = { name = "佛鲁迪另", description = "发出4发\n只转弯一次的\n圆环！" }
 "rockcube" = { name = "石头方块", description = "在正前方的格子上\n产生一个\n石头方块" }
-"colorpt" = { name = "色点", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力＋10" }
-"dblpoint" = { name = "双重点数", description = "牺牲自身区域\n将下一个芯片\n的攻击力＋20" }
+"colorpt" = { name = "色点", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力+10" }
+"dblpoint" = { name = "双重点数", description = "牺牲自身区域\n将下一个芯片\n的攻击力+20" }
 "anubis" = { name = "毒气阿努比斯", description = "暗黑芯片！\n放置产生毒气的\n阿努比斯像" }
 "guardian" = { name = "地藏像", description = "在正前方的格子\n放置不能破坏的\n地藏像" }
 "punisher" = { name = "神罚", description = "" }
@@ -402,57 +402,57 @@ language = "zh-Hans"
 
 [navicust_programs]
 "airshoes" = { name = "飞行鞋", description = "能够移动至\n没有地面的格子！" }
-"antimagc" = { name = "替身魔术", description = "Ⓑ＋左能够\n假装受到攻击\n并投掷手里剑！" }
-"attack-1" = { name = "攻击＋1", description = "洛克炮的\n攻击力提升1！" }
+"antimagc" = { name = "替身魔术", description = "Ⓑ+左能够\n假装受到攻击\n并投掷手里剑！" }
+"attack-1" = { name = "攻击+1", description = "洛克炮的\n攻击力提升1！" }
 "attckmax" = { name = "攻击MAX", description = "洛克炮的\n攻击力提升至MAX！" }
 "battery" = { name = "电池模式", description = "切换为电池模式\n电属性的病毒\n变得更容易主动接近" }
 "beat" = { name = "比特支援", description = "对战专用！\n能夺走\nMEGA以上的芯片" }
 "bodypack" = { name = "身体套组", description = "装甲、紧身衣\n漂浮鞋、飞行鞋的\n4件组！" }
 "bugstop" = { name = "BUG停止器", description = "能阻止BUG发生的\n特殊程序" }
-"bustpack" = { name = "子弹套组", description = "让子弹的\n攻击、连射、集气\n各＋3！" }
-"charge-1" = { name = "集气＋1", description = "洛克炮的\n集气力\n提升1！" }
+"bustpack" = { name = "子弹套组", description = "让子弹的\n攻击、连射、集气\n各+3！" }
+"charge-1" = { name = "集气+1", description = "洛克炮的\n集气力\n提升1！" }
 "chargmax" = { name = "集气MAX", description = "洛克炮的\n集气力\n提升至MAX！" }
 "collect" = { name = "收藏家之眼", description = "提升眼力\n变得更容易从敌人的\n残骸中搜寻到芯片" }
-"custom1" = { name = "改装1", description = "改装画面从一开始\n可选择的\n芯片数量＋1" }
-"custom2" = { name = "改装2", description = "改装画面从一开始\n可选择的\n芯片数量＋2" }
+"custom1" = { name = "改装1", description = "改装画面从一开始\n可选择的\n芯片数量+1" }
+"custom2" = { name = "改装2", description = "改装画面从一开始\n可选择的\n芯片数量+2" }
 "fish" = { name = "我是鱼", description = "彻底伪装成一只鱼\n变得更容易\n被水属性的病毒发现" }
 "flotshoe" = { name = "漂浮鞋", description = "能够稍微漂浮于地面\n因此不会\n受到地面的影响" }
 "fstbarr" = { name = "初始防护罩", description = "战斗开始即会\n装备上防护罩！" }
-"gigfldr1" = { name = "GIGA文件1", description = "能放入文件夹中的\nGIGA芯片的\n数量＋1" }
-"hp-100" = { name = "HP＋100", description = "HP最大值\n增加100！" }
-"hp-200" = { name = "HP＋200", description = "HP最大值\n增加200！" }
-"hp-300" = { name = "HP＋300", description = "HP最大值\n增加300！" }
-"hp-400" = { name = "HP＋400", description = "HP最大值\n增加400！" }
-"hp-50" = { name = "HP＋50", description = "HP最大值\n增加50！" }
-"hp-500" = { name = "HP＋500", description = "HP最大值\n增加500！" }
+"gigfldr1" = { name = "GIGA文件1", description = "能放入文件夹中的\nGIGA芯片的\n数量+1" }
+"hp-100" = { name = "HP+100", description = "HP最大值\n增加100！" }
+"hp-200" = { name = "HP+200", description = "HP最大值\n增加200！" }
+"hp-300" = { name = "HP+300", description = "HP最大值\n增加300！" }
+"hp-400" = { name = "HP+400", description = "HP最大值\n增加400！" }
+"hp-50" = { name = "HP+50", description = "HP最大值\n增加50！" }
+"hp-500" = { name = "HP+500", description = "HP最大值\n增加500！" }
 "hubbatc" = { name = "彩斗修正档", description = "能让潜能\n发挥至100％的\n危险程序" }
 "humor" = { name = "幽默感", description = "把它安装进\n太严肃的领航员里\n按下Ⓛ对话吧" }
 "jungle" = { name = "丛林地带", description = "放出森林的气息\n变得更容易\n吸引木属性的病毒" }
-"megfldr1" = { name = "MEGA文件1", description = "能放入文件夹中的\nMEGA芯片的\n数量＋1" }
-"megfldr2" = { name = "MEGA文件2", description = "能放入文件夹中的\nMEGA芯片的\n数量＋2" }
+"megfldr1" = { name = "MEGA文件1", description = "能放入文件夹中的\nMEGA芯片的\n数量+1" }
+"megfldr2" = { name = "MEGA文件2", description = "能放入文件夹中的\nMEGA芯片的\n数量+2" }
 "oilbody" = { name = "油性体质", description = "涂上火属性病毒\n最喜欢的油\n变得更容易被盯上！" }
-"reflect" = { name = "反射", description = "Ⓑ＋左可使用\n能反弹攻击的反射！" }
+"reflect" = { name = "反射", description = "Ⓑ+左可使用\n能反弹攻击的反射！" }
 "rush" = { name = "莱西支援", description = "对战专用！\n能嗅到消失敌人的气味\n并扑向他" }
-"shield" = { name = "盾", description = "Ⓑ＋左可使用\n能挡掉大部分攻击的盾牌！" }
+"shield" = { name = "盾", description = "Ⓑ+左可使用\n能挡掉大部分攻击的盾牌！" }
 "sneakrun" = { name = "忍术冲刺", description = "不会遇到\n比自己还弱的敌人！" }
 "soulclen" = { name = "灵魂吸尘器", description = "将自身的罪恶\n洗涤干净的\n修炼程序" }
-"speed-1" = { name = "连射＋1", description = "洛克炮的\n连射力提升1！" }
+"speed-1" = { name = "连射+1", description = "洛克炮的\n连射力提升1！" }
 "speedmax" = { name = "连射MAX", description = "洛克炮的\n连射力提升至MAX！" }
 "sprarmr" = { name = "超级装甲", description = "即使受到攻击\n也不会僵直！" }
 "tango" = { name = "探戈支援", description = "对战专用！\n陷入濒死状态时\n会为你进行治疗！" }
 "undersht" = { name = "紧身衣", description = "受到致命伤害时\n也会以\nHP1的状态活下来！" }
 
 [patch_cards]
-"001-max-hp-up" = { name = "最大HP＋100" }
-"002-max-hp-up" = { name = "最大HP＋100" }
-"003-max-hp-up" = { name = "最大HP＋150" }
-"004-max-hp-up" = { name = "最大HP＋150" }
-"005-max-hp-up" = { name = "最大HP＋200" }
-"006-max-hp-up" = { name = "最大HP＋200" }
-"007-max-hp-up" = { name = "最大HP＋250" }
-"008-max-hp-up" = { name = "最大HP＋250" }
-"009-max-hp-up" = { name = "最大HP＋300" }
-"010-max-hp-up" = { name = "最大HP＋300" }
+"001-max-hp-up" = { name = "最大HP+100" }
+"002-max-hp-up" = { name = "最大HP+100" }
+"003-max-hp-up" = { name = "最大HP+150" }
+"004-max-hp-up" = { name = "最大HP+150" }
+"005-max-hp-up" = { name = "最大HP+200" }
+"006-max-hp-up" = { name = "最大HP+200" }
+"007-max-hp-up" = { name = "最大HP+250" }
+"008-max-hp-up" = { name = "最大HP+250" }
+"009-max-hp-up" = { name = "最大HP+300" }
+"010-max-hp-up" = { name = "最大HP+300" }
 "011-first-barrier-100" = { name = "初始防护罩100\n产生BUG" }
 "012-buster-patch" = { name = "盲目子弹\n产生BUG" }
 "013-buster-patch" = { name = "草地子弹" }
@@ -473,18 +473,18 @@ language = "zh-Hans"
 "028-pet-menu-color-change" = { name = "PET画面颜色：蓝色" }
 "029-pet-menu-color-change" = { name = "PET画面颜色：粉红色" }
 "030-pet-menu-color-change" = { name = "PET画面颜色：绿色" }
-"031-max-hp-up" = { name = "最大HP＋350" }
-"032-max-hp-up" = { name = "最大HP＋350" }
-"033-max-hp-up" = { name = "最大HP＋400" }
-"034-max-hp-up" = { name = "最大HP＋400" }
-"035-max-hp-up" = { name = "最大HP＋450\n产生BUG" }
-"036-max-hp-up" = { name = "最大HP＋450\n产生BUG" }
-"037-max-hp-up" = { name = "最大HP＋500" }
-"038-max-hp-up" = { name = "最大HP＋500\n产生BUG" }
-"039-b-left-ability-activation" = { name = "Ⓑ＋左使出空气弹" }
-"040-b-left-ability-activation" = { name = "Ⓑ＋左使出随机陷阱" }
-"041-b-left-ability-activation" = { name = "Ⓑ＋左使出BUG炸弹" }
-"042-b-left-ability-activation" = { name = "Ⓑ＋左使出裂解" }
+"031-max-hp-up" = { name = "最大HP+350" }
+"032-max-hp-up" = { name = "最大HP+350" }
+"033-max-hp-up" = { name = "最大HP+400" }
+"034-max-hp-up" = { name = "最大HP+400" }
+"035-max-hp-up" = { name = "最大HP+450\n产生BUG" }
+"036-max-hp-up" = { name = "最大HP+450\n产生BUG" }
+"037-max-hp-up" = { name = "最大HP+500" }
+"038-max-hp-up" = { name = "最大HP+500\n产生BUG" }
+"039-b-left-ability-activation" = { name = "Ⓑ+左使出空气弹" }
+"040-b-left-ability-activation" = { name = "Ⓑ+左使出随机陷阱" }
+"041-b-left-ability-activation" = { name = "Ⓑ+左使出BUG炸弹" }
+"042-b-left-ability-activation" = { name = "Ⓑ+左使出裂解" }
 "043-buster-patch" = { name = "裂解子弹" }
 "044-buster-patch" = { name = "毒气子弹" }
 "045-default-full-synchro" = { name = "预设完全同步" }
@@ -503,23 +503,23 @@ language = "zh-Hans"
 "058-charge-shot-switch" = { name = "集气宽剑" }
 "059-megaman-color-change" = { name = "洛克人颜色：红色" }
 "060-megaman-color-change" = { name = "洛克人颜色：黄色" }
-"061-max-hp-up" = { name = "最大HP＋550" }
-"062-max-hp-up" = { name = "最大HP＋550" }
-"063-max-hp-up" = { name = "最大HP＋600" }
-"064-max-hp-up" = { name = "最大HP＋600" }
-"065-max-hp-up" = { name = "最大HP＋650" }
-"066-max-hp-up" = { name = "最大HP＋650\n产生BUG" }
-"067-max-hp-up" = { name = "最大HP＋700\n产生BUG" }
-"068-b-left-ability-activation" = { name = "Ⓑ＋左使出MEGA能量炸弹" }
-"069-b-left-ability-activation" = { name = "Ⓑ＋左使出回复10" }
-"070-b-left-ability-activation" = { name = "Ⓑ＋左使出地面复原" }
-"071-b-left-ability-activation" = { name = "Ⓑ＋左使出超级北风" }
-"072-b-left-ability-activation" = { name = "Ⓑ＋左使出竹枪" }
-"073-b-left-ability-activation" = { name = "Ⓑ＋左使出双重裂解" }
-"074-triple-supporter-1-2" = { name = "三重支援者1／2" }
-"075-triple-supporter-2-2" = { name = "三重支援者2／2" }
-"076-all-guard-1-2" = { name = "全面防御1／2\n产生BUG" }
-"077-all-guard-2-2" = { name = "全面防御2／2\n产生BUG" }
+"061-max-hp-up" = { name = "最大HP+550" }
+"062-max-hp-up" = { name = "最大HP+550" }
+"063-max-hp-up" = { name = "最大HP+600" }
+"064-max-hp-up" = { name = "最大HP+600" }
+"065-max-hp-up" = { name = "最大HP+650" }
+"066-max-hp-up" = { name = "最大HP+650\n产生BUG" }
+"067-max-hp-up" = { name = "最大HP+700\n产生BUG" }
+"068-b-left-ability-activation" = { name = "Ⓑ+左使出MEGA能量炸弹" }
+"069-b-left-ability-activation" = { name = "Ⓑ+左使出回复10" }
+"070-b-left-ability-activation" = { name = "Ⓑ+左使出地面复原" }
+"071-b-left-ability-activation" = { name = "Ⓑ+左使出超级北风" }
+"072-b-left-ability-activation" = { name = "Ⓑ+左使出竹枪" }
+"073-b-left-ability-activation" = { name = "Ⓑ+左使出双重裂解" }
+"074-triple-supporter-1-2" = { name = "三重支援者1/2" }
+"075-triple-supporter-2-2" = { name = "三重支援者2/2" }
+"076-all-guard-1-2" = { name = "全面防御1/2\n产生BUG" }
+"077-all-guard-2-2" = { name = "全面防御2/2\n产生BUG" }
 "078-first-life-aura" = { name = "初始梦之灵\n产生BUG" }
 "079-charge-shot-switch" = { name = "黑暗洞集气" }
 "080-charge-shot-switch" = { name = "集气广域射击2" }
@@ -533,20 +533,20 @@ language = "zh-Hans"
 "088-pet-menu-color-change" = { name = "PET画面颜色：黑色" }
 "089-megaman-color-change" = { name = "洛克人颜色：白色" }
 "090-megaman-color-change" = { name = "洛克人颜色：绿色" }
-"091-max-hp-up" = { name = "最大HP＋700\n产生BUG" }
-"092-max-hp-up" = { name = "最大HP＋750" }
-"093-max-hp-up" = { name = "最大HP＋750\n产生BUG" }
-"094-max-hp-up" = { name = "最大HP＋800" }
-"095-max-hp-up" = { name = "最大HP＋800\n产生BUG" }
-"096-max-hp-up" = { name = "最大HP＋850" }
-"097-max-hp-up" = { name = "最大HP＋850\n产生BUG" }
-"098-max-hp-up" = { name = "最大HP＋900" }
-"099-max-hp-up" = { name = "最大HP＋900\n产生BUG" }
-"100-max-hp-up" = { name = "最大HP＋950\n产生BUG" }
-"101-max-hp-up" = { name = "最大HP＋1000" }
+"091-max-hp-up" = { name = "最大HP+700\n产生BUG" }
+"092-max-hp-up" = { name = "最大HP+750" }
+"093-max-hp-up" = { name = "最大HP+750\n产生BUG" }
+"094-max-hp-up" = { name = "最大HP+800" }
+"095-max-hp-up" = { name = "最大HP+800\n产生BUG" }
+"096-max-hp-up" = { name = "最大HP+850" }
+"097-max-hp-up" = { name = "最大HP+850\n产生BUG" }
+"098-max-hp-up" = { name = "最大HP+900" }
+"099-max-hp-up" = { name = "最大HP+900\n产生BUG" }
+"100-max-hp-up" = { name = "最大HP+950\n产生BUG" }
+"101-max-hp-up" = { name = "最大HP+1000" }
 "102-buster-patch" = { name = "冰冻子弹" }
-"103-fullcustom-charge-1-2" = { name = "集气量表全满1／2\n产生BUG" }
-"104-fullcustom-charge-2-2" = { name = "集气量表全满2／2\n产生BUG" }
+"103-fullcustom-charge-1-2" = { name = "集气量表全满1/2\n产生BUG" }
+"104-fullcustom-charge-2-2" = { name = "集气量表全满2/2\n产生BUG" }
 "105-panel-change" = { name = "地面转换：神圣\n产生BUG" }
 "106-weapon-change" = { name = "子弹反射\n产生BUG" }
 "107-weapon-change" = { name = "子弹花洒" }
@@ -554,7 +554,7 @@ language = "zh-Hans"
 "109-megafolder3" = { name = "MEGA文件3\n产生BUG" }
 "110-custom3" = { name = "改装3\n产生BUG" }
 "111-gigafolder1" = { name = "GIGA文件1" }
-"112-b-left-ability-activation" = { name = "Ⓑ＋左使出三重裂解" }
+"112-b-left-ability-activation" = { name = "Ⓑ+左使出三重裂解" }
 "113-charge-shot-switch" = { name = "集气广域射击3" }
 "114-charge-shot-switch" = { name = "集气雷电球3" }
 "115-charge-shot-switch" = { name = "集气风神球拍" }

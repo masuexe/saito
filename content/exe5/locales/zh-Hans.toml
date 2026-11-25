@@ -34,8 +34,8 @@ language = "zh-Hans"
 "astroid1" = { name = "流星大地1", description = "瞄准敌人\n降下陨石\n使地面碎裂！" }
 "astroid2" = { name = "流星大地2", description = "瞄准敌人\n降下陨石\n使地面碎裂！" }
 "astroid3" = { name = "流星大地3", description = "瞄准敌人\n降下陨石\n使地面碎裂！" }
-"attck-10" = { name = "攻击＋10", description = "在攻击芯片后\n选择\n攻击力将＋10" }
-"attck-30" = { name = "攻击＋30", description = "在攻击芯片后\n选择\n攻击力将＋30" }
+"attck-10" = { name = "攻击+10", description = "在攻击芯片后\n选择\n攻击力将+10" }
+"attck-30" = { name = "攻击+30", description = "在攻击芯片后\n选择\n攻击力将+30" }
 "b-shoot" = { name = "B射击", description = "" }
 "barr100" = { name = "防护罩100", description = "展开防护罩\n让100HP的\n伤害无效" }
 "barr200" = { name = "防护罩200", description = "展开防护罩\n让200HP的\n伤害无效" }
@@ -92,7 +92,7 @@ language = "zh-Hans"
 "colonel" = { name = "卡尼尔", description = "对同列前方的敌人\n施展右上斜切\n的斩击" }
 "colonel-ds" = { name = "卡尼尔\uE008", description = "对同列前方的敌人\n施展右上斜切\n的斩击" }
 "colonel-sp" = { name = "卡尼尔\uE003", description = "对同列前方的敌人\n施展右上斜切\n的斩击" }
-"colorpt" = { name = "色点", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力＋10" }
+"colorpt" = { name = "色点", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力+10" }
 "copydmg" = { name = "复制损伤", description = "被光标标记的对手\n会复制其他敌人\n所受到的伤害！" }
 "cosmoman" = { name = "宇宙人", description = "在天空开洞\n落下陨石" }
 "cosmomn-ds" = { name = "宇宙人\uE008", description = "在天空开洞\n落下陨石" }
@@ -116,12 +116,12 @@ language = "zh-Hans"
 "darkdril" = { name = "黑暗钻头", description = "满足自身的\n破坏冲动\n黑暗钻头是也！" }
 "darkinvs" = { name = "黑暗隐身", description = "解放\n心中的黑暗\n并委身其中吧！" }
 "darkmetr" = { name = "黑暗流星", description = "流星雨\n将会瞄准敌方\n落下吧" }
-"darkplus" = { name = "黑暗增幅", description = "使下一枚\n芯片的攻击力\n＋50吧！" }
+"darkplus" = { name = "黑暗增幅", description = "使下一枚\n芯片的攻击力\n+50吧！" }
 "darkthnd" = { name = "黑暗雷电", description = "拥有麻痹效果的\n雷电球\n缓缓地追击对手" }
 "darktorn" = { name = "黑暗龙卷风", description = "受伤越重\n范围越广的\n憎恨风暴" }
 "darkwide" = { name = "黑暗广域射击", description = "纵向3格的\n广域射击\n将贯穿对手前进" }
 "dbldream" = { name = "双重梦幻", description = "" }
-"dblpoint" = { name = "双重点数", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力＋20" }
+"dblpoint" = { name = "双重点数", description = "以自身区域换取力量\n每格可使下枚芯片\n攻击力+20" }
 "deltaray" = { name = "三角刀锋", description = "在斩击时按下Ⓐ\n最高3段的剑攻击\n" }
 "dethphnx" = { name = "死神凤凰", description = "在区域中\n放出黑暗火焰\n并回收领航员！" }
 "dicebons" = { name = "骰子加成", description = "" }
@@ -250,7 +250,7 @@ language = "zh-Hans"
 "napalmmn" = { name = "烧夷弹人", description = "向前方4格处\n投掷扩散9格的\n烧夷炸弹！" }
 "naplmmn-ds" = { name = "烧夷弹人\uE008", description = "向前方4格处\n投掷扩散9格的\n烧夷炸弹！" }
 "naplmmn-sp" = { name = "烧夷弹人\uE003", description = "向前方4格处\n投掷扩散9格的\n烧夷炸弹！" }
-"navi-20" = { name = "领航员＋20", description = "在领航员芯片后\n选择\n攻击力将＋20" }
+"navi-20" = { name = "领航员+20", description = "在领航员芯片后\n选择\n攻击力将+20" }
 "neovari" = { name = "NEO变化", description = "自由变化的\n战术剑\n进阶篇" }
 "nrthwind" = { name = "超级北风", description = "猛烈的北风\n吹走\n防护罩或灵光" }
 "nstackle" = { name = "NS擒抱", description = "以NS擒抱\n向前方突进！" }
@@ -442,8 +442,8 @@ language = "zh-Hans"
 
 [navicust_programs]
 "airshoes" = { name = "飞行鞋", description = "能够移动至\n没有地面的格子！" }
-"antidmg" = { name = "替身魔术", description = "Ⓑ＋左能够\n伪装受到攻击\n并投掷手里剑！" }
-"attck-1" = { name = "攻击＋1", description = "洛克炮的\n攻击力提升1！" }
+"antidmg" = { name = "替身魔术", description = "Ⓑ+左能够\n伪装受到攻击\n并投掷手里剑！" }
+"attck-1" = { name = "攻击+1", description = "洛克炮的\n攻击力提升1！" }
 "attckmax" = { name = "攻击MAX", description = "洛克炮的\n攻击力提升至MAX！" }
 "autoheal" = { name = "自我回复", description = "战斗结束后\nHP会稍微回复" }
 "autorun" = { name = "自动跑步", description = "即使不按住Ⓑ\n领航员也能\n保持奔跑状态" }
@@ -451,39 +451,39 @@ language = "zh-Hans"
 "beat" = { name = "比特支援", description = "对战专用！\n能夺走\nMEGA以上的芯片" }
 "bodypack" = { name = "身体套组", description = "装甲、紧身衣\n漂浮鞋、飞行鞋的\n4件组！" }
 "bugstop" = { name = "BUG停止器", description = "能阻止BUG发生的\n特殊程序" }
-"bustpack" = { name = "子弹套组", description = "让子弹的\n攻击、连射、集气\n各＋3！" }
-"charge-1" = { name = "集气＋1", description = "洛克炮的\n集气力提升1！" }
+"bustpack" = { name = "子弹套组", description = "让子弹的\n攻击、连射、集气\n各+3！" }
+"charge-1" = { name = "集气+1", description = "洛克炮的\n集气力提升1！" }
 "chargmax" = { name = "集气MAX", description = "洛克炮的\n集气力\n提升至MAX！" }
 "chivalry" = { name = "时髦士绅", description = "将变为能理解\n男子汉美学的领航员\n以Ⓛ进行对话！" }
 "collect" = { name = "收藏家之眼", description = "提升眼力\n变得更容易从敌人的\n残骸中搜寻到芯片" }
-"custom1" = { name = "改装1", description = "改装画面从一开始\n可选择的\n芯片数量＋1" }
-"custom2" = { name = "改装2", description = "改装画面从一开始\n可选择的\n芯片数量＋2" }
+"custom1" = { name = "改装1", description = "改装画面从一开始\n可选择的\n芯片数量+1" }
+"custom2" = { name = "改装2", description = "改装画面从一开始\n可选择的\n芯片数量+2" }
 "fish" = { name = "我是鱼", description = "彻底伪装成一只鱼\n变得更容易\n被水属性的病毒发现" }
 "flotshoe" = { name = "漂浮鞋", description = "能够稍微漂浮于地板\n因此不会\n受到地面的影响" }
 "fstbarr" = { name = "初始防护罩", description = "战斗开始即会\n装备上防护罩！" }
-"gigfldr1" = { name = "GIGA文件1", description = "能放入文件夹中的\nGIGA芯片的\n数量＋1" }
-"hp-100" = { name = "HP＋100", description = "HP最大值\n增加100！" }
-"hp-200" = { name = "HP＋200", description = "HP最大值\n增加200！" }
-"hp-300" = { name = "HP＋300", description = "HP最大值\n增加300！" }
-"hp-400" = { name = "HP＋400", description = "HP最大值\n增加400！" }
-"hp-50" = { name = "HP＋50", description = "HP最大值\n增加50！" }
-"hp-500" = { name = "HP＋500", description = "HP最大值\n增加500！" }
+"gigfldr1" = { name = "GIGA文件1", description = "能放入文件夹中的\nGIGA芯片的\n数量+1" }
+"hp-100" = { name = "HP+100", description = "HP最大值\n增加100！" }
+"hp-200" = { name = "HP+200", description = "HP最大值\n增加200！" }
+"hp-300" = { name = "HP+300", description = "HP最大值\n增加300！" }
+"hp-400" = { name = "HP+400", description = "HP最大值\n增加400！" }
+"hp-50" = { name = "HP+50", description = "HP最大值\n增加50！" }
+"hp-500" = { name = "HP+500", description = "HP最大值\n增加500！" }
 "hubbatc" = { name = "彩斗修正档", description = "能让潜能\n发挥至100％的\n危险程序" }
 "humor" = { name = "幽默感", description = "把它安装进\n太严肃的领航员里\n按下Ⓛ对话吧" }
 "jungle" = { name = "丛林地带", description = "放出森林的气息\n变得更容易\n吸引木属性的病毒" }
-"megfldr1" = { name = "MEGA文件1", description = "能放入文件夹中的\nMEGA芯片的\n数量＋1" }
-"megfldr2" = { name = "MEGA文件2", description = "能放入文件夹中的\nMEGA芯片的\n数量＋2" }
+"megfldr1" = { name = "MEGA文件1", description = "能放入文件夹中的\nMEGA芯片的\n数量+1" }
+"megfldr2" = { name = "MEGA文件2", description = "能放入文件夹中的\nMEGA芯片的\n数量+2" }
 "millions" = { name = "百万富翁", description = "随机机密档案中\n只会获得\nZenny！" }
 "navchg-1" = { name = "领航员更换+1", description = "领航员更换的\n次数\n增加1次！" }
 "navchg-2" = { name = "领航员更换+2", description = "领航员更换的\n次数\n增加2次！" }
 "oilbody" = { name = "油性体质", description = "涂上火属性病毒\n最喜欢的油\n变得更容易被盯上！" }
-"reflect" = { name = "反射", description = "Ⓑ＋左可使用\n能反弹攻击的反射！" }
+"reflect" = { name = "反射", description = "Ⓑ+左可使用\n能反弹攻击的反射！" }
 "rush" = { name = "莱西支援", description = "对战专用！\n能嗅到消失敌人的气味\n并扑向他" }
-"shield" = { name = "盾", description = "Ⓑ＋左可使用\n能挡掉大部分攻击的盾牌！" }
+"shield" = { name = "盾", description = "Ⓑ+左可使用\n能挡掉大部分攻击的盾牌！" }
 "sneakrun" = { name = "忍术冲刺", description = "不会遇到\n比自己还弱的敌人！" }
 "soulclen" = { name = "灵魂吸尘器", description = "将自身的罪恶\n洗涤干净的\n修炼程序" }
-"soult-1" = { name = "灵魂时间＋1", description = "灵魂共鸣\n能保持的回合数＋1" }
-"speed-1" = { name = "连射＋1", description = "洛克炮的\n连射力提升1！" }
+"soult-1" = { name = "灵魂时间+1", description = "灵魂共鸣\n能保持的回合数+1" }
+"speed-1" = { name = "连射+1", description = "洛克炮的\n连射力提升1！" }
 "speedmax" = { name = "连射MAX", description = "洛克炮的\n连射力提升至MAX！" }
 "spport" = { name = "支援", description = "洛克人能在\n战斗中\n进行支援" }
 "sprarmr" = { name = "超级装甲", description = "即使受到攻击\n也不会僵直！" }
@@ -639,10 +639,10 @@ language = "zh-Hans"
 "b_button.megaman/minibomb" = "Ⓑ迷你炸弹"
 "b_button.megaman/sword" = "Ⓑ剑"
 "b_button.megaman/tri-buster" = "三重子弹"
-"back_special" = "Ⓑ＋←"
-"back_special.megaman/crsshld1" = "Ⓑ＋←诅咒盾"
-"back_special.megaman/guard1" = "Ⓑ＋←钢盔防御"
-"back_special.megaman/shield" = "Ⓑ＋←盾"
+"back_special" = "Ⓑ+←"
+"back_special.megaman/crsshld1" = "Ⓑ+←诅咒盾"
+"back_special.megaman/guard1" = "Ⓑ+←钢盔防御"
+"back_special.megaman/shield" = "Ⓑ+←盾"
 "beat" = "比特支援"
 "body.aqua" = "水之躯体"
 "body.elec" = "雷之躯体"
@@ -774,8 +774,8 @@ language = "zh-Hans"
 
 [builds]
 "versions" = "以该版本的灵魂开始。"
-"version.protoman" = "TEAM BLUES"
-"version.colonel" = "TEAM COLONEL"
+"version.protoman" = "布鲁斯队"
+"version.colonel" = "卡尼尔队"
 "light_dark.light" = "光明"
 "light_dark.dark" = "黑暗"
 

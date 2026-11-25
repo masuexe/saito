@@ -364,13 +364,13 @@ msgid "Random: {}"
 msgstr "随机战：{}"
 
 msgid "ABD: Original"
-msgstr "暗黑AI：原版"
+msgstr "黑暗AI：原版"
 
 msgid "ABD: 5DS"
-msgstr "暗黑AI：5DS"
+msgstr "黑暗AI：5DS"
 
 msgid "ABD: Off"
-msgstr "暗黑AI：禁用"
+msgstr "黑暗AI：禁用"
 
 msgid "CS Fix: Original"
 msgstr "CS修复：原版"
@@ -391,7 +391,7 @@ msgid "All Guard: On"
 msgstr "全面防御：生效"
 
 msgid "Dark Cut-In: LC"
-msgstr "善插暗黑：合集"
+msgstr "黑暗芯片打断：合集"
 
 msgid "Dark Cut-In: Original"
-msgstr "善插暗黑：原版"
+msgstr "黑暗芯片打断：原版"

@@ -730,31 +730,31 @@ msgid "5DS"
 msgstr "5DS"
 
 msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
-msgstr "合集 ABD 记忆卡池需要完全填满，如果合集 ABD 记忆池中存在空位，则会出现加农炮、迷你炸弹等低级芯片，空位越多低等级芯片的种类越多。"
+msgstr "合集 ABD 记忆芯片池需要完全填满，如果合集 ABD 记忆芯片池中存在空位，则会出现加农炮、迷你炸弹等低级芯片，空位越多低等级芯片的种类越多。"
 
 msgid "Dark Soul AI (ABD) Guide"
-msgstr "各版本暗黑之魂 AI（ABD）性能说明"
+msgstr "各版本黑暗之魂 AI（ABD）性能说明"
 
 msgid "Common Rules (All Versions)"
 msgstr "通用规则（各版本共通）"
 
 msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full."
-msgstr "标准芯片记忆池最多容纳 16 种不同芯片，按 4×、4×、2×、2×、1×12 的权重分配（共 24 格），另加 Mega 最多 5 格、Giga 1 格、PA 1 格。\n部分芯片在原作正常流程中无法写入 ABD（EXE4 有 22 种，EXE5 有 82 种，编辑器内标黄提示）；EXE4 在标准栏位未填满时必须包含暗黑剑（DarkSword）。"
+msgstr "标准记忆芯片池最多容纳 16 种不同芯片，按 4×、4×、2×、2×、1×12 的权重分配（共 24 格），另加 MEGA 最多 5 格、GIGA 1 格、程序强化 1 格。\n部分芯片在原作正常流程中无法写入 ABD（EXE4 有 22 种，EXE5 有 82 种，编辑器内标黄提示）；EXE4 在标准栏位未填满时必须包含黑暗剑。"
 
 msgid "Original (GBA)"
 msgstr "原版（GBA）"
 
 msgid "Uses the memory pool's exact order and 4/4/2/2/1×12 weights with no Dark Chip priority penalty, no Mega/Giga/PA unlock thresholds, and no extra post-chip buster cooldown."
-msgstr "严格按照记忆池内的排序与 4/4/2/2/1×12 权重出牌，无暗黑芯片优先级降权，无高阶芯片解锁门槛，也没有使用特定芯片后的额外连射冷却。"
+msgstr "严格按照记忆芯片池内的排序与 4/4/2/2/1×12 权重出牌，无黑暗芯片优先级降权，无高阶芯片解锁门槛，也没有使用特定芯片后的额外连射冷却。"
 
 msgid "Legacy Collection (EXE4 & EXE5)"
 msgstr "合集版（Legacy Collection，EXE4 & EXE5）"
 
 msgid "• Dark Chip priority penalty: Dark Chips (including EXE4 DrkVulcn in Mega) cannot occupy the top 4 slots. Only when a Dark Chip is present and fewer than 3 non-Dark Standard chips are registered are the top 3 slots padded with Cannon, MiniBomb, and AirShot (normal builds with 3+ non-Dark Standard chips do not trigger padding and do not need all 16 slots filled). With 4+ non-Dark Standard chips, Dark Chips in the top 4 are swapped down to 1× slots.\n• High-class unlock thresholds (by unique Standard/Dark chip count): Mega unlocks 1/2/3/4/5 slots at 3/6/10/14/16 unique chips; Giga and PA unlock at 12 unique chips."
-msgstr "• 暗黑芯片降权：暗黑芯片（含 EXE4 Mega 栏中的暗黑火神炮）不能占据前 4 高权重位。仅当池中存在暗黑芯片且非暗黑标准芯片不足 3 种时，前 3 位才会用加农炮、迷你炸弹、空气炮顺位补齐（正常配入 ≥3 种非暗黑标准芯片时不会触发填充，无需填满全部 16 槽）；当非暗黑标准芯片 ≥4 种时，前 4 位中的暗黑芯片会被换到后排 1× 位。\n• 高阶芯片解锁门槛（按标准/暗黑芯片种类数计算）：达到 3 / 6 / 10 / 14 / 16 种时分别解锁 1 / 2 / 3 / 4 / 5 个 Mega 槽位；Giga 与 PA 需满 12 种才会解锁。"
+msgstr "• 黑暗芯片降权：黑暗芯片（含 EXE4 MEGA 栏中的黑暗火神炮）不能占据前 4 高权重位。仅当池中存在黑暗芯片且非黑暗标准芯片不足 3 种时，前 3 位才会用加农炮、迷你炸弹、空气弹顺位补齐（正常配入 ≥3 种非黑暗标准芯片时不会触发填充，无需填满全部 16 槽）；当非黑暗标准芯片 ≥4 种时，前 4 位中的黑暗芯片会被换到后排 1× 位。\n• 高阶芯片解锁门槛（按标准/黑暗芯片种类数计算）：达到 3 / 6 / 10 / 14 / 16 种时分别解锁 1 / 2 / 3 / 4 / 5 个 MEGA 槽位；GIGA 与程序强化需满 12 种才会解锁。"
 
 msgid "Double Team DS (5DS — EXE5 Only)"
 msgstr "5DS 版（Double Team DS，仅 EXE5）"
 
 msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
-msgstr "• 内部芯片 ID 升序重排：在套用 4/4/2/2/1×12 权重前，标准/暗黑池与 Mega 池均强制按游戏内部 BattleChip ID 从小到大排序（编号靠前的芯片自动获得高权重，不再按使用次数排序）。\n• 芯片后强制连射冷却：使用任意暗黑芯片、SearchMan（无印/SP/DS）、ShakPar（1–3）或 BigNoise 后，AI 必须先执行 8 次洛克炮三连射（原版仅 2 次）才能再次尝试出卡。"
+msgstr "• 内部芯片 ID 升序重排：在套用 4/4/2/2/1×12 权重前，标准/黑暗池与 MEGA 池均强制按游戏内部 BattleChip ID 从小到大排序（编号靠前的芯片自动获得高权重，不再按使用次数排序）。\n• 芯片后强制连射冷却：使用任意黑暗芯片、侦察人（无印/SP/DS）、摇星游行（1–3）或巨大噪音后，AI 必须先执行 8 次洛克炮三连射（原版仅 2 次）才能再次尝试出卡。"

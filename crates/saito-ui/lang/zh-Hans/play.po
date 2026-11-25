@@ -308,10 +308,10 @@ msgid "Reduce flashes"
 msgstr "防爆闪模式"
 
 msgid "Hide aura number"
-msgstr "隐藏梦罩数字"
+msgstr "隐藏梦之灵数字"
 
 msgid "HD chip art"
-msgstr "高清卡图"
+msgstr "高清体验"
 
 # ---- Stage & BGM preset dialog ----
 
@@ -450,7 +450,7 @@ msgid "On (Original)"
 msgstr "生效（原版）"
 
 msgid "Dark Cut-In: {}"
-msgstr "善插暗黑：{}"
+msgstr "黑暗芯片打断：{}"
 
 msgid "Gate mode"
 msgstr "Gate模式"
@@ -487,19 +487,19 @@ msgid "Abilities: {}"
 msgstr "能力：{}"
 
 msgid "Reg {}/30 MB · Tag {}/60 MB"
-msgstr "常规 {}/30 MB · 标签 {}/60 MB"
+msgstr "常规 {}/30 MB · 配组 {}/60 MB"
 
 msgid "Reg (R)"
 msgstr "常规 (R)"
 
 msgid "Tag (T)"
-msgstr "标签 (T)"
+msgstr "配组 (T)"
 
 msgid "Select a second chip to complete the Tag pair (max 60 MB total)."
-msgstr "请选择第二枚芯片完成标签配对（总计上限 60 MB）。"
+msgstr "请选择第二枚芯片完成配组（总计上限 60 MB）。"
 
 msgid "Inspect the shared 30-chip folder and optionally set your Regular (30 MB) and Tag (60 MB) chips."
-msgstr "可确认本次双方共用的 30 枚随机卡组，并各自指定常规芯片（30 MB）与标签芯片（60 MB）。"
+msgstr "可确认本次双方共用的 30 枚随机卡组，并各自指定常规芯片（30 MB）与配组芯片（60 MB）。"
 
 msgid "Ready! Waiting for opponent…"
 msgstr "已准备！等待对手确认…"
