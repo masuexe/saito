@@ -427,6 +427,75 @@ pub fn hold_emotion(b: &mut Battle, side: u8, e: Emotion) -> bool {
     emotion(b, side) == e
 }
 
+/// Hold `side`'s player navi in EXE5's DarkInvs drive (`NO_CHARGE` +
+/// `UNTOUCHABLE` with `no_charge_timer = u16::MAX`, which never counts down
+/// in [`intake::no_charge_timer`]), and on initial activation populate its
+/// `auto_battle_places` list with `chips` (by local chip key) and unmute the
+/// `controller` rules hook. No-op (returns `false`) on games without
+/// `no_charge_drive`. For practice mode alone.
+pub fn hold_dark_invs(b: &mut Battle, side: u8, chips: &[&str]) -> bool {
+    if !b.game_rules().intake.no_charge_drive {
+        return false;
+    }
+    let Some(r) = b.player(side) else { return false };
+    let side_idx = side as usize & 1;
+    let already_held = {
+        let a = ai(b, r);
+        a.status & crate::actor::status::NO_CHARGE != 0 && a.no_charge_timer == u16::MAX
+    };
+    if !already_held {
+        let handles: Vec<saito_content_api::ChipHandle> = chips
+            .iter()
+            .filter_map(|key| b.content.defs.chip_by_key(key))
+            .collect();
+        if let Some(rules_def) = b.content.defs.rules()
+            && let Some(state_block) = b.rules[side_idx].state.as_mut()
+        {
+            let schema = b.content.defs.schema(rules_def.state);
+            if let Some(idx) = schema.index_of("auto_battle_places") {
+                let list_place = schema.place(idx);
+                state_block.clear_at(list_place);
+                if state_block.set_len_at(list_place, handles.len()).is_ok() {
+                    for (k, chip) in handles.into_iter().enumerate() {
+                        if let Some(elem) = list_place.elem(k)
+                            && let Some(chip_place) = elem.field("chip")
+                        {
+                            let _ = state_block.set_at(
+                                chip_place,
+                                saito_content_api::Value::Def(saito_content_api::Registry::Chip, chip.0),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if ai(b, r).anger != 0 || flag1(b, r) & f1::ANGER != 0 {
+            status::end_anger(b, r);
+        }
+        ai_mut(b, r).in_auto_battle = true;
+    }
+    b.rules[side_idx].muted &= !saito_content_api::RulesHook::Controller.bit();
+    let a = ai_mut(b, r);
+    a.no_charge_timer = u16::MAX;
+    a.status |= crate::actor::status::NO_CHARGE;
+    set_flag1(b, r, f1::UNTOUCHABLE);
+    true
+}
+
+/// Release a practice-held DarkInvs drive on `side` without triggering
+/// `darkinvs/drive_end` (which assumes MegaMan).
+pub fn release_dark_invs(b: &mut Battle, side: u8) {
+    if !b.game_rules().intake.no_charge_drive {
+        return;
+    }
+    let Some(r) = b.player(side) else { return };
+    let a = ai_mut(b, r);
+    a.no_charge_timer = 0;
+    a.in_auto_battle = false;
+    a.status &= !crate::actor::status::NO_CHARGE;
+    clear_flag1(b, r, f1::UNTOUCHABLE);
+}
+
 /// A loss of HP brought `r` to 0 (EXE5's `object_subtractHP` calls
 /// 0x0802C16C): its side's rules are asked (`hp_emptied`: EXE5's last
 /// stand, which may hold it at 1 HP), an object with actor data's; whether

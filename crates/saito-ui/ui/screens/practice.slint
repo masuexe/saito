@@ -183,7 +183,11 @@ export global PracticeView {
     }
     pure public function value(option: PracticeOption, value: int) -> string {
         if option == PracticeOption.action {
-            return value == 0 ? @tr("Stands still") : (value == 1 ? @tr("Moves around") : (value == 2 && PracticeView.fights ? @tr("Fights") : @tr("A second pad")));
+            return value == 0 ? @tr("Stands still")
+                : value == 1 ? @tr("Moves around")
+                : value == 2 ? (PracticeView.fights ? @tr("Fights") : @tr("A second pad"))
+                : value == 3 ? (PracticeView.fights ? @tr("A second pad") : @tr("DarkInvs (Thnd/PA)"))
+                : @tr("DarkInvs (Thnd/PA)");
         }
         if option == PracticeOption.level {
             return value == 0 ? @tr("level" => "Easy") : (value == 1 ? @tr("level" => "Normal") : @tr("level" => "Hard"));

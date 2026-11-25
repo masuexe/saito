@@ -411,7 +411,7 @@ fn side_of(id: &str) -> usize {
 /// How many values a row steps through, each side's of a row of two columns (none: a group's title, the columns'
 /// headings, or EDIT; Arena and Background the game's `places` and Random; Emotion Normal and the game's
 /// `emotions` it can hold a side in).
-fn values(option: PracticeOption, places: &Places, emotions: usize, abd_modes: usize) -> usize {
+fn values(option: PracticeOption, places: &Places, emotions: usize, abd_modes: usize, actions: usize) -> usize {
     match option {
         PracticeOption::Emotion => 1 + emotions,
         PracticeOption::Arena => places.len(ARENA),
@@ -419,7 +419,7 @@ fn values(option: PracticeOption, places: &Places, emotions: usize, abd_modes: u
         // (The battle's music steps through what `crate::music` offers, and the dummy's build through the session's
         // builds: `Practice::change_option`.)
         PracticeOption::Music | PracticeOption::DummysBuild => 1,
-        PracticeOption::Action => ACTIONS.len(),
+        PracticeOption::Action => actions,
         PracticeOption::Level => LEVEL_COUNT,
         PracticeOption::Hp | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::InputDisplay => 2,
         PracticeOption::RandomBattle => 4,
@@ -441,6 +441,7 @@ fn value(
     inputs: bool,
     place: [usize; 2],
     emotions: &[(Emotion, String)],
+    actions: &[InFight],
 ) -> [usize; 2] {
     let held = |side: usize| options.emotions[side].and_then(|e| emotions.iter().position(|(h, _)| *h == e)).map_or(0, |at| at + 1);
     let one = match option {
@@ -450,7 +451,7 @@ fn value(
         PracticeOption::Arena => place[ARENA],
         PracticeOption::Background => place[BACKGROUND],
         PracticeOption::Music | PracticeOption::DummysBuild => 0,
-        PracticeOption::Action => ACTIONS.iter().position(|a| *a == opponent.in_fight).unwrap_or(0),
+        PracticeOption::Action => actions.iter().position(|a| *a == opponent.in_fight).unwrap_or(0),
         PracticeOption::CustomGauge => options.full_gauge as usize,
         PracticeOption::ChipDraw => (options.chip_draw == ChipDraw::FolderOrder) as usize,
         PracticeOption::RandomBattle => random_battle.map_or(0, |r| r.as_u8() as usize),
@@ -484,7 +485,7 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
         let total = saito_match::cs_prob_fix::effects(&session.game).len() as i32;
         return PracticeRow { option, value: count, dummys_value: total, ..Default::default() };
     }
-    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions);
+    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions, actions_for(&session.game));
     let part = match option {
         PracticeOption::Arena => Some(ARENA),
         PracticeOption::Background => Some(BACKGROUND),
@@ -563,10 +564,16 @@ fn lay_out_rows(shell: &Shell, session: &mut Session) {
     }
 }
 
-/// The dummy that does `in_fight`: its custom screen goes with it, the AI's for one that fights, the first chip
-/// it can for any other (a second pad's own on its screen).
+/// The dummy that does `in_fight`: its custom screen goes with it, the AI's for one that fights, PicksNothing
+/// for DarkInvs (which plays from auto-battle data directly), and the first chip it can for any other (a second
+/// pad's own on its screen).
 fn dummy(in_fight: InFight) -> Opponent {
-    Opponent { in_fight, on_custom_screen: if in_fight == InFight::Ai { OnCustomScreen::Ai } else { OnCustomScreen::PicksFirst } }
+    let on_custom_screen = match in_fight {
+        InFight::Ai => OnCustomScreen::Ai,
+        InFight::DarkInvs => OnCustomScreen::PicksNothing,
+        _ => OnCustomScreen::PicksFirst,
+    };
+    Opponent { in_fight, on_custom_screen }
 }
 
 /// Where the menu shows `option` now, among its rows (another screen's added first), if it shows it: for the
@@ -585,11 +592,19 @@ pub(crate) fn dummys_build(shell: &Shell) -> Option<usize> {
 }
 
 /// The dummy's Actions, in the row's order (practice.slint words them by their place: `PracticeView.fights`
-/// says whether Fights is among them).
+/// says whether Fights is among them). EXE5 appends `InFight::DarkInvs` at the end.
 #[cfg(feature = "ai")]
 const ACTIONS: [InFight; 4] = [InFight::StandsStill, InFight::MovesAround, InFight::Ai, InFight::SecondPad];
 #[cfg(not(feature = "ai"))]
 const ACTIONS: [InFight; 3] = [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad];
+#[cfg(feature = "ai")]
+const EXE5_ACTIONS: [InFight; 5] = [InFight::StandsStill, InFight::MovesAround, InFight::Ai, InFight::SecondPad, InFight::DarkInvs];
+#[cfg(not(feature = "ai"))]
+const EXE5_ACTIONS: [InFight; 4] = [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad, InFight::DarkInvs];
+
+fn actions_for(game: &str) -> &'static [InFight] {
+    if game == "exe5" { &EXE5_ACTIONS } else { &ACTIONS }
+}
 
 /// The Level row's values (`ai::LEVELS`: Easy, Normal, Hard); Normal at first.
 const LEVEL_COUNT: usize = 3;
@@ -601,8 +616,15 @@ fn kept_level(shell: &Shell) -> usize {
 }
 
 /// The dummy's setup as this visit last left it in one of Practice's own sessions.
-fn kept_opponent(shell: &Shell) -> Opponent {
-    dummy(shell.practice.visit.menu.action.unwrap_or(InFight::StandsStill))
+fn kept_opponent(shell: &Shell, game: &str) -> Opponent {
+    let action = shell
+        .practice
+        .visit
+        .menu
+        .action
+        .filter(|a| actions_for(game).contains(a))
+        .unwrap_or(InFight::StandsStill);
+    dummy(action)
 }
 
 /// The battle's options as this visit last left them in one of Practice's own sessions.
@@ -1344,7 +1366,7 @@ impl Practice {
         let round = places.round(shell.practice.visit.place(&game, &places));
         let (you_build, dummy_build) = (picks[you].build.clone(), picks[dummys].build.clone());
         let start = Start {
-            opponent: kept_opponent(shell),
+            opponent: kept_opponent(shell, &game),
             level: kept_level(shell),
             options: kept_options(shell),
             round,
@@ -1458,11 +1480,11 @@ impl Practice {
             return;
         }
         let count = |o: PracticeOption, session: &Session| {
-            values(o, &session.places, session.emotions.len(), saito_match::abd_mode::available(&session.game).len())
+            values(o, &session.places, session.emotions.len(), saito_match::abd_mode::available(&session.game).len(), actions_for(&session.game).len())
         };
         if let Some(option) = option.filter(|o| count(*o, &session) > 0) {
             let next = match change {
-                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions)[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
+                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.inputs, session.place, &session.emotions, actions_for(&session.game))[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
                 Change::To(at) => at.min(count(option, &session) - 1),
             };
             // (A session another screen started keeps its choices for its wait alone, not for the visit.)
@@ -1483,7 +1505,7 @@ impl Practice {
                     }
                 }
                 PracticeOption::Action => {
-                    let in_fight = ACTIONS[next];
+                    let in_fight = actions_for(&session.game)[next];
                     session.opponent = dummy(in_fight);
                     if keep {
                         shell.practice.visit.menu.action = Some(in_fight);
@@ -1836,8 +1858,8 @@ mod tests {
         let content = saito_match::testing::exe6_content();
         let (opponent, options, places, mut seen) = (Opponent::default(), Options::default(), Places::of(&content, "exe6"), 0);
         let emotions = emotions_of(&content, &Names { content: &content, strings: None });
-        let value = |option, opponent, level, options, random_battle, abd_mode, inputs, place| value(option, opponent, level, options, random_battle, abd_mode, inputs, place, &emotions);
-        let values = |option, places: &Places| values(option, places, emotions.len(), 3);
+        let value = |option, opponent, level, options, random_battle, abd_mode, inputs, place| value(option, opponent, level, options, random_battle, abd_mode, inputs, place, &emotions, &ACTIONS);
+        let values = |option, places: &Places| values(option, places, emotions.len(), 3, ACTIONS.len());
         for option in ROWS {
             if values(option, &places) > 0 {
                 let sides = 1 + paired(option) as usize;
@@ -1940,6 +1962,10 @@ mod tests {
         assert_eq!(under(InFight::Ai), (one, Some(PracticeOption::Level)));
         assert_eq!(under(InFight::SecondPad), (none, Some(PracticeOption::Stage)));
         assert_eq!(dummy(InFight::Ai).on_custom_screen, OnCustomScreen::Ai);
+        assert_eq!(dummy(InFight::DarkInvs).on_custom_screen, OnCustomScreen::PicksNothing);
+        assert!(actions_for("exe5").contains(&InFight::DarkInvs), "EXE5 offers DarkInvs dummy");
+        assert!(!actions_for("exe4").contains(&InFight::DarkInvs), "EXE4 hides DarkInvs dummy");
+        assert!(!actions_for("exe6").contains(&InFight::DarkInvs), "EXE6 hides DarkInvs dummy");
         for in_fight in [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad] {
             assert_eq!(dummy(in_fight).on_custom_screen, OnCustomScreen::PicksFirst, "{in_fight:?}");
         }

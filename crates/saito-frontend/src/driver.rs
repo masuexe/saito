@@ -453,11 +453,15 @@ pub enum InFight {
     /// The host's AI plays it ([`Ai::fight`], [`LivePlayer::set_ai`]).
     /// With none, it stands still.
     Ai,
+    /// EXE5-only: keeps the dummy permanently in DarkInvs (`no_charge` +
+    /// untouchable) while running the GBA auto-battle AI on a fixed
+    /// 4× DarkThnd + 1× BigNoise pool.
+    DarkInvs,
 }
 
 impl InFight {
     /// Every choice, in the order a host offers them.
-    pub const ALL: [InFight; 5] = [InFight::StandsStill, InFight::MovesAround, InFight::AttacksAtRandom, InFight::Ai, InFight::SecondPad];
+    pub const ALL: [InFight; 6] = [InFight::StandsStill, InFight::MovesAround, InFight::AttacksAtRandom, InFight::Ai, InFight::SecondPad, InFight::DarkInvs];
 }
 
 /// What an opponent does on its custom screen.
@@ -560,6 +564,8 @@ pub struct LivePlayer {
     refill: [Refill; 2],
     /// The order each side's battle folder is in this round.
     arranged: [ChipDraw; 2],
+    /// Whether the practice DarkInvs drive is currently held on the opponent.
+    dark_invs_active: bool,
     /// What the host's second pad holds this tick, while it has one.
     second_pad: Option<u16>,
     /// The host's AI, for an opponent whose choices are its.
@@ -628,6 +634,7 @@ impl LivePlayer {
             training: Training::default(),
             refill: Default::default(),
             arranged: [ChipDraw::Shuffled; 2],
+            dark_invs_active: false,
             second_pad: None,
             ai: None,
             delay: 0,
@@ -721,6 +728,18 @@ impl LivePlayer {
                 self.arranged[side] = self.training.chip_draw;
             }
         }
+        let other = 1 - b.setup.local_side;
+        if self.opponent.in_fight == InFight::DarkInvs {
+            if b.round.mode == mode::FIGHTING && !over && b.player(other).is_some_and(|r| b.objects.get(r).hp > 0) {
+                const POOL: [&str; 5] = ["darkthnd", "darkthnd", "darkthnd", "darkthnd", "bignoise"];
+                if saito_battle::kinds::player::hold_dark_invs(b, other, &POOL) {
+                    self.dark_invs_active = true;
+                }
+            }
+        } else if self.dark_invs_active {
+            saito_battle::kinds::player::release_dark_invs(b, other);
+            self.dark_invs_active = false;
+        }
     }
 
     /// What the opponent does.
@@ -769,6 +788,7 @@ impl LivePlayer {
             InFight::AttacksAtRandom => mashed,
             InFight::SecondPad => 0,
             InFight::Ai => self.ai.as_mut().map_or(0, |ai| ai.fight(b, side as u8, keys)),
+            InFight::DarkInvs => 0,
         }
     }
 }
@@ -831,6 +851,7 @@ impl Driver for LivePlayer {
         }
         self.refill = Default::default();
         self.arranged = [ChipDraw::Shuffled; 2];
+        self.dark_invs_active = false;
         self.delayed.clear();
         self.layers = None;
         self.set.start()
@@ -840,7 +861,11 @@ impl Driver for LivePlayer {
     /// each navi with refills that lost no HP for [`REFILL_REST`] ticks has
     /// all of it back.
     fn prepare(&mut self, b: &mut Battle) {
-        if self.training == Training::default() && self.arranged == [ChipDraw::Shuffled; 2] {
+        if self.training == Training::default()
+            && self.arranged == [ChipDraw::Shuffled; 2]
+            && self.opponent.in_fight != InFight::DarkInvs
+            && !self.dark_invs_active
+        {
             return;
         }
         for side in 0..2 {
@@ -900,6 +925,7 @@ impl Driver for LivePlayer {
             self.round += 1;
             // (The next round's folders are shuffled as its start, and its navis are new; so are its layers.)
             self.arranged = [ChipDraw::Shuffled; 2];
+            self.dark_invs_active = false;
             self.refill = Default::default();
             self.layers = None;
         }
@@ -1262,7 +1288,7 @@ mod tests {
                         assert_eq!(pressed, mashed & 0x3FF, "tick {tick}");
                         attacked += (pressed & !MOVES != 0) as u32;
                     }
-                    InFight::SecondPad | InFight::Ai => unreachable!("not chosen here"),
+                    InFight::SecondPad | InFight::Ai | InFight::DarkInvs => unreachable!("not chosen here"),
                 }
             }
             let turn = b.round.turn;
@@ -1308,7 +1334,7 @@ mod tests {
                 // (No second pad: it stands still.)
                 InFight::SecondPad => 0,
                 // (No AI given: it stands still.)
-                InFight::Ai => 0,
+                InFight::Ai | InFight::DarkInvs => 0,
             }
         }
     }
@@ -2242,5 +2268,89 @@ mod tests {
             assert_eq!(button, if level.is_none() { Some("beast_out") } else { None }, "level {level:?}");
             assert_eq!(b.form_list(0).unwrap().count, 5, "level {level:?}");
         }
+    }
+
+    /// EXE5 `InFight::DarkInvs`: keeps the dummy permanently in DarkInvs
+    /// (`NO_CHARGE` + `UNTOUCHABLE` + `no_charge_timer == u16::MAX`), plays
+    /// from the fixed 4× DarkThnd + 1× BigNoise pool, respects 5DS ABD
+    /// cooldown when `AbdMode::DoubleTeamDs` is active, and cleanly releases
+    /// when switched back to `InFight::StandsStill`.
+    #[test]
+    fn exe5_dark_invs_dummy_spams_darkthnd_and_bignoise_and_respects_5ds() {
+        use saito_battle::actor::status as actor_status;
+        use saito_battle::collision::f1;
+        use saito_content_api::FieldValue;
+        use saito_match::AbdMode;
+
+        let content = saito_match::testing::exe5_content();
+        let darkthnd = content.defs.chip_by_key("darkthnd").unwrap();
+        let bignoise = content.defs.chip_by_key("bignoise").unwrap();
+
+        let run = |mode: AbdMode| {
+            let mut m = saito_match::pick::live(&content, "exe5", 7, None).unwrap();
+            m.abd_mode = mode;
+            let opponent = Opponent { in_fight: InFight::DarkInvs, on_custom_screen: OnCustomScreen::PicksNothing };
+            let mut live = LivePlayer::against(Set::of(&content, &m, 7), opponent, 7)
+                .with_training(Training { refills: [true, true], ..Training::default() });
+            let mut b = live.start();
+            // Advance past the first custom screen into fighting.
+            for tick in 0..3000u32 {
+                live.prepare(&mut b);
+                if b.round.mode == mode::FIGHTING && b.fight.state == saito_battle::battle::fight::FIGHTING {
+                    break;
+                }
+                let input = if b.round.mode == mode::CUSTOM { ok_tick(&b, 0, tick) } else { PlayerTick::default() };
+                let step = live.next(&b, input).unwrap();
+                b.tick(&step.input, step.events);
+                live.follow(&b);
+            }
+            assert_eq!(b.round.mode, mode::FIGHTING);
+
+            let (mut saw_darkthnd, mut saw_bignoise, mut saw_ds_cooldown) = (false, false, false);
+            for _ in 0..1000u32 {
+                live.prepare(&mut b);
+                let step = live.next(&b, PlayerTick::default()).unwrap();
+                b.tick(&step.input, step.events);
+                live.follow(&b);
+                assert!(!b.is_stopped(), "must not stop under {mode:?}");
+                let r = b.player(1).unwrap();
+                let actor = b.actors.get(b.objects.get(r).actor.unwrap());
+                assert_ne!(actor.status & actor_status::NO_CHARGE, 0, "stays in NO_CHARGE");
+                assert_eq!(actor.no_charge_timer, u16::MAX, "timer never counts down");
+                let coll_f1 = b.collision.get(b.objects.get(r).collision.unwrap()).f1;
+                assert_ne!(coll_f1 & f1::UNTOUCHABLE, 0, "stays untouchable");
+                if actor.attack.chip == Some(darkthnd) {
+                    saw_darkthnd = true;
+                }
+                if actor.attack.chip == Some(bignoise) {
+                    saw_bignoise = true;
+                }
+                let (schema, state) = b.rules_state(1).unwrap();
+                let shots_place = schema.place(schema.index_of("drive").unwrap()).field("shots").unwrap();
+                if let FieldValue::U8(s) = state.get_at(shots_place)
+                    && s >= 0x80
+                {
+                    saw_ds_cooldown = true;
+                }
+            }
+            // Switching off mid-fight releases DarkInvs cleanly without triggering drive_end.
+            live.set_opponent(Opponent::default());
+            live.set_training(live.training(), &mut b);
+            let r = b.player(1).unwrap();
+            let actor = b.actors.get(b.objects.get(r).actor.unwrap());
+            assert_eq!(actor.status & actor_status::NO_CHARGE, 0, "released NO_CHARGE");
+            assert_eq!(actor.no_charge_timer, 0, "cleared timer");
+            let coll_f1 = b.collision.get(b.objects.get(r).collision.unwrap()).f1;
+            assert_eq!(coll_f1 & f1::UNTOUCHABLE, 0, "released untouchable");
+            (saw_darkthnd, saw_bignoise, saw_ds_cooldown)
+        };
+
+        let (orig_thnd, orig_noise, orig_cd) = run(AbdMode::Original);
+        assert!(orig_thnd && orig_noise, "GBA mode must use both DarkThnd ({orig_thnd}) and BigNoise ({orig_noise})");
+        assert!(!orig_cd, "GBA mode must not enter 5DS cooldown");
+
+        let (ds_thnd, _ds_noise, ds_cd) = run(AbdMode::DoubleTeamDs);
+        assert!(ds_thnd, "5DS mode still uses DarkThnd");
+        assert!(ds_cd, "5DS mode respects 8-buster cooldown");
     }
 }

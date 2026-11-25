@@ -60,6 +60,10 @@ msgstr "전투"
 msgid "A second pad"
 msgstr "두 번째 패드"
 
+# EXE5-only dummy action: permanent DarkInvs running 4x DarkThnd + 1x BigNoise.
+msgid "DarkInvs (Thnd/PA)"
+msgstr "다크 인비지블 (전구/PA)"
+
 # How well the dummy fights: a row under the Action while it is Fights.
 msgid "Level"
 msgstr "난이도"

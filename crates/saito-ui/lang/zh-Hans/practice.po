@@ -61,6 +61,10 @@ msgstr "战斗"
 msgid "A second pad"
 msgstr "第二个手柄"
 
+# EXE5-only dummy action: permanent DarkInvs running 4x DarkThnd + 1x BigNoise.
+msgid "DarkInvs (Thnd/PA)"
+msgstr "黑暗隐身 (电球/噪音)"
+
 # How well the dummy fights: a row under the Action while it is Fights.
 msgid "Level"
 msgstr "强度"
