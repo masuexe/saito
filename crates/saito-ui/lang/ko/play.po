@@ -476,3 +476,36 @@ msgstr "단일"
 msgctxt "ruleset"
 msgid "Mixed"
 msgstr "혼합"
+
+msgid "Random Battle — Rank {}"
+msgstr "랜덤 배틀 — 랭크 {}"
+
+msgid "HP {} · {}/{}/{} · Custom {}"
+msgstr "HP {} · {}/{}/{} · 커스텀 {}"
+
+msgid "Abilities: {}"
+msgstr "어빌리티: {}"
+
+msgid "Reg {}/30 MB · Tag {}/60 MB"
+msgstr "레귤러 {}/30 MB · 태그 {}/60 MB"
+
+msgid "Reg (R)"
+msgstr "레귤러 (R)"
+
+msgid "Tag (T)"
+msgstr "태그 (T)"
+
+msgid "Select a second chip to complete the Tag pair (max 60 MB total)."
+msgstr "두 번째 칩을 선택해 태그 페어를 완성하세요 (합계 최대 60 MB)."
+
+msgid "Inspect the shared 30-chip folder and optionally set your Regular (30 MB) and Tag (60 MB) chips."
+msgstr "공유 30장 폴더를 확인하고 레귤러(30 MB) 및 태그(60 MB) 칩을 지정할 수 있습니다."
+
+msgid "Ready! Waiting for opponent…"
+msgstr "준비 완료! 상대를 기다리는 중…"
+
+msgid "Opponent is ready."
+msgstr "상대가 준비를 마쳤습니다."
+
+msgid "Shared Random Folder (30 chips)"
+msgstr "공유 랜덤 폴더 (30장)"

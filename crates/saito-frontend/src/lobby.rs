@@ -163,11 +163,13 @@ pub enum Kind {
     Refuse = 4,
     /// How far a peer is with loading the agreed match.
     Loading = 5,
+    /// EXE6 Random Battle pre-battle prep (ready state and Regular/Tag chip marks).
+    RandomPrep = 6,
 }
 
 impl Kind {
     pub fn of(byte: u8) -> Option<Kind> {
-        [Kind::Frame, Kind::Lobby, Kind::Hello, Kind::Reveal, Kind::Refuse, Kind::Loading].into_iter().find(|k| *k as u8 == byte)
+        [Kind::Frame, Kind::Lobby, Kind::Hello, Kind::Reveal, Kind::Refuse, Kind::Loading, Kind::RandomPrep].into_iter().find(|k| *k as u8 == byte)
     }
 }
 
@@ -808,6 +810,20 @@ pub struct Agreement {
     pub m: Match,
     pub names: [String; 2],
     pub answer: Vec<u8>,
+    /// Final Random Battle prep datagram, resent if the peer still asks during prep.
+    pub prep_answer: Option<Vec<u8>>,
+}
+
+/// Snapshot of the EXE6 Random Battle pre-battle prep phase (stats confirmation, 30-chip folder
+/// inspection, and per-player 30 MB Regular / 60 MB Tag selection).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RandomPrepState {
+    pub rank: saito_match::RandomRank,
+    pub seed: u32,
+    pub folder: saito_match::Folder,
+    pub my_marks: saito_match::random_battle::RandomMarks,
+    pub my_ready: bool,
+    pub their_ready: bool,
 }
 
 impl Agreement {
@@ -824,6 +840,9 @@ impl Agreement {
 pub enum Status<'a> {
     /// Still agreeing: poll it again.
     Pending,
+    /// EXE6 Random Battle pre-battle prep: both players inspect the shared 30-chip folder & rank
+    /// stats and pick their own Regular (30 MB) and Tag (60 MB) chips before loading starts.
+    RandomPrep(RandomPrepState),
     /// The match is agreed and both sides are revealed: the host loads what
     /// it needs of it, saying how far it is ([`Lobby::set_loading`]) and
     /// when it is done ([`Lobby::set_loaded`]), and polls on. (The next
@@ -950,9 +969,61 @@ enum Phase {
     Hello(Committed),
     /// The other's Hello has come: this peer's Reveal is out.
     Reveal(Committed, [u8; 32]),
+    /// EXE6 Random Battle pre-battle prep: seed & shared 30-chip folder are agreed, both players
+    /// inspect stats/folder and pick their own Regular (30 MB) & Tag (60 MB) chips before loading.
+    RandomPrep(Box<RandomPrep>),
     /// The match is agreed: loading, then started.
     Done(Box<Agreement>),
     Failed(Failure),
+}
+
+struct RandomPrep {
+    settings: Settings,
+    rank: saito_match::RandomRank,
+    seed: u32,
+    folder: saito_match::Folder,
+    me: usize,
+    names: [String; 2],
+    answer: Vec<u8>,
+    agreed_with: u32,
+    my_marks: saito_match::random_battle::RandomMarks,
+    my_ready: bool,
+    their_ready: bool,
+    their_marks: saito_match::random_battle::RandomMarks,
+}
+
+impl RandomPrep {
+    fn state(&self) -> RandomPrepState {
+        RandomPrepState {
+            rank: self.rank,
+            seed: self.seed,
+            folder: self.folder.clone(),
+            my_marks: self.my_marks,
+            my_ready: self.my_ready,
+            their_ready: self.their_ready,
+        }
+    }
+
+    fn datagram(&self) -> Vec<u8> {
+        let mut out = vec![Kind::RandomPrep as u8];
+        let mut w = Writer(&mut out);
+        w.put(&self.seed);
+        w.put(&self.my_ready);
+        // Only reveal our Regular/Tag picks once we confirm ready.
+        let (reg, ta, tb) = if self.my_ready {
+            (
+                self.my_marks.regular.unwrap_or(0xFF),
+                self.my_marks.tags.map_or(0xFF, |(a, _)| a),
+                self.my_marks.tags.map_or(0xFF, |(_, b)| b),
+            )
+        } else {
+            (0xFF, 0xFF, 0xFF)
+        };
+        w.put(&reg);
+        w.put(&ta);
+        w.put(&tb);
+        out
+    }
 }
 
 /// What a peer committed to: the settings (and their hash), the revisions
@@ -1387,10 +1458,39 @@ impl Lobby {
         self.phase = Phase::Failed(failure);
     }
 
-    /// Whether the lobby's part is over (agreed or failed): nothing of it
-    /// changes any more.
+    /// Current EXE6 Random Battle pre-battle prep state, if in prep phase.
+    pub fn random_prep(&self) -> Option<RandomPrepState> {
+        match &self.phase {
+            Phase::RandomPrep(p) => Some(p.state()),
+            _ => None,
+        }
+    }
+
+    /// Update this player's Regular/Tag marks during Random Battle prep (validated against 30 MB / 60 MB).
+    pub fn set_random_marks(&mut self, marks: saito_match::random_battle::RandomMarks) -> Result<(), String> {
+        let Phase::RandomPrep(p) = &mut self.phase else {
+            return Err("not in random battle prep".into());
+        };
+        saito_match::random_battle::validate_marks(&self.content, &p.folder, marks)?;
+        p.my_marks = marks;
+        p.my_ready = false;
+        self.changed = true;
+        Ok(())
+    }
+
+    /// Confirm (or unconfirm) this player's Random Battle prep setup.
+    pub fn set_random_ready(&mut self, ready: bool) {
+        if let Phase::RandomPrep(p) = &mut self.phase
+            && p.my_ready != ready
+        {
+            p.my_ready = ready;
+            self.changed = true;
+        }
+    }
+
+    /// Whether the lobby's part is over (in random prep, agreed, or failed): lobby settings no longer change.
     fn settled(&self) -> bool {
-        matches!(self.phase, Phase::Done(_) | Phase::Failed(_))
+        matches!(self.phase, Phase::RandomPrep(_) | Phase::Done(_) | Phase::Failed(_))
     }
 
     /// This peer's lobby state changes (`ready` now): a new revision, said
@@ -1558,6 +1658,7 @@ impl Lobby {
             Some(Kind::Hello) => self.heard_hello(body),
             Some(Kind::Reveal) => self.heard_reveal(body),
             Some(Kind::Loading) => self.heard_loading(body),
+            Some(Kind::RandomPrep) => self.heard_random_prep(body),
             Some(Kind::Frame) => self.heard_frame(datagram),
             None => {}
         }
@@ -1721,6 +1822,7 @@ impl Lobby {
         let Ok(commitment) = <[u8; 32]>::try_from(commitment) else { return };
         match &self.phase {
             // After the match is agreed: the other hasn't our Reveal.
+            Phase::RandomPrep(p) => self.outgoing.push(p.answer.clone()),
             Phase::Done(a) => self.outgoing.push(a.answer.clone()),
             _ => self.their_hello = Some(((theirs, mine), first_to, commitment)),
         }
@@ -1728,8 +1830,30 @@ impl Lobby {
 
     fn heard_reveal(&mut self, body: &[u8]) {
         match &self.phase {
+            Phase::RandomPrep(p) => self.outgoing.push(p.answer.clone()),
             Phase::Done(a) => self.outgoing.push(a.answer.clone()),
             _ => self.their_reveal = Some(body.to_vec()),
+        }
+    }
+
+    fn heard_random_prep(&mut self, body: &[u8]) {
+        let mut r = Reader::new(body);
+        let (Ok(seed), Ok(ready), Ok(reg), Ok(ta), Ok(tb)) = (r.get::<u32>(), r.get::<bool>(), r.get::<u8>(), r.get::<u8>(), r.get::<u8>()) else { return };
+        match &mut self.phase {
+            Phase::RandomPrep(p) if p.seed == seed => {
+                p.their_ready = ready;
+                if ready {
+                    let regular = (reg != 0xFF).then_some(reg);
+                    let tags = (ta != 0xFF && tb != 0xFF).then_some((ta, tb));
+                    p.their_marks = saito_match::random_battle::RandomMarks { regular, tags };
+                }
+            }
+            Phase::Done(a) if a.seed == seed => {
+                if let Some(ans) = &a.prep_answer {
+                    self.outgoing.push(ans.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1753,6 +1877,7 @@ impl Lobby {
         let start = *self.start.get_or_insert(now);
         if !matches!(self.phase, Phase::Failed(_)) {
             match self.phase {
+                Phase::RandomPrep(_) => self.prep_step(now),
                 Phase::Done(_) => self.load(now),
                 _ => self.step(now),
             }
@@ -1763,6 +1888,7 @@ impl Lobby {
             }
         }
         match &self.phase {
+            Phase::RandomPrep(p) => Status::RandomPrep(p.state()),
             Phase::Done(_) if self.playing => Status::Playing,
             Phase::Done(a) if self.started => Status::Start(a),
             Phase::Done(a) => Status::Loading(a),
@@ -1801,6 +1927,21 @@ impl Lobby {
             && revealed_for(&reveal) == Some((c.revisions.1, c.revisions.0))
         {
             let (c, commitment) = (c.clone(), *commitment);
+            if let Some(rank) = c.settings.random_battle {
+                match self.start_random_prep(&c, &commitment, &reveal, rank) {
+                    Ok(prep) => {
+                        self.outgoing.push(prep.datagram());
+                        self.phase = Phase::RandomPrep(Box::new(prep));
+                        self.changed = false;
+                        self.sent = Some(now);
+                    }
+                    Err(mut failure) => {
+                        failure.detail = format!("can't play: {}", failure.detail);
+                        self.fail(failure, true);
+                    }
+                }
+                return;
+            }
             match self.agree(&c, &commitment, &reveal) {
                 Ok(a) => {
                     self.start_digest = a.set.start().digest();
@@ -1835,6 +1976,83 @@ impl Lobby {
             self.changed = false;
             self.sent = Some(now);
         }
+    }
+
+    /// Drive EXE6 Random Battle pre-battle prep: send ready/marks heartbeats and, once both peers
+    /// confirm, build both sides with their Regular/Tag marks and transition to `Phase::Done`.
+    fn prep_step(&mut self, now: Instant) {
+        let Phase::RandomPrep(p) = &self.phase else { return };
+        if p.my_ready && p.their_ready {
+            let prep_answer = p.datagram();
+            // Send our final confirmed datagram immediately so the peer also finishes prep.
+            self.outgoing.push(prep_answer.clone());
+            let marks = if p.me == 0 { [p.my_marks, p.their_marks] } else { [p.their_marks, p.my_marks] };
+            let built = saito_match::random_battle::build_match_sides_with_marks(&self.content, p.rank, p.seed, marks)
+                .and_then(|sides| crate::netplay::netplay_setup_sides(&self.content, p.seed, &p.settings, sides));
+            match built {
+                Ok((set, m)) => {
+                    let a = Agreement {
+                        settings: p.settings.clone(),
+                        seed: p.seed,
+                        sides: m.sides.clone(),
+                        side: p.me,
+                        set,
+                        m,
+                        names: p.names.clone(),
+                        answer: p.answer.clone(),
+                        prep_answer: Some(prep_answer),
+                    };
+                    self.start_digest = a.set.start().digest();
+                    self.agreed_with = p.agreed_with;
+                    self.phase = Phase::Done(Box::new(a));
+                    self.changed = true;
+                }
+                Err(why) => {
+                    let failure = Failure { reason: Reason::Protocol, detail: format!("can't play: {why}") };
+                    self.fail(failure, true);
+                }
+            }
+            return;
+        }
+        if self.changed || self.sent.is_none_or(|t| now.duration_since(t) >= RESEND) {
+            self.outgoing.push(p.datagram());
+            self.changed = false;
+            self.sent = Some(now);
+        }
+    }
+
+    fn start_random_prep(&self, c: &Committed, theirs: &[u8; 32], reveal: &[u8], rank: saito_match::RandomRank) -> Result<RandomPrep, Failure> {
+        let failed = |reason: Reason, detail: String| Failure { reason, detail };
+        if commitment(&c.hash, reveal) != *theirs {
+            return Err(failed(Reason::Protocol, "the other side's Reveal doesn't match its commitment".into()));
+        }
+        let mut r = Reader::new(reveal);
+        let bad = |e: std::io::Error| failed(Reason::Protocol, format!("the other side's Reveal doesn't decode ({e})"));
+        let _revisions: (u32, u32) = (r.get().map_err(bad)?, r.get().map_err(bad)?);
+        let nonce: u64 = r.get().map_err(bad)?;
+        let _side_bytes = r.bytes().map_err(bad)?;
+        r.finish().map_err(bad)?;
+        let me = self.compat.role.side();
+        let (host, join) = if me == 0 { (self.nonce, nonce) } else { (nonce, self.nonce) };
+        let seed = seed(host, join);
+        let folder = saito_match::random_battle::build_folder(&self.content, rank, seed)
+            .map_err(|why| failed(Reason::Protocol, why))?;
+        let their_name = self.their_name().unwrap_or("").to_string();
+        let names = if me == 0 { [self.name.clone(), their_name] } else { [their_name, self.name.clone()] };
+        Ok(RandomPrep {
+            settings: c.settings.clone(),
+            rank,
+            seed,
+            folder,
+            me,
+            names,
+            answer: c.reveal.clone(),
+            agreed_with: c.revisions.1,
+            my_marks: saito_match::random_battle::RandomMarks::default(),
+            my_ready: false,
+            their_ready: false,
+            their_marks: saito_match::random_battle::RandomMarks::default(),
+        })
     }
 
     /// The match is agreed: say how far this host's loading is, when it
@@ -1953,7 +2171,7 @@ impl Lobby {
         let their_name = self.their_name().unwrap_or("").to_string();
         let names = if me == 0 { [self.name.clone(), their_name] } else { [their_name, self.name.clone()] };
         // (The sides as the match plays them: the match's own.)
-        Ok(Agreement { settings: c.settings.clone(), seed, sides: m.sides.clone(), side: me, set, m, names, answer: c.reveal.clone() })
+        Ok(Agreement { settings: c.settings.clone(), seed, sides: m.sides.clone(), side: me, set, m, names, answer: c.reveal.clone(), prep_answer: None })
     }
 }
 
@@ -2063,6 +2281,7 @@ pub(crate) mod testing {
             Status::Failed(failure) => panic!("{}", failure.detail),
             Status::Playing => panic!("its channel is out"),
             Status::Loading(_) => panic!("not loaded"),
+            Status::RandomPrep(_) => panic!("still in random prep"),
             Status::Pending => panic!("not agreed"),
         }
     }
@@ -3431,12 +3650,28 @@ mod tests {
         lobbies[0].set_ready(true);
         lobbies[1].set_ready(true);
         run(&mut lobbies, now, 20, &mut |_, _| {});
+        // Both peers enter Random Battle pre-battle prep with the exact same 30-chip folder.
+        let p0 = lobbies[0].random_prep().expect("host in random prep");
+        let p1 = lobbies[1].random_prep().expect("joiner in random prep");
+        assert_eq!(p0.seed, p1.seed);
+        assert_eq!(p0.folder, p1.folder);
+        assert_eq!(p0.folder.chips().count(), 30);
+        // Each player independently picks their own Regular (<= 30 MB) chip; opponent doesn't see it before ready.
+        let reg0 = (0..30u8).find(|&i| p0.folder.chips[i as usize].is_some_and(|c| content.chip(c.id).mb <= 30));
+        let reg1 = (0..30u8).rev().find(|&i| p1.folder.chips[i as usize].is_some_and(|c| content.chip(c.id).mb <= 30));
+        lobbies[0].set_random_marks(saito_match::random_battle::RandomMarks { regular: reg0, tags: None }).unwrap();
+        lobbies[1].set_random_marks(saito_match::random_battle::RandomMarks { regular: reg1, tags: None }).unwrap();
+        lobbies[0].set_random_ready(true);
+        lobbies[1].set_random_ready(true);
+        run(&mut lobbies, now, 20, &mut |_, _| {});
         load(&mut lobbies, now);
         let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
         assert_eq!(agreed[0].seed, agreed[1].seed);
         assert_eq!(agreed[0].m.random_battle, Some(RandomRank::Rank3));
         assert_eq!(agreed[0].sides, agreed[1].sides);
-        assert_eq!(agreed[0].sides[0], agreed[0].sides[1], "both sides share the generated 30-chip folder");
+        assert_eq!(agreed[0].sides[0].folder(&content).chips, agreed[0].sides[1].folder(&content).chips, "both sides share the generated 30-chip folder");
+        assert_eq!(agreed[0].sides[0].folder(&content).regular, reg0);
+        assert_eq!(agreed[0].sides[1].folder(&content).regular, reg1);
         assert_eq!(agreed[0].sides[0].folder(&content).chips().count(), 30);
         let start = agreed[0].set.start();
         assert_eq!(start.digest(), agreed[1].set.start().digest());

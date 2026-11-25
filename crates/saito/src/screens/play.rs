@@ -239,6 +239,8 @@ enum Stage {
     Waiting,
     /// The two players are in the lobby.
     Lobby,
+    /// EXE6 Random Battle pre-battle prep: stats check, 30-chip folder check, and Regular/Tag selection.
+    RandomPrep,
     /// A match is agreed and is being made ready behind the two cards.
     Loading { seed: u32, gate: Rc<Gate> },
     /// The match is on: how its set ended, once it has.
@@ -383,8 +385,19 @@ pub struct Play {
     stage_dialog: bool,
     /// Per-effect ChargeShot Addition probability fix dialog state (EXE5 / EXE6).
     cs_prob_dialog: bool,
+    /// EXE6 Random Battle pre-battle prep UI state.
+    prep: RandomPrepUi,
     /// Local replay file currently being recorded for the active online set, plus its final outcome once finished.
     recorded_replay: Option<(std::path::PathBuf, Option<crate::replays::feed::UploadOutcome>)>,
+}
+
+/// Local UI state during EXE6 Random Battle pre-battle prep.
+#[derive(Default)]
+struct RandomPrepUi {
+    slot: usize,
+    tagging: Option<u8>,
+    notice: String,
+    last: Option<saito_frontend::lobby::RandomPrepState>,
 }
 
 impl Default for Play {
@@ -430,6 +443,7 @@ impl Default for Play {
             stage_loaded: false,
             stage_dialog: false,
             cs_prob_dialog: false,
+            prep: RandomPrepUi::default(),
             recorded_replay: None,
         }
     }
@@ -479,7 +493,7 @@ impl Play {
     fn part(&self) -> PlayPart {
         match self.stage {
             Stage::Idle | Stage::Meeting => PlayPart::Builds,
-            Stage::Waiting | Stage::Lobby | Stage::Loading { .. } | Stage::Match { .. } => PlayPart::Lobby,
+            Stage::Waiting | Stage::Lobby | Stage::RandomPrep | Stage::Loading { .. } | Stage::Match { .. } => PlayPart::Lobby,
             Stage::Spectating => PlayPart::Spectate,
         }
     }
@@ -554,8 +568,38 @@ impl Play {
     }
 
     /// This player's card in the lobby: the build they bring, as the match plays it (while the host waits for the
-    /// other player, the chosen build).
+    /// other player, the chosen build). In EXE6 Random Battle, shows the Rank's fixed MegaMan performance summary.
     fn show_card(&mut self, shell: &Shell) {
+        if let Some(rank) = self.live.random_battle
+            && let Some((_, ready)) = shell.ready()
+        {
+            let content = ready.content();
+            let graphics = ready.graphics(shell.i18n.code);
+            let names = Names::of(content, &graphics);
+            let ability_keys: &[&str] = match rank {
+                saito_match::RandomRank::Rank1 => &["suprarmr", "undersht"],
+                saito_match::RandomRank::Rank2 => &["suprarmr", "airshoes"],
+                saito_match::RandomRank::Rank3 => &["chpshufl", "shield"],
+            };
+            let abilities: Vec<String> = ability_keys
+                .iter()
+                .filter_map(|key| saito_match::ids::entry(content, "exe6", "navicust", key))
+                .map(|entry| names.entry(entry))
+                .collect();
+            let b = rank.buster_level();
+            let summary = format!(
+                "HP {} · {b}/{b}/{b} · Cust {} · {}",
+                rank.hp(),
+                rank.custom_level(),
+                shell.i18n.list(&abilities),
+            );
+            let card = PlayBuild {
+                name: format!("Random Battle · Rank {}", rank.as_u8()).into(),
+                navi: summary.into(),
+            };
+            shell.ui().global::<PlayView>().set_card(card);
+            return;
+        }
         let side = self.session.as_mut().and_then(Session::lobby).map(|lobby| lobby.side().clone()).or_else(|| self.side(shell, false).ok());
         let (Some(side), Some((_, ready)), Some(build)) = (side, shell.ready(), self.build()) else { return };
         let graphics = ready.graphics(shell.i18n.code);
@@ -707,6 +751,7 @@ impl Play {
             let _ = session.send();
         }
         self.session = None;
+        self.close_random_prep(shell);
         self.drop_session(shell);
         self.direct = None;
         shell.nav.close("direct.");
@@ -723,6 +768,7 @@ impl Play {
         let direct = self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Address(_)));
         let from_rooms = self.spectate_dir.is_open() && self.session.as_ref().is_some_and(|s| matches!(s.way, Way::Code(_)));
         self.session = None;
+        self.close_random_prep(shell);
         self.drop_session(shell);
         shell.sound.play(Cue::Refused);
         if direct && let Some(dialog) = &mut self.direct {
@@ -879,6 +925,7 @@ impl Play {
             let pad = shell.nav.pad();
             shell.nav.used_keys(pad);
         }
+        self.close_random_prep(shell);
         self.stage = Stage::Lobby;
         self.direct = None;
         shell.nav.close("direct.");
@@ -943,6 +990,7 @@ impl Play {
             })),
             presentation,
         });
+        self.close_random_prep(shell);
         self.stage = Stage::Loading { seed: agreed.seed, gate };
         self.changing = false;
         shell.nav.close("change.");
@@ -976,6 +1024,7 @@ impl Play {
         if let Some(host) = &mut self.host_spectate {
             host.end_set("reopen");
         }
+        self.close_random_prep(shell);
         self.stage = Stage::Lobby;
         self.ended = why;
         self.page = MatchPage::Menu;
@@ -1579,13 +1628,15 @@ impl Play {
             lobby.set_side(resolved);
         }
         // (The build's problems in the player's words, as the editor's header says them: the first and "+n more".)
-        if live.problems != self.live.problems || live.ruleset != self.live.ruleset {
+        if live.problems != self.live.problems || live.ruleset != self.live.ruleset || live.random_battle != self.live.random_battle {
             let said = match (live.problems.is_empty(), shell.ready()) {
                 (false, Some((game, ready))) => Some(words::problems(shell, &game, &ready, &live.problems)),
                 _ => None,
             };
             let line = said.map(|said| UserError::BuildUnusable { reason: Some(said).filter(|s| !s.is_empty()) }.line(&ui));
             view.set_note_problem(line.unwrap_or_default().into());
+            // Update `self.live.random_battle` before refreshing the card so the Rank stats preview matches immediately.
+            self.live.random_battle = live.random_battle;
             self.show_card(shell);
         }
         view.set_open(live.open);
@@ -1782,7 +1833,223 @@ impl Play {
         self.show_stage(shell);
     }
 
-    /// What the match's menu and panels show: both builds (the other player's has no name here: none was
+    // ---- EXE6 Random Battle pre-battle prep (stats check, 30-chip folder check, Regular 30MB / Tag 60MB) ---
+
+    fn enter_random_prep(&mut self, shell: &mut Shell) {
+        self.changing = false;
+        shell.nav.close("change.");
+        if self.stage_dialog {
+            self.stage_dialog = false;
+            shell.nav.close("stage.");
+            shell.ui().global::<PlayView>().set_stage_dialog(false);
+        }
+        if self.cs_prob_dialog {
+            self.cs_prob_dialog = false;
+            shell.nav.close("cs-prob.");
+            shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        }
+        self.close_rules(shell);
+        self.stage = Stage::RandomPrep;
+        self.prep = RandomPrepUi::default();
+        shell.ui().global::<PlayView>().set_random_prep(true);
+        shell.nav.open("prep.", Key::new("prep.slot", 0));
+        self.sync_random_prep(shell, true);
+    }
+
+    fn close_random_prep(&mut self, shell: &mut Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        if view.get_random_prep() {
+            view.set_random_prep(false);
+            shell.nav.close("prep.");
+        }
+        self.prep = RandomPrepUi::default();
+    }
+
+    fn sync_random_prep(&mut self, shell: &Shell, force: bool) {
+        let Some(state) = self.session.as_mut().and_then(Session::lobby).and_then(|l| l.random_prep()) else { return };
+        if !force && self.prep.last.as_ref() == Some(&state) {
+            return;
+        }
+        self.prep.last = Some(state.clone());
+        self.show_random_prep(shell, &state);
+    }
+
+    fn show_random_prep(&self, shell: &Shell, state: &saito_frontend::lobby::RandomPrepState) {
+        let Some(kit) = builds::kit(shell) else { return };
+        let content = kit.content();
+        let mut folder = saito_match::random_battle::apply_marks(&state.folder, state.my_marks);
+        // Visually highlight the first chip being tagged while picking its pair.
+        if let Some(first) = self.prep.tagging {
+            folder.tags = Some((first, first));
+        }
+        let Ok(side) = saito_match::random_battle::build_side(content, &folder) else { return };
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        let mut sheet = overview::sheet_for(shell, &kit, &view.get_you(), &shell.settings.name, &side, Some(state.rank));
+        // If mid-tag, mark only the pending slot as Tag1 without showing Tag2.
+        if let Some(first) = self.prep.tagging {
+            let mut chips: Vec<saito_ui::ChipCell> = slint::Model::iter(&sheet.chips).collect();
+            for (i, c) in chips.iter_mut().enumerate() {
+                if c.mark == saito_ui::ChipMark::Tag1 || c.mark == saito_ui::ChipMark::Tag2 {
+                    c.mark = saito_ui::ChipMark::None;
+                }
+                if i == first as usize {
+                    c.mark = saito_ui::ChipMark::Tag1;
+                }
+            }
+            sheet.chips = ModelRc::new(VecModel::from(chips));
+        }
+        let mb_of = |slot: u8| folder.chips.get(slot as usize).copied().flatten().map_or(0, |c| content.chip(c.id).mb as i32);
+        let reg_mb = state.my_marks.regular.map_or(0, mb_of);
+        let tag_mb = state.my_marks.tags.map_or(0, |(a, b)| mb_of(a) + mb_of(b));
+        let detail = folder
+            .chips
+            .get(self.prep.slot)
+            .copied()
+            .flatten()
+            .map(|c| {
+                let graphics = kit.ready.graphics(shell.i18n.code);
+                let names = Names::of(content, &graphics);
+                let rec = content.chip(c.id);
+                if rec.damage > 0 {
+                    format!("{} {} · {} MB · ATK {}", names.chip(c.id), c.code.letter(), rec.mb, rec.damage)
+                } else {
+                    format!("{} {} · {} MB", names.chip(c.id), c.code.letter(), rec.mb)
+                }
+            })
+            .unwrap_or_default();
+        view.set_prep_rank(state.rank.as_u8() as i32);
+        view.set_prep_sheet(sheet);
+        view.set_prep_slot(self.prep.slot as i32);
+        view.set_prep_reg_mb(reg_mb);
+        view.set_prep_tag_mb(tag_mb);
+        view.set_prep_tagging(self.prep.tagging.is_some());
+        view.set_prep_notice(self.prep.notice.as_str().into());
+        view.set_prep_ready(state.my_ready);
+        view.set_prep_their_ready(state.their_ready);
+        view.set_prep_detail(detail.into());
+    }
+
+    fn prep_toggle_regular(&mut self, shell: &mut Shell) {
+        let Some(state) = self.session.as_mut().and_then(Session::lobby).and_then(|l| l.random_prep()) else { return };
+        if state.my_ready {
+            return;
+        }
+        let slot = self.prep.slot as u8;
+        let mut marks = state.my_marks;
+        self.prep.tagging = None;
+        if marks.regular == Some(slot) {
+            marks.regular = None;
+        } else {
+            // If this slot was part of Tag, clear Tag so it can become Regular cleanly.
+            if marks.tags.is_some_and(|(a, b)| a == slot || b == slot) {
+                marks.tags = None;
+            }
+            marks.regular = Some(slot);
+        }
+        let res = self.session.as_mut().and_then(Session::lobby).map(|l| l.set_random_marks(marks));
+        match res {
+            Some(Ok(())) => {
+                self.prep.notice.clear();
+                shell.sound.play(Cue::Pick);
+                self.sync_random_prep(shell, true);
+            }
+            Some(Err(why)) => {
+                self.prep.notice = why;
+                shell.sound.play(Cue::Refused);
+                self.sync_random_prep(shell, true);
+            }
+            None => {}
+        }
+    }
+
+    fn prep_toggle_tag(&mut self, shell: &mut Shell) {
+        let Some(state) = self.session.as_mut().and_then(Session::lobby).and_then(|l| l.random_prep()) else { return };
+        if state.my_ready {
+            return;
+        }
+        let slot = self.prep.slot as u8;
+        if state.my_marks.regular == Some(slot) {
+            self.prep.notice = "Regular chip cannot also be tagged.".into();
+            shell.sound.play(Cue::Refused);
+            self.sync_random_prep(shell, true);
+            return;
+        }
+        match self.prep.tagging {
+            None => {
+                // If clicking an already-tagged slot, untag the pair.
+                if state.my_marks.tags.is_some_and(|(a, b)| a == slot || b == slot) {
+                    let marks = saito_match::random_battle::RandomMarks { regular: state.my_marks.regular, tags: None };
+                    if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
+                        let _ = lobby.set_random_marks(marks);
+                    }
+                    self.prep.notice.clear();
+                    shell.sound.play(Cue::Pick);
+                } else {
+                    self.prep.tagging = Some(slot);
+                    self.prep.notice.clear();
+                    shell.sound.play(Cue::Pick);
+                }
+                self.sync_random_prep(shell, true);
+            }
+            Some(first) if first == slot => {
+                self.prep.tagging = None;
+                self.prep.notice.clear();
+                shell.sound.play(Cue::Back);
+                self.sync_random_prep(shell, true);
+            }
+            Some(first) => {
+                let marks = saito_match::random_battle::RandomMarks {
+                    regular: state.my_marks.regular,
+                    tags: Some((first, slot)),
+                };
+                let res = self.session.as_mut().and_then(Session::lobby).map(|l| l.set_random_marks(marks));
+                match res {
+                    Some(Ok(())) => {
+                        self.prep.tagging = None;
+                        self.prep.notice.clear();
+                        shell.sound.play(Cue::Pick);
+                        self.sync_random_prep(shell, true);
+                    }
+                    Some(Err(why)) => {
+                        self.prep.notice = why;
+                        shell.sound.play(Cue::Refused);
+                        self.sync_random_prep(shell, true);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    fn prep_clear_marks(&mut self, shell: &mut Shell) {
+        let Some(state) = self.session.as_mut().and_then(Session::lobby).and_then(|l| l.random_prep()) else { return };
+        if state.my_ready {
+            return;
+        }
+        self.prep.tagging = None;
+        self.prep.notice.clear();
+        if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
+            let _ = lobby.set_random_marks(saito_match::random_battle::RandomMarks::default());
+        }
+        shell.sound.play(Cue::Back);
+        self.sync_random_prep(shell, true);
+    }
+
+    fn prep_toggle_ready(&mut self, shell: &mut Shell) {
+        let Some(state) = self.session.as_mut().and_then(Session::lobby).and_then(|l| l.random_prep()) else { return };
+        self.prep.tagging = None;
+        self.prep.notice.clear();
+        let next = !state.my_ready;
+        if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
+            lobby.set_random_ready(next);
+        }
+        shell.sound.play(if next { Cue::Pick } else { Cue::Back });
+        self.sync_random_prep(shell, true);
+    }
+
+    // ---- What the match's menu and panels show -----------------------------------------------------------
     /// ever sent), whether the setups are open, the controls (and the footer's of them), the levels.
     fn show_match(&self, shell: &Shell) {
         let ui = shell.ui();
@@ -2372,6 +2639,7 @@ impl Screen for Play {
             _ if id.starts_with("direct.") => self.direct.is_some(),
             _ if id.starts_with("boxes.") => self.boxes.is_some(),
             _ if id.starts_with("lobby.") || id.starts_with("change.") => matches!(self.stage, Stage::Lobby),
+            _ if id.starts_with("prep.") => matches!(self.stage, Stage::RandomPrep),
             _ => true,
         };
         if !of_its_part {
@@ -2609,6 +2877,21 @@ impl Screen for Play {
             }
             "change.cancel" => self.close_change(shell),
             "lobby.leave" => self.leave(shell),
+            // ---- EXE6 Random Battle pre-battle prep.
+            "prep.slot" => {
+                self.prep.slot = (index.max(0) as usize).min(29);
+                self.prep.notice.clear();
+                if self.prep.tagging.is_some() {
+                    self.prep_toggle_tag(shell);
+                } else {
+                    self.sync_random_prep(shell, true);
+                }
+            }
+            "prep.reg" => self.prep_toggle_regular(shell),
+            "prep.tag" => self.prep_toggle_tag(shell),
+            "prep.clear" => self.prep_clear_marks(shell),
+            "prep.ready" => self.prep_toggle_ready(shell),
+            "prep.leave" => self.leave(shell),
             // ---- The match's menu. (The practice session's beside an invite is Practice's to hear.)
             "menu.resume" => {
                 if self.watch_menu {
@@ -2782,6 +3065,14 @@ impl Screen for Play {
         if let Some(at) = id.strip_prefix("boxes.").and_then(|at| at.parse::<usize>().ok()) {
             self.set_box(shell, at, index.max(0) as usize);
         }
+        // Focused chip row in Random Battle pre-battle prep.
+        if id == "prep.slot" && matches!(self.stage, Stage::RandomPrep) {
+            let slot = (index.max(0) as usize).min(29);
+            if slot != self.prep.slot {
+                self.prep.slot = slot;
+                self.sync_random_prep(shell, true);
+            }
+        }
     }
 
     /// Delete on the builds' list asks whether the chosen build goes (and with a build's name being asked for,
@@ -2832,6 +3123,23 @@ impl Screen for Play {
         if key.code == KeyCode::Tab && self.menu_open(shell) {
             return true;
         }
+        if matches!(self.stage, Stage::RandomPrep) && !key.repeat {
+            match key.code {
+                KeyCode::KeyR => {
+                    self.prep_toggle_regular(shell);
+                    return true;
+                }
+                KeyCode::KeyT => {
+                    self.prep_toggle_tag(shell);
+                    return true;
+                }
+                KeyCode::Delete | KeyCode::Backspace => {
+                    self.prep_clear_marks(shell);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         let (Some(rows), Some(at)) = (self.boxes, Play::box_focused(shell)) else { return false };
         let typed = key.text.as_deref().and_then(|t| t.chars().next()).map(|c| c.to_ascii_uppercase());
         let Some(row) = typed.and_then(|c| ALPHABET.find(c)) else { return false };
@@ -2858,6 +3166,19 @@ impl Screen for Play {
         if self.binding.button(shell, button) {
             self.show_match(shell);
             return true;
+        }
+        if matches!(self.stage, Stage::RandomPrep) {
+            match button {
+                Button::North => {
+                    self.prep_toggle_regular(shell);
+                    return true;
+                }
+                Button::Back => {
+                    self.prep_toggle_tag(shell);
+                    return true;
+                }
+                _ => {}
+            }
         }
         let on_field = shell.nav.focused().is_some_and(|k| k.id == "rooms.code") && !shell.nav.editing();
         if button != shell.bindings.confirm_button() || !on_field || !self.spectate_dir.is_open() || self.boxes.is_some() {
@@ -2896,7 +3217,12 @@ impl Screen for Play {
             self.close_cs_prob_dialog(shell);
         } else if self.changing {
             self.close_change(shell);
-        } else if matches!(self.stage, Stage::Lobby) {
+        } else if matches!(self.stage, Stage::RandomPrep) && self.prep.tagging.is_some() {
+            self.prep.tagging = None;
+            self.prep.notice.clear();
+            shell.sound.play(Cue::Back);
+            self.sync_random_prep(shell, true);
+        } else if matches!(self.stage, Stage::Lobby | Stage::RandomPrep) {
             // (Leaving ends the link for both players: one key pressed by mistake shouldn't. The lobby's own
             // LEAVE leaves at once.)
             let ui = shell.ui();
@@ -2939,7 +3265,7 @@ impl Screen for Play {
         }
         // (Still in the lobby: a match may have been agreed meanwhile, or the lobby ended.)
         if tag == LEAVE_LOBBY {
-            if choice == 1 && matches!(self.stage, Stage::Lobby | Stage::Loading { .. }) {
+            if choice == 1 && matches!(self.stage, Stage::Lobby | Stage::RandomPrep | Stage::Loading { .. }) {
                 self.leave(shell);
             }
             return;
@@ -3105,8 +3431,15 @@ impl Screen for Play {
                 let error = UserError::of_lobby(&failure);
                 return self.ended(shell, error);
             }
+            // EXE6 Random Battle pre-battle prep: stats check, 30-chip folder check, Regular/Tag selection.
+            (Stands::RandomPrep(_), Stage::Lobby) => {
+                self.enter_random_prep(shell);
+            }
+            (Stands::RandomPrep(_), Stage::RandomPrep) => {
+                self.sync_random_prep(shell, false);
+            }
             // A match is agreed.
-            (Stands::Loading(_), Stage::Lobby) => {
+            (Stands::Loading(_), Stage::Lobby | Stage::RandomPrep) => {
                 if let Some(agreed) = session.agreement(now) {
                     self.load(shell, agreed);
                 }
@@ -3127,8 +3460,8 @@ impl Screen for Play {
                 }
             }
             // The other player took their ready back as the match was agreed: the lobby again.
-            (Stands::Lobby, Stage::Loading { .. }) => self.reopen(shell, None),
-            (Stands::Lobby | Stands::Loading(_) | Stands::Start(_), _) => {}
+            (Stands::Lobby, Stage::Loading { .. } | Stage::RandomPrep) => self.reopen(shell, None),
+            (Stands::Lobby | Stands::RandomPrep(_) | Stands::Loading(_) | Stands::Start(_), _) => {}
             (Stands::Playing, Stage::Match { result }) => {
                 let over = shell.battle.as_ref().and_then(|b| b.stage.player.result());
                 let ended = *result;
@@ -3206,7 +3539,7 @@ impl Play {
         let doing = match self.stage {
             Stage::Idle | Stage::Meeting => "reaching the other player",
             Stage::Waiting => "waiting for the other player",
-            Stage::Lobby | Stage::Loading { .. } => "in the lobby",
+            Stage::Lobby | Stage::RandomPrep | Stage::Loading { .. } => "in the lobby",
             Stage::Match { .. } => "in a match",
             Stage::Spectating => "spectating a match",
         };

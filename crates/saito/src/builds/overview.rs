@@ -143,7 +143,7 @@ fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito
         line(rank.custom_level() as i32, false),
         line(5, false),
         line(1, false),
-        line(0, true),
+        line(saito_match::random_battle::RANDOM_REGULAR_MEMORY as i32, true),
     ];
     let ability_keys: &[&str] = match rank {
         saito_match::RandomRank::Rank1 => &["suprarmr", "undersht"],

@@ -360,7 +360,7 @@ impl Peer {
         }
         let preloading = self.preload.is_some();
         let polled = match lobby.poll(now) {
-            Status::Pending => Polled::Lobby,
+            Status::Pending | Status::RandomPrep(_) => Polled::Lobby,
             Status::Loading(agreed) => Polled::Loading((!preloading).then(|| (agreed.set.clone(), agreed.side))),
             Status::Start(agreed) => Polled::Start(agreed.set.clone(), agreed.side),
             Status::Playing => Polled::Playing,

@@ -107,6 +107,9 @@ pub enum Stands {
     Meeting,
     /// In the lobby.
     Lobby,
+    /// EXE6 Random Battle pre-battle prep (by seed): stats confirmation, 30-chip folder inspection,
+    /// and per-player Regular (30 MB) / Tag (60 MB) selection.
+    RandomPrep(u32),
     /// A match is agreed (by its seed) and each side makes it ready.
     Loading(u32),
     /// Both have: the match starts on its channel ([`Session::channel`]).
@@ -264,6 +267,7 @@ impl Session {
         let Some(lobby) = &mut self.lobby else { return Stands::Meeting };
         match lobby.poll(now) {
             Status::Pending => Stands::Lobby,
+            Status::RandomPrep(prep) => Stands::RandomPrep(prep.seed),
             Status::Loading(agreed) => Stands::Loading(agreed.seed),
             Status::Start(agreed) => Stands::Start(agreed.seed),
             Status::Playing => Stands::Playing,

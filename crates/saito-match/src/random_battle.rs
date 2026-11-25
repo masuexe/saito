@@ -77,6 +77,59 @@ pub const RANDOM_BATTLE_STAGES: usize = 68;
 /// SP navi deletion time filled by `sub_800B144` in Random Battle (`0x0474` = 1140 frames = 19.00s).
 pub const RANDOM_SP_FRAMES: u16 = 0x0474;
 
+/// Official EXE6 Random Battle fixed Regular chip memory capacity (30 MB).
+pub const RANDOM_REGULAR_MEMORY: u8 = 30;
+
+/// Official EXE6 Random Battle fixed Tag chip combined memory capacity (60 MB).
+pub const RANDOM_TAG_MEMORY: u8 = 60;
+
+/// Per-player Regular and Tag chip slot selections chosen during Random Battle pre-battle prep.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct RandomMarks {
+    pub regular: Option<u8>,
+    pub tags: Option<(u8, u8)>,
+}
+
+/// Validate `marks` against `folder` under official EXE6 Random Battle limits (30 MB Regular, 60 MB Tag).
+pub fn validate_marks(content: &Content, folder: &Folder, marks: RandomMarks) -> Result<(), String> {
+    let chip_mb = |slot: u8| -> Result<u8, String> {
+        let chip = folder
+            .chips
+            .get(slot as usize)
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("random battle: slot {slot} is empty or out of range"))?;
+        Ok(content.chip(chip.id).mb)
+    };
+    if let Some(reg) = marks.regular {
+        let mb = chip_mb(reg)?;
+        if mb > RANDOM_REGULAR_MEMORY {
+            return Err(format!("random battle: regular chip is {mb} MB (max {RANDOM_REGULAR_MEMORY} MB)"));
+        }
+    }
+    if let Some((a, b)) = marks.tags {
+        if a == b {
+            return Err("random battle: tag chips must be two distinct slots".into());
+        }
+        if marks.regular == Some(a) || marks.regular == Some(b) {
+            return Err("random battle: regular chip cannot also be tagged".into());
+        }
+        let total = chip_mb(a)? as u16 + chip_mb(b)? as u16;
+        if total > RANDOM_TAG_MEMORY as u16 {
+            return Err(format!("random battle: tag chips total {total} MB (max {RANDOM_TAG_MEMORY} MB)"));
+        }
+    }
+    Ok(())
+}
+
+/// Return a copy of `folder` with `marks` applied.
+pub fn apply_marks(folder: &Folder, marks: RandomMarks) -> Folder {
+    let mut out = folder.clone();
+    out.regular = marks.regular;
+    out.tags = marks.tags;
+    out
+}
+
 /// Whether `game` supports official Random Battle mode (EXE6 only).
 pub fn supported(game: &str) -> bool {
     game == "exe6"
@@ -340,6 +393,7 @@ pub fn build_side(content: &Content, folder: &Folder) -> Result<Side, String> {
     let _ = side.set_fact(content, "navicust_expansions", &[Fact::Value(Value::Nil)]);
     let _ = side.set_fact(content, "navicust_programs", &[]);
     let _ = side.set_fact(content, "patch_cards", &[]);
+    let _ = side.set_fact(content, "reg_up", &[Fact::Value(Value::Int(RANDOM_REGULAR_MEMORY as i64))]);
     let sp_records: Vec<Fact> = SP_CHIPS
         .iter()
         .filter_map(|key| ids::chip(content, "exe6", key))
@@ -355,11 +409,25 @@ pub fn build_side(content: &Content, folder: &Folder) -> Result<Side, String> {
     Ok(side)
 }
 
-/// Build both players' identical Random Battle sides from `rank` and `seed`.
+/// Build both players' identical Random Battle sides from `rank` and `seed` (no Regular/Tag marks).
 pub fn build_match_sides(content: &Content, rank: RandomRank, seed: u32) -> Result<[Side; 2], String> {
+    build_match_sides_with_marks(content, rank, seed, [RandomMarks::default(); 2])
+}
+
+/// Build both players' Random Battle sides from the shared `(rank, seed)` folder with per-player
+/// Regular (<= 30 MB) and Tag (<= 60 MB) marks applied.
+pub fn build_match_sides_with_marks(
+    content: &Content,
+    rank: RandomRank,
+    seed: u32,
+    marks: [RandomMarks; 2],
+) -> Result<[Side; 2], String> {
     let folder = build_folder(content, rank, seed)?;
-    let side = build_side(content, &folder)?;
-    Ok([side.clone(), side])
+    validate_marks(content, &folder, marks[0])?;
+    validate_marks(content, &folder, marks[1])?;
+    let s0 = build_side(content, &apply_marks(&folder, marks[0]))?;
+    let s1 = build_side(content, &apply_marks(&folder, marks[1]))?;
+    Ok([s0, s1])
 }
 
 /// Apply the official EXE6 Random Battle rank stats (`sub_8131588` / `off_8131600`) onto `stats`.
@@ -458,5 +526,35 @@ mod tests {
             let back = crate::binary::read_match(&content, &bytes).unwrap();
             assert_eq!(back.random_battle, Some(rank));
         }
+    }
+
+    #[test]
+    fn random_battle_regular_30mb_and_tag_60mb_validation() {
+        let content = exe6_content();
+        let folder = build_folder(&content, RandomRank::Rank3, 42).unwrap();
+        let mb = |i: u8| content.chip(folder.chips[i as usize].unwrap().id).mb;
+        let reg_ok = (0..30u8).find(|&i| mb(i) <= RANDOM_REGULAR_MEMORY).unwrap();
+        let reg_over = (0..30u8).find(|&i| mb(i) > RANDOM_REGULAR_MEMORY).unwrap();
+        // Valid 30MB regular chip passes.
+        assert!(validate_marks(&content, &folder, RandomMarks { regular: Some(reg_ok), tags: None }).is_ok());
+        // Over-30MB regular chip is refused.
+        assert!(validate_marks(&content, &folder, RandomMarks { regular: Some(reg_over), tags: None }).is_err());
+        // Tag pair cannot overlap regular chip.
+        let other = (0..30u8).find(|&i| i != reg_ok && mb(i) + mb(reg_ok) <= RANDOM_TAG_MEMORY).unwrap();
+        assert!(validate_marks(&content, &folder, RandomMarks { regular: Some(reg_ok), tags: Some((reg_ok, other)) }).is_err());
+        // Valid <=60MB tag pair distinct from regular passes and roundtrips into battle sides.
+        let tag_pair = (0..30u8)
+            .filter(|&i| i != reg_ok)
+            .find_map(|a| ((a + 1)..30u8).find(|&b| b != reg_ok && mb(a) + mb(b) <= RANDOM_TAG_MEMORY).map(|b| (a, b)))
+            .unwrap();
+        let marks = [
+            RandomMarks { regular: Some(reg_ok), tags: Some(tag_pair) },
+            RandomMarks { regular: None, tags: Some(tag_pair) },
+        ];
+        let sides = build_match_sides_with_marks(&content, RandomRank::Rank3, 42, marks).unwrap();
+        assert_eq!(sides[0].folder(&content).regular, Some(reg_ok));
+        assert_eq!(sides[0].folder(&content).tags, Some(tag_pair));
+        assert_eq!(sides[1].folder(&content).regular, None);
+        assert_eq!(sides[1].folder(&content).tags, Some(tag_pair));
     }
 }

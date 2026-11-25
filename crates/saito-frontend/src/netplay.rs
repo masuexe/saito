@@ -94,6 +94,12 @@ pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby:
         Some(rank) => saito_match::random_battle::build_match_sides(content, rank, seed)?,
         None => sides,
     };
+    netplay_setup_sides(content, seed, settings, sides)
+}
+
+/// [`netplay_setup`] using already-constructed `sides` (used by Random Battle prep where each player
+/// has chosen their own Regular/Tag marks on the shared random folder).
+pub fn netplay_setup_sides(content: &Arc<Content>, seed: u32, settings: &crate::lobby::Settings, sides: [Side; 2]) -> Result<(Set, Match), String> {
     let m = Match {
         game: settings.game.clone(),
         seed: Some(seed),
@@ -974,7 +980,7 @@ mod tests {
                 let _ = player.tick(input.held);
             }
             let stands = match self.lobby.poll(now) {
-                Status::Pending => Stands::Agreeing,
+                Status::Pending | Status::RandomPrep(_) => Stands::Agreeing,
                 Status::Loading(_) => Stands::Loading,
                 Status::Start(_) => Stands::Start,
                 Status::Playing => Stands::Playing,
