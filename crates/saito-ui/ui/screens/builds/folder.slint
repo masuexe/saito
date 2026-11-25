@@ -125,6 +125,60 @@ export global FolderView {
     in property <ChipCell> ghost;
     // CLEAR's question (docs/design/app-ui.md §2.71).
     out property <string> clear-question: @tr("Clear the folder?");
+    // Per-ABD-mode profile selector (EXE4: GBA/LC; EXE5: GBA/LC/5DS; EXE6: hidden, count=0).
+    in property <int> abd-mode;
+    in property <int> abd-count;
+    in property <[bool]> abd-custom;
+}
+
+// Compact segmented switcher for per-ABD-mode build profiles (GBA / LC / 5DS).
+// Shared between the Folder and Auto battle tabs for EXE4 (2 modes) and EXE5 (3 modes).
+export component AbdProfileBar inherits HorizontalLayout {
+    in property <int> mode;
+    in property <int> count;
+    in property <[bool]> custom;
+    spacing: 4px;
+    height: 20px;
+    visible: root.count > 0;
+
+    for idx in root.count: Rectangle {
+        property <bool> active: root.mode == idx;
+        property <bool> customized: idx > 0 && idx < root.custom.length && root.custom[idx];
+        property <string> label: idx == 0 ? @tr("GBA") : idx == 1 ? @tr("LC") : @tr("5DS");
+        width: lbl.preferred-width + (self.customized ? 18px : 12px);
+        height: 20px;
+        border-radius: 3px;
+        background: self.active ? Theme.cursor : (hit.has-hover ? Theme.tint-hover : Theme.inset);
+        border-width: 1px;
+        border-color: self.active ? Theme.cursor : Theme.line;
+
+        lbl := Text {
+            x: 6px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: parent.label;
+            color: parent.active ? Theme.action-ink : Theme.text;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: parent.active ? 700 : 500;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            x: lbl.x + lbl.preferred-width + 3px;
+            y: (parent.height - 4px) / 2;
+            width: 4px;
+            height: 4px;
+            border-radius: 2px;
+            visible: parent.customized;
+            background: parent.active ? Theme.action-ink : Theme.action;
+        }
+
+        hit := Focusable {
+            nav: root.count > 0 ? "abd.profile" : "";
+            nav-index: idx;
+        }
+    }
 }
 
 // One of the folder's counts: its word, and what the folder holds of its limit, which ticks as it changes. In the
@@ -656,8 +710,8 @@ export component FolderTab inherits Rectangle {
     // The panes run down to 18 over the tab's foot (482 tall at the reference window: fifteen rows visible in the
     // folder list and its header); the library's list fills its pane. (Sideways, to the tab's foot.)
     property <length> pane-height: root.height - root.pane-y - (Theme.sideways ? 0px : 18px);
-    // A phone: the counts' box, its last line kept for what is wrong with the folder, and the folder in one column
-    // under it.
+    // A phone: optional ABD profile bar at top, then the counts' box, then the folder in one column under it.
+    property <length> phone-abd-y: Theme.phone && FolderView.abd-count > 0 ? 26px : 0px;
     property <length> counts-height: (FolderView.counts.tags ? 90px : 68px) + 22px;
     // The folder's header on desktop: title + SORT + CLEAR on line 1, counts on line 2.
     property <length> counts-width: chips.width + mega.width + giga.width + regular.width + 3 * 12px + (FolderView.counts.tags ? tag.width + 12px : 0px);
@@ -772,7 +826,7 @@ export component FolderTab inherits Rectangle {
     // ---- The folder, framed: its title and its counts, then its entries.
     PanelBack {
         x: 0;
-        y: Theme.phone ? 0px : root.pane-y;
+        y: Theme.phone ? root.phone-abd-y : root.pane-y;
         width: Theme.phone ? parent.width : root.pane-width;
         height: Theme.phone ? root.counts-height : root.pane-height;
         accent: !Theme.phone;
@@ -782,18 +836,26 @@ export component FolderTab inherits Rectangle {
     folder-title := Label {
         x: 12px;
         y: root.pane-y + (Theme.sideways ? 8px : 5px);
-        width: root.pane-width - 24px;
+        width: self.preferred-width;
         height: 14px;
         visible: !Theme.phone;
         text: I18n.upper(@tr("Folder"));
         color: FolderView.in-library ? Theme.muted : Theme.cursor;
     }
 
+    AbdProfileBar {
+        x: Theme.phone ? 0px : folder-title.x + folder-title.preferred-width + 10px;
+        y: Theme.phone ? 0px : root.pane-y + (Theme.sideways ? 5px : 2px);
+        mode: FolderView.abd-mode;
+        count: FolderView.abd-count;
+        custom: FolderView.abd-custom;
+    }
+
     // (On a phone the counts are two columns in their own box; sideways two lines under the title from its left, Chips,
     // Mega and Giga, then Regular and Tag.)
     chips := CountBox {
         x: Theme.phone || Theme.sideways ? 12px : mega.x - 12px - self.width;
-        y: Theme.phone ? 12px : Theme.sideways ? root.pane-y + 30px : root.counts-y;
+        y: Theme.phone ? root.phone-abd-y + 12px : Theme.sideways ? root.pane-y + 30px : root.counts-y;
         label: @tr("Chips");
         value: FolderView.counts.chips;
         suffix: "/\{FolderView.counts.size}";
@@ -813,7 +875,7 @@ export component FolderTab inherits Rectangle {
 
     giga := CountBox {
         x: Theme.phone ? 12px : Theme.sideways ? 36px + chips.width + mega.width : regular.x - 12px - self.width;
-        y: Theme.phone ? 34px : chips.y;
+        y: Theme.phone ? root.phone-abd-y + 34px : chips.y;
         label: @tr("Giga");
         value: FolderView.counts.giga;
         suffix: "/\{FolderView.counts.giga-limit}";
@@ -833,7 +895,7 @@ export component FolderTab inherits Rectangle {
 
     tag := CountBox {
         x: Theme.phone ? 12px : Theme.sideways ? 24px + regular.width : root.counts-right - self.width;
-        y: Theme.phone ? 56px : Theme.sideways ? regular.y : chips.y;
+        y: Theme.phone ? root.phone-abd-y + 56px : Theme.sideways ? regular.y : chips.y;
         visible: FolderView.counts.tags;
         label: @tr("Tag");
         value: FolderView.counts.tag;
@@ -847,7 +909,7 @@ export component FolderTab inherits Rectangle {
     // word where a count's would end; on a phone at the right of the counts' box's first line. SORT sits just before it.
     clear := WordButton {
         x: (Theme.phone ? parent.width : root.pane-width) - 12px + self.pad - self.width;
-        y: Theme.phone ? 12px : Theme.sideways ? root.pane-y + 7px : root.pane-y + 4px;
+        y: Theme.phone ? root.phone-abd-y + 12px : Theme.sideways ? root.pane-y + 7px : root.pane-y + 4px;
         nav: "clear";
         text: I18n.upper(@tr("Clear"));
         enabled: FolderView.counts.chips > 0;
@@ -865,7 +927,7 @@ export component FolderTab inherits Rectangle {
     // between the title and SORT/CLEAR.)
     ProblemNote {
         x: Theme.sideways ? folder-title.x + folder-title.preferred-width + 12px : 12px;
-        y: Theme.sideways ? root.pane-y + 7px : root.counts-height - 12px - self.height;
+        y: Theme.sideways ? root.pane-y + 7px : root.phone-abd-y + root.counts-height - 12px - self.height;
         width: Theme.sideways ? max(0px, sort-btn.x - 6px - self.x) : parent.width - 24px;
         visible: Theme.handheld;
         text: FolderView.problems;
@@ -874,7 +936,7 @@ export component FolderTab inherits Rectangle {
     // The folder's 30 entries as one scrollable list (1×30).
     folder := ListView {
         x: Theme.phone ? 0px : 4px;
-        y: Theme.phone ? root.counts-height + 12px : Theme.sideways ? root.pane-y + 72px : root.pane-y + 52px;
+        y: Theme.phone ? root.phone-abd-y + root.counts-height + 12px : Theme.sideways ? root.pane-y + 72px : root.pane-y + 52px;
         width: Theme.phone ? parent.width : root.pane-width - 8px;
         height: Theme.phone ? parent.height - self.y : root.pane-y + root.pane-height - 4px - self.y;
         nav: "slot";

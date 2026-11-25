@@ -201,6 +201,11 @@ impl AutoBattle {
         view.set_problems(draft.pane_line(shell, &[auto::PLACES_FIELD.to_string()], false).into());
         view.set_warning(AutoBattle::data_warning(shell, draft, &data));
         view.set_needs_fix(layout.needs_normalize(&data));
+        let modes = saito_match::abd_mode::available(&draft.kit.game);
+        let custom: Vec<bool> = modes.iter().map(|&m| draft.build.has_custom_auto_battle(m)).collect();
+        view.set_abd_mode(draft.abd_mode.as_u8() as i32);
+        view.set_abd_count(modes.len() as i32);
+        view.set_abd_custom(ModelRc::new(VecModel::from(custom)));
     }
 
     /// Non-blocking ABD-wide warning (e.g., EXE4 missing DarkSword when Standard slots are not full).

@@ -519,16 +519,16 @@ impl Play {
         self.chosen = [before, remembered(shell, game)].into_iter().flatten().find_map(|name| self.builds.iter().position(|b| b.name() == name)).unwrap_or(0);
     }
 
-    /// The builds checked again under `under` (a lobby's ruleset: the host's), and the rows shown with them. Their
-    /// files aren't read again.
-    fn check_builds(&mut self, shell: &Shell, under: Option<shelf::Under>) {
+    /// The builds checked again under `under` (a lobby's ruleset: the host's) and `abd_mode`, and the rows shown
+    /// with them. Their files aren't read again.
+    fn check_builds_for(&mut self, shell: &Shell, under: Option<shelf::Under>, abd_mode: saito_match::AbdMode) {
         let Some(kit) = builds::kit(shell) else { return };
         let ui = shell.ui();
         let graphics = kit.ready.graphics(shell.i18n.code);
         let names = Names::of(kit.content(), &graphics);
         let words = words::Words { ui: &ui, kit: &kit, names: &names, i18n: &shell.i18n };
         for build in &mut self.builds {
-            build.check_under(&words, under);
+            build.check_under_abd(&words, under, abd_mode);
         }
         let view = ui.global::<PlayView>();
         view.set_builds(ModelRc::new(VecModel::from(self.builds.iter().map(|b| b.row.clone()).collect::<Vec<_>>())));
@@ -763,7 +763,11 @@ impl Play {
     /// place in the lobby, the screen's `Picture`. On a phone a battle has its pad only where it fills the window, so
     /// there it does, and a row of the menu stops it for the invite again.
     fn train(&mut self, shell: &mut Shell) {
-        let (Some(game), Ok(side)) = (shell.game().map(str::to_string), self.side(shell, false)) else { return };
+        let abd_mode = self.waiting.as_ref().map_or(saito_match::AbdMode::Original, |s| s.abd_mode);
+        let Some((game, ready)) = shell.ready() else { return };
+        let Ok(base_side) = self.side(shell, false) else { return };
+        let stored = self.build().and_then(|b| b.build.clone());
+        let side = stored.as_ref().map_or(base_side, |b| b.side_for(ready.content(), abd_mode));
         let name = self.builds.get(self.chosen).map(|b| b.name().to_string()).unwrap_or_default();
         // The menu's way out of the wait is in EXIT's place, CANCEL INVITE (STOP HOSTING), and the code (the
         // address) is the invite's place in the lobby to copy (the user: "the stop hosting button should be in the
@@ -774,7 +778,7 @@ impl Play {
         let view = shell.ui();
         let view = view.global::<PlayView>();
         let rows = if full { vec![view.get_stop_practice().to_string()] } else { Vec::new() };
-        let mut start = practice::Start::beside(&game, practice::Build { name, side }, ScreenId::Play, WAIT_ROWS, rows);
+        let mut start = practice::Start::beside(&game, practice::Build { name, side, stored }, ScreenId::Play, WAIT_ROWS, rows);
         start.exit = Some(view.invoke_wait_exit(direct).to_string());
         start.full = full;
         if shell.still {
@@ -853,10 +857,13 @@ impl Play {
     /// The link is open: the lobby over it, the practice battle ended. A host's starts on the settings it set
     /// while it waited, which the joiner takes.
     fn enter_lobby(&mut self, shell: &mut Shell) {
-        let (Some((_, ready)), Some(side)) = (shell.ready(), self.build().and_then(|b| b.side().cloned())) else {
+        let (Some(rulesets), Some(settings)) = (builds::kit(shell).and_then(|kit| kit.rulesets()), self.waiting.take().or_else(|| self.opening_settings(shell))) else {
             return self.ended(shell, Some(UserError::Other));
         };
-        let (Some(rulesets), Some(settings)) = (builds::kit(shell).and_then(|kit| kit.rulesets()), self.waiting.take().or_else(|| self.opening_settings(shell))) else {
+        let (Some((_, ready)), Some(side)) = (
+            shell.ready(),
+            shell.ready().and_then(|(_, r)| self.build().and_then(|b| b.side_for(r.content(), settings.abd_mode))),
+        ) else {
             return self.ended(shell, Some(UserError::Other));
         };
         // (The screenshot pass's matches are the same from run to run.)
@@ -1446,7 +1453,8 @@ impl Play {
         let waiting = self.waiting.clone().filter(|_| matches!(self.stage, Stage::Waiting));
         if let Some(settings) = &waiting
             && self.wait_checked.as_ref().is_none_or(|(checked, ..)| checked != settings)
-            && let (Some((_, ready)), Some(rulesets), Some(side)) = (shell.ready(), builds::kit(shell).and_then(|kit| kit.rulesets()), self.build().and_then(|b| b.side().cloned()))
+            && let (Some((_, ready)), Some(rulesets)) = (shell.ready(), builds::kit(shell).and_then(|kit| kit.rulesets()))
+            && let Some(side) = self.build().and_then(|b| b.side_for(ready.content(), settings.abd_mode))
         {
             let problems = if settings.random_battle.is_some() {
                 Vec::new()
@@ -1548,15 +1556,27 @@ impl Play {
                 view.set_ruleset_mixed(false);
             }
         }
-        // The builds CHANGE BUILD offers are checked under the lobby's ruleset, the host's, where it changed.
-        if live.ruleset != self.live.ruleset
+        // The builds CHANGE BUILD offers are checked under the lobby's ruleset and ABD mode, where either changed.
+        let abd_changed = live.abd_mode != self.live.abd_mode;
+        if (live.ruleset != self.live.ruleset || abd_changed)
             && let Some(ruleset) = &live.ruleset
         {
-            self.check_builds(shell, Some(shelf::Under { rulesets: &rulesets, ruleset }));
+            self.check_builds_for(shell, Some(shelf::Under { rulesets: &rulesets, ruleset }), live.abd_mode);
             // (A joiner viewing the host's ruleset sees each change as it comes.)
-            if let Some(page) = self.rules.as_mut() {
+            if live.ruleset != self.live.ruleset
+                && let Some(page) = self.rules.as_mut()
+            {
                 page.follow(shell, ruleset);
             }
+        }
+        // Automatically switch the lobby's active side to this build's matching ABD profile (GBA / LC / 5DS).
+        if abd_changed
+            && let Some((_, ready)) = shell.ready()
+            && let Some(resolved) = self.build().and_then(|b| b.side_for(ready.content(), live.abd_mode))
+            && let Some(lobby) = self.session.as_mut().and_then(Session::lobby)
+            && *lobby.side() != resolved
+        {
+            lobby.set_side(resolved);
         }
         // (The build's problems in the player's words, as the editor's header says them: the first and "+n more".)
         if live.problems != self.live.problems || live.ruleset != self.live.ruleset {
@@ -2083,7 +2103,11 @@ impl Play {
     /// can't (`of` says what the content is, for that).
     fn play_reloaded(&mut self, shell: &mut Shell, game: &str, content: &Arc<saito_battle::Content>, of: &str) -> Result<(), String> {
         self.read_builds(shell, game);
-        let (side, rulesets) = (self.side(shell, self.joining()), builds::kit(shell).and_then(|kit| kit.rulesets()));
+        let abd_mode = self.session.as_mut().and_then(Session::lobby).map_or(self.live.abd_mode, |l| l.settings().abd_mode);
+        let side = self
+            .side(shell, self.joining())
+            .map(|base| self.build().and_then(|b| b.side_for(content, abd_mode)).unwrap_or(base));
+        let rulesets = builds::kit(shell).and_then(|kit| kit.rulesets());
         let played = match (side, rulesets, self.session.as_mut().and_then(Session::lobby)) {
             (Ok(side), Some(rulesets), Some(lobby)) => {
                 lobby.replace_content(content, rulesets, side);
@@ -2564,7 +2588,12 @@ impl Screen for Play {
             // the lobby's to say: it can't be made ready, and the line says why.)
             "change.builds" => {
                 let index = index.max(0) as usize;
-                if let Some(side) = self.builds.get(index).and_then(|b| b.side().cloned()) {
+                let abd_mode = self.session.as_mut().and_then(Session::lobby).map_or(self.live.abd_mode, |l| l.settings().abd_mode);
+                let side = shell
+                    .ready()
+                    .and_then(|(_, r)| self.builds.get(index).and_then(|b| b.side_for(r.content(), abd_mode)))
+                    .or_else(|| self.builds.get(index).and_then(|b| b.side().cloned()));
+                if let Some(side) = side {
                     self.choose_build(shell, index);
                     // (Nothing of it is said to the other player; a ready mark was for the build before.)
                     if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {

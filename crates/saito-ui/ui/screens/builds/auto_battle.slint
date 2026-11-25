@@ -14,7 +14,7 @@ import { Shell, Hint, PadButton } from "../../shell.slint";
 import { Cut, PanelBack, Label, Field, Select, Button, ButtonKind, ListView, RowTouch, ScrollPage, Refusal, ProblemNote, WordButton } from "../../widgets.slint";
 import { Tween, Flash, Shake, Count } from "../../motion.slint";
 import { ChipCell, ChipKind, ChipRow, VersionMark } from "../../build.slint";
-import { ChipDetail, LibraryRow, LibraryHead, DropGap, LiftedRow, RemoveTarget } from "folder.slint";
+import { ChipDetail, LibraryRow, LibraryHead, DropGap, LiftedRow, RemoveTarget, AbdProfileBar } from "folder.slint";
 
 // A line of the places: a list's title (over both columns), or one of its places (its chip, by its place in its list
 // from 1, where it is: a column and a row of the panel).
@@ -58,6 +58,10 @@ export global AutoBattleView {
     in property <string> warning;
     // Whether the build holds legacy/illegal ABD structure (non-empty `first` or non-4x-2x-1x `standard`).
     in property <bool> needs-fix;
+    // Per-ABD-mode profile selector (EXE4: GBA/LC; EXE5: GBA/LC/5DS).
+    in property <int> abd-mode;
+    in property <int> abd-count;
+    in property <[bool]> abd-custom;
     out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
     // Where the place a chip just went into is (its column and row), counted: it flashes.
     in property <int> landed-column;
@@ -451,15 +455,25 @@ export component AutoBattleTab inherits Rectangle {
     }
 
     property <length> actions-left: AutoBattleView.needs-fix ? fix.x + fix.pad : clear.x + clear.pad;
+    property <bool> show-lc-note: AutoBattleView.abd-mode == 1;
+    property <length> lc-note-height: root.show-lc-note ? (Theme.phone ? 64px : 48px) : 0px;
 
     places-title := Label {
         x: 12px;
         y: root.pane-y;
-        width: max(0px, root.actions-left - 12px - self.x);
+        width: self.preferred-width;
         height: 44px;
         visible: !Theme.phone;
         text: I18n.upper(@tr("Auto battle"));
         color: AutoBattleView.in-library ? Theme.muted : Theme.cursor;
+    }
+
+    abd-bar := AbdProfileBar {
+        x: Theme.phone ? 0px : places-title.x + places-title.preferred-width + 10px;
+        y: Theme.phone ? 2px : root.pane-y + 12px;
+        mode: AutoBattleView.abd-mode;
+        count: AutoBattleView.abd-count;
+        custom: AutoBattleView.abd-custom;
     }
 
     // FIX: normalizes legacy/illegal ABD data (clears `first` and aligns `standard` to 4×-2×-1×).
@@ -486,7 +500,7 @@ export component AutoBattleTab inherits Rectangle {
     // (What is wrong with the data: a phone's line of its own over the places, before CLEAR; sideways in the header,
     // after the title, as there is no strip.)
     ProblemNote {
-        x: Theme.sideways ? places-title.x + places-title.preferred-width + 12px : 0px;
+        x: Theme.sideways ? (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 10px : places-title.x + places-title.preferred-width + 12px) : (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 8px : 0px);
         y: Theme.sideways ? clear.y : 0px;
         width: max(0px, root.actions-left - 12px - self.x);
         visible: Theme.handheld;
@@ -495,7 +509,7 @@ export component AutoBattleTab inherits Rectangle {
 
     // (Non-blocking ABD-wide illegal data warning in the places header / phone lead line.)
     Text {
-        x: Theme.phone ? 0px : places-title.x + places-title.preferred-width + 12px;
+        x: Theme.phone ? (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 8px : 0px) : (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 10px : places-title.x + places-title.preferred-width + 12px);
         y: Theme.phone ? 0px : Theme.sideways ? clear.y : root.pane-y;
         width: max(0px, root.actions-left - 12px - self.x);
         height: Theme.phone ? root.phone-lead : Theme.sideways ? clear.height : 44px;
@@ -509,11 +523,44 @@ export component AutoBattleTab inherits Rectangle {
         overflow: elide;
     }
 
-    page := ScrollPage {
+    // Legacy Collection ABD pool reminder note (shown when editing the LC profile).
+    Rectangle {
         x: Theme.phone ? 0px : 12px;
         y: root.pane-y + (Theme.phone ? root.phone-lead : 44px);
+        width: root.pane-width - (Theme.phone ? 0px : 24px);
+        height: root.show-lc-note ? root.lc-note-height - 6px : 0px;
+        visible: root.show-lc-note;
+        background: Theme.inset;
+        border-radius: 3px;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 3px;
+            height: parent.height;
+            background: Theme.warn;
+        }
+
+        Text {
+            x: 10px;
+            y: 4px;
+            width: parent.width - 16px;
+            height: parent.height - 8px;
+            text: @tr("LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear.");
+            color: Theme.warn;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: 500;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    page := ScrollPage {
+        x: Theme.phone ? 0px : 12px;
+        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px) + root.lc-note-height;
         width: root.pane-width - (Theme.phone ? 0px : 12px);
-        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px);
+        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px) - root.lc-note-height;
         nav: "places.";
         content-height: AutoBattleView.rows * root.pitch;
         // (A mouse's drag on a place moves its chip: the wheel scrolls.)

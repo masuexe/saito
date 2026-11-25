@@ -67,6 +67,10 @@ pub struct Draft {
     /// The game's builds data, pictures and library order.
     pub kit: Rc<Kit>,
     pub build: Build,
+    /// Active ABD profile being viewed/edited (`Original` = GBA, `LegacyCollection` = LC, `DoubleTeamDs` = 5DS).
+    pub abd_mode: saito_match::AbdMode,
+    /// Resolved side for `abd_mode` (`build.side_for(content, abd_mode)`).
+    active_side: Side,
     /// The build checked: what is wrong with it, and its round set up (the stats it starts with, the
     /// folder's view, the navi's first face). Made again at each change.
     pub checked: Checked,
@@ -86,18 +90,31 @@ impl Draft {
         self.kit.content()
     }
 
-    /// The side a match is handed.
+    /// The side for the active ABD profile (`abd_mode`).
     pub fn side(&self) -> &Side {
-        &self.build.side
+        &self.active_side
+    }
+
+    /// Switch the active ABD profile being edited (`Original` / `LegacyCollection` / `DoubleTeamDs`).
+    pub fn set_abd_mode(&mut self, mode: saito_match::AbdMode) -> bool {
+        if mode == self.abd_mode || !mode.allowed_for(&self.kit.game) {
+            return false;
+        }
+        self.abd_mode = mode;
+        self.active_side = self.build.side_for(self.kit.content(), mode);
+        self.check();
+        true
     }
 
     /// Change the build's side: `change` says whether it did. The build is checked again at once; the frame
     /// saves it when the tab's call returns.
     pub fn edit(&mut self, change: impl FnOnce(&Content, &mut Side) -> bool) -> bool {
         let kit = self.kit.clone();
-        if !change(kit.content(), &mut self.build.side) {
+        if !change(kit.content(), &mut self.active_side) {
             return false;
         }
+        self.build.apply_edited_side(kit.content(), self.abd_mode, &self.active_side);
+        self.active_side = self.build.side_for(kit.content(), self.abd_mode);
         self.recheck();
         true
     }
@@ -114,6 +131,7 @@ impl Draft {
         if self.build == before {
             return false;
         }
+        self.active_side = self.build.side_for(kit.content(), self.abd_mode);
         self.recheck();
         true
     }
@@ -145,7 +163,7 @@ impl Draft {
 
     /// Check the build as it stands, under the ruleset it is made for.
     fn check(&mut self) {
-        self.checked = checked(&self.kit, &self.build.side, self.under());
+        self.checked = checked(&self.kit, &self.active_side, self.under());
     }
 
     /// The ruleset the build is checked under: the one it is made for, else (that one missing) the game's first
@@ -585,9 +603,11 @@ impl Editor {
         let navi_only = navi_only_fields(&content);
         let settled = build.settle(&content, &kit.builds, &navi_only);
         let ruleset = rulesets::made_for(&rulesets::pickable(&kit), build.ruleset.as_ref());
-        let checked = checked(&kit, &build.side, ruleset.as_ref().map(|made| &made.pick));
+        let abd_mode = saito_match::AbdMode::Original;
+        let active_side = build.side_for(&content, abd_mode);
+        let checked = checked(&kit, &active_side, ruleset.as_ref().map(|made| &made.pick));
         let tabs: Vec<Box<dyn Tab>> = all().into_iter().filter(|t| has(&content, t.as_ref())).collect();
-        let draft = Draft { kit, build, checked, ruleset, path, navi_only, changed: settled };
+        let draft = Draft { kit, build, abd_mode, active_side, checked, ruleset, path, navi_only, changed: settled };
         let mut editor = Editor { draft, tabs, at: 0, rules: None, rest: None };
         editor.save(shell);
         editor
@@ -844,6 +864,17 @@ impl Editor {
         if id == "tab" {
             let way = if index as usize >= self.at { 1 } else { -1 };
             return self.go(shell, index.max(0) as usize, way);
+        }
+        if id == "abd.profile" {
+            if let Some(mode) = saito_match::AbdMode::from_u8(index.max(0) as u8)
+                && self.draft.set_abd_mode(mode)
+            {
+                shell.sound.play(crate::sound::Cue::Pick);
+                self.show_frame(shell);
+                let (tab, draft) = self.tab();
+                tab.show(shell, draft);
+            }
+            return;
         }
         let (tab, draft) = self.tab();
         tab.activate(shell, draft, id, index);

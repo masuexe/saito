@@ -715,3 +715,15 @@ msgstr "不正データ（通常プレイで入手不可）"
 
 msgid "5DS-only content (not allowed in GBA rules)"
 msgstr "5DS限定データ（GBAルールでは使用不可）"
+
+msgid "GBA"
+msgstr "GBA"
+
+msgid "LC"
+msgstr "アドコレ"
+
+msgid "5DS"
+msgstr "5DS"
+
+msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
+msgstr "アドコレABDの記憶プールはすべて埋める必要があります。空き枠があるとキャノンやミニボムなどの下位チップが出現し、空きが多いほど下位チップの種類が増えます。"

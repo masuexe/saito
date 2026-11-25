@@ -713,3 +713,15 @@ msgstr "非法数据（正常流程无法获得）"
 
 msgid "5DS-only content (not allowed in GBA rules)"
 msgstr "仅限 5DS 规则可用（GBA 规则下不可用）"
+
+msgid "GBA"
+msgstr "GBA"
+
+msgid "LC"
+msgstr "合集"
+
+msgid "5DS"
+msgstr "5DS"
+
+msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
+msgstr "合集 ABD 记忆卡池需要完全填满，如果合集 ABD 记忆池中存在空位，则会出现加农炮、迷你炸弹等低级芯片，空位越多低等级芯片的种类越多。"

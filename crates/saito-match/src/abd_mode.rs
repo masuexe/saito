@@ -30,7 +30,7 @@ use saito_content_api::{ChipHandle, Registry, Value};
 use std::collections::HashMap;
 
 /// Dark Soul Auto Battle Data (ABD) behavior mode for EXE4 and EXE5.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum AbdMode {
     /// Original GBA behavior (default).
@@ -76,6 +76,25 @@ impl AbdMode {
 
     pub fn as_u8(self) -> u8 {
         self as u8
+    }
+
+    /// Stable string key for serialization (`"gba"`, `"lc"`, `"ds"`).
+    pub fn key(self) -> &'static str {
+        match self {
+            AbdMode::Original => "gba",
+            AbdMode::LegacyCollection => "lc",
+            AbdMode::DoubleTeamDs => "ds",
+        }
+    }
+
+    /// Parse a serialized mode key (`"gba"`, `"lc"`, `"ds"`).
+    pub fn from_key(key: &str) -> Option<AbdMode> {
+        match key {
+            "gba" => Some(AbdMode::Original),
+            "lc" => Some(AbdMode::LegacyCollection),
+            "ds" => Some(AbdMode::DoubleTeamDs),
+            _ => None,
+        }
     }
 
     /// Cycle to the next available mode for `game`.

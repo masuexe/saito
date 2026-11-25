@@ -68,6 +68,11 @@ impl Shelved {
         self.build.as_ref().map(|b| &b.side)
     }
 
+    /// Its side resolved for `abd_mode` (applying LC/5DS folder & auto-battle overrides when configured).
+    pub fn side_for(&self, content: &saito_battle::Content, abd_mode: saito_match::AbdMode) -> Option<Side> {
+        self.build.as_ref().map(|b| b.side_for(content, abd_mode))
+    }
+
     /// The ruleset it is made for (none where the game has none, or its file doesn't read).
     pub fn made_for(&self) -> Option<&MadeFor> {
         self.made_for.as_ref().map(|(_, made)| made)
@@ -87,14 +92,31 @@ impl Shelved {
     /// Check it again under `under` (a lobby's ruleset; none: the one it is made for, or where there is none the
     /// game's rules alone), and its row's words with it. Its row names the ruleset it is made for, whichever.
     pub fn check_under(&mut self, words: &Words, under: Option<Under>) {
+        self.check_under_abd(words, under, saito_match::AbdMode::Original);
+    }
+
+    /// [`Self::check_under`], resolving the build's side for `abd_mode` (GBA / LC / 5DS).
+    pub fn check_under_abd(&mut self, words: &Words, under: Option<Under>, abd_mode: saito_match::AbdMode) {
         let Some(build) = &self.build else { return };
         let kit = words.kit;
-        let mut problems = self.rules.clone();
+        let has_override = abd_mode != saito_match::AbdMode::Original && build.profiles.contains_key(&abd_mode);
+        let resolved;
+        let side = if has_override {
+            resolved = build.side_for(kit.content(), abd_mode);
+            &resolved
+        } else {
+            &build.side
+        };
+        let mut problems = if has_override {
+            Checked::of(kit.content(), &kit.game, side).problems
+        } else {
+            self.rules.clone()
+        };
         let own = self.made_for.as_ref().map(|(rulesets, made)| Under { rulesets, ruleset: &made.pick.ruleset });
         if let Some(u) = under.or(own) {
-            problems.extend(u.ruleset.problems(u.rulesets, kit.content(), &build.side));
+            problems.extend(u.ruleset.problems(u.rulesets, kit.content(), side));
         }
-        let navi = words.names.navi(build.side.navi(kit.content()));
+        let navi = words.names.navi(side.navi(kit.content()));
         let (status, bad) = words.status(&navi, &problems);
         let (ruleset, missing) = self.made_for.as_ref().map(|(_, made)| made.shown(words.names)).unwrap_or_default();
         self.row = BuildEntry { name: build.name.as_str().into(), status: status.into(), bad, ruleset: ruleset.into(), ruleset_missing: missing };

@@ -47,13 +47,15 @@
 //! old builds are dropped, not converted).
 
 use saito_battle::Content;
+use saito_battle::content::PlayerFact;
 use saito_match::build::Builds;
 use saito_match::facts::{Stated, fact_of};
 use saito_match::file::{FactsFile, SideFile};
 use saito_match::ruleset::Name;
-use saito_match::{Facts, Side};
+use saito_match::{AbdMode, Facts, Side};
 use saito_content_api::NaviHandle;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The most letters a build's name has.
@@ -169,10 +171,26 @@ struct TacticFile {
     tactic: JsonFacts,
     #[serde(default, skip_serializing_if = "JsonFacts::is_empty")]
     reserve: JsonFacts,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    abd_profiles: BTreeMap<String, JsonFacts>,
 }
 
-/// A build: its name, the ruleset it is made for, the side a match is handed, and the facts kept aside while its
-/// navi takes none of them.
+/// Per-ABD-mode overrides (folder and/or auto battle data) stored alongside the primary GBA side
+/// for EXE4 (Legacy Collection) and EXE5 (Legacy Collection, Double Team DS).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AbdProfile {
+    pub folder: Option<Facts>,
+    pub auto_battle: Option<Facts>,
+}
+
+impl AbdProfile {
+    pub fn is_empty(&self) -> bool {
+        self.folder.is_none() && self.auto_battle.is_none()
+    }
+}
+
+/// A build: its name, the ruleset it is made for, the side a match is handed, the facts kept aside while its
+/// navi takes none of them, and optional per-ABD-mode folder/AI profiles (EXE4/EXE5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
     pub name: String,
@@ -182,6 +200,8 @@ pub struct Build {
     pub side: Side,
     /// The facts kept aside, stated; every other one the rules' default.
     aside: Facts,
+    /// Optional per-ABD-mode overrides (keyed by non-Original `AbdMode`: LC, 5DS).
+    pub profiles: BTreeMap<AbdMode, AbdProfile>,
 }
 
 /// A build's file, as it is listed: its path, its name, and its text (read against its game's content once
@@ -201,10 +221,109 @@ fn values(value: &Stated) -> Vec<saito_battle::rules::Fact<'_>> {
     }
 }
 
+/// Folder-related setup field names for `content`.
+pub fn folder_fields(content: &Content) -> Vec<&str> {
+    [PlayerFact::Folder, PlayerFact::RegularChip, PlayerFact::TagChips]
+        .into_iter()
+        .filter_map(|role| content.defs.fact_name(role))
+        .collect()
+}
+
+/// Auto-battle setup field names for `content`.
+pub fn auto_battle_fields(content: &Content) -> Vec<&'static str> {
+    [crate::builds::auto::PLACES_FIELD, crate::builds::auto::RECORDS_FIELD]
+        .into_iter()
+        .filter(|field| saito_match::facts::takes(content, field))
+        .collect()
+}
+
+/// Copy `fields` from `from` into `to` (resetting any field that is default in `from`).
+fn copy_fields(content: &Content, from: &Facts, to: &mut Facts, fields: &[&str]) {
+    for &field in fields {
+        if from.is_default(content, field) {
+            to.reset(content, field);
+        } else if let Some(value) = from.get(content, field) {
+            let _ = to.set(content, field, &values(&value));
+        }
+    }
+}
+
+/// Whether `a` and `b` agree on every field in `fields`.
+fn fields_equal(content: &Content, a: &Facts, b: &Facts, fields: &[&str]) -> bool {
+    fields.iter().all(|&field| a.get(content, field) == b.get(content, field))
+}
+
 impl Build {
     /// A build named `name` of `side`, made for the game's first preset, nothing kept aside.
     pub fn new(content: &Content, name: &str, side: Side) -> Build {
-        Build { name: name.to_string(), ruleset: None, side, aside: Facts::defaults(content) }
+        Build { name: name.to_string(), ruleset: None, side, aside: Facts::defaults(content), profiles: BTreeMap::new() }
+    }
+
+    /// Resolve this build's [`Side`] for `mode` (applying LC/5DS folder and auto-battle overrides
+    /// when configured, falling back to the primary GBA side otherwise).
+    pub fn side_for(&self, content: &Content, mode: AbdMode) -> Side {
+        if mode == AbdMode::Original {
+            return self.side.clone();
+        }
+        let Some(profile) = self.profiles.get(&mode) else {
+            return self.side.clone();
+        };
+        let mut side = self.side.clone();
+        if let Some(folder) = &profile.folder {
+            copy_fields(content, folder, &mut side.facts, &folder_fields(content));
+        }
+        if let Some(auto) = &profile.auto_battle
+            && self.own_navi(content)
+        {
+            copy_fields(content, auto, &mut side.facts, &auto_battle_fields(content));
+        }
+        side
+    }
+
+    /// Commit edits made to the resolved side for `mode` back into this build.
+    /// Shared facts update `self.side`; folder and auto-battle changes update the active profile.
+    pub fn apply_edited_side(&mut self, content: &Content, mode: AbdMode, edited: &Side) {
+        if mode == AbdMode::Original {
+            self.side = edited.clone();
+            return;
+        }
+        let before = self.side_for(content, mode);
+        let f_fields = folder_fields(content);
+        let a_fields = auto_battle_fields(content);
+        let folder_changed = !fields_equal(content, &before.facts, &edited.facts, &f_fields);
+        let auto_changed = !fields_equal(content, &before.facts, &edited.facts, &a_fields);
+
+        // Sync any shared (non-folder, non-auto-battle) facts back to `self.side`.
+        let shared: Vec<&str> = saito_match::facts::fields(content)
+            .into_iter()
+            .map(|f| f.name)
+            .filter(|name| !f_fields.contains(name) && !a_fields.contains(name))
+            .collect();
+        copy_fields(content, &edited.facts, &mut self.side.facts, &shared);
+
+        if folder_changed || auto_changed {
+            let entry = self.profiles.entry(mode).or_default();
+            if folder_changed {
+                let mut facts = Facts::defaults(content);
+                copy_fields(content, &edited.facts, &mut facts, &f_fields);
+                entry.folder = Some(facts);
+            }
+            if auto_changed {
+                let mut facts = Facts::defaults(content);
+                copy_fields(content, &edited.facts, &mut facts, &a_fields);
+                entry.auto_battle = Some(facts);
+            }
+        }
+    }
+
+    /// Whether `mode` has a customized folder override (always true for `Original`).
+    pub fn has_custom_folder(&self, mode: AbdMode) -> bool {
+        mode == AbdMode::Original || self.profiles.get(&mode).is_some_and(|p| p.folder.is_some())
+    }
+
+    /// Whether `mode` has a customized auto-battle override (always true for `Original`).
+    pub fn has_custom_auto_battle(&self, mode: AbdMode) -> bool {
+        mode == AbdMode::Original || self.profiles.get(&mode).is_some_and(|p| p.auto_battle.is_some())
     }
 
     /// The build made for ruleset `ruleset` (none: the game's first preset).
@@ -345,8 +464,35 @@ pub fn read(content: &Content, game: &str, text: &str) -> Result<Build, String> 
         Some(text) => Some(crate::rulesets::name_of_text(&text).ok_or_else(|| format!("ruleset {text:?}: \"preset:<id>\" or \"own:<name>\""))?),
         None => None,
     };
+    let f_fields = folder_fields(content);
+    let a_fields = auto_battle_fields(content);
+    let mut profiles = BTreeMap::new();
+    for (key, json_facts) in f.abd_profiles {
+        let Some(mode) = AbdMode::from_key(&key).filter(|&m| m != AbdMode::Original && m.allowed_for(game)) else {
+            return Err(format!("unknown or disallowed ABD profile {key:?} for {game}"));
+        };
+        let has_folder = json_facts.0.iter().any(|(k, _)| f_fields.contains(&k.as_str()));
+        let has_auto = json_facts.0.iter().any(|(k, _)| a_fields.contains(&k.as_str()));
+        let profile_file = to_side_file(json_facts)?;
+        if let Some(resolved) = saito_match::file::resolve_facts(content, game, &profile_file, &format!("ABD profile {key}"), &mut problems) {
+            let mut profile = AbdProfile::default();
+            if has_folder {
+                let mut facts = Facts::defaults(content);
+                copy_fields(content, &resolved, &mut facts, &f_fields);
+                profile.folder = Some(facts);
+            }
+            if has_auto {
+                let mut facts = Facts::defaults(content);
+                copy_fields(content, &resolved, &mut facts, &a_fields);
+                profile.auto_battle = Some(facts);
+            }
+            if !profile.is_empty() {
+                profiles.insert(mode, profile);
+            }
+        }
+    }
     match (side, aside) {
-        (Some(side), Some(aside)) => Ok(Build { name: f.title, ruleset, side, aside }),
+        (Some(side), Some(aside)) if problems.is_empty() => Ok(Build { name: f.title, ruleset, side, aside, profiles }),
         _ => Err(problems.join("; ")),
     }
 }
@@ -358,6 +504,38 @@ pub fn text(content: &Content, game: &str, build: &Build) -> String {
     } else {
         JsonFacts::default()
     };
+    let f_fields = folder_fields(content);
+    let a_fields = auto_battle_fields(content);
+    let mut abd_profiles = BTreeMap::new();
+    for (&mode, profile) in &build.profiles {
+        if mode == AbdMode::Original || !mode.allowed_for(game) || profile.is_empty() {
+            continue;
+        }
+        let mut combined = Facts::defaults(content);
+        if let Some(folder) = &profile.folder {
+            copy_fields(content, folder, &mut combined, &f_fields);
+        }
+        if let Some(auto) = &profile.auto_battle {
+            copy_fields(content, auto, &mut combined, &a_fields);
+        }
+        let mut json = to_json_facts(saito_match::file::side_file(content, &Side { facts: combined }));
+        // Preserve explicitly customized empty folder / empty auto_battle_places so they don't fall back to GBA.
+        if profile.folder.is_some()
+            && let Some(folder_key) = content.defs.fact_name(PlayerFact::Folder)
+            && !json.0.iter().any(|(k, _)| f_fields.contains(&k.as_str()))
+        {
+            json.0.push((folder_key.to_string(), serde_json::Value::Array(Vec::new())));
+        }
+        if profile.auto_battle.is_some()
+            && saito_match::facts::takes(content, crate::builds::auto::PLACES_FIELD)
+            && !json.0.iter().any(|(k, _)| a_fields.contains(&k.as_str()))
+        {
+            json.0.push((crate::builds::auto::PLACES_FIELD.to_string(), serde_json::Value::Array(Vec::new())));
+        }
+        if !json.is_empty() {
+            abd_profiles.insert(mode.key().to_string(), json);
+        }
+    }
     let file = TacticFile {
         format: FORMAT.to_string(),
         schema: SCHEMA,
@@ -366,6 +544,7 @@ pub fn text(content: &Content, game: &str, build: &Build) -> String {
         ruleset_ref: build.ruleset.as_ref().map(crate::rulesets::name_text),
         tactic: to_json_facts(saito_match::file::side_file(content, &build.side)),
         reserve,
+        abd_profiles,
     };
     serde_json::to_string_pretty(&file).expect("a tactic file serializes") + "\n"
 }
@@ -722,5 +901,75 @@ mod tests {
         assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("heat-elec.saitotactic"));
         assert_eq!(clean_name("  A\tname\n"), "A name ");
         assert_eq!(clean_name(&"x".repeat(80)).chars().count(), NAME_LENGTH);
+    }
+
+    /// EXE5 per-ABD-mode profiles (GBA, LC, 5DS) independently store folder and auto-battle overrides,
+    /// fall back to GBA when uncustomized, keep shared facts synced, and round-trip cleanly through JSON.
+    #[test]
+    fn exe5_abd_profiles_resolve_and_roundtrip() {
+        use saito_battle::content::ChipCode;
+        use saito_battle::custom::FolderChip;
+        use saito_battle::rules::Fact;
+        use saito_content_api::{Registry, Value};
+
+        let content = exe5_content();
+        let builds = Builds::of(&content, "exe5").unwrap();
+        let mut build = Build::new(&content, "Dark Multi-ABD", builds.new_build(&content, "protoman").unwrap());
+
+        // Initially LC and 5DS inherit GBA completely.
+        assert!(!build.has_custom_folder(AbdMode::LegacyCollection));
+        assert!(!build.has_custom_auto_battle(AbdMode::LegacyCollection));
+        assert_eq!(build.side_for(&content, AbdMode::LegacyCollection), build.side);
+        assert_eq!(build.side_for(&content, AbdMode::DoubleTeamDs), build.side);
+        assert!(!text(&content, "exe5", &build).contains("\"abd_profiles\""));
+
+        let sword = saito_match::ids::chip(&content, "exe5", "sword").unwrap();
+        let cannon = saito_match::ids::chip(&content, "exe5", "cannon").unwrap();
+        let darkinvs = saito_match::ids::chip(&content, "exe5", "darkinvs").unwrap();
+
+        // Customize LC folder (swap slot 0 to sword) without touching LC auto_battle.
+        let mut lc_side = build.side_for(&content, AbdMode::LegacyCollection);
+        let mut lc_folder = lc_side.folder(&content);
+        lc_folder.chips[0] = Some(FolderChip::new(sword, ChipCode::ASTERISK));
+        lc_side.set_folder(&content, &lc_folder).unwrap();
+        build.apply_edited_side(&content, AbdMode::LegacyCollection, &lc_side);
+
+        assert!(build.has_custom_folder(AbdMode::LegacyCollection));
+        assert!(!build.has_custom_auto_battle(AbdMode::LegacyCollection));
+        assert_eq!(build.side_for(&content, AbdMode::LegacyCollection).folder(&content).chips[0], Some(FolderChip::new(sword, ChipCode::ASTERISK)));
+        assert_ne!(build.side.folder(&content).chips[0], Some(FolderChip::new(sword, ChipCode::ASTERISK)));
+
+        // Customize 5DS folder (slot 0 = darkinvs) and 5DS auto_battle_places (slot 3 = cannon).
+        let mut ds_side = build.side_for(&content, AbdMode::DoubleTeamDs);
+        let mut ds_folder = ds_side.folder(&content);
+        ds_folder.chips[0] = Some(FolderChip::new(darkinvs, ChipCode::from_letter('I').unwrap()));
+        ds_side.set_folder(&content, &ds_folder).unwrap();
+        let mut ds_places: Vec<Fact> = (0..4).map(|_| Fact::Record(Vec::new())).collect();
+        ds_places[3] = Fact::Record(vec![("chip", Fact::Value(Value::Def(Registry::Chip, cannon.0)))]);
+        ds_side.set_fact(&content, "auto_battle_places", &ds_places).unwrap();
+        build.apply_edited_side(&content, AbdMode::DoubleTeamDs, &ds_side);
+
+        assert!(build.has_custom_folder(AbdMode::DoubleTeamDs));
+        assert!(build.has_custom_auto_battle(AbdMode::DoubleTeamDs));
+
+        // Round-trip through .saitotactic JSON.
+        let json = text(&content, "exe5", &build);
+        assert!(json.contains("\"abd_profiles\"") && json.contains("\"lc\"") && json.contains("\"ds\""), "{json}");
+        let back = read(&content, "exe5", &json).unwrap();
+        assert_eq!(back, build);
+        assert_eq!(back.side_for(&content, AbdMode::Original), build.side);
+        assert_eq!(back.side_for(&content, AbdMode::LegacyCollection), lc_side);
+        assert_eq!(back.side_for(&content, AbdMode::DoubleTeamDs), ds_side);
+
+        // Explicitly customized empty LC auto_battle_places stays empty after round-trip even if GBA has places.
+        let mut gba_places: Vec<Fact> = (0..4).map(|_| Fact::Record(Vec::new())).collect();
+        gba_places[3] = Fact::Record(vec![("chip", Fact::Value(Value::Def(Registry::Chip, sword.0)))]);
+        build.side.set_fact(&content, "auto_battle_places", &gba_places).unwrap();
+        let mut lc_cleared = build.side_for(&content, AbdMode::LegacyCollection);
+        lc_cleared.set_fact(&content, "auto_battle_places", &[]).unwrap();
+        build.apply_edited_side(&content, AbdMode::LegacyCollection, &lc_cleared);
+        let back2 = read(&content, "exe5", &text(&content, "exe5", &build)).unwrap();
+        assert!(back2.has_custom_auto_battle(AbdMode::LegacyCollection));
+        assert!(back2.side_for(&content, AbdMode::LegacyCollection).facts.is_default(&content, "auto_battle_places"));
     }
 }

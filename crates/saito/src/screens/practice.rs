@@ -57,11 +57,21 @@ mod thumbs;
 
 // ---- A practice session, which any screen may start ----------------------------------------------------------
 
-/// A build in a practice session: its name, as the cards and the menu say it, and the side it brings.
+/// A build in a practice session: its name, as the cards and the menu say it, the primary side it brings,
+/// and optionally the full stored build (for per-ABD-mode profile resolution in EXE4/EXE5).
 #[derive(Clone, Debug)]
 pub struct Build {
     pub name: String,
     pub side: Side,
+    pub stored: Option<crate::builds::store::Build>,
+}
+
+impl Build {
+    pub fn side_for(&self, content: &saito_battle::Content, abd_mode: saito_match::AbdMode) -> Side {
+        self.stored
+            .as_ref()
+            .map_or_else(|| self.side.clone(), |b| b.side_for(content, abd_mode))
+    }
 }
 
 /// A practice session to start ([`start`]).
@@ -295,7 +305,7 @@ struct Session {
     game: String,
     m: Match,
     /// Player and dummy custom builds saved when toggling Random Battle on/off.
-    custom_sides: [Side; 2],
+    custom_builds: [Build; 2],
     random_battle: Option<saito_match::RandomRank>,
     abd_mode: saito_match::AbdMode,
     cs_prob_fix: saito_match::CsProbFix,
@@ -675,7 +685,14 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         crate::errors::log("making a practice match", &why);
         UserError::Other
     })?;
-    let custom_sides = [start.you.side.clone(), start.dummy.side.clone()];
+    let abd_mode = if start.from.is_none() && saito_match::abd_mode::supported(&start.game) {
+        let mode = shell.practice.visit.menu.abd_mode;
+        if mode.allowed_for(&start.game) { mode } else { saito_match::AbdMode::Original }
+    } else {
+        saito_match::AbdMode::Original
+    };
+    let custom_builds = [start.you.clone(), start.dummy.clone()];
+    let custom_sides = [custom_builds[0].side_for(content, abd_mode), custom_builds[1].side_for(content, abd_mode)];
     let random_battle = if start.from.is_none() && saito_match::random_battle::supported(&start.game) {
         shell.practice.visit.menu.random_battle
     } else {
@@ -689,18 +706,12 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
             }
             Err(why) => {
                 crate::errors::log("starting random battle practice", &why);
-                m.sides = custom_sides.clone();
+                m.sides = custom_sides;
             }
         }
     } else {
-        m.sides = custom_sides.clone();
+        m.sides = custom_sides;
     }
-    let abd_mode = if start.from.is_none() && saito_match::abd_mode::supported(&start.game) {
-        let mode = shell.practice.visit.menu.abd_mode;
-        if mode.allowed_for(&start.game) { mode } else { saito_match::AbdMode::Original }
-    } else {
-        saito_match::AbdMode::Original
-    };
     m.abd_mode = abd_mode;
     let cs_prob_fix = if start.from.is_none() && saito_match::cs_prob_fix::supported(&start.game) {
         shell.practice.visit.menu.cs_prob_fix.clamp_for(&start.game)
@@ -746,7 +757,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         exit: start.exit.is_some(),
         game: start.game.clone(),
         m,
-        custom_sides,
+        custom_builds,
         random_battle,
         abd_mode,
         cs_prob_fix,
@@ -972,7 +983,10 @@ fn restart_set(shell: &mut Shell, session: &mut Session) {
             session.m.random_battle = Some(rank);
         }
     } else {
-        session.m.sides = session.custom_sides.clone();
+        session.m.sides = [
+            session.custom_builds[0].side_for(ready.content(), session.abd_mode),
+            session.custom_builds[1].side_for(ready.content(), session.abd_mode),
+        ];
         session.m.random_battle = None;
     }
     session.m.abd_mode = session.abd_mode;
@@ -1094,7 +1108,7 @@ pub fn new_builds(content: &std::sync::Arc<saito_battle::Content>, game: &str) -
         .groups
         .iter()
         // (A name to tell them by: the version's id, as a title.)
-        .map(|v| Ok(Build { name: as_title(&v.id), side: builds.new_build(content, &v.id)? }))
+        .map(|v| Ok(Build { name: as_title(&v.id), side: builds.new_build(content, &v.id)?, stored: None }))
         .collect()
 }
 
@@ -1324,7 +1338,7 @@ fn picks(listed: &[builds::shelf::Shelved]) -> Vec<Pick> {
             let side = b.side().filter(|_| b.usable())?.clone();
             // (The screenshot pass's own have no file.)
             let file = (!b.listed.path.as_os_str().is_empty()).then_some(at);
-            Some(Pick { build: Build { name: b.name().to_string(), side }, file })
+            Some(Pick { build: Build { name: b.name().to_string(), side, stored: b.build.clone() }, file })
         })
         .collect()
 }
@@ -1468,9 +1482,8 @@ impl Practice {
                 if session.from.is_none() {
                     shell.practice.visit.dummys_build = Some((session.game.clone(), build.name.clone()));
                 }
-                session.custom_sides[1] = build.side.clone();
+                session.custom_builds[1] = build.clone();
                 if session.random_battle.is_none() {
-                    session.m.sides[1] = build.side;
                     restart_set(shell, &mut session);
                 }
                 shell.ui().global::<PracticeView>().set_session_dummys(build.name.as_str().into());

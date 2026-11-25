@@ -220,6 +220,11 @@ impl Folder {
         view.set_slots(ModelRc::new(VecModel::from(cells)));
         view.set_problems(draft.pane_line(shell, &fields, false).into());
         view.set_slot(self.slot as i32);
+        let modes = saito_match::abd_mode::available(&draft.kit.game);
+        let custom: Vec<bool> = modes.iter().map(|&m| draft.build.has_custom_folder(m)).collect();
+        view.set_abd_mode(draft.abd_mode.as_u8() as i32);
+        view.set_abd_count(modes.len() as i32);
+        view.set_abd_custom(ModelRc::new(VecModel::from(custom)));
         if let Some(held) = &self.held {
             let tags = stood.tags.map_or(0, |(a, b)| megabytes(a) + megabytes(b));
             view.set_counts(FolderCounts {
