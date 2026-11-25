@@ -20,6 +20,7 @@ import { NavicustView, NavicustTab, NavicustOverlay } from "builds/navicust.slin
 import { PatchCardsView, PatchCardsTab, PatchCardsOverlay } from "builds/patch_cards.slint";
 import { AutoBattleView, AutoBattleTab, AutoBattleOverlay } from "builds/auto_battle.slint";
 import { PartyView, PartyTab, PartyOverlay } from "builds/party.slint";
+import { AbdGuideDialog } from "../abd_guide.slint";
 
 // Each tab's view reaches the app through here (app.slint exports what this file does).
 export { NaviView, FolderView, NavicustView, PatchCardsView, AutoBattleView, PartyView }
@@ -221,6 +222,11 @@ export component BuildsOverlay inherits Rectangle {
     }
     if BuildsView.shown == EditorTab.auto-battle && AutoBattleView.sheet: AutoBattleOverlay {
         Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if BuildsView.shown == EditorTab.auto-battle && AutoBattleView.guide: AbdGuideDialog {
+        active-mode: AutoBattleView.abd-mode;
+        has-ds: AutoBattleView.abd-count >= 3;
+        nav-prefix: "abd-guide.";
     }
     if BuildsView.shown == EditorTab.party && PartyView.sheet: PartyOverlay {
         Rectangle { }  // (Copied in: docs/app.md §14.)

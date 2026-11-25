@@ -58,10 +58,11 @@ export global AutoBattleView {
     in property <string> warning;
     // Whether the build holds legacy/illegal ABD structure (non-empty `first` or non-4x-2x-1x `standard`).
     in property <bool> needs-fix;
-    // Per-ABD-mode profile selector (EXE4: GBA/LC; EXE5: GBA/LC/5DS).
+    // Per-ABD-mode profile selector (EXE4: GBA/LC; EXE5: GBA/LC/5DS) and version guide dialog.
     in property <int> abd-mode;
     in property <int> abd-count;
     in property <[bool]> abd-custom;
+    in property <bool> guide;
     out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
     // Where the place a chip just went into is (its column and row), counted: it flashes.
     in property <int> landed-column;
@@ -476,6 +477,35 @@ export component AutoBattleTab inherits Rectangle {
         custom: AutoBattleView.abd-custom;
     }
 
+    // Compact '?' button beside the ABD profile switcher to open the version mechanics guide dialog.
+    abd-guide-btn := Rectangle {
+        x: abd-bar.x + abd-bar.width + 6px;
+        y: abd-bar.y;
+        width: 20px;
+        height: 20px;
+        visible: AutoBattleView.abd-count > 0;
+        border-radius: 3px;
+        background: guide-hit.has-hover ? Theme.tint-hover : Theme.inset;
+        border-width: 1px;
+        border-color: Theme.line;
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: "?";
+            color: Theme.cursor;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        guide-hit := Focusable {
+            nav: AutoBattleView.abd-count > 0 ? "abd.guide" : "";
+        }
+    }
+
     // FIX: normalizes legacy/illegal ABD data (clears `first` and aligns `standard` to 4×-2×-1×).
     fix := WordButton {
         x: clear.x + clear.pad - 12px + self.pad - self.width;
@@ -500,7 +530,7 @@ export component AutoBattleTab inherits Rectangle {
     // (What is wrong with the data: a phone's line of its own over the places, before CLEAR; sideways in the header,
     // after the title, as there is no strip.)
     ProblemNote {
-        x: Theme.sideways ? (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 10px : places-title.x + places-title.preferred-width + 12px) : (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 8px : 0px);
+        x: Theme.sideways ? (AutoBattleView.abd-count > 0 ? abd-guide-btn.x + abd-guide-btn.width + 10px : places-title.x + places-title.preferred-width + 12px) : (AutoBattleView.abd-count > 0 ? abd-guide-btn.x + abd-guide-btn.width + 8px : 0px);
         y: Theme.sideways ? clear.y : 0px;
         width: max(0px, root.actions-left - 12px - self.x);
         visible: Theme.handheld;
@@ -509,7 +539,7 @@ export component AutoBattleTab inherits Rectangle {
 
     // (Non-blocking ABD-wide illegal data warning in the places header / phone lead line.)
     Text {
-        x: Theme.phone ? (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 8px : 0px) : (AutoBattleView.abd-count > 0 ? abd-bar.x + abd-bar.width + 10px : places-title.x + places-title.preferred-width + 12px);
+        x: Theme.phone ? (AutoBattleView.abd-count > 0 ? abd-guide-btn.x + abd-guide-btn.width + 8px : 0px) : (AutoBattleView.abd-count > 0 ? abd-guide-btn.x + abd-guide-btn.width + 10px : places-title.x + places-title.preferred-width + 12px);
         y: Theme.phone ? 0px : Theme.sideways ? clear.y : root.pane-y;
         width: max(0px, root.actions-left - 12px - self.x);
         height: Theme.phone ? root.phone-lead : Theme.sideways ? clear.height : 44px;

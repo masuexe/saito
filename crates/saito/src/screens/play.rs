@@ -385,6 +385,8 @@ pub struct Play {
     stage_dialog: bool,
     /// Per-effect ChargeShot Addition probability fix dialog state (EXE5 / EXE6).
     cs_prob_dialog: bool,
+    /// Dark Soul AI (ABD) version mechanics reference dialog state (EXE4 / EXE5).
+    abd_guide_dialog: bool,
     /// EXE6 Random Battle pre-battle prep UI state.
     prep: RandomPrepUi,
     /// Local replay file currently being recorded for the active online set, plus its final outcome once finished.
@@ -443,6 +445,7 @@ impl Default for Play {
             stage_loaded: false,
             stage_dialog: false,
             cs_prob_dialog: false,
+            abd_guide_dialog: false,
             prep: RandomPrepUi::default(),
             recorded_replay: None,
         }
@@ -729,6 +732,11 @@ impl Play {
             shell.nav.close("cs-prob.");
             shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
         }
+        if self.abd_guide_dialog {
+            self.abd_guide_dialog = false;
+            shell.nav.close("abd-guide.");
+            shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
+        }
         self.close_rules(shell);
         shell.stay_awake = false;
         self.set_peek(shell, false);
@@ -956,6 +964,11 @@ impl Play {
             shell.nav.close("cs-prob.");
             shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
         }
+        if self.abd_guide_dialog {
+            self.abd_guide_dialog = false;
+            shell.nav.close("abd-guide.");
+            shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
+        }
         let presentation = Some(self.stage_config.build_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to()));
         let (me, other) = (agreed.side, 1 - agreed.side);
         let ui = shell.ui();
@@ -1003,6 +1016,11 @@ impl Play {
             self.cs_prob_dialog = false;
             shell.nav.close("cs-prob.");
             shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        }
+        if self.abd_guide_dialog {
+            self.abd_guide_dialog = false;
+            shell.nav.close("abd-guide.");
+            shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
         }
         self.close_rules(shell);
         self.agreed = Some(agreed);
@@ -1644,6 +1662,7 @@ impl Play {
         view.set_random_supported(saito_match::random_battle::supported(&settings.game));
         view.set_random_rank(live.random_battle.map_or(0, |r| r.as_u8() as i32));
         view.set_abd_supported(saito_match::abd_mode::supported(&settings.game));
+        view.set_abd_has_ds(saito_match::AbdMode::DoubleTeamDs.allowed_for(&settings.game));
         view.set_abd_mode(live.abd_mode.as_u8() as i32);
         let cs_total = saito_match::cs_prob_fix::effects(&settings.game).len() as i32;
         view.set_cs_prob_supported(cs_total > 0);
@@ -1833,6 +1852,29 @@ impl Play {
         self.show_stage(shell);
     }
 
+    fn open_abd_guide_dialog(&mut self, shell: &mut Shell) {
+        if matches!(self.stage, Stage::Waiting) && practice::running(shell) {
+            practice::stop(shell);
+        }
+        self.abd_guide_dialog = true;
+        shell.ui().global::<PlayView>().set_abd_guide_dialog(true);
+        shell.nav.open("abd-guide.", Key::new("abd-guide.close", 0));
+        shell.sound.play(Cue::Pick);
+    }
+
+    fn close_abd_guide_dialog(&mut self, shell: &mut Shell) {
+        if !self.abd_guide_dialog {
+            return;
+        }
+        self.abd_guide_dialog = false;
+        shell.nav.close("abd-guide.");
+        shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
+        shell.sound.play(Cue::Back);
+        if matches!(self.stage, Stage::Waiting) && !shell.scale.handheld() {
+            self.train(shell);
+        }
+    }
+
     // ---- EXE6 Random Battle pre-battle prep (stats check, 30-chip folder check, Regular 30MB / Tag 60MB) ---
 
     fn enter_random_prep(&mut self, shell: &mut Shell) {
@@ -1847,6 +1889,11 @@ impl Play {
             self.cs_prob_dialog = false;
             shell.nav.close("cs-prob.");
             shell.ui().global::<PlayView>().set_cs_prob_dialog(false);
+        }
+        if self.abd_guide_dialog {
+            self.abd_guide_dialog = false;
+            shell.nav.close("abd-guide.");
+            shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
         }
         self.close_rules(shell);
         self.stage = Stage::RandomPrep;
@@ -2630,7 +2677,8 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            _ if id.starts_with("abd-guide.") => self.abd_guide_dialog,
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
@@ -2799,6 +2847,8 @@ impl Screen for Play {
             "lobby.stage" => self.open_stage_dialog(shell),
             "lobby.random-battle" => self.cycle_random_battle(shell),
             "lobby.abd-mode" => self.cycle_abd_mode(shell),
+            "lobby.abd-guide" => self.open_abd_guide_dialog(shell),
+            "abd-guide.close" => self.close_abd_guide_dialog(shell),
             "lobby.extra-rule" => self.toggle_extra_rule(shell),
             "lobby.cs-prob" => self.open_cs_prob_dialog(shell),
             "cs-prob.none" => self.set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
@@ -3215,6 +3265,8 @@ impl Screen for Play {
             self.close_stage_dialog(shell);
         } else if self.cs_prob_dialog {
             self.close_cs_prob_dialog(shell);
+        } else if self.abd_guide_dialog {
+            self.close_abd_guide_dialog(shell);
         } else if self.changing {
             self.close_change(shell);
         } else if matches!(self.stage, Stage::RandomPrep) && self.prep.tagging.is_some() {

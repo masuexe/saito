@@ -728,9 +728,14 @@ impl Tab for AutoBattle {
         self.notice = None;
         self.hovered = None;
         let ui = shell.ui();
-        if ui.global::<AutoBattleView>().get_sheet() {
-            ui.global::<AutoBattleView>().set_sheet(false);
+        let view = ui.global::<AutoBattleView>();
+        if view.get_sheet() {
+            view.set_sheet(false);
             shell.nav.close("lib.");
+        }
+        if view.get_guide() {
+            view.set_guide(false);
+            shell.nav.close("abd-guide.");
         }
     }
 
@@ -765,6 +770,18 @@ impl Tab for AutoBattle {
                 self.leave_library(shell);
             }
             "lib.close" => self.leave_library(shell),
+            "abd.guide" => {
+                view.set_guide(true);
+                shell.nav.open("abd-guide.", crate::nav::Key::new("abd-guide.close", 0));
+                shell.sound.play(Cue::Pick);
+            }
+            "abd-guide.close" => {
+                if view.get_guide() {
+                    view.set_guide(false);
+                    shell.nav.close("abd-guide.");
+                    shell.sound.play(Cue::Back);
+                }
+            }
             "fix" => self.fix(shell, draft),
             "clear" => {
                 let empty = Data::of_side(draft.content(), draft.side()).entries() == 0;
@@ -882,9 +899,17 @@ impl Tab for AutoBattle {
         true
     }
 
-    /// Esc in the library goes back to the place being filled.
+    /// Esc closes the ABD guide dialog or leaves the library back to the place being filled.
     fn back(&mut self, shell: &mut Shell, _draft: &mut Draft) -> bool {
-        if shell.nav.focused().is_some_and(|k| k.id.starts_with("lib.")) || shell.ui().global::<AutoBattleView>().get_sheet() {
+        let ui = shell.ui();
+        let view = ui.global::<AutoBattleView>();
+        if view.get_guide() {
+            view.set_guide(false);
+            shell.nav.close("abd-guide.");
+            shell.sound.play(Cue::Back);
+            return true;
+        }
+        if shell.nav.focused().is_some_and(|k| k.id.starts_with("lib.")) || view.get_sheet() {
             self.leave_library(shell);
             return true;
         }

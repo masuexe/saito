@@ -22,6 +22,7 @@ import { SettingsView, BindBox } from "settings.slint";
 import { Arrive, Tween, Pulse, Flash, Count } from "../motion.slint";
 import { VersionTag, BuildEntry, BuildSheet, BuildRow, BuildOverview, RulesetNote, ChipRow } from "../build.slint";
 import { CsProbDialog, CsProbEntry } from "../cs_prob.slint";
+import { AbdGuideDialog } from "../abd_guide.slint";
 
 // The part of Play shown.
 export enum PlayPart {
@@ -218,9 +219,11 @@ export global PlayView {
     in property <bool> prep-ready: false;
     in property <bool> prep-their-ready: false;
     in property <string> prep-detail;
-    // EXE4 / EXE5 Dark Soul AI (ABD) mode (0 = Original, 1 = Legacy Collection, 2 = DS).
+    // EXE4 / EXE5 Dark Soul AI (ABD) mode (0 = Original, 1 = Legacy Collection, 2 = DS) and guide dialog.
     in property <bool> abd-supported: false;
+    in property <bool> abd-has-ds: false;
     in property <int> abd-mode: 0;
+    in property <bool> abd-guide-dialog: false;
     // EXE5 / EXE6 per-effect ChargeShot Addition probability fix settings and dialog state.
     in property <bool> cs-prob-supported: false;
     in property <int> cs-prob-count: 0;
@@ -1289,21 +1292,22 @@ component LobbyBody inherits Rectangle {
             property <bool> show-cs-prob: PlayView.cs-prob-supported;
             property <bool> show-extra-rule: PlayView.all-guard-supported || PlayView.dark-cut-in-supported;
             property <length> gap: Theme.sideways ? 6px : 10px;
+            property <length> abd-group-w: abd-btn.width + 4px + abd-guide-btn.width;
             property <length> row-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
-                + (self.show-abd ? self.gap + abd-btn.width : 0px)
+                + (self.show-abd ? self.gap + self.abd-group-w : 0px)
                 + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
                 + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px)
                 + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
             property <length> top-w: stage-btn.width
                 + (self.show-random ? self.gap + random-btn.width : 0px)
-                + (self.show-abd ? self.gap + abd-btn.width : 0px)
+                + (self.show-abd ? self.gap + self.abd-group-w : 0px)
                 + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
                 + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px);
             property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd || self.show-cs-prob || self.show-extra-rule) && self.top-w > self.width;
             property <length> extra-w: (self.show-random ? random-btn.width : 0px)
                 + (self.show-random && self.show-abd ? self.gap : 0px)
-                + (self.show-abd ? abd-btn.width : 0px)
+                + (self.show-abd ? self.abd-group-w : 0px)
                 + ((self.show-random || self.show-abd) && self.show-cs-prob ? self.gap : 0px)
                 + (self.show-cs-prob ? cs-prob-btn.width : 0px)
                 + ((self.show-random || self.show-abd || self.show-cs-prob) && self.show-extra-rule ? self.gap : 0px)
@@ -1349,10 +1353,23 @@ component LobbyBody inherits Rectangle {
                 text: @tr("Dark Soul AI: {}", PlayView.abd-mode == 1 ? @tr("Legacy Collection") : PlayView.abd-mode == 2 ? @tr("DS") : @tr("Original"));
             }
 
+            abd-guide-btn := Button {
+                x: abd-btn.x + abd-btn.width + 4px;
+                y: abd-btn.y;
+                width: Theme.sideways ? 28px : 32px;
+                height: abd-btn.height;
+                compact: true;
+                visible: parent.show-abd;
+                enabled: parent.show-abd;
+                nav: parent.show-abd ? "lobby.abd-guide" : "";
+                kind: ButtonKind.ghost;
+                text: "?";
+            }
+
             cs-prob-btn := Button {
                 x: parent.wrap-top
-                    ? (parent.show-abd ? abd-btn.x + abd-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
-                    : (parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                    ? (parent.show-abd ? abd-guide-btn.x + abd-guide-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
+                    : (parent.show-abd ? abd-guide-btn.x + abd-guide-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: parent.wrap-top ? 40px : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;
@@ -1371,8 +1388,8 @@ component LobbyBody inherits Rectangle {
 
             extra-rule-btn := Button {
                 x: parent.wrap-top
-                    ? (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width + parent.gap : parent.show-abd ? abd-btn.x + abd-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
-                    : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                    ? (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width + parent.gap : parent.show-abd ? abd-guide-btn.x + abd-guide-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
+                    : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-guide-btn.x + abd-guide-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: parent.wrap-top ? 40px : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;
@@ -1386,7 +1403,7 @@ component LobbyBody inherits Rectangle {
             }
 
             spec-vis := Button {
-                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-extra-rule ? extra-rule-btn.x + extra-rule-btn.width : parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-btn.x + abd-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
+                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-extra-rule ? extra-rule-btn.x + extra-rule-btn.width : parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-guide-btn.x + abd-guide-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
                 y: Theme.phone ? parent.spec-row-y : 0px;
                 height: Theme.sideways ? 28px : 34px;
                 compact: true;
@@ -3214,6 +3231,13 @@ export component PlayOverlay inherits Rectangle {
         items: PlayView.cs-prob-items;
         editable: PlayView.host;
         nav-prefix: "cs-prob.";
+    }
+
+    // Dark Soul AI (ABD) version mechanics reference dialog (EXE4 / EXE5).
+    if PlayView.abd-guide-dialog: AbdGuideDialog {
+        active-mode: PlayView.abd-mode;
+        has-ds: PlayView.abd-has-ds;
+        nav-prefix: "abd-guide.";
     }
 
     // Another build for the lobby: the player's builds of the game.
