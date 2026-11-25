@@ -179,6 +179,10 @@ function navi_chips.controller(spec: Spec): NaviChipController
         steps = spec.steps,
         short = spec.short,
         course = spec.course,
+        -- EXE4's AntiNavi (0x08008F80) checks no chip-number block or navi flag:
+        -- every chip whose controller runs through it (including Standard Navi
+        -- summons RollAro1-3, GutPnch1-3, HawkCut1-3) triggers AntiNavi.
+        navi_block = true,
         -- The user's side's navi warps (0x080E2D26).
         warp = function(c: Object, out: boolean)
             navi_chips.warp(c.alliance, out)

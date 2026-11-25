@@ -493,3 +493,46 @@ fn exe4_deltaray_has_navi_flag_and_triggers_anti_navi() {
     assert!(b.linked[1].chip.is_none(), "AntiNavi should have sprung and turned DeltaRay");
     assert!(b.objects.get(p0).hp < p0_hp_before, "Turned DeltaRay should strike its original caster");
 }
+
+/// EXE4: Standard Navi-summoning chips (RollAro1-3, GutPnch1-3, HawkCut1-3, NumbrBl1-3)
+/// do NOT have ChipFlags::NAVI (not boostable by Navi+20), yet DO trigger opponent AntiNavi,
+/// matching original GBA EXE4 (0x08008F61 / 0x08008F80).
+#[test]
+fn exe4_standard_navi_summons_trigger_anti_navi_without_navi_plus() {
+    let content = exe4_content();
+    let antinavi = crate::ids::chip(&content, "exe4", "antinavi").unwrap();
+
+    for key in ["rollaro1", "gutpnch1", "hawkcut1", "numbrbl1"] {
+        let chip = crate::ids::chip(&content, "exe4", key).unwrap();
+        assert!(
+            !content.chip(chip).flags.has(saito_battle::content::ChipFlags::NAVI),
+            "EXE4 {key} must not have ChipFlags::NAVI (must not take Navi+20)"
+        );
+
+        let mut m = crate::pick::live(&content, "exe4", 1, None).unwrap();
+        let megaman = crate::ids::navi(&content, "exe4", "megaman").unwrap();
+        for s in &mut m.sides {
+            s.set_fact(&content, "navi", &[Fact::Value(Value::Def(Registry::Navi, megaman.0))]).unwrap();
+            s.set_fact(&content, "karma", &number(500)).unwrap();
+        }
+        let mut setup = m.round(&content, 0x1234);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+        for side in 0..2 {
+            b.stats[side].support = None;
+            b.stats[side].bugs = Default::default();
+        }
+
+        give_chip(&mut b, 1, antinavi, 0, 0);
+        b.tick(&[Default::default(), PlayerTick { held: keys::A, ..Default::default() }], Default::default());
+        wait_undimmed(&mut b);
+        assert_eq!(b.linked[1].chip, Some(antinavi));
+
+        give_chip(&mut b, 0, chip, 50, 0);
+        b.tick(&[PlayerTick { held: keys::A, ..Default::default() }, Default::default()], Default::default());
+        wait_undimmed(&mut b);
+
+        assert!(b.linked[1].chip.is_none(), "AntiNavi must spring on EXE4 Standard Navi summon {key}");
+    }
+}

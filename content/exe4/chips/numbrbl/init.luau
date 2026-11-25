@@ -51,7 +51,8 @@ local CONTROLLER = common.make(
     end, function(me: Object, damage: number, balls: number)
         -- 0x080C8E98.
         NUMBERMAN.spawn(me, me.panel_x, me.panel_y, damage, balls)
-    end)
+    end),
+    true
 )
 
 -- NumbrBl1 (EXE4 chip 0x0AC): three balls.

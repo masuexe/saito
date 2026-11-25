@@ -37,7 +37,7 @@ local DIM, ANTI_NAVI, TELOP, EFFECT, UNDIM = 0x0, 0x4, 0x8, 0xC, 0x10
 controller.UNDIM = UNDIM
 
 -- A controller kind `id` whose effect (its action 0xC) is `effect`.
-function controller.make(id: string, effect: (me: Object) -> ()): Kind
+function controller.make(id: string, effect: (me: Object) -> (), navi_block: boolean?): Kind
     return new.kind {
         id = id,
         pool = "effect",
@@ -56,9 +56,9 @@ function controller.make(id: string, effect: (me: Object) -> ()): Kind
                 if a == DIM then
                     dimming.dim_screen(me)
                 elseif a == ANTI_NAVI then
-                    navi_chips.anti_navi(me, navi_chips.in_block(s.chip))
+                    navi_chips.anti_navi(me, navi_chips.in_block(s.chip, navi_block))
                 elseif a == TELOP then
-                    navi_chips.name(me, s.chip, navi_chips.in_block(s.chip))
+                    navi_chips.name(me, s.chip, navi_chips.in_block(s.chip, navi_block))
                 elseif a == EFFECT then
                     effect(me)
                 elseif a == UNDIM then
