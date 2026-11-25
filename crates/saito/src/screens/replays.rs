@@ -2480,13 +2480,12 @@ mod tests {
         assert_eq!(replays.plays_on_line(&games, "test", "0.1", 7, 0x2222), Plays::Listed);
 
         // Resolution across engine lines:
-        // - 0.1.2, 0.2.0, 0.3.0, and 0.4.0 EXE6 with matching content play strictly (same sim_version).
-        // - 0.1.2, 0.2.0, 0.3.0, and 0.4.0 EXE5 with matching content play in Lenient mode.
+        // - 0.1.2..=0.5.0 EXE6 and EXE5 with matching content play in Lenient mode on 0.6.0.
         // - 0.1.2 replay whose content is unavailable falls back to Here in Lenient mode (offline).
         // - Same-line replay with missing content still returns None (ReplayContentMissing).
-        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0"] {
+        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] {
             let exe6_old = saito_replay::Head { engine: prev.into(), game: "exe6".into(), content: 7, start: 0 };
-            assert_eq!(replays.resolve_replay(&games, "exe6", 7, &exe6_old), Some((Plays::Here, Compat::Exact)));
+            assert_eq!(replays.resolve_replay(&games, "exe6", 7, &exe6_old), Some((Plays::Here, Compat::Lenient)));
             let exe5_old = saito_replay::Head { engine: prev.into(), game: "exe5".into(), content: 7, start: 0 };
             assert_eq!(replays.resolve_replay(&games, "exe5", 7, &exe5_old), Some((Plays::Here, Compat::Lenient)));
         }

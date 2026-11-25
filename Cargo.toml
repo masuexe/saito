@@ -5,7 +5,7 @@ exclude = ["crates/saito-luau/wasm/libc"]
 
 [workspace.package]
 # The app's version, which saito, saito-frontend and saito-extract take: the lobby and replays compare saito-frontend's (builds of one minor version play together), and a pack's fingerprint has saito-extract's line.
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 license = "MPL-2.0"
 
