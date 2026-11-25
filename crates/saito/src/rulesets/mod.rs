@@ -80,13 +80,96 @@ impl MadeFor {
     }
 }
 
+/// Top-level ruleset class for tiered lobby selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresetClass {
+    Masters,
+    Senior,
+    Gate,
+}
+
+impl PresetClass {
+    /// Base preset ID whose localized name labels this top-level class.
+    pub fn base_id(self) -> &'static str {
+        match self {
+            PresetClass::Masters => "masters",
+            PresetClass::Senior => "senior",
+            PresetClass::Gate => "gate",
+        }
+    }
+
+    /// Resolve `(game, class, sub, mixed)` to the canonical built-in preset ID.
+    /// In EXE5, `sub` is `5ds` for Masters/Senior and `party` for Gate; in EXE4/EXE6 `sub` is ignored.
+    pub fn preset_id(self, game: &str, sub: bool, mixed: bool) -> &'static str {
+        match (game, self, sub, mixed) {
+            ("exe5", PresetClass::Masters, false, false) => "masters",
+            ("exe5", PresetClass::Masters, false, true) => "masters_mixed",
+            ("exe5", PresetClass::Masters, true, false) => "masters_5ds",
+            ("exe5", PresetClass::Masters, true, true) => "masters_5ds_mixed",
+            ("exe5", PresetClass::Senior, false, false) => "senior",
+            ("exe5", PresetClass::Senior, false, true) => "senior_mixed",
+            ("exe5", PresetClass::Senior, true, false) => "senior_5ds",
+            ("exe5", PresetClass::Senior, true, true) => "senior_5ds_mixed",
+            ("exe5", PresetClass::Gate, false, false) => "gate",
+            ("exe5", PresetClass::Gate, false, true) => "gate_mixed",
+            ("exe5", PresetClass::Gate, true, false) => "gate_party",
+            ("exe5", PresetClass::Gate, true, true) => "gate_party_mixed",
+            (_, PresetClass::Masters, _, false) => "masters",
+            (_, PresetClass::Masters, _, true) => "masters_mixed",
+            (_, PresetClass::Senior, _, false) => "senior",
+            (_, PresetClass::Senior, _, true) => "senior_mixed",
+            (_, PresetClass::Gate, _, false) => "gate",
+            (_, PresetClass::Gate, _, true) => "gate_mixed",
+        }
+    }
+}
+
+/// Decomposed tiered coordinates of a built-in preset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PresetTier {
+    pub class: PresetClass,
+    pub sub: bool,
+    pub mixed: bool,
+}
+
+/// Parse a built-in preset ID into its `(class, sub, mixed)` coordinates.
+pub fn preset_tier(id: &str) -> Option<PresetTier> {
+    match id {
+        "masters" => Some(PresetTier { class: PresetClass::Masters, sub: false, mixed: false }),
+        "masters_mixed" => Some(PresetTier { class: PresetClass::Masters, sub: false, mixed: true }),
+        "masters_5ds" => Some(PresetTier { class: PresetClass::Masters, sub: true, mixed: false }),
+        "masters_5ds_mixed" => Some(PresetTier { class: PresetClass::Masters, sub: true, mixed: true }),
+        "senior" => Some(PresetTier { class: PresetClass::Senior, sub: false, mixed: false }),
+        "senior_mixed" => Some(PresetTier { class: PresetClass::Senior, sub: false, mixed: true }),
+        "senior_5ds" => Some(PresetTier { class: PresetClass::Senior, sub: true, mixed: false }),
+        "senior_5ds_mixed" => Some(PresetTier { class: PresetClass::Senior, sub: true, mixed: true }),
+        "gate" => Some(PresetTier { class: PresetClass::Gate, sub: false, mixed: false }),
+        "gate_mixed" => Some(PresetTier { class: PresetClass::Gate, sub: false, mixed: true }),
+        "gate_party" => Some(PresetTier { class: PresetClass::Gate, sub: true, mixed: false }),
+        "gate_party_mixed" => Some(PresetTier { class: PresetClass::Gate, sub: true, mixed: true }),
+        _ => None,
+    }
+}
+
+/// Legacy preset ID compatibility: old `unrestricted` maps to the equivalent mixed Masters preset.
+fn legacy_preset<'a>(picks: &'a [Pickable], name: &Name) -> Option<&'a Pickable> {
+    let Name::Preset(id) = name else { return None };
+    if id != "unrestricted" {
+        return None;
+    }
+    picks
+        .iter()
+        .find(|p| p.ruleset.name == Name::Preset("masters_5ds_mixed".into()))
+        .or_else(|| picks.iter().find(|p| p.ruleset.name == Name::Preset("masters_mixed".into())))
+}
+
 /// The ruleset a build that names `name` is made for, of `picks` (what the player can pick of its game, in order:
 /// [`pickable`]): the one named; the game's first preset where it names none (a file from before builds named
 /// theirs), or one no longer there (missing). None where the game has no rulesets.
 pub fn made_for(picks: &[Pickable], name: Option<&Name>) -> Option<MadeFor> {
     let first = picks.first()?;
     let Some(name) = name else { return Some(MadeFor { pick: first.clone(), missing: None }) };
-    Some(match picks.iter().find(|p| p.ruleset.name == *name) {
+    Some(match picks.iter().find(|p| p.ruleset.name == *name).or_else(|| legacy_preset(picks, name)) {
         Some(pick) => MadeFor { pick: pick.clone(), missing: None },
         None => MadeFor { pick: first.clone(), missing: Some(name.clone()) },
     })
@@ -124,7 +207,15 @@ pub fn name_of_text(text: &str) -> Option<Name> {
 pub fn chosen_last(shell: &Shell, kit: &Kit) -> Option<Pickable> {
     let picks = pickable(kit);
     let remembered = shell.settings.remembered.get(&remembered_key(&kit.game));
-    remembered.and_then(|text| picks.iter().find(|p| name_text(&p.ruleset.name) == *text)).or_else(|| picks.first()).cloned()
+    remembered
+        .and_then(|text| {
+            picks
+                .iter()
+                .find(|p| name_text(&p.ruleset.name) == *text)
+                .or_else(|| name_of_text(text).and_then(|n| legacy_preset(&picks, &n)))
+        })
+        .or_else(|| picks.first())
+        .cloned()
 }
 
 /// Remember `name` as the ruleset the player last chose in `game`.
@@ -178,5 +269,36 @@ mod tests {
         assert_eq!(gone, MadeFor { pick: picks[0].clone(), missing: Some(Name::Own("Gone".into())) });
         assert_eq!(gone.name(), &Name::Own("Gone".into()));
         assert_eq!(made_for(&[], None), None);
+    }
+
+    #[test]
+    fn preset_tiers_roundtrip_and_migrate_unrestricted() {
+        for (game, ids) in [
+            ("exe4", &["masters", "masters_mixed", "senior", "senior_mixed"][..]),
+            (
+                "exe5",
+                &[
+                    "masters", "masters_mixed", "masters_5ds", "masters_5ds_mixed",
+                    "senior", "senior_mixed", "senior_5ds", "senior_5ds_mixed",
+                    "gate", "gate_mixed", "gate_party", "gate_party_mixed",
+                ][..],
+            ),
+            ("exe6", &["masters", "masters_mixed", "senior", "senior_mixed", "gate", "gate_mixed"][..]),
+        ] {
+            for &id in ids {
+                let tier = preset_tier(id).unwrap_or_else(|| panic!("{game}: missing tier for {id}"));
+                assert_eq!(tier.class.preset_id(game, tier.sub, tier.mixed), id, "{game}: {id}");
+            }
+        }
+        let pick = |id: &str| Pickable { ruleset: Ruleset::open(Name::Preset(id.into())), path: None };
+        let exe6_picks = [pick("masters"), pick("masters_mixed"), pick("senior")];
+        let migrated6 = made_for(&exe6_picks, Some(&Name::Preset("unrestricted".into()))).unwrap();
+        assert_eq!(migrated6.missing, None);
+        assert_eq!(migrated6.pick.ruleset.name, Name::Preset("masters_mixed".into()));
+
+        let exe5_picks = [pick("masters"), pick("masters_mixed"), pick("masters_5ds_mixed")];
+        let migrated5 = made_for(&exe5_picks, Some(&Name::Preset("unrestricted".into()))).unwrap();
+        assert_eq!(migrated5.missing, None);
+        assert_eq!(migrated5.pick.ruleset.name, Name::Preset("masters_5ds_mixed".into()));
     }
 }

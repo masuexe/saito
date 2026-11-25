@@ -176,6 +176,12 @@ export global PlayView {
     // and the custom screen's time limit in seconds (0: none; saito's own).
     in property <int> first-to: 2;
     in property <string> ruleset;
+    // Tiered built-in ruleset toggles: Level 2 (`ruleset-sub-kind`: 0 = none, 1 = EXE5 5DS, 2 = EXE5 Gate Solo/Party)
+    // and Level 3 (`ruleset-mixed`: Single vs Mixed versions). Hidden for custom/host-only rulesets.
+    in property <bool> ruleset-tiered: false;
+    in property <int> ruleset-sub-kind: 0;
+    in property <bool> ruleset-sub: false;
+    in property <bool> ruleset-mixed: false;
     in property <bool> host;
     in property <bool> open;
     in property <int> custom-time: 60;
@@ -794,13 +800,16 @@ component MatchFacts inherits Rectangle {
     out property <length> natural-width: self.x4 + max(custom-time-label.width, custom-time.width) + root.x1;
     // On a phone, a line each: the name, and the control at the right.
     property <length> line: 44px;
+    property <int> extra-lines: PlayView.ruleset-tiered ? (PlayView.ruleset-sub-kind > 0 ? 2 : 1) : 0;
     // A name's place and a control's, in the row.
     property <length> name-y: 10px;
     property <length> name-height: 18px;
     property <length> control-y: 32px;
     property <length> control-height: 36px;
+    property <length> sub-y: Theme.sideways ? 80px : 82px;
+    property <length> sub-h: Theme.sideways ? 28px : 30px;
     property <brush> name-color: Theme.phone ? Theme.text : Theme.muted;
-    height: Theme.phone ? 4 * self.line : 78px;
+    height: Theme.phone ? (4 + self.extra-lines) * self.line : (PlayView.ruleset-tiered ? (Theme.sideways ? 114px : 118px) : 78px);
     PanelBack {
         visible: !Theme.phone;
         accent: false;
@@ -866,6 +875,56 @@ component MatchFacts inherits Rectangle {
         text: PlayView.host ? I18n.upper(@tr("Edit")) : I18n.upper(@tr("ruleset" => "View"));
     }
 
+    // Tiered built-in ruleset sub-options: Level 2 (EXE5 5DS / Gate Solo-Party) -> Level 3 (Single / Mixed versions).
+    Rectangle {
+        x: root.x1;
+        y: 76px;
+        width: parent.width - 2 * root.x1;
+        height: 1px;
+        visible: !Theme.phone && PlayView.ruleset-tiered;
+        background: Theme.line;
+    }
+
+    sub-label := Value {
+        x: Theme.phone ? 0px : root.x2;
+        y: Theme.phone ? 2 * root.line : root.sub-y;
+        height: Theme.phone ? root.line : root.sub-h;
+        visible: PlayView.ruleset-tiered && PlayView.ruleset-sub-kind > 0;
+        text: PlayView.ruleset-sub-kind == 2 ? @tr("Gate mode") : @tr("5DS content");
+        color: root.name-color;
+    }
+
+    sub-seg := Seg {
+        x: Theme.phone ? parent.width - self.width : sub-label.x + sub-label.width + 8px;
+        y: Theme.phone ? 2 * root.line + (root.line - self.height) / 2 : root.sub-y + (root.sub-h - self.height) / 2;
+        visible: PlayView.ruleset-tiered && PlayView.ruleset-sub-kind > 0;
+        nav: "lobby.ruleset-sub";
+        first: PlayView.ruleset-sub-kind == 2 ? I18n.upper(@tr("ruleset" => "Solo")) : I18n.upper(@tr("Off"));
+        second: PlayView.ruleset-sub-kind == 2 ? I18n.upper(@tr("ruleset" => "Party")) : I18n.upper(@tr("On"));
+        chosen: PlayView.ruleset-sub ? 1 : 0;
+        enabled: PlayView.host && PlayView.random-rank == 0;
+    }
+
+    mixed-label := Value {
+        x: Theme.phone ? 0px : (PlayView.ruleset-sub-kind > 0 ? sub-seg.x + sub-seg.width + 20px : root.x2);
+        y: Theme.phone ? (PlayView.ruleset-sub-kind > 0 ? 3 : 2) * root.line : root.sub-y;
+        height: Theme.phone ? root.line : root.sub-h;
+        visible: PlayView.ruleset-tiered;
+        text: @tr("Versions");
+        color: root.name-color;
+    }
+
+    mixed-seg := Seg {
+        x: Theme.phone ? parent.width - self.width : mixed-label.x + mixed-label.width + 8px;
+        y: Theme.phone ? (PlayView.ruleset-sub-kind > 0 ? 3 : 2) * root.line + (root.line - self.height) / 2 : root.sub-y + (root.sub-h - self.height) / 2;
+        visible: PlayView.ruleset-tiered;
+        nav: "lobby.ruleset-mixed";
+        first: I18n.upper(@tr("ruleset" => "Single"));
+        second: I18n.upper(@tr("ruleset" => "Mixed"));
+        chosen: PlayView.ruleset-mixed ? 1 : 0;
+        enabled: PlayView.host && PlayView.random-rank == 0;
+    }
+
     Rectangle {
         x: root.x3 - (root.gap + 1px) / 2;
         y: 14px;
@@ -879,7 +938,7 @@ component MatchFacts inherits Rectangle {
     // setups should be open setups instead and it should be off by default").
     open-label := Value {
         x: Theme.phone ? 0px : root.x3;
-        y: Theme.phone ? 2 * root.line : root.name-y;
+        y: Theme.phone ? (2 + root.extra-lines) * root.line : root.name-y;
         height: Theme.phone ? root.line : root.name-height;
         text: @tr("Open setups");
         color: root.name-color;
@@ -887,7 +946,7 @@ component MatchFacts inherits Rectangle {
 
     open := Seg {
         x: Theme.phone ? parent.width - self.width : root.x3;
-        y: Theme.phone ? 2 * root.line + (root.line - self.height) / 2 : root.control-y;
+        y: Theme.phone ? (2 + root.extra-lines) * root.line + (root.line - self.height) / 2 : root.control-y;
         nav: "lobby.open";
         first: I18n.upper(@tr("Off"));
         second: I18n.upper(@tr("On"));
@@ -908,7 +967,7 @@ component MatchFacts inherits Rectangle {
     // user: "instead of Unlimited use the infinity sign for custom timer").
     custom-time-label := Value {
         x: Theme.phone ? 0px : root.x4;
-        y: Theme.phone ? 3 * root.line : root.name-y;
+        y: Theme.phone ? (3 + root.extra-lines) * root.line : root.name-y;
         height: Theme.phone ? root.line : root.name-height;
         text: @tr("Custom timer");
         color: root.name-color;
@@ -916,7 +975,7 @@ component MatchFacts inherits Rectangle {
 
     custom-time := Stepper {
         x: Theme.phone ? parent.width - self.width : root.x4;
-        y: Theme.phone ? 3 * root.line + (root.line - self.height) / 2 : root.control-y + (root.control-height - self.height) / 2;
+        y: Theme.phone ? (3 + root.extra-lines) * root.line + (root.line - self.height) / 2 : root.control-y + (root.control-height - self.height) / 2;
         nav: "lobby.custom-time";
         value: PlayView.custom-time == 0 ? "∞" : @tr("custom timer" => "{}s", PlayView.custom-time);
         value-width: root.value-width;
@@ -1003,12 +1062,12 @@ component LobbyBody inherits Rectangle {
     property <length> vs-width: Theme.sideways ? 54px : 80px;
     property <length> place-width: Theme.phone ? self.width : Theme.sideways ? (self.width - self.vs-width) / 2 : 480px;
     property <length> place-height: Theme.phone ? 126px : Theme.sideways ? 94px : 320px;
-    property <length> lobby-top: Theme.handheld ? 0px : (self.viewport-height - 548px) / 2;
+    property <length> lobby-top: Theme.handheld ? 0px : (self.viewport-height - (PlayView.ruleset-tiered ? 588px : 548px)) / 2;
     property <length> lobby-left: (self.width - 2 * self.place-width - self.vs-width) / 2;
     property <length> their-x: Theme.phone ? 0px : self.lobby-left + self.place-width + self.vs-width;
     property <length> their-y: Theme.phone ? self.place-height + 8px : self.lobby-top;
     property <length> facts-top: Theme.phone ? 2 * self.place-height + 20px : Theme.sideways ? self.place-height + 8px : self.lobby-top + self.place-height + 24px;
-    property <length> buttons-top: Theme.phone ? self.facts-top + 308px : Theme.sideways ? self.viewport-height - 52px : self.facts-top + 124px;
+    property <length> buttons-top: Theme.phone ? connection.y + connection.height + 20px : Theme.sideways ? self.viewport-height - 52px : match-facts.y + match-facts.height + 24px;
     out property <length> portrait-height: pills.y + pills.height + 42px;
 
     // The other player's card slides in as they join.

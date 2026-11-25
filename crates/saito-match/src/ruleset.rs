@@ -949,6 +949,19 @@ impl Rulesets {
                     ruleset.allow_only(&category, &only);
                 }
             }
+            if let Data::Map(ban) = p.field("ban") {
+                for (fact, denied) in ban {
+                    let DataKey::Str(fact) = fact else { continue };
+                    let category = out.category(fact).ok_or_else(|| format!("{module}: preset {id}: no category {fact:?}"))?.clone();
+                    let denied: Vec<u16> = self::items(denied)
+                        .iter()
+                        .map(|n| n.str().and_then(|n| ids::handle_of(content, game, category.registry, category.of.as_deref(), n)).ok_or_else(|| format!("{module}: preset {id}: {fact}: {n:?} is none of its items")))
+                        .collect::<Result<_, _>>()?;
+                    for item in category.items.iter().filter(|i| denied.contains(&i.def)) {
+                        ruleset.set_allowed(fact, item, false);
+                    }
+                }
+            }
             out.presets.push(ruleset);
         }
         if out.presets.is_empty() {
@@ -1167,12 +1180,44 @@ mod tests {
                     assert_eq!(r.group_items(cards, g), [(*v).clone()], "{game}");
                 }
             }
-            // The presets: Masters class, one version per build; Senior class, without patch cards; Unrestricted.
+            // The presets: tiered by class (Masters / Senior / Gate), EXE5 5DS or Gate Party, and Single / Mixed versions.
             let names: Vec<Name> = r.presets.iter().map(|p| p.name.clone()).collect();
-            let expected: Vec<Name> = ["masters", "senior", "unrestricted"].iter().map(|n| Name::Preset(n.to_string())).collect();
+            let expected_ids: &[&str] = match game {
+                "exe4" => &["masters", "masters_mixed", "senior", "senior_mixed"],
+                "exe5" => &[
+                    "masters", "masters_mixed", "masters_5ds", "masters_5ds_mixed",
+                    "senior", "senior_mixed", "senior_5ds", "senior_5ds_mixed",
+                    "gate", "gate_mixed", "gate_party", "gate_party_mixed",
+                ],
+                "exe6" => &["masters", "masters_mixed", "senior", "senior_mixed", "gate", "gate_mixed"],
+                _ => unreachable!(),
+            };
+            let expected: Vec<Name> = expected_ids.iter().map(|n| Name::Preset(n.to_string())).collect();
             assert_eq!(names, expected, "{game}");
-            assert!(!r.first().bans_anything() && r.first().one_per_build);
-            assert!(!r.preset("unrestricted").unwrap().one_per_build);
+            if game == "exe5" {
+                assert!(r.first().one_per_build);
+                assert!(!r.preset("masters_5ds").unwrap().bans_anything() && r.preset("masters_5ds").unwrap().one_per_build);
+                assert!(!r.preset("masters_5ds_mixed").unwrap().bans_anything() && !r.preset("masters_5ds_mixed").unwrap().one_per_build);
+                let party = r.category("party").unwrap();
+                let navi = r.category("navi").unwrap();
+                assert_eq!(r.first().allowed_count(party), 0);
+                assert_eq!(r.first().allowed_count(navi), 1);
+                let gate = r.preset("gate").unwrap();
+                assert_eq!(gate.allowed_count(party), 0);
+                assert_eq!(gate.allowed_count(navi), navi.items.len() - 1);
+                let gate_party = r.preset("gate_party").unwrap();
+                assert_eq!(gate_party.allowed_count(party), party.items.len());
+                assert_eq!(gate_party.allowed_count(navi), navi.items.len() - 1);
+            } else {
+                assert!(!r.first().bans_anything() && r.first().one_per_build);
+                assert!(!r.preset("masters_mixed").unwrap().bans_anything() && !r.preset("masters_mixed").unwrap().one_per_build);
+                if game == "exe6" {
+                    let navi = r.category("navi").unwrap();
+                    assert_eq!(r.preset("gate").unwrap().allowed_count(navi), navi.items.len() - 1);
+                    assert!(!r.preset("gate_mixed").unwrap().one_per_build);
+                }
+            }
+            assert!(!r.preset("masters_mixed").unwrap().one_per_build);
             assert_eq!(r.first().groups_chosen(&r, category), Some(groups.to_vec()));
             assert_eq!(r.first().groups_chosen(&r, chips), Some(groups.to_vec()));
             let senior = r.preset("senior").unwrap();
@@ -1323,7 +1368,7 @@ mod tests {
         all.extend(forms(&falzar[..2]));
         all.insert(form("gregar-beast"));
         assert_eq!(mix(&side), all);
-        assert!(r.preset("unrestricted").unwrap().problems(&r, &content, &side).is_empty());
+        assert!(r.preset("masters_mixed").unwrap().problems(&r, &content, &side).is_empty());
         // Gregar's Crosses alone with Falzar's Cybeast: every one of them.
         let mut beast = builds.new_build(&content, "gregar").unwrap();
         beast.set_fact(&content, "cybeast", &[crate::facts::version_fact(&content, "falzar").unwrap()]).unwrap();
@@ -1361,7 +1406,7 @@ mod tests {
         let partner = |n: &str, p: &[&str]| Fact::Record(vec![("navi", navi(n)), ("programs", Fact::List(p.iter().map(|x| Fact::Value(Value::Def(Registry::Entry, program(x).0))).collect()))]);
         side.set_fact(&content, "party", &[partner("protoman", &["p-hp-50"]), partner("toadman", &["p-spport", "p-hp-50"])]).unwrap();
         // (Versions mixed: ToadMan is Team Colonel's.)
-        let mut ruleset = r.preset("unrestricted").unwrap().clone();
+        let mut ruleset = r.preset("masters_5ds_mixed").unwrap().clone();
         let spport = Item::of(program("p-spport").0);
         ruleset.set_allowed("party.programs", &spport, false);
         assert!(!ruleset.allows("party.programs", spport.def));
@@ -1393,7 +1438,7 @@ mod tests {
         assert_eq!(category.within.as_deref(), Some("party"));
         let program = |n: &str| Item::of(ids::entry(&content, "exe5", "partycust_programs", n).unwrap().0);
         let (hp_300, btlpk_2, spport) = (program("p-hp-300"), program("p-btlpk2"), program("p-spport"));
-        let mut ruleset = r.preset("unrestricted").unwrap().clone();
+        let mut ruleset = r.preset("masters_5ds_mixed").unwrap().clone();
         ruleset.set_allowed("party.programs", &hp_300, false);
         ruleset.set_allowed_for(&category, navi("protoman"), &btlpk_2, false);
         ruleset.set_allowed_for(&category, navi("meddy"), &spport, false);
@@ -1441,7 +1486,7 @@ mod tests {
         back.set_allowed_for(&category, navi("protoman"), &btlpk_2, true);
         back.set_allowed_for(&category, navi("meddy"), &spport, true);
         back.set_allowed("party.programs", &hp_300, true);
-        assert_eq!(back, r.preset("unrestricted").unwrap().clone());
+        assert_eq!(back, r.preset("masters_5ds_mixed").unwrap().clone());
     }
 
     /// A partner of the other team in a build of one version is in the mix with every other thing of the versions the
@@ -1455,7 +1500,7 @@ mod tests {
         let mut side = Builds::of(&content, "exe5").unwrap().new_build(&content, "protoman").unwrap();
         let partner = |n: &str| Fact::Record(vec![("navi", Fact::Value(Value::Def(Registry::Navi, navi(n)))), ("programs", Fact::List(vec![]))]);
         side.set_fact(&content, "party", &[partner("magnetman"), partner("colonel")]).unwrap();
-        let problems = r.preset("masters").unwrap().problems(&r, &content, &side);
+        let problems = r.preset("masters_5ds").unwrap().problems(&r, &content, &side);
         let [Problem { what: Wrong::Mixed { groups, items }, .. }] = &problems[..] else { panic!("{problems:?}") };
         assert_eq!(groups, &["protoman", "colonel"]);
         for n in ["magnetman", "colonel"] {
@@ -1465,7 +1510,7 @@ mod tests {
         let colonel = Item::of(navi("colonel"));
         assert!(r.category("navi").unwrap().items.contains(&colonel));
         assert!(held(&content, &side, "party").contains(&colonel) && !held(&content, &side, "navi").contains(&colonel));
-        assert!(r.preset("unrestricted").unwrap().problems(&r, &content, &side).is_empty());
+        assert!(r.preset("masters_5ds_mixed").unwrap().problems(&r, &content, &side).is_empty());
     }
 
     #[test]

@@ -718,7 +718,8 @@ mod tests {
 
     /// A triple battle of `game`, every place from the seed.
     fn triple(game: &str) -> Settings {
-        Settings::new(game, TRIPLE_BATTLE, saito_match::testing::rulesets(game).preset("unrestricted").unwrap().clone())
+        let open_id = if game == "exe5" { "masters_5ds_mixed" } else { "masters_mixed" };
+        Settings::new(game, TRIPLE_BATTLE, saito_match::testing::rulesets(game).preset(open_id).unwrap().clone())
     }
 
     /// A player who shows the newest tick (no input delay), so that every
@@ -1081,13 +1082,13 @@ mod tests {
         let server = saito_signaling::testing::Server::start();
         // Each one's lobby: the host's a triple battle, the joiner's what
         // it last played, a single battle.
-        let (mut seats, code) = meet(&content, &server, [Settings::new("exe6", TRIPLE_BATTLE, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone()), Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone())], [side(&content, 3), side(&content, 4)]);
+        let (mut seats, code) = meet(&content, &server, [Settings::new("exe6", TRIPLE_BATTLE, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone()), Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone())], [side(&content, 3), side(&content, 4)]);
         until(&mut seats, "the lobbies meet", idle, |s, _| s.iter().all(|seat| seat.lobby.their_present() && seat.lobby.ping().is_some()) && s[1].lobby.settings() == s[0].lobby.settings());
         // The links are through, and have left the room they met in: the
         // server keeps nothing of it, and nothing more needs it.
         until(&mut seats, "the room is left", idle, |_, _| server.codes().is_empty() && server.sockets() == 0);
         assert_eq!(seats.each_ref().map(|seat| seat.link.code()), [Some(code.as_str()); 2]);
-        assert_eq!(seats[1].lobby.settings(), &Settings::new("exe6", TRIPLE_BATTLE, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone()), "the joiner takes the host's settings");
+        assert_eq!(seats[1].lobby.settings(), &Settings::new("exe6", TRIPLE_BATTLE, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone()), "the joiner takes the host's settings");
         assert_eq!((seats[0].lobby.their_name(), seats[1].lobby.their_name()), (Some("Chaud"), Some("Lan")));
         for seat in &seats {
             let ping = seat.lobby.ping().unwrap();
@@ -1098,7 +1099,7 @@ mod tests {
         seats[1].lobby.set_ready(true);
         seats[0].lobby.set_first_to(1);
         seats[0].lobby.set_open_setups(true);
-        let single = Settings { open_setups: true, ..Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone()) };
+        let single = Settings { open_setups: true, ..Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone()) };
         until(&mut seats, "the settings are both players'", idle, |s, _| s.iter().all(|seat| *seat.lobby.settings() == single && !seat.lobby.ready() && !seat.lobby.their_ready()));
         // Both ready: agreed, and loading.
         seats[0].lobby.set_ready(true);
@@ -1217,7 +1218,7 @@ mod tests {
         const LATE: u32 = 10;
         let content = exe6_test_content();
         let m = short_set::of(&content, "exe6", 7);
-        let single = Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone());
+        let single = Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone());
         let mut lobbies = testing::pair(&content, [single.clone(), single], m.sides.clone());
         testing::run(&mut lobbies, Instant::now(), 20, &mut |_, _| {});
         testing::load(&mut lobbies, Instant::now());
@@ -1313,7 +1314,7 @@ mod tests {
         let content = exe6_test_content();
         let server = saito_signaling::testing::Server::start();
         let m = short_set::of(&content, "exe6", 7);
-        let single = Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone());
+        let single = Settings::new("exe6", 1, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone());
         let (mut seats, _) = meet(&content, &server, [single.clone(), single.clone()], m.sides.clone());
         let keys = |b: &Battle, side: usize, frame: u32| if side == 0 { short_set::shooter(b, side, frame) } else { crate::driver::bot_tick(b, side, frame) };
         let (agreeing, loading, starting, playing) =
@@ -1440,7 +1441,7 @@ mod tests {
         let links = [host, saito_rtc::Link::join_room(&server.url(), &code, config).unwrap()].map(|l| Rc::new(RefCell::new(l)));
         let sinks = [Shared::default(), Shared::default()];
         let mut playing: Vec<Session> = Vec::new();
-        for (side, crate::lobby::Agreement { set, m, .. }) in agreed(&content, &Settings::of_match(&m, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone()), m.sides.clone()).into_iter().enumerate() {
+        for (side, crate::lobby::Agreement { set, m, .. }) in agreed(&content, &Settings::of_match(&m, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone()), m.sides.clone()).into_iter().enumerate() {
             let channel = Rtc(links[side].clone(), Vec::new());
             let mut s = Session::new(Box::new(NetPlayer::new(channel, side, set, no_delay())));
             let info = saito_replay::Info::of(saito_replay::MatchKind::Online, side as u8);
@@ -1775,7 +1776,7 @@ mod tests {
         m.rounds.resize(saito_match::rounds_for(wins), RoundSettings::default());
         let (mut shuttle, hands) = Shuttle::new();
         let mut hands = hands.into_iter().enumerate();
-        let mut playing = agreed(&content, &Settings::of_match(&m, saito_match::testing::rulesets("exe6").preset("unrestricted").unwrap().clone()), m.sides.clone()).map(|a| {
+        let mut playing = agreed(&content, &Settings::of_match(&m, saito_match::testing::rulesets("exe6").preset("masters_mixed").unwrap().clone()), m.sides.clone()).map(|a| {
             let set = a.set;
             let (side, hand) = hands.next().unwrap();
             let mut player = NetPlayer::new(hand, side, set, no_delay());
@@ -1924,7 +1925,10 @@ mod tests {
             let text = saito_match::write(content, &saito_match::pick::live(content, "exe6", seed, None).unwrap());
             saito_match::parse(content, &text).unwrap()
         }
-        let [hosted, _] = pair(600, |content| Settings::of_match(&file(content, 40), saito_match::testing::rulesets(content.game()).preset("unrestricted").unwrap().clone()), |content, role| file(content, 40 + role as u32).sides[0].clone());
+        let [hosted, _] = pair(600, |content| {
+            let open_id = if content.game() == "exe5" { "masters_5ds_mixed" } else { "masters_mixed" };
+            Settings::of_match(&file(content, 40), saito_match::testing::rulesets(content.game()).preset(open_id).unwrap().clone())
+        }, |content, role| file(content, 40 + role as u32).sides[0].clone());
         let content = exe6_test_content();
         let m = &hosted.1;
         assert_eq!(m.rounds, file(&content, 40).rounds, "the agreed rounds, stated");

@@ -755,8 +755,11 @@ language = "zh-Hans"
 "category.cybeast" = "野兽出笼"
 "category.crosses" = "交错"
 "preset.masters" = "大师组"
+"preset.masters_mixed" = "大师组-混合"
 "preset.senior" = "中级组"
-"preset.unrestricted" = "无限制"
+"preset.senior_mixed" = "中级组-混合"
+"preset.gate" = "Gate组"
+"preset.gate_mixed" = "Gate组-混合"
 "theirs" = "房主的规则"
 
 [patch_card_groups]

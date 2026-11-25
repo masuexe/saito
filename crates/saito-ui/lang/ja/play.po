@@ -451,3 +451,28 @@ msgstr "有効（原作）"
 
 msgid "Dark Cut-In: {}"
 msgstr "善ダークカットイン：{}"
+
+msgid "Gate mode"
+msgstr "ゲート形式"
+
+msgid "5DS content"
+msgstr "5DS要素"
+
+msgctxt "ruleset"
+msgid "Solo"
+msgstr "シングル"
+
+msgctxt "ruleset"
+msgid "Party"
+msgstr "パーティ"
+
+msgid "Versions"
+msgstr "バージョン"
+
+msgctxt "ruleset"
+msgid "Single"
+msgstr "単一"
+
+msgctxt "ruleset"
+msgid "Mixed"
+msgstr "混合"

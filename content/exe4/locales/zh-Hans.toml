@@ -695,8 +695,9 @@ language = "zh-Hans"
 "category.souls" = "灵魂"
 "category.auto_battle_places" = "自动战斗"
 "preset.masters" = "大师组"
+"preset.masters_mixed" = "大师组-混合"
 "preset.senior" = "中级组"
-"preset.unrestricted" = "无限制"
+"preset.senior_mixed" = "中级组-混合"
 "theirs" = "房主的规则"
 
 [auto_battle_lists]

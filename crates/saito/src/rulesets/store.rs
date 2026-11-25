@@ -205,7 +205,7 @@ mod tests {
         assert!(read(&rulesets("exe5"), &saito_match::testing::exe5_content(), &text).unwrap_err().contains("not of exe5"));
         assert!(read(&r, &content, &text.replacen("bass", "nobody", 1)).is_err());
         assert!(read(&r, &content, &text.replacen("single_version", "sometimes", 1)).is_err());
-        let mut mixed = r.preset("unrestricted").unwrap().clone();
+        let mut mixed = r.preset("masters_mixed").unwrap().clone();
         mixed.name = Name::Own("Open".into());
         assert_eq!(read(&r, &content, &super::text(&content, "exe6", &mixed)), Ok(mixed));
     }
@@ -219,7 +219,7 @@ mod tests {
         let legacy_toml = "game = \"exe6\"\nname = \"Legacy\"\nversions = \"one_per_build\"\n\n[banned]\nfolder = [\"bass\"]\n";
         assert!(read(&r, &content, legacy_toml).is_err());
 
-        let mut own = r.preset("unrestricted").unwrap().clone();
+        let mut own = r.preset("masters_mixed").unwrap().clone();
         own.name = Name::Own("Open".into());
         let valid = text(&content, "exe6", &own);
         let wrong_format = valid.replacen(FORMAT, "com.example.legacy.ruleset.v1", 1);
@@ -245,7 +245,7 @@ mod tests {
         use saito_match::ruleset::Item;
         let content = saito_match::testing::exe5_content();
         let r = rulesets("exe5");
-        let mut own = r.preset("unrestricted").unwrap().clone();
+        let mut own = r.preset("masters_mixed").unwrap().clone();
         own.name = Name::Own("Masters".into());
         let program = |n: &str| Item::of(ids::entry(&content, "exe5", "partycust_programs", n).unwrap().0);
         own.set_allowed("party.programs", &program("p-hp-300"), false);
@@ -254,14 +254,14 @@ mod tests {
         assert!(text.contains("\"restrictions_by\"") && text.contains("\"protoman\"") && text.contains("\"party.programs\""), "{text}");
         assert_eq!(read(&r, &content, &text), Ok(own));
         assert!(read(&r, &content, &text.replacen("\"protoman\":", "\"megaman\":", 1)).is_err());
-        assert!(!super::text(&content, "exe5", r.preset("unrestricted").unwrap()).contains("restrictions_by"));
+        assert!(!super::text(&content, "exe5", r.preset("masters_5ds_mixed").unwrap()).contains("restrictions_by"));
     }
 
     #[test]
     fn a_ruleset_reads_back_its_custom_limits() {
         let content = exe6_content();
         let r = rulesets("exe6");
-        let mut own = r.preset("unrestricted").unwrap().clone();
+        let mut own = r.preset("masters_mixed").unwrap().clone();
         own.name = Name::Own("Custom Limits".into());
         own.limits.mb_tier_copies[0] = Some(6);
         own.limits.mega_copies = Some(2);
@@ -272,6 +272,6 @@ mod tests {
         let saved = text(&content, "exe6", &own);
         assert!(saved.contains("\"limits\""), "{saved}");
         assert_eq!(read(&r, &content, &saved), Ok(own));
-        assert!(!text(&content, "exe6", r.preset("unrestricted").unwrap()).contains("\"limits\""));
+        assert!(!text(&content, "exe6", r.preset("masters_mixed").unwrap()).contains("\"limits\""));
     }
 }

@@ -39,8 +39,17 @@ return {
     -- Unrestricted lets a build mix the teams (the user: "no patch card rules is known as "senior class". patch card
     -- rules is known as "masters class". mixed rules is known as "unrestricted". get rid of version only rules").
     presets = {
-        { id = "masters", versions = "one_per_build" },
-        { id = "senior", versions = "one_per_build", only = { patch_cards = {} } },
-        { id = "unrestricted", versions = "mixed" },
+        { id = "masters", versions = "one_per_build", only = { navi = { "megaman" }, party = {} } },
+        { id = "masters_mixed", versions = "mixed", only = { navi = { "megaman" }, party = {} } },
+        { id = "masters_5ds", versions = "one_per_build" },
+        { id = "masters_5ds_mixed", versions = "mixed" },
+        { id = "senior", versions = "one_per_build", only = { navi = { "megaman" }, party = {}, patch_cards = {} } },
+        { id = "senior_mixed", versions = "mixed", only = { navi = { "megaman" }, party = {}, patch_cards = {} } },
+        { id = "senior_5ds", versions = "one_per_build", only = { patch_cards = {} } },
+        { id = "senior_5ds_mixed", versions = "mixed", only = { patch_cards = {} } },
+        { id = "gate", versions = "one_per_build", ban = { navi = { "megaman" } }, only = { party = {} } },
+        { id = "gate_mixed", versions = "mixed", ban = { navi = { "megaman" } }, only = { party = {} } },
+        { id = "gate_party", versions = "one_per_build", ban = { navi = { "megaman" } } },
+        { id = "gate_party_mixed", versions = "mixed", ban = { navi = { "megaman" } } },
     },
 }

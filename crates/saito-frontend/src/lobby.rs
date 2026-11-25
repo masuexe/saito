@@ -2095,7 +2095,7 @@ mod tests {
     /// which holds nothing back: the random sides these tests bring may hold
     /// both versions' Crosses, which Standard (a new lobby's) refuses.
     fn settings(wins: u8) -> Settings {
-        Settings::new("exe6", wins, rulesets().preset("unrestricted").unwrap().clone())
+        Settings::new("exe6", wins, rulesets().preset("masters_mixed").unwrap().clone())
     }
 
     /// A new EXE6 build of `version`: one version's things alone, so it plays
@@ -2454,7 +2454,7 @@ mod tests {
         let r = Rulesets::of(&content, "exe5").unwrap();
         let ids = saito_match::ids::entry(&content, "exe5", "partycust_programs", "p-btlpk2").unwrap().0;
         let protoman = saito_match::ids::navi(&content, "exe5", "protoman").unwrap().0;
-        let mut own = r.preset("unrestricted").unwrap().clone();
+        let mut own = r.preset("masters_5ds_mixed").unwrap().clone();
         own.name = RulesetName::Own("Masters".into());
         own.set_allowed_for(r.category("party.programs").unwrap(), protoman, &saito_match::ruleset::Item::of(ids), false);
         let m = saito_match::pick::live(&content, "exe5", 9, None).unwrap();
@@ -2589,7 +2589,7 @@ mod tests {
         assert!(!lobbies[1].set_first_to(TRIPLE_BATTLE));
         assert!(!lobbies[1].set_open_setups(true));
         assert!(!lobbies[1].set_custom_screen_time(None));
-        assert!(!lobbies[1].set_ruleset(rulesets().preset("unrestricted").unwrap().clone()));
+        assert!(!lobbies[1].set_ruleset(rulesets().preset("masters_mixed").unwrap().clone()));
         assert!(!lobbies[1].propose(open(settings(TRIPLE_BATTLE))));
         assert_eq!(both(&lobbies), [settings(1), settings(1)]);
         run(&mut lobbies, now, 4, &mut |_, _| {});
@@ -2788,7 +2788,7 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert!(gregar[..3].iter().chain(&falzar[..2]).all(|h| held.contains(&(Registry::Form, h.clone()))), "{held:?}");
-        assert!(lobbies[0].set_ruleset(r.preset("unrestricted").unwrap().clone()));
+        assert!(lobbies[0].set_ruleset(r.preset("masters_mixed").unwrap().clone()));
         run(&mut lobbies, now, 6, &mut |_, _| {});
         assert!(lobbies[1].problems().is_empty());
 

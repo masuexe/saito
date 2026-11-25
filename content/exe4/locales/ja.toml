@@ -709,8 +709,9 @@ language = "ja"
 "category.souls" = "ソウル"
 "category.auto_battle_places" = "オートバトル"
 "preset.masters" = "マスタークラス"
+"preset.masters_mixed" = "マスタークラス（混合）"
 "preset.senior" = "シニアクラス"
-"preset.unrestricted" = "無制限"
+"preset.senior_mixed" = "シニアクラス（混合）"
 "theirs" = "ホストのルール"
 
 # The auto battle data's lists (en.toml's `[auto_battle_lists]` says what they are). Ours, as EXE5's.

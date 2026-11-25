@@ -787,8 +787,11 @@ language = "ja"
 "category.cybeast" = "獣化"
 "category.crosses" = "クロス"
 "preset.masters" = "マスタークラス"
+"preset.masters_mixed" = "マスタークラス（混合）"
 "preset.senior" = "シニアクラス"
-"preset.unrestricted" = "無制限"
+"preset.senior_mixed" = "シニアクラス（混合）"
+"preset.gate" = "ゲートクラス"
+"preset.gate_mixed" = "ゲートクラス（混合）"
 "theirs" = "ホストのルール"
 
 # The two groups of a patch card's effects (en.toml's `[patch_card_groups]` says what they are).

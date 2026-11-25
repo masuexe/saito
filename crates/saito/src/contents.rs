@@ -771,7 +771,7 @@ mod tests {
             let content = Peer::played(&contents);
             let side = saito_match::Side::picked(&content, "exe6", &mut saito_match::Picks::new(role as u32 + 1)).unwrap();
             let rulesets = saito_match::testing::rulesets("exe6");
-            let settings = saito_frontend::lobby::Settings::new("exe6", 1, rulesets.preset("unrestricted").unwrap().clone());
+            let settings = saito_frontend::lobby::Settings::new("exe6", 1, rulesets.preset("masters_mixed").unwrap().clone());
             let entropy = 0x1111 * (role as u64 + 1);
             let mut lobby = saito_frontend::lobby::Lobby::new(role, &content, rulesets, settings, side.clone(), entropy, std::time::Duration::from_secs(10));
             lobby.wait_on_content(true);

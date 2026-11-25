@@ -26,7 +26,10 @@ return {
     -- rules is known as "masters class". mixed rules is known as "unrestricted". get rid of version only rules").
     presets = {
         { id = "masters", versions = "one_per_build" },
+        { id = "masters_mixed", versions = "mixed" },
         { id = "senior", versions = "one_per_build", only = { patch_cards = {} } },
-        { id = "unrestricted", versions = "mixed" },
+        { id = "senior_mixed", versions = "mixed", only = { patch_cards = {} } },
+        { id = "gate", versions = "one_per_build", ban = { navi = { "megaman" } } },
+        { id = "gate_mixed", versions = "mixed", ban = { navi = { "megaman" } } },
     },
 }

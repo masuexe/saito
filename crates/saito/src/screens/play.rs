@@ -819,7 +819,7 @@ impl Play {
                 .and_then(|r| r.parse::<u8>().ok())
                 .and_then(saito_match::AbdMode::from_u8)
                 .filter(|m| m.allowed_for(game))
-                .unwrap_or(saito_match::AbdMode::Original);
+                .unwrap_or(saito_match::AbdMode::LegacyCollection);
         }
         if saito_match::cs_prob_fix::supported(game) {
             settings.cs_prob_fix = saito_match::CsProbFix::recommended(game);
@@ -1231,24 +1231,109 @@ impl Play {
         self.change_settings(shell, |s| s.ruleset = picked.ruleset.clone());
     }
 
-    /// The rulesets the host can pick, and which of them the match's is.
-    fn ruleset_choices(&mut self, shell: &Shell) -> Option<(Vec<Pickable>, usize)> {
+    /// Top-level ruleset choices for the lobby's tiered picker: built-in classes (`masters`, `senior`,
+    /// `gate` when supported) followed by the player's own custom rulesets.
+    fn lobby_ruleset_entries(&mut self, shell: &Shell) -> Option<(Vec<Pickable>, usize)> {
         let kit = builds::kit(shell)?;
         let settings = self.match_settings()?;
         let picks = rulesets::pickable(&kit);
-        let at = picks.iter().position(|p| p.ruleset.name == settings.ruleset.name).unwrap_or(0);
-        Some((picks, at))
+        let current_tier = match &settings.ruleset.name {
+            saito_match::ruleset::Name::Preset(id) => rulesets::preset_tier(id),
+            _ => None,
+        };
+        let mut entries: Vec<Pickable> = Vec::new();
+        for class in [rulesets::PresetClass::Masters, rulesets::PresetClass::Senior, rulesets::PresetClass::Gate] {
+            let base = saito_match::ruleset::Name::Preset(class.base_id().to_string());
+            if let Some(pick) = picks.iter().find(|p| p.ruleset.name == base) {
+                entries.push(pick.clone());
+            }
+        }
+        for pick in &picks {
+            if matches!(pick.ruleset.name, saito_match::ruleset::Name::Own(_)) {
+                entries.push(pick.clone());
+            }
+        }
+        let at = if let Some(tier) = current_tier {
+            let base = saito_match::ruleset::Name::Preset(tier.class.base_id().to_string());
+            entries.iter().position(|p| p.ruleset.name == base).unwrap_or(0)
+        } else {
+            entries.iter().position(|p| p.ruleset.name == settings.ruleset.name).unwrap_or(0)
+        };
+        Some((entries, at))
     }
 
-    /// The lobby's Ruleset stepped or chosen (the host's): the `at`th of the rulesets it can pick.
+    /// The lobby's top-level Ruleset stepped or chosen (the host's).
+    /// Choosing a built-in class preserves compatible tier toggles (`5ds` between Masters/Senior, `mixed` across classes).
     fn pick_ruleset(&mut self, shell: &mut Shell, at: i32, by: i32) {
-        let Some((picks, now)) = self.ruleset_choices(shell) else { return };
-        if picks.is_empty() || !self.is_host() {
+        let Some((entries, now)) = self.lobby_ruleset_entries(shell) else { return };
+        if entries.is_empty() || !self.is_host() {
             return;
         }
         let at = if by == 0 { at } else { now as i32 + by };
-        let picked = picks[at.rem_euclid(picks.len() as i32) as usize].clone();
-        self.set_ruleset(shell, &picked);
+        let chosen = entries[at.rem_euclid(entries.len() as i32) as usize].clone();
+        if let saito_match::ruleset::Name::Preset(id) = &chosen.ruleset.name
+            && let Some(target) = rulesets::preset_tier(id)
+            && let Some(kit) = builds::kit(shell)
+            && let Some(settings) = self.match_settings()
+        {
+            let current = match &settings.ruleset.name {
+                saito_match::ruleset::Name::Preset(cur) => rulesets::preset_tier(cur),
+                _ => None,
+            };
+            let (sub, mixed) = match current {
+                Some(cur) => {
+                    let same_sub_family = (cur.class == rulesets::PresetClass::Gate) == (target.class == rulesets::PresetClass::Gate);
+                    (if same_sub_family { cur.sub } else { false }, cur.mixed)
+                }
+                None => (false, false),
+            };
+            let target_id = target.class.preset_id(&kit.game, sub, mixed);
+            let picks = rulesets::pickable(&kit);
+            if let Some(resolved) = picks.into_iter().find(|p| p.ruleset.name == saito_match::ruleset::Name::Preset(target_id.to_string())) {
+                self.set_ruleset(shell, &resolved);
+                return;
+            }
+        }
+        self.set_ruleset(shell, &chosen);
+    }
+
+    /// Set the Level 2 built-in ruleset toggle (`5ds` for EXE5 Masters/Senior, `party` for EXE5 Gate).
+    fn set_ruleset_sub(&mut self, shell: &mut Shell, sub: bool) {
+        if !self.is_host() || self.live.random_battle.is_some() {
+            return;
+        }
+        let Some(kit) = builds::kit(shell) else { return };
+        if kit.game != "exe5" {
+            return;
+        }
+        let Some(settings) = self.match_settings() else { return };
+        let saito_match::ruleset::Name::Preset(id) = &settings.ruleset.name else { return };
+        let Some(tier) = rulesets::preset_tier(id) else { return };
+        if tier.sub == sub {
+            return;
+        }
+        let target_id = tier.class.preset_id(&kit.game, sub, tier.mixed);
+        if let Some(resolved) = rulesets::pickable(&kit).into_iter().find(|p| p.ruleset.name == saito_match::ruleset::Name::Preset(target_id.to_string())) {
+            self.set_ruleset(shell, &resolved);
+        }
+    }
+
+    /// Set the Level 3 built-in ruleset toggle (`mixed` versions across EXE4/EXE5/EXE6).
+    fn set_ruleset_mixed(&mut self, shell: &mut Shell, mixed: bool) {
+        if !self.is_host() || self.live.random_battle.is_some() {
+            return;
+        }
+        let Some(kit) = builds::kit(shell) else { return };
+        let Some(settings) = self.match_settings() else { return };
+        let saito_match::ruleset::Name::Preset(id) = &settings.ruleset.name else { return };
+        let Some(tier) = rulesets::preset_tier(id) else { return };
+        if tier.mixed == mixed {
+            return;
+        }
+        let target_id = tier.class.preset_id(&kit.game, tier.sub, mixed);
+        if let Some(resolved) = rulesets::pickable(&kit).into_iter().find(|p| p.ruleset.name == saito_match::ruleset::Name::Preset(target_id.to_string())) {
+            self.set_ruleset(shell, &resolved);
+        }
     }
 
     /// Whether this player hosts the lobby (and so chooses the match's settings): its lobby's role, or while it
@@ -1439,7 +1524,29 @@ impl Play {
         view.set_host(live.host);
         if let (Some(ruleset), Some((_, ready))) = (&live.ruleset, shell.ready()) {
             let graphics = ready.graphics(shell.i18n.code);
-            view.set_ruleset(rulesets::shown_name(&Names::of(ready.content(), &graphics), &ruleset.name).into());
+            let names = Names::of(ready.content(), &graphics);
+            let tier = match &ruleset.name {
+                saito_match::ruleset::Name::Preset(id) => rulesets::preset_tier(id),
+                _ => None,
+            };
+            if let Some(tier) = tier {
+                let class_name = saito_match::ruleset::Name::Preset(tier.class.base_id().to_string());
+                view.set_ruleset(rulesets::shown_name(&names, &class_name).into());
+                view.set_ruleset_tiered(true);
+                view.set_ruleset_sub_kind(if settings.game == "exe5" {
+                    if tier.class == rulesets::PresetClass::Gate { 2 } else { 1 }
+                } else {
+                    0
+                });
+                view.set_ruleset_sub(tier.sub);
+                view.set_ruleset_mixed(tier.mixed);
+            } else {
+                view.set_ruleset(rulesets::shown_name(&names, &ruleset.name).into());
+                view.set_ruleset_tiered(false);
+                view.set_ruleset_sub_kind(0);
+                view.set_ruleset_sub(false);
+                view.set_ruleset_mixed(false);
+            }
         }
         // The builds CHANGE BUILD offers are checked under the lobby's ruleset, the host's, where it changed.
         if live.ruleset != self.live.ruleset
@@ -2232,7 +2339,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
             _ if id.starts_with("rooms.") => self.spectate_dir.is_open(),
@@ -2428,9 +2535,9 @@ impl Screen for Play {
                 self.show_stage(shell);
             }
             "stage.close" => self.close_stage_dialog(shell),
-            // The host's Ruleset opens its rulesets as a list; the joiner's VIEW is beside it.
+            // The host's Ruleset opens its top-level classes and custom rulesets as a list; the joiner's VIEW is beside it.
             "lobby.ruleset" => {
-                if let Some((picks, at)) = self.ruleset_choices(shell).filter(|_| self.is_host())
+                if let Some((picks, at)) = self.lobby_ruleset_entries(shell).filter(|_| self.is_host())
                     && let Some((_, ready)) = shell.ready()
                 {
                     let graphics = ready.graphics(shell.i18n.code);
@@ -2438,6 +2545,14 @@ impl Screen for Play {
                     let shown = picks.iter().map(|p| rulesets::shown_name(&names, &p.ruleset.name)).collect();
                     shell.pick("lobby.ruleset", 0, shown, at);
                 }
+            }
+            "lobby.ruleset-sub" => {
+                let next = !shell.ui().global::<PlayView>().get_ruleset_sub();
+                self.set_ruleset_sub(shell, next);
+            }
+            "lobby.ruleset-mixed" => {
+                let next = !shell.ui().global::<PlayView>().get_ruleset_mixed();
+                self.set_ruleset_mixed(shell, next);
             }
             "lobby.rules" => self.open_rules(shell),
             "lobby.change" => {
@@ -2524,6 +2639,8 @@ impl Screen for Play {
             "lobby.open" => self.set_open(shell, by > 0),
             "lobby.custom-time" => self.step_custom_time(shell, by),
             "lobby.ruleset" => self.pick_ruleset(shell, 0, by),
+            "lobby.ruleset-sub" => self.set_ruleset_sub(shell, by > 0),
+            "lobby.ruleset-mixed" => self.set_ruleset_mixed(shell, by > 0),
             "lobby.delay" | "menu.set.delay" => self.set_delay(shell, by),
             "stage.list.bg" => self.step_stage_bg(shell, index, by),
             "stage.list.bgm" => self.step_stage_bgm(shell, index, by),
@@ -2561,6 +2678,8 @@ impl Screen for Play {
             "name.version" => self.choose_version(shell, choice.max(0) as usize),
             "lobby.open" => self.set_open(shell, choice == 1),
             "lobby.ruleset" => self.pick_ruleset(shell, choice, 0),
+            "lobby.ruleset-sub" => self.set_ruleset_sub(shell, choice == 1),
+            "lobby.ruleset-mixed" => self.set_ruleset_mixed(shell, choice == 1),
             "stage.list.bg" => self.choose_stage_bg(shell, index, choice),
             "stage.list.bgm" => self.choose_stage_bgm(shell, index, choice),
             "menu.set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
