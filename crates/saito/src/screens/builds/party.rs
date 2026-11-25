@@ -962,6 +962,17 @@ impl Tab for Party {
         SLOTS
     }
 
+    fn cursor(&self) -> Option<usize> {
+        Some(self.slot)
+    }
+
+    fn restore_cursor(&mut self, _draft: &Draft, _other_side: &saito_match::Side, cursor: Option<usize>, _is_undo: bool) {
+        if let Some(slot) = cursor {
+            self.slot = slot;
+            self.described = Some(Described::Slot(slot));
+        }
+    }
+
     fn show(&mut self, shell: &mut Shell, draft: &mut Draft) {
         // (A phone turned sideways has the library beside PARTY: its sheet shuts.)
         if !shell.scale.phone {

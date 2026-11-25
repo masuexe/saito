@@ -187,7 +187,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
             WindowEvent::ModifiersChanged(modifiers) => {
                 let held = modifiers.state();
                 if let Ok(mut app) = state.try_borrow_mut() {
-                    app.modifiers(held.shift_key(), held.control_key() || held.alt_key() || held.super_key());
+                    let primary = (held.control_key() || held.super_key()) && !held.alt_key();
+                    let chord = held.control_key() || held.alt_key() || held.super_key();
+                    app.modifiers(held.shift_key(), primary, chord);
                 }
                 EventResult::Propagate
             }

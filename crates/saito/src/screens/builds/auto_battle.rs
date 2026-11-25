@@ -713,6 +713,18 @@ impl Tab for AutoBattle {
         "places.place"
     }
 
+    fn cursor(&self) -> Option<usize> {
+        Some(self.place)
+    }
+
+    fn restore_cursor(&mut self, _draft: &Draft, _other_side: &saito_match::Side, cursor: Option<usize>, _is_undo: bool) {
+        if let Some(place) = cursor {
+            self.place = place.min(auto::PLACES - 1);
+            self.described = Some(Described::Place(self.place));
+            self.in_library = false;
+        }
+    }
+
     fn show(&mut self, shell: &mut Shell, draft: &mut Draft) {
         if self.described.is_none() {
             self.described = Some(Described::Place(self.place));

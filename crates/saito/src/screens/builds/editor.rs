@@ -372,6 +372,15 @@ pub trait Tab {
 
     /// A dialog the tab asked (`Shell::ask`, by its `tag`) was answered.
     fn answered(&mut self, _shell: &mut Shell, _draft: &mut Draft, _tag: &str, _choice: usize) {}
+
+    /// Current highlighted slot/place on this tab, recorded alongside undo/redo steps.
+    fn cursor(&self) -> Option<usize> {
+        None
+    }
+
+    /// Move the tab's highlighted slot/place to follow the restored edit during undo/redo.
+    /// Called after `draft` has been updated and before `Tab::show`.
+    fn restore_cursor(&mut self, _draft: &Draft, _other_side: &Side, _cursor: Option<usize>, _is_undo: bool) {}
 }
 
 // ---- CLEAR ------------------------------------------------------------------------------------------------------
@@ -584,11 +593,125 @@ fn name(tab: EditorTab) -> &'static str {
     }
 }
 
+/// Maximum undo steps kept for one editing session.
+const HISTORY_LIMIT: usize = 100;
+
+/// One recorded edit transition in the build editor's undo/redo history.
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryStep {
+    before: Build,
+    after: Build,
+    /// Tab where the edit took place (`None` for frame-level edits such as Ruleset changes).
+    tab: Option<EditorTab>,
+    /// Active ABD profile when the edit took place.
+    abd_mode: saito_match::AbdMode,
+    /// Highlighted slot/place on the origin tab before and after the edit.
+    before_cursor: Option<usize>,
+    after_cursor: Option<usize>,
+}
+
+/// Result of popping an undo or redo step from [`History`].
+struct Restored {
+    build: Build,
+    other_build: Build,
+    tab: Option<EditorTab>,
+    abd_mode: saito_match::AbdMode,
+    cursor: Option<usize>,
+    is_undo: bool,
+}
+
+/// Undo/redo history for the build currently open in [`Editor`].
+///
+/// Tracks transitions (`before -> after`) so undoing jumps back to the tab/ABD profile where the edit occurred,
+/// and redoing re-applies that same edit in place without jumping back to a tab the user merely visited.
+#[derive(Clone, Debug)]
+struct History {
+    current: Build,
+    past: Vec<HistoryStep>,
+    future: Vec<HistoryStep>,
+}
+
+impl History {
+    fn new(initial: Build) -> Self {
+        Self { current: initial, past: Vec::new(), future: Vec::new() }
+    }
+
+    fn can_undo(&self) -> bool {
+        !self.past.is_empty()
+    }
+
+    fn can_redo(&self) -> bool {
+        !self.future.is_empty()
+    }
+
+    /// Record a new build state if it actually differs from the latest recorded state.
+    fn record(
+        &mut self,
+        next: Build,
+        tab: Option<EditorTab>,
+        abd_mode: saito_match::AbdMode,
+        before_cursor: Option<usize>,
+        after_cursor: Option<usize>,
+    ) -> bool {
+        if next == self.current {
+            return false;
+        }
+        let before = std::mem::replace(&mut self.current, next.clone());
+        self.past.push(HistoryStep { before, after: next, tab, abd_mode, before_cursor, after_cursor });
+        if self.past.len() > HISTORY_LIMIT {
+            self.past.remove(0);
+        }
+        self.future.clear();
+        true
+    }
+
+    /// Pop the latest edit and return the restored snapshot and origin metadata.
+    fn undo(&mut self) -> Option<Restored> {
+        let step = self.past.pop()?;
+        let restored = step.before.clone();
+        let other = step.after.clone();
+        let tab = step.tab;
+        let abd_mode = step.abd_mode;
+        let cursor = step.before_cursor;
+        self.current = restored.clone();
+        self.future.push(step);
+        Some(Restored { build: restored, other_build: other, tab, abd_mode, cursor, is_undo: true })
+    }
+
+    /// Re-apply the most recently undone edit and return the restored snapshot and origin metadata.
+    fn redo(&mut self) -> Option<Restored> {
+        let step = self.future.pop()?;
+        let restored = step.after.clone();
+        let other = step.before.clone();
+        let tab = step.tab;
+        let abd_mode = step.abd_mode;
+        let cursor = step.after_cursor;
+        self.current = restored.clone();
+        self.past.push(step);
+        Some(Restored { build: restored, other_build: other, tab, abd_mode, cursor, is_undo: false })
+    }
+
+    /// Keep build renames outside undo/redo by updating the name across all recorded snapshots.
+    fn rename(&mut self, name: &str) {
+        self.current.name = name.to_string();
+        for step in &mut self.past {
+            step.before.name = name.to_string();
+            step.after.name = name.to_string();
+        }
+        for step in &mut self.future {
+            step.before.name = name.to_string();
+            step.after.name = name.to_string();
+        }
+    }
+}
+
 /// The editor's frame: the build, the game's tabs, and the one shown.
 pub struct Editor {
     pub draft: Draft,
     tabs: Vec<Box<dyn Tab>>,
     at: usize,
+    /// Undo/redo history for the open build.
+    history: History,
     /// The ruleset's page, open over the editor.
     rules: Option<RulesPage>,
     /// The row a drag was let go over, which the pointer rests on (`hovered`).
@@ -607,8 +730,9 @@ impl Editor {
         let active_side = build.side_for(&content, abd_mode);
         let checked = checked(&kit, &active_side, ruleset.as_ref().map(|made| &made.pick));
         let tabs: Vec<Box<dyn Tab>> = all().into_iter().filter(|t| has(&content, t.as_ref())).collect();
+        let history = History::new(build.clone());
         let draft = Draft { kit, build, abd_mode, active_side, checked, ruleset, path, navi_only, changed: settled };
-        let mut editor = Editor { draft, tabs, at: 0, rules: None, rest: None };
+        let mut editor = Editor { draft, tabs, at: 0, history, rules: None, rest: None };
         editor.save(shell);
         editor
     }
@@ -673,6 +797,8 @@ impl Editor {
         view.set_tabs(ModelRc::new(VecModel::from(tabs)));
         view.set_tab(self.at as i32);
         view.set_shown(self.tabs[self.at].id());
+        view.set_can_undo(self.history.can_undo());
+        view.set_can_redo(self.history.can_redo());
     }
 
     /// The editor is shown, or something changed under it: the frame, and the tab.
@@ -736,6 +862,7 @@ impl Editor {
                         let _ = saito_files::remove_file(&self.draft.path);
                     }
                     crate::screens::play::follow_rename(shell, &game, &from, &renamed.name);
+                    self.history.rename(&renamed.name);
                     self.draft.path = to;
                     self.draft.build = renamed;
                     self.draft.changed = false;
@@ -749,12 +876,77 @@ impl Editor {
         self.show_frame(shell);
     }
 
-    /// After a tab's call: the build kept if it changed, and the frame shown anew.
-    fn after(&mut self, shell: &mut Shell) {
+    /// After a tab's call: record an undo step, save the build if it changed, and refresh the frame.
+    fn after(&mut self, shell: &mut Shell, before_cursor: Option<usize>) {
         if self.draft.changed {
+            let tab = self.tabs[self.at].id();
+            let after_cursor = self.tabs[self.at].cursor();
+            self.history.record(self.draft.build.clone(), Some(tab), self.draft.abd_mode, before_cursor, after_cursor);
             self.save(shell);
             self.show_frame(shell);
         }
+    }
+
+    /// Restore a build snapshot from history, jumping back to the origin tab/ABD profile and cursor when applicable.
+    fn apply_history(&mut self, shell: &mut Shell, restored: Restored) {
+        shell.ui().global::<saito_ui::Drag>().invoke_end();
+        {
+            let (cur, draft) = self.tab();
+            cur.hide(shell, draft);
+        }
+        self.rest = None;
+        self.draft.build = restored.build;
+        if restored.abd_mode.allowed_for(&self.draft.kit.game) {
+            self.draft.abd_mode = restored.abd_mode;
+        }
+        let other_side = restored.other_build.side_for(self.draft.kit.content(), self.draft.abd_mode);
+        self.draft.active_side = self.draft.build.side_for(self.draft.kit.content(), self.draft.abd_mode);
+        self.draft.find_ruleset();
+        self.draft.recheck();
+        self.save(shell);
+
+        let target = restored
+            .tab
+            .and_then(|id| self.tabs.iter().position(|t| t.id() == id))
+            .filter(|&i| self.enabled(i))
+            .or_else(|| (!self.enabled(self.at)).then_some(0));
+        if let Some(to) = target
+            && to != self.at
+        {
+            let way = if to > self.at { 1 } else { -1 };
+            self.at = to;
+            shell.ui().global::<BuildsView>().set_tab_way(way);
+            let (cur, draft) = self.tab();
+            cur.restore_cursor(draft, &other_side, restored.cursor, restored.is_undo);
+            self.show(shell);
+        } else {
+            self.show_frame(shell);
+            let (cur, draft) = self.tab();
+            if restored.tab.is_none_or(|id| cur.id() == id) {
+                cur.restore_cursor(draft, &other_side, restored.cursor, restored.is_undo);
+            }
+            cur.show(shell, draft);
+        }
+    }
+
+    /// Undo the latest edit to the open build.
+    pub fn undo(&mut self, shell: &mut Shell) {
+        let Some(restored) = self.history.undo() else {
+            shell.sound.play(crate::sound::Cue::Refused);
+            return;
+        };
+        shell.sound.play(crate::sound::Cue::Pick);
+        self.apply_history(shell, restored);
+    }
+
+    /// Redo the most recently undone edit to the open build.
+    pub fn redo(&mut self, shell: &mut Shell) {
+        let Some(restored) = self.history.redo() else {
+            shell.sound.play(crate::sound::Cue::Refused);
+            return;
+        };
+        shell.sound.play(crate::sound::Cue::Pick);
+        self.apply_history(shell, restored);
     }
 
     /// Go to tab `to`, if it can be gone to; `way` is the side it is reached from (-1: from the right).
@@ -792,6 +984,7 @@ impl Editor {
         self.draft.build.ruleset = Some(picked.ruleset.name.clone());
         self.draft.ruleset = Some(MadeFor { pick: picked, missing: None });
         self.draft.recheck();
+        self.history.record(self.draft.build.clone(), None, self.draft.abd_mode, None, None);
         self.save(shell);
         self.show_marks(shell);
     }
@@ -861,6 +1054,12 @@ impl Editor {
         if id == "ruleset" || id == "ruleset-edit" {
             return self.ruleset_control(shell, id, index, None);
         }
+        if id == "undo" {
+            return self.undo(shell);
+        }
+        if id == "redo" {
+            return self.redo(shell);
+        }
         if id == "tab" {
             let way = if index as usize >= self.at { 1 } else { -1 };
             return self.go(shell, index.max(0) as usize, way);
@@ -876,6 +1075,7 @@ impl Editor {
             }
             return;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         tab.activate(shell, draft, id, index);
         // (A click on one of the build's own rows, an entry, a card, a slot or a place, chooses it as Enter does,
@@ -888,7 +1088,7 @@ impl Editor {
             shell.nav.focus(id, index);
             tab.focused(shell, draft, id, index);
         }
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 
     pub fn step(&mut self, shell: &mut Shell, id: &str, index: i32, by: i32) {
@@ -899,9 +1099,10 @@ impl Editor {
         if id == "ruleset" {
             return self.ruleset_control(shell, id, index, Some(by));
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         tab.step(shell, draft, id, index, by);
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 
     /// A right click (`remove`: on a row of the build's, a library's row that is in, the NaviCust's) removes what it
@@ -931,6 +1132,7 @@ impl Editor {
             }
             return;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         if id == "remove" {
             let (tab, draft) = self.tab();
             tab.action(shell, draft, Action::Delete);
@@ -938,7 +1140,7 @@ impl Editor {
             let (tab, draft) = self.tab();
             tab.choose(shell, draft, id, index, choice);
         }
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 
     pub fn edit(&mut self, shell: &mut Shell, id: &str, index: i32, text: &str, done: bool) {
@@ -949,9 +1151,10 @@ impl Editor {
         if id == "name" {
             return self.rename(shell, text, done);
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         tab.edit(shell, draft, id, index, text, done);
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 
     /// The pointer on one of the tab's rows, or gone off it (a ruleset's page has no strip).
@@ -978,9 +1181,10 @@ impl Editor {
         if let Some(page) = self.rules.as_mut().filter(|_| RulesPage::owns(id)) {
             return page.focused(shell, id, index);
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         tab.focused(shell, draft, id, index);
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 
     pub fn route(&mut self, shell: &mut Shell, action: Action) -> bool {
@@ -995,19 +1199,40 @@ impl Editor {
         if self.rules.is_some() {
             return false;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         let taken = tab.key(shell, draft, key);
-        self.after(shell);
+        self.after(shell, before_cursor);
         taken
+    }
+
+    /// Ctrl/Cmd+Z (undo), Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y (redo).
+    pub fn shortcut(&mut self, shell: &mut Shell, key: &KeyPress) -> bool {
+        use i_slint_backend_winit::winit::keyboard::KeyCode;
+        if self.rules.is_some() || !key.primary {
+            return false;
+        }
+        match (key.code, key.shift) {
+            (KeyCode::KeyZ, false) => {
+                self.undo(shell);
+                true
+            }
+            (KeyCode::KeyZ, true) | (KeyCode::KeyY, false) => {
+                self.redo(shell);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn button(&mut self, shell: &mut Shell, button: saito_gamepad::Button) -> bool {
         if self.rules.is_some() {
             return false;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         let taken = tab.button(shell, draft, button);
-        self.after(shell);
+        self.after(shell, before_cursor);
         taken
     }
 
@@ -1021,9 +1246,10 @@ impl Editor {
             Action::Previous => self.step_tab(shell, -1),
             Action::Next => self.step_tab(shell, 1),
             _ => {
+                let before_cursor = self.tabs[self.at].cursor();
                 let (tab, draft) = self.tab();
                 let taken = tab.action(shell, draft, action);
-                self.after(shell);
+                self.after(shell, before_cursor);
                 return taken;
             }
         }
@@ -1038,9 +1264,10 @@ impl Editor {
             tab.show(shell, draft);
             return true;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         let within = tab.back(shell, draft);
-        self.after(shell);
+        self.after(shell, before_cursor);
         within
     }
 
@@ -1054,9 +1281,10 @@ impl Editor {
             }
             return;
         }
+        let before_cursor = self.tabs[self.at].cursor();
         let (tab, draft) = self.tab();
         tab.answered(shell, draft, tag, choice);
-        self.after(shell);
+        self.after(shell, before_cursor);
     }
 }
 
@@ -1095,5 +1323,66 @@ mod tests {
         assert_eq!(drop_row(view, (view.x - NEAR - 1.0, view.y + 40.0), 1, 30), None);
         assert_eq!(drop_row(view, (view.right() + NEAR + 1.0, view.y + 40.0), 1, 30), None);
         assert_eq!(drop_row(view, (100.0, view.y + 40.0), 0, 0), None);
+    }
+
+    #[test]
+    fn history_undo_redo_origin_tab_rename_and_cap() {
+        use crate::builds::edit::{self, FolderEdit};
+        use saito_match::{AbdMode, build::Builds};
+
+        let content = exe6_content();
+        let builds = Builds::of(&content, "exe6").unwrap();
+        let b0 = Build::new(&content, "Original", builds.new_build(&content, "falzar").unwrap());
+
+        let mut b1 = b0.clone();
+        assert!(edit::folder(&content, &mut b1.side, FolderEdit::Clear(0)));
+        let mut b2 = b1.clone();
+        assert!(edit::folder(&content, &mut b2.side, FolderEdit::Clear(1)));
+
+        let mut history = History::new(b0.clone());
+        assert!(!history.can_undo() && !history.can_redo());
+        // Recording an identical build is a no-op.
+        assert!(!history.record(b0.clone(), Some(EditorTab::Folder), AbdMode::Original, Some(0), Some(0)));
+
+        assert!(history.record(b1.clone(), Some(EditorTab::Folder), AbdMode::Original, Some(5), Some(6)));
+        assert!(history.record(b2.clone(), Some(EditorTab::Navicust), AbdMode::LegacyCollection, Some(2), Some(2)));
+        assert!(history.can_undo() && !history.can_redo());
+
+        // Rename propagates to all snapshots without creating an undo step.
+        history.rename("Renamed");
+        let r1 = history.undo().unwrap();
+        assert_eq!(r1.build.name, "Renamed");
+        assert_eq!(r1.build.side, b1.side);
+        assert_eq!((r1.tab, r1.abd_mode, r1.cursor, r1.is_undo), (Some(EditorTab::Navicust), AbdMode::LegacyCollection, Some(2), true));
+
+        let r0 = history.undo().unwrap();
+        assert_eq!(r0.build.name, "Renamed");
+        assert_eq!(r0.build.side, b0.side);
+        assert_eq!((r0.tab, r0.abd_mode, r0.cursor, r0.is_undo), (Some(EditorTab::Folder), AbdMode::Original, Some(5), true));
+        assert!(!history.can_undo() && history.can_redo());
+
+        // Redoing the folder edit stays attributed to Folder (not Navicust).
+        let re1 = history.redo().unwrap();
+        assert_eq!(re1.build.name, "Renamed");
+        assert_eq!(re1.build.side, b1.side);
+        assert_eq!((re1.tab, re1.abd_mode, re1.cursor, re1.is_undo), (Some(EditorTab::Folder), AbdMode::Original, Some(6), false));
+
+        // Recording a new edit clears the redo stack.
+        let mut b3 = b1.clone();
+        b3.name = "Renamed".into();
+        assert!(edit::folder(&content, &mut b3.side, FolderEdit::Clear(2)));
+        assert!(history.record(b3.clone(), Some(EditorTab::Folder), AbdMode::Original, Some(2), Some(2)));
+        assert!(!history.can_redo());
+
+        // History respects HISTORY_LIMIT.
+        let mut capped = History::new(b0.clone());
+        let mut cur = b0.clone();
+        for i in 0..(HISTORY_LIMIT + 10) {
+            let mut next = cur.clone();
+            next.ruleset = Some(saito_match::ruleset::Name::Preset(format!("r{i}")));
+            assert!(capped.record(next.clone(), None, AbdMode::Original, None, None));
+            cur = next;
+        }
+        assert_eq!(capped.past.len(), HISTORY_LIMIT);
     }
 }

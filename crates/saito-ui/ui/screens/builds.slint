@@ -11,7 +11,7 @@
 import { Theme, I18n } from "../theme.slint";
 import { Nav } from "../nav.slint";
 import { Shell, Page, PadButton, Hint } from "../shell.slint";
-import { TabBar, Tab, Rule, Label, Select, Button } from "../widgets.slint";
+import { TabBar, Tab, Rule, Label, Select, Button, ButtonKind } from "../widgets.slint";
 import { Tween } from "../motion.slint";
 import { VersionTag } from "../build.slint";
 import { NaviView, NaviTab, NaviOverlay } from "builds/navi.slint";
@@ -53,6 +53,9 @@ export global BuildsView {
     in property <int> tab;
     in property <EditorTab> shown;
     in property <int> tab-way: 1;
+    // Whether undo/redo steps are available for the open build.
+    in property <bool> can-undo;
+    in property <bool> can-redo;
     // ---- Words the app asks for.
     out property <[string]> tab-names: [I18n.upper(@tr("Navi")), I18n.upper(@tr("Party")), I18n.upper(@tr("Folder")), I18n.upper(@tr("NaviCust")), I18n.upper(@tr("Patch cards")), I18n.upper(@tr("Auto battle"))];
     // A tab's CLEAR's dialog's button (docs/design/app-ui.md §2.71).
@@ -103,9 +106,10 @@ export component BuildsScreen inherits Page {
     property <length> bar-y: Theme.phone ? -8px : -16px;
     property <length> tab-y: Theme.phone ? 44px : Theme.sideways ? 0px : 40px;
     property <length> tab-height: self.body-height - root.tab-y + (Theme.handheld ? 0px : 8px);
+    property <length> mobile-history-width: Theme.handheld ? undo-handheld.width + 6px + redo-handheld.width : 0px;
     title: BuildsView.name;
     title-nav: "name";
-    title-most: Theme.sideways ? 152px : 10000px;
+    title-most: Theme.sideways ? 152px : Theme.phone ? max(80px, root.body-width - 72px - root.mobile-history-width) : 10000px;
     back: BuildsView.to-practice ? I18n.upper(@tr("Practice")) : I18n.upper(@tr("Play"));
     // (A phone's header leaves the game out. A build has no version: docs/design/versions.md §3.3.)
     game: !Theme.phone;
@@ -122,16 +126,17 @@ export component BuildsScreen inherits Page {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
 
-    // (At the bar's right end on a desktop, the ruleset the build is made for, and EDIT: its page; then past a divider
+    // (At the bar's right end on a desktop, Undo/Redo, the ruleset the build is made for, and EDIT: its page; then past a divider
     // PRACTICE, straight into a practice battle with the build, whose EXIT comes back here (none where the editor was
-    // opened from Practice, whose Back goes back to it). A phone has them on the Navi tab, upright or sideways.)
+    // opened from Practice, whose Back goes back to it). On a phone Undo/Redo sit in the header and ruleset/practice are on the Navi tab.)
     property <bool> practice: !BuildsView.to-practice;
     property <length> practice-width: root.practice ? 16px + 1px + 16px + practice-button.width : 0px;
-    property <length> ruleset-width: Theme.handheld ? 0px : ruleset-label.width + 12px + 176px + 8px + rules-edit.width + root.practice-width + 16px;
+    property <length> history-width: Theme.handheld ? 0px : undo-button.width + 6px + redo-button.width + 16px + 1px + 16px;
+    property <length> ruleset-width: Theme.handheld ? 0px : root.history-width + ruleset-label.width + 12px + 176px + 8px + rules-edit.width + root.practice-width + 16px;
     tab-bar := TabBar {
         x: Theme.phone ? -8px : Theme.sideways ? root.header-room-x : 0px;
         y: Theme.sideways ? root.header-top + (Theme.header - self.height) / 2 : root.bar-y;
-        width: Theme.sideways ? root.header-room-width : root.body-width + (Theme.phone ? 16px : 0px) - root.ruleset-width;
+        width: Theme.sideways ? max(0px, root.header-room-width - root.mobile-history-width - 8px) : root.body-width + (Theme.phone ? 16px : 0px) - root.ruleset-width;
         nav: "tab";
         tabs: BuildsView.tabs;
         chosen: BuildsView.tab;
@@ -140,8 +145,73 @@ export component BuildsScreen inherits Page {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
 
-    ruleset-label := Label {
+    undo-handheld := Button {
+        x: Theme.sideways ? root.header-room-x + root.header-room-width - root.mobile-history-width : root.body-width - root.mobile-history-width;
+        y: root.header-top + (Theme.header - self.height) / 2;
+        height: 32px;
+        width: self.natural-width;
+        compact: true;
+        tight: true;
+        kind: ButtonKind.ghost;
+        enabled: BuildsView.can-undo;
+        visible: Theme.handheld;
+        nav: Theme.handheld ? "undo" : "";
+        text: I18n.upper(@tr("Undo"));
+    }
+
+    redo-handheld := Button {
+        x: undo-handheld.x + undo-handheld.width + 6px;
+        y: undo-handheld.y;
+        height: 32px;
+        width: self.natural-width;
+        compact: true;
+        tight: true;
+        kind: ButtonKind.ghost;
+        enabled: BuildsView.can-redo;
+        visible: Theme.handheld;
+        nav: Theme.handheld ? "redo" : "";
+        text: I18n.upper(@tr("Redo"));
+    }
+
+    undo-button := Button {
         x: root.body-width - root.ruleset-width + 16px;
+        y: root.bar-y;
+        height: 36px;
+        width: self.natural-width;
+        compact: true;
+        tight: true;
+        kind: ButtonKind.ghost;
+        enabled: BuildsView.can-undo;
+        visible: !Theme.handheld;
+        nav: Theme.handheld ? "" : "undo";
+        text: I18n.upper(@tr("Undo"));
+    }
+
+    redo-button := Button {
+        x: undo-button.x + undo-button.width + 6px;
+        y: root.bar-y;
+        height: 36px;
+        width: self.natural-width;
+        compact: true;
+        tight: true;
+        kind: ButtonKind.ghost;
+        enabled: BuildsView.can-redo;
+        visible: !Theme.handheld;
+        nav: Theme.handheld ? "" : "redo";
+        text: I18n.upper(@tr("Redo"));
+    }
+
+    Rectangle {
+        x: redo-button.x + redo-button.width + 16px;
+        y: root.bar-y + 8px;
+        width: 1px;
+        height: 20px;
+        visible: !Theme.handheld;
+        background: Theme.line;
+    }
+
+    ruleset-label := Label {
+        x: redo-button.x + redo-button.width + 33px;
         y: root.bar-y;
         width: self.preferred-width;
         height: 36px;

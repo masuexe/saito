@@ -481,6 +481,8 @@ pub struct KeyPress {
     pub text: Option<String>,
     pub repeat: bool,
     pub shift: bool,
+    /// Ctrl or Cmd/Super is held (without Alt): an editor shortcut chord.
+    pub primary: bool,
 }
 
 /// How the footer's hints draw a pad's button: a face button by its place, START and SELECT by their caps,

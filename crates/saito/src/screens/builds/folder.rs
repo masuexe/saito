@@ -710,6 +710,41 @@ impl Tab for Folder {
         "slot"
     }
 
+    fn cursor(&self) -> Option<usize> {
+        Some(self.slot)
+    }
+
+    fn restore_cursor(&mut self, draft: &Draft, other_side: &saito_match::Side, cursor: Option<usize>, _is_undo: bool) {
+        let content = draft.content();
+        let now = draft.side().folder(content);
+        let other = other_side.folder(content);
+        let mut changed = (0..saito_battle::custom::folder::FOLDER_SIZE).filter(|&i| now.chips[i] != other.chips[i]);
+        let target = match (changed.next(), changed.next()) {
+            (Some(only), None) => Some(only),
+            (None, _) => {
+                if now.regular != other.regular {
+                    now.regular.or(other.regular).map(|i| i as usize)
+                } else if now.tags != other.tags {
+                    match (now.tags, other.tags) {
+                        (Some((a, _)), None) | (None, Some((a, _))) => Some(a as usize),
+                        (Some((a, _)), Some((c, _))) if a != c => Some(a as usize),
+                        (Some((_, b)), Some((_, _))) => Some(b as usize),
+                        (None, None) => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+        .or(cursor);
+        if let Some(slot) = target {
+            self.slot = slot.min(saito_battle::custom::folder::FOLDER_SIZE - 1);
+            self.described = Some(Described::Slot(self.slot));
+            self.in_library = false;
+        }
+    }
+
     fn show(&mut self, shell: &mut Shell, draft: &mut Draft) {
         self.slot = self.slot.min(saito_battle::custom::folder::FOLDER_SIZE - 1);
         // (A phone turned sideways has the library beside the folder: its sheet shuts.)

@@ -722,6 +722,18 @@ impl Tab for PatchCards {
         "card"
     }
 
+    fn cursor(&self) -> Option<usize> {
+        Some(self.slot)
+    }
+
+    fn restore_cursor(&mut self, _draft: &Draft, _other_side: &saito_match::Side, cursor: Option<usize>, _is_undo: bool) {
+        if let Some(slot) = cursor {
+            self.slot = slot;
+            self.described = Some(Described::Installed(slot));
+            self.in_library = false;
+        }
+    }
+
     fn show(&mut self, shell: &mut Shell, draft: &mut Draft) {
         self.read(draft);
         if self.described.is_none() {

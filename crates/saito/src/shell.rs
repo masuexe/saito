@@ -298,6 +298,8 @@ pub struct Shell {
     pub(crate) drawing: bool,
     /// Ctrl, Alt or the system's key is held (the key is the system's, or a text field's).
     chord: bool,
+    /// Ctrl or Cmd/Super is held without Alt (shortcut chords like Undo/Redo).
+    primary: bool,
     shift: bool,
     /// The input method is composing in a text field (its keys are its own).
     composing: bool,
@@ -1286,6 +1288,7 @@ impl App {
             awake: None,
             drawing: true,
             chord: false,
+            primary: false,
             shift: false,
             composing: false,
             keep_nothing: still,
@@ -1849,8 +1852,9 @@ impl App {
     }
 
     /// The modifiers held changed.
-    pub fn modifiers(&mut self, shift: bool, chord: bool) {
+    pub fn modifiers(&mut self, shift: bool, primary: bool, chord: bool) {
         self.shell.shift = shift;
+        self.shell.primary = primary;
         self.shell.chord = chord;
     }
 
@@ -2151,7 +2155,7 @@ impl App {
     fn key_down(&mut self, code: KeyCode, text: Option<String>, repeat: bool, now: Instant) -> bool {
         let editing = self.shell.nav.editing();
         self.shell.last_input = Some(now);
-        let press = KeyPress { code, text, repeat, shift: self.shell.shift };
+        let press = KeyPress { code, text, repeat, shift: self.shell.shift, primary: self.shell.primary };
         // The battle has the keys: Esc is saito's menu, a key bound to no button may be its owner's.
         if self.shell.battle_has_keys() {
             self.shell.nav.used_keys(false);
@@ -2195,11 +2199,20 @@ impl App {
             self.shell.nav.used_keys(false);
             return true;
         }
+        let over = self.shell.dialog.is_some() || self.shell.picking.is_some();
         if self.shell.chord {
+            if press.primary && !over {
+                let hearer = self.hearer();
+                let taken = self.call(hearer, |s, shell| s.shortcut(shell, &press)).unwrap_or(false);
+                self.settle();
+                if taken {
+                    self.shell.nav.used_keys(false);
+                    return true;
+                }
+            }
             return false;
         }
         // The screen may want the key for itself (a key being bound, a letter that acts on a row).
-        let over = self.shell.dialog.is_some() || self.shell.picking.is_some();
         if !over {
             let hearer = self.hearer();
             let taken = self.call(hearer, |s, shell| s.key(shell, &press)).unwrap_or(false);

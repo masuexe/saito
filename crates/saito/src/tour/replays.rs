@@ -377,7 +377,7 @@ fn steps_to_queue(add: &mut dyn FnMut(u64, Step), lang: &'static str, size: &'st
         Box::new(move |_, app, _| {
             app.borrow_mut().with_screen(ScreenId::Replays, |s, shell| {
                 for _ in 0..times {
-                    s.key(shell, &KeyPress { code, text: None, repeat: false, shift: false });
+                    s.key(shell, &KeyPress { code, text: None, repeat: false, shift: false, primary: false });
                 }
             })
         })
@@ -432,7 +432,7 @@ fn steps_to_queue(add: &mut dyn FnMut(u64, Step), lang: &'static str, size: &'st
     add(SETTLE, until(|view| view.get_watching() && view.get_exporting()));
     add(SETTLE * 2, focus("export.start-here", 0));
     shot(add, "replays-export", Pair::First, Also::Nothing);
-    add(SETTLE, Box::new(|_, app, _| app.borrow_mut().with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::ArrowRight, text: None, repeat: false, shift: true }); })));
+    add(SETTLE, Box::new(|_, app, _| app.borrow_mut().with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::ArrowRight, text: None, repeat: false, shift: true, primary: false }); })));
     add(SETTLE, key(KeyCode::BracketLeft, 1));
     shot(add, "replays-export-handle", Pair::Second, Also::Playback);
     add(
@@ -619,7 +619,7 @@ fn export(add: &mut dyn FnMut(u64, Step)) {
             let mut app = app.borrow_mut();
             app.shell.settings.remembered.insert("replays.export-folder".into(), tour.dir.display().to_string());
             app.shell.nav.focus("list", 0);
-            app.with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::KeyE, text: None, repeat: false, shift: false }); });
+            app.with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::KeyE, text: None, repeat: false, shift: false, primary: false }); });
         }),
     );
     // (The viewer in its export mode; then the last of the Range's list, the last round.)
@@ -677,7 +677,7 @@ fn stop_export(add: &mut dyn FnMut(u64, Step)) {
         Box::new(|_, app, _| {
             let mut app = app.borrow_mut();
             app.shell.nav.focus("list", 0);
-            app.with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::KeyE, text: None, repeat: false, shift: false }); });
+            app.with_screen(ScreenId::Replays, |s, shell| { s.key(shell, &KeyPress { code: KeyCode::KeyE, text: None, repeat: false, shift: false, primary: false }); });
         }),
     );
     add(SETTLE, until(|view| view.get_watching() && view.get_exporting()));

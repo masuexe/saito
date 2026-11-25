@@ -113,6 +113,12 @@ msgstr "自动战斗"
 msgid "Tab"
 msgstr "标签页"
 
+msgid "Undo"
+msgstr "撤销"
+
+msgid "Redo"
+msgstr "重做"
+
 # ---- The Navi tab.
 
 msgid "Choose"

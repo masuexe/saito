@@ -135,6 +135,12 @@ pub trait Screen {
         false
     }
 
+    /// A modifier shortcut chord (Ctrl/Cmd + key) pressed while no text field or dialog is active.
+    /// True if the screen consumed it; false lets it propagate to the system/Slint.
+    fn shortcut(&mut self, _shell: &mut Shell, _key: &KeyPress) -> bool {
+        false
+    }
+
     /// A mouse button pressed, before Slint sees it (a key or mouse binding being asked for). True if the screen took it.
     fn mouse(&mut self, _shell: &mut Shell, _button: i_slint_backend_winit::winit::event::MouseButton) -> bool {
         false

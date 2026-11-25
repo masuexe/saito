@@ -177,6 +177,10 @@ impl Screen for Builds {
         self.editor.as_mut().is_some_and(|editor| editor.key(shell, key))
     }
 
+    fn shortcut(&mut self, shell: &mut Shell, key: &KeyPress) -> bool {
+        self.editor.as_mut().is_some_and(|editor| editor.shortcut(shell, key))
+    }
+
     fn button(&mut self, shell: &mut Shell, button: saito_gamepad::Button) -> bool {
         self.editor.as_mut().is_some_and(|editor| editor.button(shell, button))
     }

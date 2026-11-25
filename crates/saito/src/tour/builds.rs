@@ -61,7 +61,7 @@ fn play(f: impl Fn(&mut dyn crate::screens::Screen, &mut crate::shell::Shell) + 
 }
 fn letter(code: KeyCode, text: &'static str) -> Step {
     screen(move |s, shell| {
-        s.key(shell, &KeyPress { code, text: Some(text.into()), repeat: false, shift: false });
+        s.key(shell, &KeyPress { code, text: Some(text.into()), repeat: false, shift: false, primary: false });
     })
 }
 /// Make a build named `name` of the game's version `version` (its place in the game's order), through Play.

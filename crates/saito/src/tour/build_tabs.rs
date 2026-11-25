@@ -72,7 +72,7 @@ fn screen(f: impl Fn(&mut dyn crate::screens::Screen, &mut crate::shell::Shell) 
 /// A key pressed on the editor, as the window's keys reach it (before the menus read it).
 fn key(code: KeyCode, text: &'static str) -> Step {
     screen(move |s, shell| {
-        s.key(shell, &KeyPress { code, text: Some(text.into()), repeat: false, shift: false });
+        s.key(shell, &KeyPress { code, text: Some(text.into()), repeat: false, shift: false, primary: false });
     })
 }
 

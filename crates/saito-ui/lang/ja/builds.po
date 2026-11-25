@@ -113,6 +113,12 @@ msgstr "オートバトル"
 msgid "Tab"
 msgstr "タブ"
 
+msgid "Undo"
+msgstr "戻す"
+
+msgid "Redo"
+msgstr "進む"
+
 # ---- The Navi tab.
 
 msgid "Choose"
