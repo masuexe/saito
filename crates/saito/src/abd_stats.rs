@@ -82,7 +82,7 @@ pub struct AbdRoundRecord {
     pub ai_version: String,
     /// Whether Scheme B's hard cap was enabled during this round.
     pub under_cap_limit: bool,
-    /// Explicit Scheme B notice when active (e.g. `"在方案B的限制下(≤5)"`).
+    /// Explicit cap-limit notice when active (e.g. `"在使用上限为5次的限制下"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit_note: Option<String>,
     /// Active per-round hard cap value (`1..=15`) when `under_cap_limit` is true.
@@ -149,7 +149,7 @@ pub fn build_record(content: &Content, ctx: &AbdLogContext, usage: &RoundAbdUsag
     }
     let cap_limit = ctx.abd_chip_cap.filter(|&c| saito_match::abd_mode::chip_cap_allowed(&ctx.game, Some(c)));
     let under_cap_limit = cap_limit.is_some();
-    let limit_note = cap_limit.map(|c| format!("在方案B的限制下(≤{c})"));
+    let limit_note = cap_limit.map(|c| format!("在使用上限为{c}次的限制下"));
     Some(AbdRoundRecord {
         ai_version: ai_version_label(ctx.abd_mode).to_string(),
         under_cap_limit,
@@ -177,16 +177,16 @@ pub fn record_round(content: &Content, ctx: &AbdLogContext, usage: &RoundAbdUsag
 
 /// Format a compact post-match summary `(header, lines)` for `MatchResult`.
 ///
-/// `header` always starts with `[GBA]` / `[合集]` / `[NDS]` and includes `【在方案B的限制下(≤x)】`
-/// when Scheme B's hard cap was active. Returns empty `lines` when `records` is empty.
+/// `header` always starts with `[GBA]` / `[合集]` / `[NDS]` and includes `【在使用上限为x次的限制下】`
+/// when the per-round hard cap was active. Returns empty `lines` when `records` is empty.
 pub fn format_result_summary(records: &[AbdRoundRecord], name_for: impl Fn(&str, &str) -> String) -> (String, Vec<String>) {
     let Some(first) = records.first() else {
         return (String::new(), Vec::new());
     };
     let header = if first.under_cap_limit {
         match first.cap_limit {
-            Some(c) => format!("[{}] 【在方案B的限制下(≤{c})】", first.ai_version),
-            None => format!("[{}] 【在方案B的限制下】", first.ai_version),
+            Some(c) => format!("[{}] 【在使用上限为{c}次的限制下】", first.ai_version),
+            None => format!("[{}] 【在使用上限限制下】", first.ai_version),
         }
     } else {
         format!("[{}]", first.ai_version)
@@ -331,8 +331,8 @@ pub fn format_log(records: &[AbdRoundRecord]) -> String {
     for r in records {
         let cap_tag = if r.under_cap_limit {
             match r.cap_limit {
-                Some(c) => format!(" 【在方案B的限制下(≤{c})】"),
-                None => " 【在方案B的限制下】".to_string(),
+                Some(c) => format!(" 【在使用上限为{c}次的限制下】"),
+                None => " 【在使用上限限制下】".to_string(),
             }
         } else {
             String::new()
@@ -362,8 +362,8 @@ pub fn format_csv(records: &[AbdRoundRecord]) -> String {
     for r in records {
         let limit_note = if r.under_cap_limit {
             match r.cap_limit {
-                Some(c) => format!("在方案B的限制下(≤{c})"),
-                None => "在方案B的限制下".to_string(),
+                Some(c) => format!("在使用上限为{c}次的限制下"),
+                None => "在使用上限限制下".to_string(),
             }
         } else {
             "无限制".to_string()
@@ -446,7 +446,7 @@ mod tests {
             AbdRoundRecord {
                 ai_version: "NDS".into(),
                 under_cap_limit: true,
-                limit_note: Some("在方案B的限制下(≤5)".into()),
+                limit_note: Some("在使用上限为5次的限制下".into()),
                 cap_limit: Some(5),
                 timestamp: 1_764_092_700,
                 game: "exe5".into(),
@@ -485,8 +485,8 @@ mod tests {
         let lines: Vec<&str> = log.lines().collect();
         assert_eq!(lines.len(), 3);
         assert!(lines[0].starts_with("[合集] "), "log line 0: {}", lines[0]);
-        assert!(!lines[0].contains("方案B"));
-        assert!(lines[1].starts_with("[NDS] 【在方案B的限制下(≤5)】 "), "log line 1: {}", lines[1]);
+        assert!(!lines[0].contains("使用上限"));
+        assert!(lines[1].starts_with("[NDS] 【在使用上限为5次的限制下】 "), "log line 1: {}", lines[1]);
         assert!(lines[1].contains("练习"));
         assert!(lines[2].starts_with("[GBA] "), "log line 2: {}", lines[2]);
 
@@ -494,13 +494,13 @@ mod tests {
         assert!(csv.starts_with("\u{FEFF}ai_version,limit_note,cap_limit,"));
         let csv_lines: Vec<&str> = csv.trim_start_matches('\u{FEFF}').lines().collect();
         assert!(csv_lines[1].starts_with("合集,无限制,,"));
-        assert!(csv_lines[2].starts_with("NDS,在方案B的限制下(≤5),5,"));
+        assert!(csv_lines[2].starts_with("NDS,在使用上限为5次的限制下,5,"));
         assert!(csv_lines[3].starts_with("GBA,无限制,,"));
 
         let jsonl = format_jsonl(&recs);
         let json_lines: Vec<&str> = jsonl.lines().collect();
         assert!(json_lines[0].starts_with("{\"ai_version\":\"合集\",\"under_cap_limit\":false"));
-        assert!(json_lines[1].starts_with("{\"ai_version\":\"NDS\",\"under_cap_limit\":true,\"limit_note\":\"在方案B的限制下(≤5)\",\"cap_limit\":5"));
+        assert!(json_lines[1].starts_with("{\"ai_version\":\"NDS\",\"under_cap_limit\":true,\"limit_note\":\"在使用上限为5次的限制下\",\"cap_limit\":5"));
         assert!(json_lines[2].starts_with("{\"ai_version\":\"GBA\",\"under_cap_limit\":false"));
     }
 
@@ -524,7 +524,7 @@ mod tests {
         assert!(lines0[0].contains("R1") && lines0[0].contains("Alice: ダークサンダー(D)×6, サーチマンSP(M)×2") && lines0[0].contains("Bob: ビッグノイズ(PA)×3"));
 
         let (hdr1, lines1) = format_result_summary(&recs[1..2], |_, fallback| fallback.to_string());
-        assert_eq!(hdr1, "[NDS] 【在方案B的限制下(≤5)】");
+        assert_eq!(hdr1, "[NDS] 【在使用上限为5次的限制下】");
         assert_eq!(lines1.len(), 1);
         assert!(lines1[0].contains("ダークサンダー(D) 5/5"));
     }
