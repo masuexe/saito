@@ -315,6 +315,9 @@ export global PlayView {
     // its value. The app puts them back as it shows a result.
     in-out property <int> result-ticks;
     in-out property <bool> result-done;
+    // Post-match ABD Mega/Giga/Dark/PA chip usage summary (empty when no ABD high-class chip was used).
+    in property <string> result-abd-header;
+    in property <[string]> result-abd-lines;
 
     // ---- Words the app needs -----------------------------------------------------------------------------
     out property <string> you: I18n.upper(@tr("You"));
@@ -2554,6 +2557,49 @@ export component MatchResult inherits Rectangle {
                 if self.done {
                     PlayView.result-done = true;
                 }
+            }
+        }
+    }
+
+    if PlayView.result-abd-lines.length > 0: Rectangle {
+        property <length> card-w: Theme.phone ? root.width - 2 * Theme.margin : min(440px, root.half-width - 2 * Theme.margin);
+        property <length> card-h: min(Theme.phone ? root.height - root.half-height - Theme.margin - 64px : root.height - 96px, abd-col.preferred-height + 24px);
+        x: Theme.phone ? Theme.margin : root.half-width + (root.half-width - self.card-w) / 2;
+        y: Theme.phone ? root.half-height + 8px : (root.height - self.card-h) / 2;
+        width: self.card-w;
+        height: self.card-h;
+        background: Theme.ground-top.with-alpha(0.88);
+        border-width: 1px;
+        border-color: Theme.line;
+        border-radius: 6px;
+        clip: true;
+
+        abd-col := VerticalLayout {
+            x: 14px;
+            y: 12px;
+            width: parent.width - 28px;
+            spacing: 6px;
+
+            Label {
+                text: I18n.upper(@tr("ABD Chip Usage"));
+                color: Theme.muted;
+            }
+
+            Text {
+                text: PlayView.result-abd-header;
+                color: Theme.cursor;
+                font-family: Theme.body;
+                font-size: 13px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            for line in PlayView.result-abd-lines: Text {
+                text: line;
+                color: Theme.text;
+                font-family: Theme.body;
+                font-size: Theme.handheld ? 11px : 12px;
+                wrap: word-wrap;
             }
         }
     }

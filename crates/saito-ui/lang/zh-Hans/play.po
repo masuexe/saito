@@ -521,3 +521,6 @@ msgstr "ABD 上限：{} 次"
 
 msgid "ABD Cap: Off"
 msgstr "ABD 上限：关闭"
+
+msgid "ABD Chip Usage"
+msgstr "ABD 芯片使用次数"

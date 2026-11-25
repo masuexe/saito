@@ -164,14 +164,62 @@ pub fn build_record(content: &Content, ctx: &AbdLogContext, usage: &RoundAbdUsag
     })
 }
 
-/// Append one round record (if non-empty) to the default `abd-stats.jsonl` path.
-pub fn record_round(content: &Content, ctx: &AbdLogContext, usage: &RoundAbdUsage) {
+/// Append one round record (if non-empty) to the default `abd-stats.jsonl` path and return it.
+pub fn record_round(content: &Content, ctx: &AbdLogContext, usage: &RoundAbdUsage) -> Option<AbdRoundRecord> {
     let now = Utc::now().timestamp().max(0) as u64;
-    let Some(record) = build_record(content, ctx, usage, now) else { return };
+    let record = build_record(content, ctx, usage, now)?;
     let path = crate::paths::abd_stats();
     if let Err(why) = append_to(&path, &record) {
         crate::errors::log("recording ABD chip usage", &why);
     }
+    Some(record)
+}
+
+/// Format a compact post-match summary `(header, lines)` for `MatchResult`.
+///
+/// `header` always starts with `[GBA]` / `[合集]` / `[NDS]` and includes `【在方案B的限制下(≤x)】`
+/// when Scheme B's hard cap was active. Returns empty `lines` when `records` is empty.
+pub fn format_result_summary(records: &[AbdRoundRecord], name_for: impl Fn(&str, &str) -> String) -> (String, Vec<String>) {
+    let Some(first) = records.first() else {
+        return (String::new(), Vec::new());
+    };
+    let header = if first.under_cap_limit {
+        match first.cap_limit {
+            Some(c) => format!("[{}] 【在方案B的限制下(≤{c})】", first.ai_version),
+            None => format!("[{}] 【在方案B的限制下】", first.ai_version),
+        }
+    } else {
+        format!("[{}]", first.ai_version)
+    };
+    let mut lines = Vec::new();
+    for r in records {
+        let fmt_side = |entries: &[AbdChipEntry]| -> String {
+            entries
+                .iter()
+                .map(|e| {
+                    let label = name_for(&e.key, &e.name);
+                    match r.cap_limit.filter(|_| r.under_cap_limit) {
+                        Some(cap) => format!("{label}({}) {}/{}", e.class, e.count, cap),
+                        None => format!("{label}({})×{}", e.class, e.count),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let p1_name = if r.players[0].is_empty() { "P1" } else { r.players[0].as_str() };
+        let p2_name = if r.players[1].is_empty() { "P2" } else { r.players[1].as_str() };
+        let mut parts = Vec::new();
+        if !r.sides[0].is_empty() {
+            parts.push(format!("{p1_name}: {}", fmt_side(&r.sides[0])));
+        }
+        if !r.sides[1].is_empty() {
+            parts.push(format!("{p2_name}: {}", fmt_side(&r.sides[1])));
+        }
+        if !parts.is_empty() {
+            lines.push(format!("R{}  {}", r.round, parts.join("  |  ")));
+        }
+    }
+    (header, lines)
 }
 
 /// Append `record` as one JSONL line to `path`.
@@ -465,5 +513,19 @@ mod tests {
             append_to(&path, r).unwrap();
         }
         assert_eq!(load_from(&path), recs);
+    }
+
+    #[test]
+    fn result_summary_leads_with_ai_version_and_cap_ratio() {
+        let recs = sample_records();
+        let (hdr0, lines0) = format_result_summary(&recs[..1], |_, fallback| fallback.to_string());
+        assert_eq!(hdr0, "[合集]");
+        assert_eq!(lines0.len(), 1);
+        assert!(lines0[0].contains("R1") && lines0[0].contains("Alice: ダークサンダー(D)×6, サーチマンSP(M)×2") && lines0[0].contains("Bob: ビッグノイズ(PA)×3"));
+
+        let (hdr1, lines1) = format_result_summary(&recs[1..2], |_, fallback| fallback.to_string());
+        assert_eq!(hdr1, "[NDS] 【在方案B的限制下(≤5)】");
+        assert_eq!(lines1.len(), 1);
+        assert!(lines1[0].contains("ダークサンダー(D) 5/5"));
     }
 }

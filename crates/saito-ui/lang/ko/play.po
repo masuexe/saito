@@ -521,3 +521,6 @@ msgstr "ABD 상한: {}회"
 
 msgid "ABD Cap: Off"
 msgstr "ABD 상한: 끔"
+
+msgid "ABD Chip Usage"
+msgstr "ABD 칩 사용 횟수"

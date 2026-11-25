@@ -1087,29 +1087,53 @@ impl Play {
             BattleResult::Drawn => MatchOutcome::Drawn,
             _ => return false,
         };
-        let Some(b) = shell.battle.as_ref() else { return false };
-        let (wins, losses) = b.stage.player.battle().wins_for(b.viewer);
-        // Record side 0's (P1's) perspective outcome for auto-uploading finished online replays.
-        if let Some((_, recorded_outcome)) = self.recorded_replay.as_mut() {
-            let (p1_wins, p2_wins) = b.stage.player.battle().wins_for(0);
-            let res_str = match (result, b.viewer) {
-                (BattleResult::Won, 0) | (BattleResult::Lost, 1) => "p1",
-                (BattleResult::Lost, 0) | (BattleResult::Won, 1) => "p2",
-                (BattleResult::Drawn, _) => "draw",
-                _ => "unfinished",
-            };
-            *recorded_outcome = Some(crate::replays::feed::UploadOutcome {
-                score: [p1_wins as u32, p2_wins as u32],
-                result: res_str,
-            });
-        }
-        let time = b.stage.player.ticks() as f64 / FRAME_RATE;
+        let (wins, losses, time, abd_game, abd_records) = {
+            let Some(b) = shell.battle.as_mut() else { return false };
+            b.flush_abd_rounds(false);
+            let (wins, losses) = b.stage.player.battle().wins_for(b.viewer);
+            // Record side 0's (P1's) perspective outcome for auto-uploading finished online replays.
+            if let Some((_, recorded_outcome)) = self.recorded_replay.as_mut() {
+                let (p1_wins, p2_wins) = b.stage.player.battle().wins_for(0);
+                let res_str = match (result, b.viewer) {
+                    (BattleResult::Won, 0) | (BattleResult::Lost, 1) => "p1",
+                    (BattleResult::Lost, 0) | (BattleResult::Won, 1) => "p2",
+                    (BattleResult::Drawn, _) => "draw",
+                    _ => "unfinished",
+                };
+                *recorded_outcome = Some(crate::replays::feed::UploadOutcome {
+                    score: [p1_wins as u32, p2_wins as u32],
+                    result: res_str,
+                });
+            }
+            let time = b.stage.player.ticks() as f64 / FRAME_RATE;
+            (wins, losses, time, b.game.clone(), b.abd_records.clone())
+        };
+        let (abd_header, abd_lines) = if abd_records.is_empty() {
+            (String::new(), Vec::new())
+        } else {
+            let ready = shell.games.ready(&abd_game);
+            let graphics = ready.as_ref().map(|r| r.graphics(shell.i18n.code));
+            let names = ready.as_ref().zip(graphics.as_ref()).map(|(r, g)| Names::of(r.content(), g));
+            crate::abd_stats::format_result_summary(&abd_records, |key, fallback| {
+                if let (Some(r), Some(n)) = (ready.as_ref(), names.as_ref())
+                    && let Some(chip) = saito_match::ids::chip(r.content(), &abd_game, key)
+                {
+                    n.chip(chip).to_string()
+                } else {
+                    fallback.to_string()
+                }
+            })
+        };
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
         view.set_outcome(outcome);
         view.set_result_wins(wins as i32);
         view.set_result_losses(losses as i32);
         view.set_result_time((time * 100.0).round().min(i32::MAX as f64) as i32);
+        view.set_result_abd_header(abd_header.into());
+        view.set_result_abd_lines(ModelRc::new(VecModel::from(
+            abd_lines.into_iter().map(slint::SharedString::from).collect::<Vec<_>>(),
+        )));
         view.set_result_settled(false);
         view.set_result_ticks(0);
         view.set_result_done(false);
@@ -1144,6 +1168,8 @@ impl Play {
         let view = ui.global::<PlayView>();
         if view.get_result_shown() {
             view.set_result_shown(false);
+            view.set_result_abd_header(Default::default());
+            view.set_result_abd_lines(Default::default());
             shell.cover_battle("result.", None);
         }
     }

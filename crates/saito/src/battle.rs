@@ -164,6 +164,8 @@ pub struct Battle {
     party: party::PartyState,
     /// Persistent ABD usage logging context (Online & Practice EXE4/EXE5 battles).
     pub abd_log: Option<crate::abd_stats::AbdLogContext>,
+    /// Recorded ABD high-class chip rounds for the current set (shown on MatchResult).
+    pub abd_records: Vec<crate::abd_stats::AbdRoundRecord>,
 }
 
 /// The keys of a phone's pad held sideways that are over the custom screen's window, by bit: SELECT, the four
@@ -189,6 +191,7 @@ impl Battle {
             return false;
         }
         self.flush_abd_rounds(false);
+        self.abd_records.clear();
         self.hold.reset(&mut self.stage.player);
         self.over = false;
         self.stage.hold();
@@ -201,12 +204,15 @@ impl Battle {
         let Some(ctx) = self.abd_log.as_ref() else { return };
         let content = self.stage.player.battle().content.clone();
         for usage in self.stage.player.take_abd_rounds() {
-            crate::abd_stats::record_round(&content, ctx, &usage);
+            if let Some(rec) = crate::abd_stats::record_round(&content, ctx, &usage) {
+                self.abd_records.push(rec);
+            }
         }
         if include_current
             && let Some(usage) = self.stage.player.flush_current_abd_round()
+            && let Some(rec) = crate::abd_stats::record_round(&content, ctx, &usage)
         {
-            crate::abd_stats::record_round(&content, ctx, &usage);
+            self.abd_records.push(rec);
         }
     }
 }
@@ -478,7 +484,7 @@ impl Shell {
         shell.set_connection_shown(false);
         shell.set_connection_open(false);
         self.keys.pressed.clear();
-        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: start.abd_log });
+        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: start.abd_log, abd_records: Vec::new() });
         Some((start.owner, BattleEvent::Started))
     }
 
@@ -852,7 +858,7 @@ mod tests {
         let m = short_set::of(&content, "exe6", 7);
         let driver = LivePlayer::new(Set::of(&content, &m, 7));
         let player = Player::with(graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None), None, None, Box::new(driver));
-        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None };
+        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new() };
         let play_out = |b: &mut Battle| {
             while {
                 let input = short_set::shooter(b.stage.player.battle(), 0, b.stage.player.ticks() as u32);
@@ -1115,7 +1121,7 @@ mod tests {
         saito_frontend::testing::scrolling_background(&mut graphics);
         let audio = saito_frontend::testing::audio(content);
         let player = Player::with(graphics.renderer(Enhancements::NONE, None), None, Some(audio), Box::new(driver));
-        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None }
+        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new() }
     }
 
     /// A practice session of Practice's own, as the editor's PRACTICE starts one: the menu open before the battle's

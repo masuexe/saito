@@ -521,3 +521,6 @@ msgstr "ABD上限: {}回"
 
 msgid "ABD Cap: Off"
 msgstr "ABD上限: なし"
+
+msgid "ABD Chip Usage"
+msgstr "ABDチップ使用回数"
