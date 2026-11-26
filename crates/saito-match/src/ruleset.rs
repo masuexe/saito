@@ -58,7 +58,7 @@ use crate::{Side, Wrong, ids};
 use saito_battle::content::{ChipClass, ChipData, ChipFlags, Content, PlayerFact};
 use serde::{Deserialize, Serialize};
 use serde::de::IntoDeserializer;
-use saito_content_api::{ChipHandle, Data, DataKey, FieldType, FormHandle, NaviHandle, Registry};
+use saito_content_api::{ChipHandle, Data, DataKey, EntryHandle, FieldType, FormHandle, NaviHandle, Registry};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -439,27 +439,29 @@ fn chooses_variants(content: &Content, fact: &str) -> bool {
 /// first come (EXE6's Bass-Cross MegaMan's effects': gregar, falzar). None
 /// for most.
 pub fn variants_of(content: &Content, registry: Registry, h: u16) -> Vec<String> {
-    fn walk(d: &Data, out: &mut Vec<String>) {
+    fn walk(d: &Data, depth: usize, out: &mut Vec<String>) {
         match d {
             Data::Map(entries) => {
                 for (k, v) in entries {
                     match (k, v) {
-                        (DataKey::Str(k), Data::Str(name)) if k == VARIANT_OF => {
+                        // Skip a definition's own top-level `version` (its version group, e.g. EXE4 soul patch cards);
+                        // only nested `version` fields inside parts/effects declare per-version variants.
+                        (DataKey::Str(k), Data::Str(name)) if depth > 0 && k == VARIANT_OF => {
                             if !out.contains(name) {
                                 out.push(name.clone());
                             }
                         }
-                        _ => walk(v, out),
+                        _ => walk(v, depth + 1, out),
                     }
                 }
             }
-            Data::List(items) => items.iter().for_each(|v| walk(v, out)),
+            Data::List(items) => items.iter().for_each(|v| walk(v, depth + 1, out)),
             _ => {}
         }
     }
     let mut out = Vec::new();
     if let Some(def) = ids::key_of(content, registry, h).and_then(|key| content.defs.definitions.get(registry, key)) {
-        walk(&def.spec, &mut out);
+        walk(&def.spec, 0, &mut out);
     }
     out
 }
@@ -1194,6 +1196,14 @@ fn groups(content: &Content, game: &str, builds: &Builds) -> Vec<Group> {
             g.members.insert((Registry::Form, h));
         }
     }
+    for h in 0..content.defs.entries.len() as u16 {
+        let key = &content.defs.entry(EntryHandle(h)).key;
+        if let Some(v) = own(Registry::Entry, key).filter(|_| ids::in_game(content, game, key))
+            && let Some(g) = groups.iter_mut().find(|g| g.id == v)
+        {
+            g.members.insert((Registry::Entry, h));
+        }
+    }
     groups
 }
 
@@ -1292,11 +1302,15 @@ mod tests {
                 let h = crate::ids::chip(&content, game, both).unwrap().0;
                 assert!(r.group_of(Registry::Chip, &Item::of(h)).is_none(), "{game} {both}");
             }
-            // Bass-Cross MegaMan is two items, a variant of each group (EXE4 has no such card).
+            // Bass-Cross MegaMan is two items, a variant of each group (EXE4 has no variant card,
+            // only its twelve version-exclusive soul patch cards: six Red Sun and six Blue Moon).
             let cards = r.category("patch_cards").unwrap();
             let variants: Vec<&Item> = cards.items.iter().filter(|i| i.variant.is_some()).collect();
             if game == "exe4" {
                 assert!(variants.is_empty());
+                for g in &r.groups {
+                    assert_eq!(r.group_items(cards, g).len(), 6, "{game} {}", g.id);
+                }
             } else {
                 assert_eq!(variants.iter().map(|i| i.variant.as_deref().unwrap()).collect::<Vec<_>>(), groups, "{game}");
                 for (g, v) in r.groups.iter().zip(&variants) {
@@ -1337,14 +1351,17 @@ mod tests {
                 let gate_party = r.preset("gate_party").unwrap();
                 assert_eq!(gate_party.allowed_count(party), party.items.len());
                 assert_eq!(gate_party.allowed_count(navi), navi.items.len() - 1);
+            } else if game == "exe6" {
+                let navi = r.category("navi").unwrap();
+                assert!(r.first().one_per_build && r.first().allowed_count(navi) == 1);
+                assert!(!r.preset("masters_mixed").unwrap().one_per_build && r.preset("masters_mixed").unwrap().allowed_count(navi) == 1);
+                assert!(r.preset("senior").unwrap().one_per_build && r.preset("senior").unwrap().allowed_count(navi) == 1);
+                assert!(!r.preset("senior_mixed").unwrap().one_per_build && r.preset("senior_mixed").unwrap().allowed_count(navi) == 1);
+                assert_eq!(r.preset("gate").unwrap().allowed_count(navi), navi.items.len() - 1);
+                assert!(!r.preset("gate_mixed").unwrap().one_per_build);
             } else {
                 assert!(!r.first().bans_anything() && r.first().one_per_build);
                 assert!(!r.preset("masters_mixed").unwrap().bans_anything() && !r.preset("masters_mixed").unwrap().one_per_build);
-                if game == "exe6" {
-                    let navi = r.category("navi").unwrap();
-                    assert_eq!(r.preset("gate").unwrap().allowed_count(navi), navi.items.len() - 1);
-                    assert!(!r.preset("gate_mixed").unwrap().one_per_build);
-                }
             }
             assert!(!r.preset("masters_mixed").unwrap().one_per_build);
             assert_eq!(r.first().groups_chosen(&r, category), Some(groups.to_vec()));
@@ -1836,5 +1853,121 @@ mod tests {
             "expected per-navi ban on lead party_programs, got: {:?}",
             bad.problems
         );
+    }
+
+    /// S-111: EXE4 soul patch cards (121..=126 Red Sun, 127..=132 Blue Moon) belong to their version group
+    /// without being treated as multi-variant cards, so Masters (`one_per_build`) rejects mixing a Blue Moon
+    /// soul patch card with Red Sun souls, Red Sun folder Giga chips, or Red Sun ABD chips, while Masters Mixed
+    /// allows it.
+    #[test]
+    fn exe4_soul_patch_cards_enforce_one_version_per_build() {
+        use crate::build::Checked;
+        use saito_battle::custom::FolderChip;
+
+        let content = exe4_content();
+        let r = Rulesets::of(&content, "exe4").unwrap();
+        let builds = Builds::of(&content, "exe4").unwrap();
+        let slots = builds.slots.as_ref().unwrap();
+        let number_soul = ids::entry(&content, "exe4", "patch_cards", "128-number-soul").unwrap();
+        let roll_soul = ids::entry(&content, "exe4", "patch_cards", "121-roll-soul").unwrap();
+
+        // Top-level `version` assigns group membership without turning the card into a variant card.
+        assert!(variants_of(&content, Registry::Entry, number_soul.0).is_empty());
+        assert!(variants_of(&content, Registry::Entry, roll_soul.0).is_empty());
+        assert_eq!(r.group_of(Registry::Entry, &Item::of(roll_soul.0)).map(|g| g.id.as_str()), Some("redsun"));
+        assert_eq!(r.group_of(Registry::Entry, &Item::of(number_soul.0)).map(|g| g.id.as_str()), Some("bluemoon"));
+
+        // 1. Red Sun souls + Blue Moon Number Soul patch card -> Mixed under Masters, legal under Masters Mixed.
+        let mut with_rs_souls = builds.new_build(&content, "redsun").unwrap();
+        slots.put(&content, &mut with_rs_souls, number_soul).unwrap();
+        let problems = r.first().problems(&r, &content, &with_rs_souls);
+        assert!(
+            matches!(&problems[..], [Problem { what: Wrong::Mixed { groups, items }, .. }]
+                if groups == &["redsun", "bluemoon"] && items.contains(&(Registry::Entry, Item::of(number_soul.0)))),
+            "expected Mixed versions for Red Sun souls + Number Soul card, got: {problems:?}"
+        );
+        assert!(Checked::under(&content, "exe4", &with_rs_souls, &r, r.preset("masters_mixed").unwrap()).ready());
+
+        // 2. Empty souls + Red Sun Giga chip in folder + Blue Moon Number Soul card -> Mixed under Masters.
+        let mut with_rs_giga = builds.new_build(&content, "redsun").unwrap();
+        with_rs_giga.set_fact(&content, "souls", &[]).unwrap();
+        let blakbarr = ids::chip(&content, "exe4", "blakbarr").unwrap();
+        let blakbarr_code = content.defs.chip(blakbarr).record.codes[0];
+        let mut folder = with_rs_giga.folder(&content);
+        folder.chips[0] = Some(FolderChip::new(blakbarr, blakbarr_code));
+        with_rs_giga.set_folder(&content, &folder).unwrap();
+        slots.put(&content, &mut with_rs_giga, number_soul).unwrap();
+        let problems = r.first().problems(&r, &content, &with_rs_giga);
+        assert!(
+            matches!(&problems[..], [Problem { what: Wrong::Mixed { groups, items }, .. }]
+                if groups == &["redsun", "bluemoon"]
+                && items.contains(&(Registry::Chip, Item::of(blakbarr.0)))
+                && items.contains(&(Registry::Entry, Item::of(number_soul.0)))),
+            "expected Mixed versions for Red Sun Giga + Number Soul card, got: {problems:?}"
+        );
+
+        // 3. Empty souls + Red Sun Giga chip in ABD + Blue Moon Number Soul card -> Mixed under Masters.
+        let mut with_rs_abd = builds.new_build(&content, "redsun").unwrap();
+        with_rs_abd.set_fact(&content, "souls", &[]).unwrap();
+        let redsun = ids::chip(&content, "exe4", "redsun").unwrap();
+        let place = Fact::Record(vec![
+            ("chip", Fact::Value(Value::Def(Registry::Chip, redsun.0))),
+            ("pattern", Fact::Value(Value::Int(0))),
+            ("zero", Fact::Value(Value::Bool(false))),
+        ]);
+        with_rs_abd.set_fact(&content, "auto_battle_places", &[place]).unwrap();
+        slots.put(&content, &mut with_rs_abd, number_soul).unwrap();
+        let problems = r.first().problems(&r, &content, &with_rs_abd);
+        assert!(
+            matches!(&problems[..], [Problem { what: Wrong::Mixed { groups, items }, .. }]
+                if groups == &["redsun", "bluemoon"]
+                && items.contains(&(Registry::Chip, Item::of(redsun.0)))
+                && items.contains(&(Registry::Entry, Item::of(number_soul.0)))),
+            "expected Mixed versions for Red Sun ABD + Number Soul card, got: {problems:?}"
+        );
+
+        // 4. Matching Blue Moon build + Blue Moon Number Soul card -> Ready under Masters.
+        let mut bm = builds.new_build(&content, "bluemoon").unwrap();
+        slots.put(&content, &mut bm, number_soul).unwrap();
+        assert!(Checked::under(&content, "exe4", &bm, &r, r.first()).ready());
+    }
+
+    /// S-112: EXE6 Masters and Senior (both single-version and mixed) restrict the main navi to MegaMan only,
+    /// while Gate / Gate Mixed disallow MegaMan and allow Link Navis.
+    #[test]
+    fn exe6_masters_and_senior_restrict_main_navi_to_megaman() {
+        use crate::build::Checked;
+
+        let content = exe6_content();
+        let r = Rulesets::of(&content, "exe6").unwrap();
+        let builds = Builds::of(&content, "exe6").unwrap();
+        let megaman = ids::navi(&content, "exe6", "megaman").unwrap();
+        let chargeman = ids::navi(&content, "exe6", "chargeman").unwrap();
+        let spoutman = ids::navi(&content, "exe6", "spoutman").unwrap();
+        let protoman = ids::navi(&content, "exe6", "protoman").unwrap();
+
+        let mut charge_side = builds.new_build(&content, "gregar").unwrap();
+        builds.set_navi(&content, &mut charge_side, chargeman).unwrap();
+
+        for preset_id in ["masters", "masters_mixed", "senior", "senior_mixed"] {
+            let preset = r.preset(preset_id).unwrap();
+            assert!(preset.allows("navi", megaman.0), "{preset_id} must allow MegaMan");
+            for link in [chargeman, spoutman, protoman] {
+                assert!(!preset.allows("navi", link.0), "{preset_id} must disallow non-MegaMan navis");
+            }
+            let checked = Checked::under(&content, "exe6", &charge_side, &r, preset);
+            assert!(
+                checked.problems.iter().any(|p| p.field.as_deref() == Some("navi") && matches!(p.what, Wrong::NotAllowed { .. })),
+                "{preset_id} must flag ChargeMan build as NotAllowed, got: {:?}",
+                checked.problems
+            );
+        }
+
+        for preset_id in ["gate", "gate_mixed"] {
+            let preset = r.preset(preset_id).unwrap();
+            assert!(!preset.allows("navi", megaman.0), "{preset_id} must disallow MegaMan");
+            assert!(preset.allows("navi", chargeman.0), "{preset_id} must allow ChargeMan");
+            assert!(Checked::under(&content, "exe6", &charge_side, &r, preset).ready());
+        }
     }
 }

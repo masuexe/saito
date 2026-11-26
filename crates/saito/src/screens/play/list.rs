@@ -53,10 +53,10 @@ pub(super) struct Naming {
     version: usize,
 }
 
-/// The ruleset a new build of `kit`'s game is made for (NEW BUILD's, an import's): the one the player last chose
-/// (`rulesets::chosen_last`), else the game's first preset.
-fn made_for_new(shell: &Shell, kit: &Kit) -> Option<saito_match::ruleset::Name> {
-    crate::rulesets::chosen_last(shell, kit).map(|p| p.ruleset.name)
+/// The ruleset a new build of `kit`'s game is made for (NEW BUILD's, an import's): the game's first preset
+/// (Masters class), so creating a new build never inherits an arbitrary ruleset used for a previous fun/custom build.
+fn made_for_new(kit: &Kit) -> Option<saito_match::ruleset::Name> {
+    kit.rulesets().map(|r| r.first().name.clone())
 }
 
 impl Play {
@@ -228,15 +228,15 @@ impl Play {
         }
     }
 
-    /// A new build from the game's `version`th group (its version's forms), named `name`, made for the ruleset the
-    /// player last chose ([`made_for_new`]), opened in Builds' editor (the user: "after creating a new build, it
+    /// A new build from the game's `version`th group (its version's forms), named `name`, made for the game's default
+    /// preset ([`made_for_new`]), opened in Builds' editor (the user: "after creating a new build, it
     /// should go directly into the editor"), whose Back comes back here with it chosen.
     fn create(&mut self, shell: &mut Shell, kit: &Kit, name: &str, version: usize) {
         let Some(version) = kit.builds.groups.get(version) else { return };
         self.notice.clear();
         match kit.builds.new_build(kit.content(), &version.id) {
             Ok(side) => {
-                if self.add(shell, kit, &Build::new(kit.content(), name, side).made_for(made_for_new(shell, kit))) {
+                if self.add(shell, kit, &Build::new(kit.content(), name, side).made_for(made_for_new(kit))) {
                     self.edit_chosen(shell);
                 }
             }
@@ -297,7 +297,7 @@ impl Play {
         };
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let name = store::new_name(store::clean_name(&stem).trim_end(), taken);
-        let mut build = Build::new(kit.content(), &name, imported.side).made_for(made_for_new(shell, kit));
+        let mut build = Build::new(kit.content(), &name, imported.side).made_for(made_for_new(kit));
         build.settle(kit.content(), &kit.builds, &crate::screens::builds::editor::navi_only_fields(kit.content()));
         let ui = shell.ui();
         let graphics = kit.ready.graphics(shell.i18n.code);
@@ -376,5 +376,18 @@ impl Play {
         let next = self.builds.get(at + 1).or_else(|| at.checked_sub(1).and_then(|i| self.builds.get(i))).map(|b| b.name().to_string());
         self.notice.clear();
         self.reload(shell, next);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// S-113: New builds in EXE4, EXE5, and EXE6 always default to Masters (`preset:masters`), never inheriting
+    /// whatever custom/fun ruleset was last selected on another build.
+    #[test]
+    fn default_ruleset_for_new_builds_is_masters_across_all_games() {
+        for game in ["exe4", "exe5", "exe6"] {
+            let r = saito_match::testing::rulesets(game);
+            assert_eq!(r.first().name, saito_match::ruleset::Name::Preset("masters".into()), "{game}");
+        }
     }
 }

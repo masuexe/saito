@@ -12,6 +12,7 @@
 -- slot of the setup holds (rules/patch_cards).
 export type SlottedPatchCard = {
     id: string?,
+    version: string?,
     slot: number,
     effects: { any },
 }

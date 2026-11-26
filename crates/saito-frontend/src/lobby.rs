@@ -2346,11 +2346,11 @@ mod tests {
         other
     }
 
-    /// EXE6's settings of a set first to `wins`, under its Mixed ruleset,
-    /// which holds nothing back: the random sides these tests bring may hold
-    /// both versions' Crosses, which Standard (a new lobby's) refuses.
+    /// EXE6's settings of a set first to `wins`, under an open ruleset that
+    /// holds nothing back: the random sides and Link Navis these tests bring
+    /// may hold both versions' Crosses or non-MegaMan navis.
     fn settings(wins: u8) -> Settings {
-        Settings::new("exe6", wins, rulesets().preset("masters_mixed").unwrap().clone())
+        Settings::new("exe6", wins, Ruleset::open(RulesetName::Theirs))
     }
 
     /// A new EXE6 build of `version`: one version's things alone, so it plays

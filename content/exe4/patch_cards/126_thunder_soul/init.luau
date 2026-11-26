@@ -6,6 +6,7 @@ local cards = require("../rules/patch_cards/cards")
 local thundersoul = require("../navis/megaman/forms/thundersoul").thundersoul
 
 local card: SlottedPatchCard = {
+    version = "redsun",
     slot = cards.SLOT_0E,
     effects = {
         cards.soul(thundersoul),

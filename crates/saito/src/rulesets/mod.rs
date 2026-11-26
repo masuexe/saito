@@ -7,8 +7,8 @@
 //! - the ruleset a build is made for ([`made_for`]: the one its file names, `crate::builds::store::Build::ruleset`),
 //!   which it is checked under outside a lobby, and a ruleset's name as a build's file and the settings write it
 //!   ([`name_text`], [`name_of_text`]); the player's own renamed, renamed in the builds made for it ([`rename`]);
-//! - the ruleset the player last chose, one for each game, remembered ([`chosen_last`], [`remember`]): the one a new
-//!   build is made for;
+//! - the ruleset the player last chose, one for each game, remembered ([`chosen_last`], [`remember`]): the fallback a
+//!   lobby starts on where no build says;
 //! - a ruleset's page ([`page`]), which the lobby and the build editor open over themselves.
 //!
 //! What a ruleset is, what a game's categories, groups and presets are and what a build breaks under one are
@@ -202,8 +202,8 @@ pub fn name_of_text(text: &str) -> Option<Name> {
 }
 
 /// The ruleset the player last chose in `kit`'s game (for a build in its editor, or as a lobby's host): the one
-/// remembered for it, where it can still be picked; else the game's first preset. What a new build is made for
-/// (and a lobby starts on where no build says). None where the game says nothing of its rulesets.
+/// remembered for it, where it can still be picked; else the game's first preset. What a lobby starts on where no
+/// build says. None where the game says nothing of its rulesets.
 pub fn chosen_last(shell: &Shell, kit: &Kit) -> Option<Pickable> {
     let picks = pickable(kit);
     let remembered = shell.settings.remembered.get(&remembered_key(&kit.game));

@@ -25,10 +25,10 @@ return {
     -- Unrestricted lets a build mix the versions (the user: "no patch card rules is known as "senior class". patch card
     -- rules is known as "masters class". mixed rules is known as "unrestricted". get rid of version only rules").
     presets = {
-        { id = "masters", versions = "one_per_build" },
-        { id = "masters_mixed", versions = "mixed" },
-        { id = "senior", versions = "one_per_build", only = { patch_cards = {} } },
-        { id = "senior_mixed", versions = "mixed", only = { patch_cards = {} } },
+        { id = "masters", versions = "one_per_build", only = { navi = { "megaman" } } },
+        { id = "masters_mixed", versions = "mixed", only = { navi = { "megaman" } } },
+        { id = "senior", versions = "one_per_build", only = { navi = { "megaman" }, patch_cards = {} } },
+        { id = "senior_mixed", versions = "mixed", only = { navi = { "megaman" }, patch_cards = {} } },
         { id = "gate", versions = "one_per_build", ban = { navi = { "megaman" } } },
         { id = "gate_mixed", versions = "mixed", ban = { navi = { "megaman" } } },
     },

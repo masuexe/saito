@@ -6,6 +6,7 @@ local cards = require("../rules/patch_cards/cards")
 local protosoul = require("../navis/megaman/forms/protosoul").protosoul
 
 local card: SlottedPatchCard = {
+    version = "bluemoon",
     slot = cards.SLOT_0E,
     effects = {
         cards.soul(protosoul),
