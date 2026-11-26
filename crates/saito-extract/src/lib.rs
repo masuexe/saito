@@ -22,6 +22,7 @@ mod gfx;
 pub mod hd_art;
 pub mod letters;
 mod names;
+pub mod nds;
 mod recipe;
 mod rom;
 pub mod shapes;
@@ -29,6 +30,7 @@ mod sound;
 pub mod source;
 mod sprite;
 
+pub use nds::{exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
 pub use recipe::Recipe;
 pub use sound::SongVersions;
 pub use source::{Install, RomSource};

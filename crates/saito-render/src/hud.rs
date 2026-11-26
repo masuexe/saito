@@ -375,6 +375,8 @@ struct Face {
     /// EXE6), which blink when they change.
     own: bool,
     full_synchro: bool,
+    /// EXE5DS Danger (Critical) state active on this live navi.
+    danger: bool,
     count: u8,
     /// The form and the emotion it is the face of (its lookup's), and
     /// whether of the form's second set by the side's rules (the chaos
@@ -382,7 +384,8 @@ struct Face {
     form: FormHandle,
     emotion: Emotion,
     /// The base form's variant set index, as the side's rules ask
-    /// (0 own, 1 ProtoMan Hub Style gold, 2 Colonel Hub Style silver).
+    /// (0 own, 1 ProtoMan Hub Style gold, 2 Colonel Hub Style silver,
+    /// 3 Sol Cross).
     base_variant: u8,
 }
 
@@ -420,10 +423,19 @@ impl Face {
         } else {
             base_variant
         };
+        let danger = live && looks.danger;
+        let picture = f.mugshot.as_ref().map(|faces| {
+            if danger {
+                faces.shown_danger(variant).unwrap_or_else(|| faces.shown(&b.game_rules().emotion, emotion, variant))
+            } else {
+                faces.shown(&b.game_rules().emotion, emotion, variant)
+            }
+        });
         Face {
-            picture: f.mugshot.as_ref().map(|faces| faces.shown(&b.game_rules().emotion, emotion, variant)),
+            picture,
             own: f.base,
-            full_synchro: b.game_rules().emotion.role(emotion) == Some(EmotionRole::FullSynchro),
+            full_synchro: !danger && b.game_rules().emotion.role(emotion) == Some(EmotionRole::FullSynchro),
+            danger,
             // (The count the emotion window's box shows: a stat of the
             // game's own, by its role: EXE6's Beast Out turns.)
             count: match b.stat(side, saito_battle::content::StatRole::WindowCount) {
@@ -554,7 +566,11 @@ impl HudState {
             let live = std::ptr::eq(stats, &b.stats[i]);
             let now = Face::for_window(b, local, stats, live, stats.form);
             let m = self.mood.get_or_insert(Mood { now, before: now, blink: 0, flash: false, white: false });
-            if now.picture != m.now.picture {
+            if now.danger {
+                // EXE5DS Danger state takes over the emotion window immediately without
+                // blinking back to the previous non-danger face.
+                *m = Mood { now, before: now, blink: 0, flash: false, white: false };
+            } else if now.picture != m.now.picture || now.danger != m.now.danger {
                 *m = Mood { now, before: m.now, blink: 12, flash: false, white: false };
             } else if now.count != m.now.count {
                 m.before.count = m.now.count;
@@ -1873,10 +1889,29 @@ fn mugshot_parts<'a>(
     // (The face's place and the box's.)
     let at = (seat.x(x, 32), seat.x(x + 32, 16));
     // A link navi's own face, its definition's (MegaMan's, the navi that
-    // changes form, is his form's): in its second palette in Full Synchro.
+    // changes form, is his form's): in its second palette in Full Synchro,
+    // or its EXE5DS Danger face/box (or pulsing red fallback tint) in Danger.
     let navi = b.content.navi(stats.navi);
     if !navi.changes_form() {
         let Some((tiles, palettes, number)) = crate::lookups::navi_face(graphics, &b.content, stats.navi, problems) else { return items };
+        if live && b.looks[side & 1].danger {
+            if let Some(d) = hud.navi_danger_mugshot(number) {
+                let pal = window_faded(b, screen_layer, side as u8, d.palette);
+                out.push(SpritePart { hflip: flip, ..block(&d.tiles, 32, 16, pal, at.0, EMOTION_WINDOW_Y) });
+                let box_tiles = if d.box_tiles.is_empty() { &hud.navi_box } else { &d.box_tiles };
+                out.push(box_part(None, box_tiles, &pal, (at.1, flip), text, &mut items));
+                note_true_face(b, graphics, side, navi.version.as_deref(), seat.x(x, 48), problems);
+                return items;
+            }
+            let base_pal = palettes.first().copied().unwrap_or_default();
+            let danger_pal = danger_fallback_palette(base_pal, b.consoles[side & 1].frames);
+            let pal = window_faded(b, screen_layer, side as u8, danger_pal);
+            let tiles = face_with_ring(hud, number, tiles, &pal, (at.0, flip), text, &mut items);
+            out.push(SpritePart { hflip: flip, ..block(tiles, 32, 16, pal, at.0, EMOTION_WINDOW_Y) });
+            out.push(box_part(hud.shapes.navi_box.as_ref(), &hud.navi_box, &pal, (at.1, flip), text, &mut items));
+            note_true_face(b, graphics, side, navi.version.as_deref(), seat.x(x, 48), problems);
+            return items;
+        }
         let full_synchro = live && emotion_role(b, side as u8) == Some(EmotionRole::FullSynchro);
         let pal = window_faded(b, screen_layer, side as u8, palettes.get(full_synchro as usize).or(palettes.first()).copied().unwrap_or_default());
         let tiles = face_with_ring(hud, number, tiles, &pal, (at.0, flip), text, &mut items);
@@ -1895,21 +1930,40 @@ fn mugshot_parts<'a>(
     if let Some(form) = crate::custom::face(b, side) {
         face = Face::for_window(b, side as u8, stats, live, form);
     }
+    // Always reflect live `looks.danger` immediately even if `state.mood` has
+    // not ticked since `looks.danger` flipped.
+    if live && b.looks[side & 1].danger {
+        face.danger = true;
+    }
     let face_variant = if live && saito_battle::kinds::player::face_variant_any_form(b, side as u8) {
         1
     } else {
         face.base_variant
     };
-    let (picture, Some((gfx, palettes))) = crate::lookups::form_face(
-        graphics,
-        &b.content,
-        face.form,
-        face.emotion,
-        face_variant,
-        problems,
-    ) else { return items };
+    let (picture, used_danger_art, face_gfx) = if face.danger {
+        match crate::lookups::form_danger_face(graphics, &b.content, face.form, face_variant, problems) {
+            (pic, Some(gfx)) => (pic, true, Some(gfx)),
+            _ => {
+                let (pic, gfx) = crate::lookups::form_face(graphics, &b.content, face.form, face.emotion, face_variant, problems);
+                (pic, false, gfx)
+            }
+        }
+    } else {
+        let (pic, gfx) = crate::lookups::form_face(graphics, &b.content, face.form, face.emotion, face_variant, problems);
+        (pic, false, gfx)
+    };
+    let Some((gfx, palettes)) = face_gfx else { return items };
     // (The white of a change to Full Synchro: `byte_801CD80`.)
-    let pal = if state.mood.is_some_and(|m| m.white) { [0x7FFF; 16] } else { palettes.first().copied().unwrap_or_default() };
+    let base_pal = if !face.danger && state.mood.is_some_and(|m| m.white) {
+        [0x7FFF; 16]
+    } else {
+        palettes.first().copied().unwrap_or_default()
+    };
+    let pal = if face.danger && !used_danger_art {
+        danger_fallback_palette(base_pal, b.consoles[side & 1].frames)
+    } else {
+        base_pal
+    };
     let pal = window_faded(b, screen_layer, side as u8, pal);
     let face_hud = hud;
     let gfx = match picture {
@@ -2100,6 +2154,30 @@ fn count_number(counts: &saito_assets::letters::CountLetters, n: usize, palette:
     let glyphs = chars.chars().zip(&d.glyphs).map(|(c, &[gx, gy, gw, gh])| (c, [(gx as i32 + dx) as f32, gy as f32, gw as f32, gh as f32])).collect();
     let fitted = crate::numbers::Fitted { glyphs, set: crate::numbers::DIGITS.into(), fill: d.fill.iter().map(|&c| color(c)).collect(), rim: d.rim.map(color), shadow: d.shadow.map(color), face: crate::numbers::Face::Digits, ids: Vec::new() };
     Some(TextItem::fitted(fitted, Rect::new(x, y, 16, 16)))
+}
+
+/// Pulsing crimson/rose Danger fallback tint for Team Navis (or forms without
+/// dedicated Danger art) when no EXE5DS ROM is provided.
+fn danger_fallback_palette(palette: Palette, frames: u32) -> Palette {
+    // Gentle 32-frame triangle pulse (`0..=3`) so Danger stands out unmistakably.
+    let phase = (frames / 4) & 7;
+    let pulse = (if phase < 4 { phase } else { 7 - phase }) as u16;
+    let mut out = [0u16; 16];
+    for (i, &c) in palette.iter().enumerate() {
+        if i == 0 || c == 0 {
+            out[i] = c & 0x7FFF;
+            continue;
+        }
+        let r = c & 31;
+        let g = (c >> 5) & 31;
+        let b = (c >> 10) & 31;
+        let lum = (r * 3 + g * 5 + b * 2) / 10;
+        let nr = (lum + 10 + pulse).min(31);
+        let ng = ((lum * 2) / 5).min(22);
+        let nb = ((lum * 3) / 5 + 3 + (pulse / 2)).min(27);
+        out[i] = nr | (ng << 5) | (nb << 10);
+    }
+    out
 }
 
 /// The emotion window's palette (sprite palette 12: `byte_30016D0`) as
@@ -3559,5 +3637,159 @@ mod tests {
         let field = parts.iter().find(|p| !(p.x == GAUGE_WARNING.0 && p.y == GAUGE_WARNING.1)).expect("field warning part");
         assert_eq!(gauge.anchor, Anchor::TOP, "gauge warning must anchor to TOP");
         assert_eq!(field.anchor, Anchor::CENTER, "field warning must stay anchored to CENTER");
+    }
+
+    #[test]
+    fn danger_hud_renders_megaman_base_hub_colonel_and_sol_faces() {
+        use saito_battle::content::{FaceSet, Faces, MugshotId};
+
+        let mut c = testing::build();
+        let megaman = c.navi_by_key(testing::MEGAMAN);
+        let base_form = c.base_form_for(megaman);
+
+        c.defs.forms[base_form.index()].record.mugshot = Some(Faces {
+            own: FaceSet {
+                by_emotion: vec![("normal".into(), MugshotId(0))],
+                every: None,
+                danger: Some(MugshotId(4)),
+            },
+            variant: Some(FaceSet {
+                by_emotion: vec![("normal".into(), MugshotId(1))],
+                every: None,
+                danger: Some(MugshotId(5)),
+            }),
+            variant2: Some(FaceSet {
+                by_emotion: vec![("normal".into(), MugshotId(2))],
+                every: None,
+                danger: Some(MugshotId(6)),
+            }),
+            variant3: Some(FaceSet {
+                by_emotion: vec![("normal".into(), MugshotId(3))],
+                every: None,
+                danger: Some(MugshotId(7)),
+            }),
+        });
+
+        let c = std::sync::Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+        testing::on(&mut setup, &c);
+        let mut b = Battle::new(setup, c);
+        b.tick(&[saito_battle::input::PlayerTick::default(); 2], Default::default());
+
+        let mut h = hud();
+        h.mugshots = (0..8u8)
+            .map(|i| (Tiles { pixels: vec![i + 1; 8 * Tiles::TILE] }, [0x0400 * (i as u16 + 1); 16]))
+            .collect();
+        h.mugshot_boxes = (0..8u8).map(|i| Tiles { pixels: vec![i + 10; 4 * Tiles::TILE] }).collect();
+        let assets = saito_assets::Bundle { hud: h, ..saito_assets::Bundle::default() };
+        let mut numbers = testing::asset_numbers(&b.content);
+        numbers.mugshots = (0..8).collect();
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+
+        let r = b.player(0).unwrap();
+        let draw = |b: &Battle, state: &HudState| {
+            let mut out = Vec::new();
+            let mut problems = Problems::default();
+            let shared = SharedGlyphs::default();
+            let text = TextSink::original();
+            let _ = mugshot_parts(b, &assets.hud, &graphics, state, r, (0, Seat::alone(0), None), (&shared, &text), &mut out, &mut problems);
+            (out[0].tiles.pixels[0], out[1].tiles.pixels[0])
+        };
+
+        let cases = [
+            ("base", (false, false, false), 1u8, 10u8, 5u8, 14u8),
+            ("hub-gold", (true, false, false), 2, 11, 6, 15),
+            ("hub-colonel", (false, true, false), 3, 12, 7, 16),
+            ("sol-cross", (false, false, true), 4, 13, 8, 17),
+        ];
+
+        for (label, (v1, v2, v3), norm_face, norm_box, danger_face, danger_box) in cases {
+            b.looks[0].face_variant = v1;
+            b.looks[0].face_variant_alt = v2;
+            b.looks[0].face_variant_sol = v3;
+            b.looks[0].danger = false;
+            let mut state = HudState::default();
+            state.tick(&b, 0);
+            assert_eq!(draw(&b, &state), (norm_face, norm_box), "{label} normal face+box");
+
+            // Flipping `looks.danger` shows the Danger face & box immediately and never blinks back.
+            b.looks[0].danger = true;
+            assert_eq!(draw(&b, &state), (danger_face, danger_box), "{label} immediate danger before tick");
+            for tick in 0..8 {
+                state.tick(&b, 0);
+                assert_eq!(draw(&b, &state), (danger_face, danger_box), "{label} danger tick {tick}");
+            }
+        }
+    }
+
+    #[test]
+    fn danger_hud_renders_team_navi_ds_art_and_gba_fallback() {
+        use saito_assets::{NAVI_MUGSHOTS, NaviDangerFace, NaviMugshot};
+        use saito_battle::content::MugshotId;
+
+        let mut c = testing::build();
+        let partner = c.navi_by_key(testing::LINK_NAVI);
+        c.defs.navis[partner.index()].record.mugshot = Some(MugshotId(0));
+
+        let c = std::sync::Arc::new(c);
+        let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+        testing::on(&mut setup, &c);
+        let mut b = Battle::new(setup, c);
+        b.tick(&[saito_battle::input::PlayerTick::default(); 2], Default::default());
+
+        // Put the Team Navi live on side 0.
+        b.stats[0].navi = partner;
+        b.stats[0].form = b.content.base_form_for(partner);
+        b.looks[0].danger = true;
+
+        let normal_pal: Palette = [
+            0x0000,
+            saito_assets::bgr555([0x20, 0x60, 0xE0]),
+            saito_assets::bgr555([0xE0, 0xE0, 0xE0]),
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let ds_danger_pal: Palette = [0x0000, 0x7B9F, 0x66FF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        let mut h_fallback = hud();
+        h_fallback.navi_mugshots = vec![NaviMugshot {
+            tiles: Tiles { pixels: vec![3; 8 * Tiles::TILE] },
+            palettes: [normal_pal, [0x03E0; 16]],
+        }];
+        h_fallback.navi_box = Tiles { pixels: vec![4; 4 * Tiles::TILE] };
+
+        let mut h_ds = h_fallback.clone();
+        h_ds.navi_danger_mugshots = vec![Some(NaviDangerFace {
+            tiles: Tiles { pixels: vec![9; 8 * Tiles::TILE] },
+            box_tiles: Tiles { pixels: vec![11; 4 * Tiles::TILE] },
+            palette: ds_danger_pal,
+        })];
+
+        let mut numbers = testing::asset_numbers(&b.content);
+        numbers.mugshots = vec![NAVI_MUGSHOTS];
+        let r = b.player(0).unwrap();
+
+        // 1. DS art path: draws DS danger face tiles (9), DS danger box (11), and DS danger palette.
+        let assets_ds = saito_assets::Bundle { hud: h_ds, ..saito_assets::Bundle::default() };
+        let gfx_ds = crate::graphics::Graphics::of(&assets_ds).with_numbers(&numbers);
+        let mut out = Vec::new();
+        let mut problems = Problems::default();
+        let shared = SharedGlyphs::default();
+        let text = TextSink::original();
+        let _ = mugshot_parts(&b, &assets_ds.hud, &gfx_ds, &HudState::default(), r, (0, Seat::alone(0), None), (&shared, &text), &mut out, &mut problems);
+        assert_eq!(out[0].tiles.pixels[0], 9, "DS danger face tiles");
+        assert_eq!(out[0].palette, ds_danger_pal, "DS danger palette");
+        assert_eq!(out[1].tiles.pixels[0], 11, "DS danger box tiles");
+
+        // 2. GBA fallback path: draws normal tiles (3) and navi_box (4) with a crimson-tinted palette != normal_pal.
+        let assets_fb = saito_assets::Bundle { hud: h_fallback, ..saito_assets::Bundle::default() };
+        let gfx_fb = crate::graphics::Graphics::of(&assets_fb).with_numbers(&numbers);
+        let mut out = Vec::new();
+        let _ = mugshot_parts(&b, &assets_fb.hud, &gfx_fb, &HudState::default(), r, (0, Seat::alone(0), None), (&shared, &text), &mut out, &mut problems);
+        assert_eq!(out[0].tiles.pixels[0], 3, "GBA fallback uses normal Team Navi tiles");
+        assert_eq!(out[1].tiles.pixels[0], 4, "GBA fallback uses normal navi_box");
+        assert_ne!(out[0].palette, normal_pal, "GBA fallback tints palette red for Danger");
+        let tinted_r = out[0].palette[1] & 31;
+        let tinted_g = (out[0].palette[1] >> 5) & 31;
+        assert!(tinted_r > tinted_g, "Danger fallback tint must be strongly red-shifted (r={tinted_r}, g={tinted_g})");
     }
 }

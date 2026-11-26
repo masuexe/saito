@@ -214,9 +214,12 @@ impl Recipe {
         let model::Extracted { names, mut graphics, sound } = model::extracted(&value).map_err(recipe)?;
         drop((value, extract));
         drop(vm);
+        let mut warnings = Vec::new();
+        if game == "exe5" {
+            warnings.extend(crate::nds::apply_exe5_ds_assets(&mut graphics));
+        }
         complete(&mut graphics, &names).map_err(|e| Error(format!("{game}: {e}")))?;
         progress(GRAPHICS_SHARE);
-        let mut warnings = Vec::new();
         warnings.extend(crate::letters::read(&mut graphics).into_iter().map(|p| format!("letters: {p}")));
         warnings.extend(elements::split(&mut graphics.custom).into_iter().map(|p| format!("element icons: {p}")));
         warnings.extend(crate::shapes::read(&mut graphics, &self.drawings(), &|i| names.banner(4 * i as u8)).into_iter().map(|p| format!("frames: {p}")));

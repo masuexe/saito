@@ -508,6 +508,9 @@ pub struct Hud {
     /// ProtoMan's or Colonel's). Which face a form or a navi shows is its
     /// definition's (`mugshot`), by number (see [`NAVI_MUGSHOTS`]).
     pub navi_mugshots: Vec<NaviMugshot>,
+    /// EXE5DS Danger (Critical) faces for link navis, indexed identically to
+    /// `navi_mugshots` (empty or `None` when using the GBA fallback).
+    pub navi_danger_mugshots: Vec<Option<NaviDangerFace>>,
     /// The box beside a link navi's mugshot (2x2 tiles), where MegaMan's
     /// count is.
     pub navi_box: Tiles,
@@ -745,6 +748,13 @@ impl Hud {
     pub fn mugshot_box(&self, number: u8) -> Option<&Tiles> {
         self.mugshot_boxes.get(number as usize).filter(|t| !t.is_empty())
     }
+
+    /// The link navi's EXE5DS Danger (Critical) mugshot for `number`
+    /// (`NAVI_MUGSHOTS + i`), if DS assets supplied one.
+    pub fn navi_danger_mugshot(&self, number: u8) -> Option<&NaviDangerFace> {
+        let i = number.checked_sub(NAVI_MUGSHOTS)?;
+        self.navi_danger_mugshots.get(i as usize).and_then(Option::as_ref)
+    }
 }
 
 /// The dialogue font (the chatbox's, `byte_86ACD60`): glyphs of 16x12
@@ -838,6 +848,15 @@ impl DialogueFont {
 pub struct NaviMugshot {
     pub tiles: Tiles,
     pub palettes: [Palette; 2],
+}
+
+/// A link navi's EXE5DS Danger (Critical) mugshot (4x2 tiles), its danger
+/// box beside it (2x2 tiles), and its BGR555 palette.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NaviDangerFace {
+    pub tiles: Tiles,
+    pub box_tiles: Tiles,
+    pub palette: Palette,
 }
 
 /// A chip's icon. Empty tiles: the chip has none.

@@ -134,6 +134,7 @@ impl Lookup {
                 let tag = match variant {
                     0 => "",
                     1 => " (second set)",
+                    3 => " (sol cross set)",
                     _ => " (alternate set)",
                 };
                 format!("form {} face {}{tag}", form(h), c.rules().emotion.name(e))

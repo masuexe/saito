@@ -297,8 +297,9 @@ pub fn navi_face<'a>(graphics: &Graphics<'a>, c: &Content, navi: NaviHandle, pro
 }
 
 /// The face a form shows for an emotion (its definition's mugshot for it, of
-/// its variant set `variant`: `0` own, `1` primary variant, `2` alternate):
-/// the mugshot's number in the game's HUD, and the picture with its palettes.
+/// its variant set `variant`: `0` own, `1` primary variant, `2` alternate,
+/// `3` Sol Cross): the mugshot's number in the game's HUD, and the picture
+/// with its palettes.
 #[allow(clippy::type_complexity)]
 pub fn form_face<'a>(
     graphics: &Graphics<'a>,
@@ -312,6 +313,28 @@ pub fn form_face<'a>(
     let face = picture.and_then(|n| graphics.bundle().hud.mugshot(n));
     if problems.lookup(Lookup::FormFace(form, emotion, variant)) && face.is_none() {
         problems.note(format!("form {:?} has no mugshot in the game's graphics", c.defs.form(form).key));
+    }
+    (picture, face)
+}
+
+/// The EXE5DS Danger (Critical) face a form shows for `variant`, if declared
+/// on its definition and present in the game's graphics.
+#[allow(clippy::type_complexity)]
+pub fn form_danger_face<'a>(
+    graphics: &Graphics<'a>,
+    c: &Content,
+    form: FormHandle,
+    variant: u8,
+    problems: &mut Problems,
+) -> (Option<u8>, Option<(&'a Tiles, &'a [Palette])>) {
+    let Some(id) = c.form(form).mugshot.as_ref().and_then(|faces| faces.shown_danger(variant)) else {
+        return (None, None);
+    };
+    let picture = graphics.mugshot(id);
+    let face = picture.and_then(|n| graphics.bundle().hud.mugshot(n));
+    if problems.lookup(Lookup::Mugshot(id)) && face.is_none() {
+        let name = crate::graphics::name(c, AssetKind::Mugshot, id.0).map_or(format!("handle {}", id.0), |n| format!("{n:?}"));
+        problems.note(format!("mugshot {name} is not in the game's graphics"));
     }
     (picture, face)
 }
