@@ -438,6 +438,8 @@ fn wire(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     let a = app.clone();
     sv.on_touch_reset(move |landscape| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Reset { landscape })));
     let a = app.clone();
+    sv.on_touch_rotate(move || tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Rotate)));
+    let a = app.clone();
     sv.on_touch_commit(move || tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Commit)));
     let a = app.clone();
     sv.on_touch_close(move || tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Close)));

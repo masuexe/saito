@@ -1365,6 +1365,7 @@ impl Replays {
         }
         self.close_up_next(shell);
         self.overlays = w.overlays();
+        shell.set_watching_replay(false);
         shell.lock_game(false);
         let ui = shell.ui();
         let view = ui.global::<ReplaysView>();
@@ -1901,6 +1902,7 @@ impl Screen for Replays {
         if let Some(w) = self.watching.take() {
             self.overlays = w.overlays();
             shell.ui().global::<ReplaysView>().set_watching(false);
+            shell.set_watching_replay(false);
         }
         self.opening = None;
     }
@@ -2381,6 +2383,7 @@ impl Screen for Replays {
         }
         self.watching = Some(watching);
         self.woke = Some(Instant::now());
+        shell.set_watching_replay(true);
         // (`show` sets the viewer's view.)
         shell.refresh();
     }

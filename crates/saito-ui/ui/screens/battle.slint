@@ -644,10 +644,20 @@ component TouchPad inherits Rectangle {
         text: I18n.upper(@tr("Menu"));
     }
 
-    Text {
-        x: menu.width + 12px;
+    rotate := Button {
+        x: menu.width + 8px;
         y: 0;
-        width: parent.width - self.x;
+        compact: true;
+        visible: Shell.can-rotate;
+        enabled: Shell.can-rotate;
+        nav: Shell.can-rotate ? "pad.rotate" : "";
+        text: I18n.upper(@tr("Landscape"));
+    }
+
+    Text {
+        x: (Shell.can-rotate ? rotate.x + rotate.width : menu.width) + 12px;
+        y: 0;
+        width: max(0px, parent.width - self.x);
         height: menu.height;
         text: Shell.battle-note;
         color: Theme.muted;

@@ -254,6 +254,13 @@ impl Loading {
             Loading::Wasm { .. } => BattleMusic::Background,
         }
     }
+
+    pub(crate) fn is_fullscreen_battle(&self) -> bool {
+        match self {
+            Loading::Native { start, .. } => start.full || start.kind == BattleKind::Replay,
+            Loading::Wasm { .. } => true,
+        }
+    }
 }
 
 impl Shell {
@@ -278,6 +285,7 @@ impl Shell {
         shell.set_battle(BattleKind::None);
         shell.set_battle_menu(false);
         self.loading = Some(Loading::Native { start, began: Instant::now(), preload: None });
+        self.apply_orientation();
     }
 
     /// Open a legacy replay inside a sandboxed historical WASM simulation kernel behind the versus cards.
@@ -298,6 +306,7 @@ impl Shell {
         shell.set_battle(BattleKind::None);
         shell.set_battle_menu(false);
         self.loading = Some(Loading::Wasm { owner, began: Instant::now(), req: Some(Box::new(req)), ready: None, opened: None });
+        self.apply_orientation();
     }
 
     /// A frame of the cards: the match made ready a few steps at a time, and the battle begun once it is, the
@@ -505,6 +514,7 @@ impl Shell {
         shell.set_mic_listening(false);
         self.keys.pressed.clear();
         self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), mic: saito_audio::MicMonitor::new(), shout_held: false, abd_log: start.abd_log, abd_records: Vec::new() });
+        self.apply_orientation();
         Some((start.owner, BattleEvent::Started))
     }
 
@@ -522,6 +532,7 @@ impl Shell {
     fn loading_failed(&mut self) {
         self.loading = None;
         self.ui().global::<saito_ui::Shell>().set_versus(false);
+        self.apply_orientation();
         self.fail(UserError::Other);
     }
 
@@ -539,6 +550,7 @@ impl Shell {
     pub fn cancel_loading(&mut self) {
         if self.loading.take().is_some() {
             self.ui().global::<saito_ui::Shell>().set_versus(false);
+            self.apply_orientation();
         }
     }
 
@@ -640,6 +652,7 @@ impl Shell {
         shell.set_mic_listening(false);
         shell.set_party(Default::default());
         self.keys.release();
+        self.apply_orientation();
     }
 
     /// Trigger an EXE5DS Quick-Shout from the on-screen HUD button (desktop click or mobile touch).

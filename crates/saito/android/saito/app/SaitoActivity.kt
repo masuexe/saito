@@ -2,6 +2,7 @@ package saito.app
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
@@ -128,6 +129,23 @@ class SaitoActivity : GameActivity() {
     fun setHideLandscapeStatusBar(hide: Boolean) {
         hideStatusBarInLandscape = hide
         runOnUiThread { applyStatusBarVisibility() }
+    }
+
+    /**
+     * Lock or unlock the activity's screen orientation from Rust (`activity.rs`):
+     * 0 = Auto (UNSPECIFIED), 1 = Portrait (PORTRAIT), 2 = Landscape (SENSOR_LANDSCAPE).
+     */
+    fun setScreenOrientation(mode: Int) {
+        val target = when (mode) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            2 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        runOnUiThread {
+            if (requestedOrientation != target) {
+                requestedOrientation = target
+            }
+        }
     }
 
     private fun applyStatusBarVisibility(orientation: Int = resources.configuration.orientation) {

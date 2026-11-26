@@ -13,7 +13,7 @@ use crate::games::{Games, Notice, Ready, State};
 use crate::input::{Action, Bindings, KeyPress, Keys, Pad, Scroll, bind_cap, menu_action, scroll_key};
 use crate::nav::{Did, Direction, Key, Nav, Rect};
 use crate::screens::{self, Screen, ScreenId};
-use crate::settings::{Settings, TOUCH_SCALE_MAX, TOUCH_SCALE_MIN, TouchControlLayout, TouchPadLayout};
+use crate::settings::{OrientationLock, ScreenOrientation, Settings, TOUCH_SCALE_MAX, TOUCH_SCALE_MIN, TouchControlLayout, TouchPadLayout, resolve_orientation};
 use crate::sound::{Cue, Sound};
 use saito_battle::input::keys;
 use saito_frontend::game::Enhancements;
@@ -311,6 +311,16 @@ pub struct Shell {
     cursor_pos: Option<(f32, f32)>,
     /// Mouse button whose press was consumed for key/mouse rebinding and whose release must also be swallowed.
     swallow_mouse_up: Option<MouseButton>,
+    /// True while spectating an online match in `Play`.
+    spectating: bool,
+    /// True while watching a replay in `Replays`.
+    watching_replay: bool,
+    /// Temporary portrait/landscape override toggled during the current battle, spectate, or replay session.
+    battle_orientation_override: Option<bool>,
+    /// Temporary portrait/landscape override toggled inside `TouchLayoutEditor`.
+    editor_orientation_override: Option<bool>,
+    /// Last orientation lock requested from the mobile OS to avoid redundant JNI calls.
+    last_orientation_lock: Option<OrientationLock>,
     /// When the player last did anything: a key or a pad's button pressed, the pointer moved, clicked or
     /// scrolled, a finger on the window. (A replay's viewer shows its controls for a while after it.)
     pub last_input: Option<Instant>,
@@ -639,6 +649,68 @@ impl Shell {
         self.save_settings();
         #[cfg(target_os = "android")]
         crate::activity::set_hide_landscape_status_bar(hide);
+    }
+
+    pub fn in_battle_view(&self) -> bool {
+        self.battle.as_ref().is_some_and(|b| b.full)
+            || self.loading.as_ref().is_some_and(Loading::is_fullscreen_battle)
+            || self.spectating
+            || self.watching_replay
+    }
+
+    pub fn apply_orientation(&mut self) {
+        let in_battle = self.in_battle_view();
+        if !in_battle {
+            self.battle_orientation_override = None;
+        }
+        let override_landscape = self.editor_orientation_override.or(self.battle_orientation_override);
+        let lock = resolve_orientation(self.settings.screen_orientation, in_battle, override_landscape);
+        if self.last_orientation_lock != Some(lock) {
+            self.last_orientation_lock = Some(lock);
+            #[cfg(target_os = "android")]
+            crate::activity::set_screen_orientation(lock);
+        }
+    }
+
+    pub fn set_screen_orientation(&mut self, pref: ScreenOrientation) {
+        self.settings.screen_orientation = pref;
+        self.battle_orientation_override = None;
+        self.save_settings();
+        self.apply_orientation();
+    }
+
+    pub fn toggle_battle_orientation(&mut self) {
+        let currently_landscape = self.battle_orientation_override.unwrap_or(!self.scale.phone);
+        self.battle_orientation_override = Some(!currently_landscape);
+        self.touch.forget();
+        self.show_pad();
+        self.apply_orientation();
+    }
+
+    pub fn set_spectating(&mut self, active: bool) {
+        if self.spectating != active {
+            self.spectating = active;
+            self.apply_orientation();
+        }
+    }
+
+    pub fn set_watching_replay(&mut self, active: bool) {
+        if self.watching_replay != active {
+            self.watching_replay = active;
+            self.apply_orientation();
+        }
+    }
+
+    pub fn toggle_editor_orientation(&mut self) {
+        let currently_landscape = self.editor_orientation_override.unwrap_or(!self.scale.phone);
+        self.editor_orientation_override = Some(!currently_landscape);
+        self.apply_orientation();
+    }
+
+    pub fn clear_editor_orientation(&mut self) {
+        if self.editor_orientation_override.take().is_some() {
+            self.apply_orientation();
+        }
     }
 
     pub fn check_updates_now(&mut self, manual: bool) {
@@ -1176,6 +1248,7 @@ pub enum TouchLayoutEdit {
     Move { landscape: bool, index: i32, dx: f32, dy: f32 },
     Scale { landscape: bool, index: i32, delta: f32 },
     Reset { landscape: bool },
+    Rotate,
     Commit,
     Close,
 }
@@ -1297,6 +1370,11 @@ impl App {
             nearby: Default::default(),
             cursor_pos: None,
             swallow_mouse_up: None,
+            spectating: false,
+            watching_replay: false,
+            battle_orientation_override: None,
+            editor_orientation_override: None,
+            last_orientation_lock: None,
             last_input: None,
         };
         App {
@@ -1319,7 +1397,9 @@ impl App {
         shell.set_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
         shell.set_player(self.shell.settings.name.as_str().into());
         shell.set_landscape_pad(self.shell.settings.landscape_touch_pad);
+        shell.set_can_rotate(cfg!(target_os = "android"));
         self.shell.apply_touch_pad_layout();
+        self.shell.apply_orientation();
         #[cfg(target_os = "android")]
         crate::activity::set_hide_landscape_status_bar(self.shell.settings.hide_landscape_status_bar);
         // (The games' content the store hasn't is downloaded whatever the settings say: there is nothing to play
@@ -1471,6 +1551,7 @@ impl App {
                     "pick.close" => self.picked(None),
                     "back" => self.back(),
                     "pad.menu" => self.shell.open_menu(),
+                    "pad.rotate" => self.shell.toggle_battle_orientation(),
                     "pad.toggle" => self.shell.set_landscape_touch_pad(!self.shell.settings.landscape_touch_pad),
                     CHOOSE_SOURCE => self.choose_source(),
                     "game" | "" => {}
@@ -1839,6 +1920,11 @@ impl App {
                 *self.shell.settings.touch_pad_layout.for_orientation_mut(landscape) = TouchPadLayout::default();
                 self.shell.apply_touch_pad_layout();
                 self.shell.save_settings();
+                self.shell.sound.play(Cue::Pick);
+                crate::haptics::tap();
+            }
+            TouchLayoutEdit::Rotate => {
+                self.shell.toggle_editor_orientation();
                 self.shell.sound.play(Cue::Pick);
                 crate::haptics::tap();
             }

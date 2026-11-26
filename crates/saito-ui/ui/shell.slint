@@ -389,6 +389,8 @@ export global Shell {
     in property <bool> pad-gives-way;
     // On-screen virtual touch pad shown in mobile landscape (`Settings::landscape_touch_pad`).
     in property <bool> landscape-pad: true;
+    // Whether the platform supports programmatic screen orientation locking/toggling (Android).
+    in property <bool> can-rotate: false;
     // The player's party beside the battle, in a party battle (`PartyHud`): read from the battle each frame. On a
     // phone the pad has the switches' two buttons (bits 14 and 15), each with the member it names.
     in property <PartyHud> party;

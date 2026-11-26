@@ -2811,6 +2811,7 @@ impl Screen for Play {
             session.leave();
         }
         self.drop_session(shell);
+        shell.set_spectating(false);
         self.close_room_browser(shell);
         self.direct = None;
         shell.nav.close("direct.");
@@ -3112,6 +3113,14 @@ impl Screen for Play {
             }
             "menu.controls" => self.set_page(shell, MatchPage::Controls),
             "menu.settings" => self.set_page(shell, MatchPage::Settings),
+            "menu.rotate" => {
+                shell.toggle_battle_orientation();
+                if self.watch_menu {
+                    self.close_watch_menu(shell);
+                } else {
+                    shell.close_menu();
+                }
+            }
             "menu.back" => {
                 if self.watch_menu && self.watch_menu_direct {
                     self.close_watch_menu(shell);
@@ -4061,6 +4070,7 @@ impl Play {
                 self.watching = Some(watch);
                 self.stage = Stage::Spectating;
                 shell.stay_awake = true;
+                shell.set_spectating(true);
                 if let Some(game) = known_game.filter(|g| !g.is_empty())
                     && shell.games.ready(game).is_none()
                     && shell.games.playable().iter().any(|g| g == game)
@@ -4146,6 +4156,7 @@ impl Play {
         }
         self.stage = Stage::Idle;
         shell.stay_awake = false;
+        shell.set_spectating(false);
         if let Some(msg) = notice {
             self.notice = msg;
         }

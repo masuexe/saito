@@ -1782,6 +1782,10 @@ impl Screen for Practice {
                 },
                 _ => {}
             },
+            "menu.rows.rotate" => {
+                shell.toggle_battle_orientation();
+                shell.close_menu();
+            }
             "menu.rows.option" | "menu.rows.dummys" => self.open_option(shell, index, side_of(id)),
             "cs-prob.none" => set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
             "cs-prob.recommended" => {

@@ -10,7 +10,7 @@ mod about;
 
 use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
-use crate::settings::{DEFAULT_SIGNAL_SERVER, MAX_INPUT_DELAY, clean_name, clean_signaling_server, clean_signaling_server_draft};
+use crate::settings::{DEFAULT_SIGNAL_SERVER, MAX_INPUT_DELAY, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
 use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
@@ -76,7 +76,7 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
         "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
@@ -125,6 +125,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_full_screen(s.full_screen);
     view.set_is_android(cfg!(target_os = "android"));
     view.set_hide_landscape_status_bar(s.hide_landscape_status_bar);
+    view.set_screen_orientation(s.screen_orientation.as_index() as i32);
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_hide_aura_number(s.hide_aura_number);
@@ -215,6 +216,20 @@ pub fn set_full_screen(shell: &mut Shell, on: bool) {
     shell.settings.full_screen = on;
     shell.save_settings();
     shell.ui().window().set_fullscreen(on);
+}
+
+pub fn pick_screen_orientation(shell: &mut Shell, id: &str) {
+    let ui = shell.ui();
+    let view = ui.global::<SettingsView>();
+    let options: Vec<String> = (0..ScreenOrientation::COUNT as i32)
+        .map(|i| view.invoke_orientation_name(i).to_string())
+        .collect();
+    shell.pick(id, 0, options, shell.settings.screen_orientation.as_index());
+}
+
+pub fn step_screen_orientation(shell: &mut Shell, by: i32) {
+    let next = ScreenOrientation::from_index(shell.settings.screen_orientation.as_index() as i32 + by);
+    shell.set_screen_orientation(next);
 }
 
 pub fn set_keyboard_only_custom(shell: &mut Shell, on: bool) {
@@ -385,6 +400,7 @@ impl Settings {
     fn close_touch_editor(&mut self, shell: &mut Shell) {
         if std::mem::take(&mut self.touch_editor) {
             shell.ui().global::<SettingsView>().set_touch_editor(false);
+            shell.clear_editor_orientation();
         }
     }
 
@@ -558,6 +574,7 @@ impl Screen for Settings {
                 shell.set_hide_landscape_status_bar(!shell.settings.hide_landscape_status_bar);
                 self.show(shell);
             }
+            "set.orientation" => pick_screen_orientation(shell, id),
             "set.motion" => self.set_reduce_motion(shell, !shell.reduces_motion()),
             "set.updates" => self.set_check_updates(shell, !shell.settings.check_updates),
             "set.auto-upload" => {
@@ -642,6 +659,10 @@ impl Screen for Settings {
                 shell.set_hide_landscape_status_bar(by > 0);
                 self.show(shell);
             }
+            "set.orientation" => {
+                step_screen_orientation(shell, by);
+                self.show(shell);
+            }
             "set.motion" => self.set_reduce_motion(shell, by > 0),
             "set.updates" => self.set_check_updates(shell, by > 0),
             "set.auto-upload" => {
@@ -711,6 +732,10 @@ impl Screen for Settings {
             }
             "set.status-bar" => {
                 shell.set_hide_landscape_status_bar(choice == 1);
+                self.show(shell);
+            }
+            "set.orientation" => {
+                shell.set_screen_orientation(ScreenOrientation::from_index(choice));
                 self.show(shell);
             }
             "set.motion" => self.set_reduce_motion(shell, choice == 1),

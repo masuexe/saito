@@ -372,3 +372,21 @@ msgstr "中"
 
 msgid "High"
 msgstr "大"
+
+msgid "Screen orientation"
+msgstr "画面の向き"
+
+msgid "Lock portrait or landscape, auto-rotate in battle only, or follow gravity."
+msgstr "縦画面・横画面の固定、バトル中のみ自動横画面、または自動回転を選択します。"
+
+msgid "Battle landscape"
+msgstr "バトル中のみ横画面"
+
+msgid "Follow gravity"
+msgstr "自動回転"
+
+msgid "Switch to landscape"
+msgstr "横画面に切替"
+
+msgid "Switch to portrait"
+msgstr "縦画面に切替"

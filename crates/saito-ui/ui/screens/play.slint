@@ -2048,7 +2048,8 @@ export component MatchMenu inherits MenuOverlay {
     title: PlayView.page == MatchPage.controls ? I18n.upper(@tr("Controls")) : PlayView.page == MatchPage.settings ? I18n.upper(@tr("Settings")) : I18n.upper(@tr("Menu"));
     note: PlayView.page == MatchPage.menu ? (PlayView.watch-menu ? "" : @tr("The match keeps running")) : "";
     side: PlayView.page != MatchPage.menu;
-    content-height: PlayView.watch-menu ? 144px : 192px;
+    property <bool> show-rotate: Shell.can-rotate;
+    content-height: (PlayView.watch-menu ? 144px : 192px) + (root.show-rotate ? 48px : 0px);
     hints: PlayView.watch-menu ? [] : PlayView.match-keys;
     if PlayView.page == MatchPage.menu: Rectangle {
         x: 0;
@@ -2079,9 +2080,17 @@ export component MatchMenu inherits MenuOverlay {
             text: I18n.upper(@tr("Settings"));
         }
 
-        MenuItem {
+        if root.show-rotate: MenuItem {
             x: 0;
             y: PlayView.watch-menu ? 96px : 144px;
+            width: root.inner-width;
+            nav: "menu.rotate";
+            text: Theme.phone ? I18n.upper(@tr("Switch to landscape")) : I18n.upper(@tr("Switch to portrait"));
+        }
+
+        MenuItem {
+            x: 0;
+            y: (PlayView.watch-menu ? 96px : 144px) + (root.show-rotate ? 48px : 0px);
             width: root.inner-width;
             nav: "menu.leave";
             text: PlayView.watch-menu ? I18n.upper(@tr("Leave")) : I18n.upper(@tr("Leave match"));

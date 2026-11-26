@@ -272,6 +272,7 @@ component EditorToolbar inherits Rectangle {
     in property <float> selected-scale;
     callback scale-by(float);
     callback reset();
+    callback rotate();
     callback close();
 
     width: 336px;
@@ -371,6 +372,14 @@ component EditorToolbar inherits Rectangle {
                 }
             }
 
+            if Shell.can-rotate: EditorActionBtn {
+                horizontal-stretch: 1;
+                text: root.landscape ? I18n.upper(@tr("Portrait")) : I18n.upper(@tr("Landscape"));
+                clicked => {
+                    root.rotate();
+                }
+            }
+
             EditorActionBtn {
                 horizontal-stretch: 1;
                 primary: true;
@@ -389,6 +398,7 @@ export component TouchLayoutEditor inherits Rectangle {
     callback move(bool, int, float, float);
     callback scale-by(bool, int, float);
     callback reset(bool);
+    callback rotate();
     callback commit();
     callback close();
 
@@ -467,6 +477,9 @@ export component TouchLayoutEditor inherits Rectangle {
                 }
                 reset => {
                     root.reset(false);
+                }
+                rotate => {
+                    root.rotate();
                 }
                 close => {
                     root.close();
@@ -939,6 +952,9 @@ export component TouchLayoutEditor inherits Rectangle {
             }
             reset => {
                 root.reset(true);
+            }
+            rotate => {
+                root.rotate();
             }
             close => {
                 root.close();

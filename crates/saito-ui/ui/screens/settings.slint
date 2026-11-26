@@ -28,6 +28,20 @@ export global SettingsView {
     in property <bool> full-screen;
     in property <bool> is-android;
     in property <bool> hide-landscape-status-bar;
+    // Mobile screen orientation policy: 0 = Portrait, 1 = Landscape, 2 = Battle landscape, 3 = Follow gravity.
+    in property <int> screen-orientation: 0;
+    pure public function orientation-name(mode: int) -> string {
+        if mode == 1 {
+            return @tr("Landscape");
+        }
+        if mode == 2 {
+            return @tr("Battle landscape");
+        }
+        if mode == 3 {
+            return @tr("Follow gravity");
+        }
+        return @tr("Portrait");
+    }
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> hide-aura-number;
@@ -98,6 +112,7 @@ export global SettingsView {
     callback touch-move(bool, int, float, float);
     callback touch-scale(bool, int, float);
     callback touch-reset(bool);
+    callback touch-rotate();
     callback touch-commit();
     callback touch-close();
     // The picture size that isn't a number, as the list of sizes says it.
@@ -419,6 +434,24 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.hide-landscape-status-bar ? 1 : 0;
+                    }
+                }
+
+                if SettingsView.is-android: Rectangle {
+                    height: orientation-row.height;
+                    orientation-row := SettingLabel {
+                        label: @tr("Screen orientation");
+                        note: @tr("Lock portrait or landscape, auto-rotate in battle only, or follow gravity.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Select {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width;
+                        nav: "set.orientation";
+                        value: SettingsView.orientation-name(SettingsView.screen-orientation);
                     }
                 }
 
@@ -1169,6 +1202,9 @@ export component SettingsScreen inherits Rectangle {
         }
         reset(landscape) => {
             SettingsView.touch-reset(landscape);
+        }
+        rotate => {
+            SettingsView.touch-rotate();
         }
         commit => {
             SettingsView.touch-commit();

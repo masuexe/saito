@@ -371,3 +371,21 @@ msgstr "보통"
 
 msgid "High"
 msgstr "높음"
+
+msgid "Screen orientation"
+msgstr "화면 방향"
+
+msgid "Lock portrait or landscape, auto-rotate in battle only, or follow gravity."
+msgstr "세로/가로 고정, 배틀 시에만 자동 가로 전환 또는 중력 센서 회전을 선택합니다."
+
+msgid "Battle landscape"
+msgstr "배틀 시 가로 화면"
+
+msgid "Follow gravity"
+msgstr "자동 회전"
+
+msgid "Switch to landscape"
+msgstr "가로 화면으로 전환"
+
+msgid "Switch to portrait"
+msgstr "세로 화면으로 전환"

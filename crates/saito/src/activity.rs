@@ -118,6 +118,18 @@ pub(crate) fn set_hide_landscape_status_bar(hide: bool) {
     }
 }
 
+/// Ask Android's activity to lock or unlock screen orientation.
+pub(crate) fn set_screen_orientation(lock: crate::settings::OrientationLock) {
+    let mode = lock.as_android_mode();
+    let result = java(|env, activity| {
+        env.call_method(activity, jni_str!("setScreenOrientation"), jni_sig!("(I)V"), &[JValue::Int(mode)])?;
+        Ok(())
+    });
+    if let Err(why) = result {
+        crate::errors::log("setting Android screen orientation", &why);
+    }
+}
+
 /// Move the Android task to the background when Back is pressed at the root menu.
 pub(crate) fn move_to_background() {
     let result = java(|env, activity| {

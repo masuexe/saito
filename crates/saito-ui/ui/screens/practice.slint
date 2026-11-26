@@ -485,6 +485,11 @@ export component PracticeMenu inherits MenuOverlay {
             width: rows.view-width;
             alignment: start;
             spacing: 4px;
+            if Shell.can-rotate: MenuItem {
+                nav: "menu.rows.rotate";
+                text: Theme.phone ? I18n.upper(@tr("Switch to landscape")) : I18n.upper(@tr("Switch to portrait"));
+            }
+
             for row[i] in PracticeView.rows: MenuRow {
                 entry: row;
                 index: i;

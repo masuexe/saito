@@ -129,6 +129,85 @@ impl TouchPadLayouts {
     }
 }
 
+/// Mobile screen orientation preference (`Settings::screen_orientation`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenOrientation {
+    /// Lock upright portrait everywhere (default).
+    #[default]
+    Portrait,
+    /// Lock landscape everywhere (allows 180-degree sensor flip).
+    Landscape,
+    /// Portrait in menus/lobby/builds; automatically landscape in battles, spectating, and replays.
+    BattleLandscape,
+    /// Follow the device's gravity / system auto-rotate setting.
+    Auto,
+}
+
+impl ScreenOrientation {
+    pub const COUNT: usize = 4;
+
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Portrait => 0,
+            Self::Landscape => 1,
+            Self::BattleLandscape => 2,
+            Self::Auto => 3,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(Self::COUNT as i32) {
+            1 => Self::Landscape,
+            2 => Self::BattleLandscape,
+            3 => Self::Auto,
+            _ => Self::Portrait,
+        }
+    }
+}
+
+/// Effective orientation lock sent to the mobile OS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrientationLock {
+    /// Follow system auto-rotate / gravity (`SCREEN_ORIENTATION_UNSPECIFIED`).
+    Auto,
+    /// Lock upright portrait (`SCREEN_ORIENTATION_PORTRAIT`).
+    Portrait,
+    /// Lock landscape with 180-degree sensor flip (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`).
+    Landscape,
+}
+
+impl OrientationLock {
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn as_android_mode(self) -> i32 {
+        match self {
+            Self::Auto => 0,
+            Self::Portrait => 1,
+            Self::Landscape => 2,
+        }
+    }
+}
+
+/// Resolve the active OS orientation lock from the saved preference, whether a full-screen battle/viewer is
+/// active, and any temporary manual override (editor preview or in-battle toggle).
+pub fn resolve_orientation(pref: ScreenOrientation, in_battle: bool, override_landscape: Option<bool>) -> OrientationLock {
+    if let Some(landscape) = override_landscape {
+        return if landscape { OrientationLock::Landscape } else { OrientationLock::Portrait };
+    }
+    match pref {
+        ScreenOrientation::Portrait => OrientationLock::Portrait,
+        ScreenOrientation::Landscape => OrientationLock::Landscape,
+        ScreenOrientation::BattleLandscape => {
+            if in_battle {
+                OrientationLock::Landscape
+            } else {
+                OrientationLock::Portrait
+            }
+        }
+        ScreenOrientation::Auto => OrientationLock::Auto,
+    }
+}
+
 /// What the file keeps.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -146,6 +225,8 @@ pub struct Settings {
     pub landscape_touch_pad: bool,
     /// Hide Android's top status bar in landscape orientation.
     pub hide_landscape_status_bar: bool,
+    /// Mobile screen orientation preference (portrait, landscape, battle-only landscape, or follow gravity).
+    pub screen_orientation: ScreenOrientation,
     /// Pure keyboard mode on the custom screen: disables mouse/touch chip selection.
     pub keyboard_only_custom: bool,
     /// Motion turned down: everything is a cut. None: as the system asks.
@@ -214,6 +295,7 @@ impl Default for Settings {
             full_screen: false,
             landscape_touch_pad: true,
             hide_landscape_status_bar: false,
+            screen_orientation: ScreenOrientation::default(),
             keyboard_only_custom: false,
             reduce_motion: None,
             check_updates: true,
@@ -471,5 +553,54 @@ mod tests {
         let encoded = toml::to_string(&s).unwrap();
         let decoded: Settings = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn screen_orientation_roundtrip_default_and_resolution() {
+        let legacy: Settings = toml::from_str("music = 60\n").unwrap();
+        assert_eq!(legacy.screen_orientation, ScreenOrientation::Portrait, "default screen orientation is Portrait");
+
+        for (i, pref) in [
+            ScreenOrientation::Portrait,
+            ScreenOrientation::Landscape,
+            ScreenOrientation::BattleLandscape,
+            ScreenOrientation::Auto,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(pref.as_index(), i);
+            assert_eq!(ScreenOrientation::from_index(i as i32), pref);
+            let s = Settings { screen_orientation: pref, ..Settings::default() };
+            let encoded = toml::to_string(&s).unwrap();
+            let decoded: Settings = toml::from_str(&encoded).unwrap();
+            assert_eq!(decoded.screen_orientation, pref);
+        }
+        assert_eq!(ScreenOrientation::from_index(-1), ScreenOrientation::Auto);
+        assert_eq!(ScreenOrientation::from_index(4), ScreenOrientation::Portrait);
+
+        // No override: follows preference and battle state.
+        assert_eq!(resolve_orientation(ScreenOrientation::Portrait, false, None), OrientationLock::Portrait);
+        assert_eq!(resolve_orientation(ScreenOrientation::Portrait, true, None), OrientationLock::Portrait);
+        assert_eq!(resolve_orientation(ScreenOrientation::Landscape, false, None), OrientationLock::Landscape);
+        assert_eq!(resolve_orientation(ScreenOrientation::Landscape, true, None), OrientationLock::Landscape);
+        assert_eq!(resolve_orientation(ScreenOrientation::BattleLandscape, false, None), OrientationLock::Portrait);
+        assert_eq!(resolve_orientation(ScreenOrientation::BattleLandscape, true, None), OrientationLock::Landscape);
+        assert_eq!(resolve_orientation(ScreenOrientation::Auto, false, None), OrientationLock::Auto);
+        assert_eq!(resolve_orientation(ScreenOrientation::Auto, true, None), OrientationLock::Auto);
+
+        // Temporary manual override always takes precedence over preference (including Auto).
+        for pref in [
+            ScreenOrientation::Portrait,
+            ScreenOrientation::Landscape,
+            ScreenOrientation::BattleLandscape,
+            ScreenOrientation::Auto,
+        ] {
+            assert_eq!(resolve_orientation(pref, true, Some(true)), OrientationLock::Landscape);
+            assert_eq!(resolve_orientation(pref, true, Some(false)), OrientationLock::Portrait);
+        }
+        assert_eq!(OrientationLock::Auto.as_android_mode(), 0);
+        assert_eq!(OrientationLock::Portrait.as_android_mode(), 1);
+        assert_eq!(OrientationLock::Landscape.as_android_mode(), 2);
     }
 }

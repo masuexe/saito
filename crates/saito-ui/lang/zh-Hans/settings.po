@@ -371,3 +371,21 @@ msgstr "中"
 
 msgid "High"
 msgstr "高"
+
+msgid "Screen orientation"
+msgstr "屏幕方向"
+
+msgid "Lock portrait or landscape, auto-rotate in battle only, or follow gravity."
+msgstr "锁定竖屏或横屏、仅在战斗时自动横屏，或跟随重力感应。"
+
+msgid "Battle landscape"
+msgstr "仅战斗横屏"
+
+msgid "Follow gravity"
+msgstr "跟随重力"
+
+msgid "Switch to landscape"
+msgstr "切换横屏"
+
+msgid "Switch to portrait"
+msgstr "切换竖屏"
