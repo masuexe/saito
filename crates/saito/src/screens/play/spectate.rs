@@ -638,6 +638,7 @@ impl WatchSession {
             sound: ready.loaded.sound.as_ref().map(|s| Sound {
                 bank: s.bank.clone(),
                 ds_bank: s.ds_bank.clone(),
+                ds_voices: s.ds_voices.clone(),
                 songs: s.songs.clone(),
                 report: Default::default(),
             }),

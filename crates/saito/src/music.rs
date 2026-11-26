@@ -330,6 +330,7 @@ mod tests {
                 graphics: Default::default(),
                 sound: bank.clone(),
                 ds_sound: None,
+                ds_voices: None,
                 numbers: Arc::new(assets),
                 index: Arc::new(index),
                 others: Default::default(),
@@ -338,7 +339,7 @@ mod tests {
             graphics: saito_frontend::testing::graphics(&content, 0x7FFF),
             enhancements: Enhancements::NONE,
             font: None,
-            sound: Some(Sound { bank, ds_bank: None, songs, report: Default::default() }),
+            sound: Some(Sound { bank, ds_bank: None, ds_voices: None, songs, report: Default::default() }),
         }
     }
 

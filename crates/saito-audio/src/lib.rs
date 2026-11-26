@@ -397,6 +397,9 @@ pub struct BattleAudio {
     /// and the background whose parts play now.
     round_music: Option<Arc<RoundMusic>>,
     round: Option<saito_battle::content::BackgroundId>,
+    /// Optional presentation-only NDS `SSAR` battle voice player (mixed at the
+    /// host's effects level).
+    voices: Option<sdat::VoicePlayer>,
 }
 
 fn apply_sdat(d: &mut sdat::Driver, r: Request) {
@@ -492,6 +495,7 @@ impl BattleAudio {
             mix: Vec::new(),
             round_music: None,
             round: None,
+            voices: None,
         }
     }
 
@@ -626,6 +630,34 @@ impl BattleAudio {
         for p in &mut self.banks {
             p.driver.set_levels(self.levels);
         }
+        if let Some(voices) = &mut self.voices {
+            voices.set_level((effects.clamp(0.0, 1.0) * 256.0).round() as u16);
+        }
+    }
+
+    /// Attach or detach an optional NDS `SSAR` voice bank for presentation-only
+    /// battle voice playback (mixed at the host's effects level).
+    pub fn set_voice_bank(&mut self, bank: Option<Arc<sdat::VoiceBank>>) {
+        self.voices = bank.map(|b| {
+            let mut player = sdat::VoicePlayer::new(b);
+            player.set_level((self.levels.1.clamp(0.0, 1.0) * 256.0).round() as u16);
+            player
+        });
+    }
+
+    /// Trigger a presentation-only voice clip `clip_id` on `channel`
+    /// (`0` = operator/Lan, `1` = Navi). No-op if no voice bank is attached.
+    pub fn play_voice(&mut self, clip_id: u16, channel: usize) {
+        if let Some(voices) = &mut self.voices {
+            voices.play(clip_id, channel);
+        }
+    }
+
+    /// Stop any currently playing battle voice clips.
+    pub fn stop_voices(&mut self) {
+        if let Some(voices) = &mut self.voices {
+            voices.stop_all();
+        }
     }
 
     /// Mix every bank's Direct Sound as `mixer` says from the next frame on
@@ -750,6 +782,9 @@ impl BattleAudio {
                     o[1] = (o[1] + m[1]).clamp(-1.0, 1.0);
                 }
             }
+        }
+        if let Some(voices) = &mut self.voices {
+            voices.mix_into(&mut out[start..]);
         }
     }
 

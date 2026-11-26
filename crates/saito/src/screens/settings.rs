@@ -77,7 +77,7 @@ fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
-        "set.music" | "set.effects" | "set.exe5ds-music" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
+        "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.abd-format" | "set.abd-export" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
@@ -138,13 +138,22 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_fill_window(s.fill_window);
     view.set_hd_chip_art(s.hd_chip_art);
     view.set_has_hd_art(shell.games.has_all_hd_art());
-    let rom_name = s
-        .exe5ds_rom
-        .as_ref()
-        .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string()))
-        .unwrap_or_default();
+    let display_name = |p: &std::path::Path| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    let (rom_name, rom_clearable) = if let Some(p) = s.exe5ds_rom.as_ref() {
+        (display_name(p), true)
+    } else if let Some(p) = saito_extract::nds::exe5ds_rom_path().filter(|p| saito_extract::is_exe5ds_rom(p)) {
+        (format!("{} (SAITO_EXE5DS_ROM)", display_name(&p)), false)
+    } else {
+        (String::new(), false)
+    };
     view.set_exe5ds_rom(rom_name.into());
+    view.set_exe5ds_rom_clearable(rom_clearable);
     view.set_exe5ds_music(s.exe5ds_music);
+    view.set_exe5ds_voices(s.exe5ds_voices);
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
     view.set_mic_supported(saito_audio::MicMonitor::is_supported());
@@ -582,6 +591,12 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.exe5ds-voices" => {
+                shell.settings.exe5ds_voices = !shell.settings.exe5ds_voices;
+                saito_frontend::ds_voices::set_enabled(shell.settings.exe5ds_voices);
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, !shell.settings.mic_shout_enabled),
             "set.mic-test" => self.toggle_mic_test(shell),
             "set.quick-shout-tier" => {
@@ -646,6 +661,12 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.exe5ds-voices" => {
+                shell.settings.exe5ds_voices = by > 0;
+                saito_frontend::ds_voices::set_enabled(shell.settings.exe5ds_voices);
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, by > 0),
             "set.mic-sensitivity" => {
                 let cur = (shell.settings.mic_sensitivity * 100.0).round() as i32;
@@ -705,6 +726,12 @@ impl Screen for Settings {
             "set.exe5ds-music" => {
                 shell.settings.exe5ds_music = choice == 1;
                 crate::music::set_prefer_ds_music(shell.settings.exe5ds_music);
+                shell.save_settings();
+                self.show(shell);
+            }
+            "set.exe5ds-voices" => {
+                shell.settings.exe5ds_voices = choice == 1;
+                saito_frontend::ds_voices::set_enabled(shell.settings.exe5ds_voices);
                 shell.save_settings();
                 self.show(shell);
             }

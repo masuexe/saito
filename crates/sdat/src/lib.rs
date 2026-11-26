@@ -12,10 +12,12 @@ pub mod bank;
 pub mod driver;
 pub mod parse;
 pub mod tables;
+pub mod voice;
 
 pub use bank::{Instrument, InstrumentBank, NoteDef, NoteKind, Song, SongId, SoundBank, Wave, WaveArchive};
 pub use driver::Driver;
 pub use parse::Error;
+pub use voice::{VOICE_CHANNELS, VoiceBank, VoiceClip, VoicePlayer, VoiceStep};
 
 /// Output sample rate in Hz (matches `m4a::OUT_RATE`).
 pub const OUT_RATE: u32 = 32_768;

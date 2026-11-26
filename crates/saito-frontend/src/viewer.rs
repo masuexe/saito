@@ -136,6 +136,8 @@ struct State {
     huds: [HudState; 2],
     /// By sound ([`SOUNDS`]); none: a silent viewer.
     audio: Option<[BattleAudio; SOUNDS]>,
+    /// Per-side EXE5DS battle voice observers (kept alongside audio snapshots for seeking).
+    ds_voices: [crate::ds_voices::DsVoiceObserver; 2],
     /// Each side's custom screen layer (the replay's driver's), by side.
     layers: [Option<Layer>; 2],
     /// The session's: why it stopped, if it had, whether that was the
@@ -324,6 +326,8 @@ pub struct Viewer {
     /// Each of its sounds ([`SOUNDS`]: each console's, each side's own
     /// effects; none: silent). All run every tick.
     audio: Option<[BattleAudio; SOUNDS]>,
+    /// Per-side EXE5DS battle voice observers (presentation-only, snapshot-safe).
+    ds_voices: [crate::ds_voices::DsVoiceObserver; 2],
     /// The host's levels for the sound, the music's and the effects'
     /// ([`Viewer::set_sound_levels`]): the viewer's, whatever state it is
     /// put back to.
@@ -559,6 +563,7 @@ impl Viewer {
             renderer,
             text,
             audio: audio.map(|a| std::array::from_fn(|_| a.clone())),
+            ds_voices: std::array::from_fn(|_| crate::ds_voices::DsVoiceObserver::new()),
             levels: (1.0, 1.0),
             view,
             both: false,
@@ -1020,8 +1025,8 @@ impl Viewer {
             ran += 1;
         }
         self.frontier = (!self.whole).then(|| self.state());
-        let Viewer { session, renderer, audio, view, rounds, .. } = self;
-        put(&here, session, renderer, audio, *view, rounds);
+        let Viewer { session, renderer, audio, ds_voices, view, rounds, .. } = self;
+        put(&here, session, renderer, audio, ds_voices, *view, rounds);
         self.level();
         self.whole
     }
@@ -1304,6 +1309,14 @@ impl Viewer {
         let speed = self.speed;
         if self.session.new_round {
             self.renderer.reset();
+            for obs in &mut self.ds_voices {
+                obs.reset();
+            }
+            if let Some(audio) = &mut self.audio {
+                for sound in audio.iter_mut() {
+                    sound.stop_voices();
+                }
+            }
         }
         let custom_presentation = self.presentation.is_some();
         if custom_presentation {
@@ -1320,6 +1333,9 @@ impl Viewer {
                     sound.round(ticked.setup.settings.background);
                 }
                 sound.handle(&self.cues);
+                if k < 2 {
+                    self.ds_voices[k].observe(ticked, k as u8, sound);
+                }
                 self.ticks[k].clear();
                 sound.tick(&mut self.ticks[k]);
             }
@@ -1351,6 +1367,7 @@ impl Viewer {
             battle: self.session.battle.save_state(),
             huds,
             audio: self.audio.clone(),
+            ds_voices: self.ds_voices.clone(),
             layers: self.session.driver.layers().map(|l| l.copied()),
             stopped: self.session.stopped.clone(),
             finished: self.session.finished,
@@ -1373,13 +1390,13 @@ impl Viewer {
 
     /// Be as a kept state was.
     fn restore(&mut self, kept: Kept) {
-        let Viewer { session, renderer, audio, view, rounds, keyframes, frontier, near, .. } = self;
+        let Viewer { session, renderer, audio, ds_voices, view, rounds, keyframes, frontier, near, .. } = self;
         let state = match kept {
             Kept::Keyframe(i) => &keyframes[i],
             Kept::Frontier => frontier.as_ref().expect("a frontier to go on from"),
             Kept::Near(i) => &near[i],
         };
-        put(state, session, renderer, audio, *view, rounds);
+        put(state, session, renderer, audio, ds_voices, *view, rounds);
         self.level();
         if self.presentation.is_some() {
             // Re-apply background override for the restored round without clobbering restored audio state.
@@ -1438,6 +1455,7 @@ fn sound_of(game: &Loaded, music: Option<Arc<RoundMusic>>) -> Option<BattleAudio
     game.sound.as_ref().map(|s| {
         let mut audio = BattleAudio::new(s.bank.clone(), s.songs.clone());
         audio.set_round_music(music);
+        audio.set_voice_bank(s.ds_voices.clone());
         audio
     })
 }
@@ -1455,6 +1473,7 @@ fn put(
     session: &mut Session,
     renderer: &mut Renderer,
     audio: &mut Option<[BattleAudio; SOUNDS]>,
+    ds_voices: &mut [crate::ds_voices::DsVoiceObserver; 2],
     view: u8,
     rounds: &[u32],
 ) {
@@ -1468,6 +1487,7 @@ fn put(
     if let (Some(audio), Some(kept)) = (audio, &state.audio) {
         audio.clone_from(kept);
     }
+    ds_voices.clone_from(&state.ds_voices);
 }
 
 /// The renderer's two consoles' HUD states the other way round: the other

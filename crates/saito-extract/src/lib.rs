@@ -118,6 +118,9 @@ pub struct Extraction {
     /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank extracted when
     /// an EXE5DS `.nds` ROM is configured alongside GBA EXE5.
     pub ds_sound: Option<sdat::SoundBank>,
+    /// Optional EXE5DS `SSAR` battle voice bank extracted when an EXE5DS `.nds`
+    /// ROM is configured alongside GBA EXE5.
+    pub ds_voices: Option<sdat::VoiceBank>,
     /// The songs each version of the game has its own of (EXE5's Team Colonel's).
     pub sound_versions: SongVersions,
     /// Every asset by its name, with its number in `graphics` and `sound`: what content names its assets by

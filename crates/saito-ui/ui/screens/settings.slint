@@ -46,8 +46,12 @@ export global SettingsView {
     in property <bool> importing-hd-art;
     // Optional EXE5DS (.nds) ROM filename for DS-authentic SolCross, Danger HUD art & arranged battle music (empty = GBA fallback).
     in property <string> exe5ds-rom;
+    // Whether the configured EXE5DS ROM comes from saved settings (and can therefore be cleared from the UI, unlike $SAITO_EXE5DS_ROM).
+    in property <bool> exe5ds-rom-clearable: false;
     // Whether EXE5 default / background / escalating battles use arranged EXE5DS battle music when a DS ROM is loaded.
     in property <bool> exe5ds-music: true;
+    // Whether EXE5 battles play EXE5DS battle voices (Lan, MegaMan, ProtoMan, Colonel) when a DS ROM is loaded.
+    in property <bool> exe5ds-voices: true;
     in property <int> music;
     in property <int> effects;
     // EXE5DS Crisis Microphone settings & live test meter.
@@ -609,7 +613,7 @@ component SettingsPage inherits Page {
                         text: I18n.upper(@tr("Choose file"));
                     }
 
-                    if SettingsView.exe5ds-rom != "": Button {
+                    if SettingsView.exe5ds-rom-clearable: Button {
                         x: exe5ds-browse.x + exe5ds-browse.width + 8px;
                         y: 4px;
                         nav: "set.exe5ds-rom-clear";
@@ -673,6 +677,26 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.exe5ds-music ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: exe5ds-voices-row.height;
+                    exe5ds-voices-row := SettingLabel {
+                        label: @tr("EXE5DS battle voices");
+                        note: @tr("Play DS battle voices in EXE5 (requires EXE5DS ROM).");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.exe5ds-voices";
+                        enabled: SettingsView.exe5ds-rom != "";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.exe5ds-voices ? 1 : 0;
                     }
                 }
 

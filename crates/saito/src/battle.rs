@@ -399,16 +399,20 @@ impl Shell {
                     let music = if start.music == BattleMusic::Picked { self.battle_music() } else { crate::music::Music::Background };
                     (crate::music::sound(&self.games, &ready, &music), crate::music::round_music(&self.games, &ready, &music))
                 };
+                let ds_voices = ready.loaded.sound.as_ref().and_then(|s| s.ds_voices.clone());
                 if let Some(pres) = pres {
                     renderer.set_background_override(pres.first_background);
                     preload = Some(
                         Preload::with(renderer, font.map(TextRenderer::new), music, &start.set, start.viewer, size)
+                            .ds_voices(ds_voices)
                             .extra_backgrounds(pres.extra_backgrounds)
                             .round_presentation(Some(pres.resolver)),
                     );
                 } else {
                     preload = Some(
-                        Preload::with(renderer, font.map(TextRenderer::new), music, &start.set, start.viewer, size).round_music(rounds),
+                        Preload::with(renderer, font.map(TextRenderer::new), music, &start.set, start.viewer, size)
+                            .ds_voices(ds_voices)
+                            .round_music(rounds),
                     );
                 }
             }

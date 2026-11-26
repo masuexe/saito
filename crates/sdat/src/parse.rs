@@ -3,7 +3,9 @@
 
 use crate::bank::{Instrument, InstrumentBank, NoteDef, NoteKind, Song, SoundBank, Wave, WaveArchive};
 use crate::tables::{ADPCM_INDEX_TABLE, ADPCM_STEP_TABLE};
-use std::collections::BTreeSet;
+use crate::voice::{VoiceBank, VoiceClip, VoiceStep};
+use crate::OUT_RATE;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +173,220 @@ pub fn extract_sdat(sdat: &[u8], seq_ids: &[u16]) -> Result<SoundBank, Error> {
     }
 
     Ok(out)
+}
+
+/// Read a MIDI-style variable-length integer starting at `*pos` in `buf`.
+fn read_vlq(buf: &[u8], pos: &mut usize) -> Option<u32> {
+    let mut val = 0u32;
+    for _ in 0..4 {
+        let b = *buf.get(*pos)?;
+        *pos += 1;
+        val = (val << 7) | (b & 0x7F) as u32;
+        if (b & 0x80) == 0 {
+            return Some(val);
+        }
+    }
+    Some(val)
+}
+
+/// Extract all voice entries (`bank_id >= 1`) from `SEQARC[0]` (`SSAR`) inside
+/// an NDS `SDAT` archive, decoding and deduplicating their referenced `SWAV`
+/// waveforms into a compact [`VoiceBank`].
+pub fn extract_ssar_voices(sdat: &[u8]) -> Result<VoiceBank, Error> {
+    if sdat.len() < 0x30 || &sdat[0..4] != b"SDAT" {
+        return Err(err("not an SDAT archive"));
+    }
+    let info_off = rd32(sdat, 0x18)? as usize;
+    let info_len = rd32(sdat, 0x1C)? as usize;
+    let fat_off = rd32(sdat, 0x20)? as usize;
+    let fat_len = rd32(sdat, 0x24)? as usize;
+    if info_off.checked_add(info_len).is_none_or(|e| e > sdat.len())
+        || fat_off.checked_add(fat_len).is_none_or(|e| e > sdat.len())
+    {
+        return Err(err("SDAT INFO/FAT bounds exceed file size"));
+    }
+    if sdat.get(info_off..info_off + 4) != Some(b"INFO") || sdat.get(fat_off..fat_off + 4) != Some(b"FAT ") {
+        return Err(err("SDAT missing INFO or FAT block"));
+    }
+
+    let fat_count = rd32(sdat, fat_off + 8)? as usize;
+    let get_file = |file_id: u16| -> Result<&[u8], Error> {
+        let idx = file_id as usize;
+        if idx >= fat_count {
+            return Err(err(format!("SDAT file id {file_id} out of range ({fat_count})")));
+        }
+        let rec = fat_off + 12 + idx * 16;
+        let foff = rd32(sdat, rec)? as usize;
+        let fsz = rd32(sdat, rec + 4)? as usize;
+        sdat.get(foff..foff.checked_add(fsz).ok_or_else(|| err("file range overflow"))?)
+            .ok_or_else(|| err(format!("SDAT file {file_id} out of bounds")))
+    };
+
+    let info_list = |table_idx: usize| -> Result<Option<usize>, Error> {
+        let rel = rd32(sdat, info_off + 8 + table_idx * 4)? as usize;
+        Ok((rel != 0).then_some(info_off + rel))
+    };
+
+    let Some(seqarc_list) = info_list(1)? else {
+        return Ok(VoiceBank::default());
+    };
+    let bank_list = info_list(2)?.ok_or_else(|| err("SDAT has no BANK table"))?;
+    let war_list = info_list(3)?.ok_or_else(|| err("SDAT has no WAVEARC table"))?;
+
+    let seqarc_count = rd32(sdat, seqarc_list)? as usize;
+    if seqarc_count == 0 {
+        return Ok(VoiceBank::default());
+    }
+    let sa0_rel = rd32(sdat, seqarc_list + 4)? as usize;
+    if sa0_rel == 0 {
+        return Ok(VoiceBank::default());
+    }
+    let sa0_fid = rd16(sdat, info_off + sa0_rel)?;
+    let ssar = get_file(sa0_fid)?;
+    if ssar.len() < 0x20 || &ssar[0..4] != b"SSAR" || &ssar[0x10..0x14] != b"DATA" {
+        return Err(err("invalid SSAR file"));
+    }
+    let data_off = rd32(ssar, 0x18)? as usize;
+    let entry_count = rd32(ssar, 0x1C)? as usize;
+
+    // Collect voice entries (bank_id >= 1) and the SBNKs they reference.
+    let mut entries = Vec::new();
+    let mut needed_banks = BTreeSet::new();
+    for i in 0..entry_count {
+        let off = 0x20 + i * 12;
+        if off + 12 > ssar.len() {
+            break;
+        }
+        let seq_off = rd32(ssar, off)? as usize;
+        let bank_id = rd16(ssar, off + 4)?;
+        let vol = ssar[off + 6];
+        if bank_id >= 1 && vol > 0 {
+            entries.push((i as u16, seq_off, bank_id, vol));
+            needed_banks.insert(bank_id);
+        }
+    }
+
+    let bank_count = rd32(sdat, bank_list)? as usize;
+    let war_count = rd32(sdat, war_list)? as usize;
+
+    let mut banks = BTreeMap::<u16, InstrumentBank>::new();
+    let mut needed_wars = BTreeSet::new();
+    for bank_id in needed_banks {
+        let i = bank_id as usize;
+        if i >= bank_count {
+            continue;
+        }
+        let entry_rel = rd32(sdat, bank_list + 4 + i * 4)? as usize;
+        if entry_rel == 0 {
+            continue;
+        }
+        let entry = info_off + entry_rel;
+        let file_id = rd16(sdat, entry)?;
+        let mut wave_arcs = [None; 4];
+        for slot in 0..4 {
+            let wid = rd16(sdat, entry + 4 + slot * 2)?;
+            if wid != 0xFFFF {
+                wave_arcs[slot] = Some(wid);
+                needed_wars.insert(wid);
+            }
+        }
+        let sbnk_bytes = get_file(file_id)?;
+        let instruments = parse_sbnk(sbnk_bytes)?;
+        banks.insert(bank_id, InstrumentBank { wave_arcs, instruments });
+    }
+
+    let mut wars = BTreeMap::<u16, Vec<Wave>>::new();
+    for war_id in needed_wars {
+        let i = war_id as usize;
+        if i >= war_count {
+            continue;
+        }
+        let entry_rel = rd32(sdat, war_list + 4 + i * 4)? as usize;
+        if entry_rel == 0 {
+            continue;
+        }
+        let entry = info_off + entry_rel;
+        let file_id = rd16(sdat, entry)?;
+        let swar_bytes = get_file(file_id)?;
+        wars.insert(war_id, parse_swar(swar_bytes)?);
+    }
+
+    // Deduplicate decoded waves into `VoiceBank::waves` and build each `VoiceClip`.
+    let mut voice_bank = VoiceBank::default();
+    let mut wave_map = BTreeMap::<(u16, u16), u16>::new();
+
+    for (clip_id, seq_off, bank_id, volume) in entries {
+        let Some(bank) = banks.get(&bank_id) else {
+            continue;
+        };
+        let mut pos = match data_off.checked_add(seq_off) {
+            Some(p) if p < ssar.len() => p,
+            _ => continue,
+        };
+        let mut program = 0usize;
+        let mut cum_ticks = 0u64;
+        let mut steps = Vec::new();
+        let mut guard = 0usize;
+
+        while pos < ssar.len() && guard < 64 {
+            guard += 1;
+            let op = ssar[pos];
+            pos += 1;
+            match op {
+                0xFF => break,
+                0x80 => {
+                    let Some(wait) = read_vlq(ssar, &mut pos) else { break };
+                    cum_ticks = cum_ticks.saturating_add(wait as u64);
+                }
+                0x81 => {
+                    let Some(p) = read_vlq(ssar, &mut pos) else { break };
+                    program = p as usize;
+                }
+                0x00..=0x7F => {
+                    let key = op;
+                    if pos >= ssar.len() {
+                        break;
+                    }
+                    let _vel = ssar[pos];
+                    pos += 1;
+                    let Some(dur) = read_vlq(ssar, &mut pos) else { break };
+                    if let Some(inst) = bank.instruments.get(program)
+                        && let Some(def) = inst.resolve(key)
+                        && let NoteKind::Pcm { swav_id, swar_slot } = def.kind
+                        && let Some(war_id) = bank.wave_arcs.get(swar_slot as usize).copied().flatten()
+                    {
+                        let wave_idx = if let Some(&idx) = wave_map.get(&(war_id, swav_id)) {
+                            Some(idx)
+                        } else if let Some(war_waves) = wars.get(&war_id)
+                            && let Some(wave) = war_waves.get(swav_id as usize)
+                            && voice_bank.waves.len() < u16::MAX as usize
+                        {
+                            let idx = voice_bank.waves.len() as u16;
+                            voice_bank.waves.push(wave.clone());
+                            wave_map.insert((war_id, swav_id), idx);
+                            Some(idx)
+                        } else {
+                            None
+                        };
+                        if let Some(wave) = wave_idx {
+                            // Default NitroComposer SSAR tempo is 120 BPM at 48 PPQN = 96 seq ticks/sec.
+                            let delay_samples = (cum_ticks * OUT_RATE as u64 / 96) as u32;
+                            steps.push(VoiceStep { wave, delay_samples });
+                        }
+                    }
+                    // SSAR defaults to note-wait on: a non-zero duration advances time before the next phrase.
+                    cum_ticks = cum_ticks.saturating_add(dur as u64);
+                }
+                _ => break,
+            }
+        }
+
+        if !steps.is_empty() {
+            voice_bank.clips.insert(clip_id, VoiceClip { volume, steps });
+        }
+    }
+
+    Ok(voice_bank)
 }
 
 fn parse_sseq(buf: &[u8]) -> Result<Vec<u8>, Error> {
@@ -426,6 +642,45 @@ mod tests {
             eprintln!("SEQ[{id:2}] samples={} rms={rms:.4} peak={peak:.4}", out.len());
             assert!(rms > 0.02, "seq {id} too quiet: rms={rms}");
             assert!(peak <= 1.0, "seq {id} invalid peak: {peak}");
+        }
+    }
+
+    #[test]
+    fn parses_and_renders_real_exe5ds_voices() {
+        let path = Path::new(LOCAL_EXE5DS_ROM);
+        if !path.exists() {
+            return;
+        }
+        let rom = std::fs::read(path).expect("read exe5ds.nds");
+        let sdat_bytes = extract_nitrofs_file(&rom, "data/rom/ds/sound_data.sdat").expect("sound_data.sdat");
+        let voices = Arc::new(extract_ssar_voices(sdat_bytes).expect("extract ssar voices"));
+        assert!(voices.len() > 250, "expected >250 voice clips, got {}", voices.len());
+        assert_eq!(voices.clip(0x1F4).expect("V_NET0101").steps.len(), 3, "Battle Routine Set has 3 phrases");
+        assert_eq!(voices.clip(0x1FC).expect("V_NET0401").steps.len(), 2, "Soul Unison ProtoSoul has 2 phrases");
+
+        let sample_ids: [u16; 10] = [
+            0x1F4, // Lan Battle Routine Set
+            0x1FC, // Lan Soul Unison ProtoSoul
+            0x208, // Lan Chaos Unison ProtoSoul
+            0x214, // Lan Navi Change MegaMan
+            0x246, // Lan PA LifeSword
+            0x27F, // MegaMan chip cry
+            0x2E3, // ProtoMan chip cry
+            0x347, // Colonel chip cry
+            0x268, // MegaMan victory
+            0x265, // MegaMan deletion
+        ];
+        let mut player = crate::VoicePlayer::new(voices);
+        for id in sample_ids {
+            player.play(id, 0);
+            assert!(player.is_playing(), "voice {id:#x} should start");
+            let mut buf = vec![[0.0f32; 2]; crate::OUT_RATE as usize * 3];
+            player.mix_into(&mut buf);
+            let peak = buf.iter().flat_map(|s| *s).map(f32::abs).fold(0.0_f32, f32::max);
+            let rms = (buf.iter().map(|s| s[0] * s[0] + s[1] * s[1]).sum::<f32>() / (2.0 * buf.len() as f32)).sqrt();
+            eprintln!("VOICE[{id:#05x}] rms={rms:.4} peak={peak:.4}");
+            assert!(rms > 0.01, "voice {id:#x} too quiet: rms={rms}");
+            assert!(peak <= 1.0, "voice {id:#x} invalid peak: {peak}");
         }
     }
 }

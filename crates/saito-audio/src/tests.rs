@@ -477,3 +477,44 @@ fn sdat_theme_mixes_with_m4a_effects_and_handles_pinch_and_rollback() {
     a.tick(&mut out);
     assert_eq!((a.playing_music_of(BankId(0)), a.playing_music_of(BankId(1))), (None, Some(21)));
 }
+
+#[test]
+fn voice_bank_mixes_at_effects_level_and_clones_deterministically() {
+    let wave = sdat::Wave {
+        samples: (0..2048).map(|i| if (i / 16) % 2 == 0 { 16000 } else { -16000 }).collect(),
+        sample_rate: 11_025,
+        looped: false,
+        loop_start: 0,
+        loop_end: 2048,
+    };
+    let mut clips = std::collections::BTreeMap::new();
+    clips.insert(
+        0x27F,
+        sdat::VoiceClip {
+            volume: 80,
+            steps: vec![sdat::VoiceStep { wave: 0, delay_samples: 0 }],
+        },
+    );
+    let voice_bank = Arc::new(sdat::VoiceBank { waves: vec![wave], clips });
+
+    let mut a = BattleAudio::new(bank(), Songs::numbers(0x200));
+    a.set_voice_bank(Some(voice_bank));
+    a.play_voice(0x27F, 1);
+
+    let mut snapshot = a.clone();
+    let (mut out_a, mut out_b) = (Vec::new(), Vec::new());
+    for _ in 0..4 {
+        a.tick(&mut out_a);
+        snapshot.tick(&mut out_b);
+    }
+    assert_eq!(out_a, out_b, "cloned BattleAudio must render identical voice samples");
+    let peak = out_a.iter().flat_map(|s| *s).map(f32::abs).fold(0.0_f32, f32::max);
+    assert!(peak > 0.1 && peak <= 1.0, "expected audible voice mix, peak={peak}");
+
+    // Muting effects silences voices cleanly.
+    a.set_levels(1.0, 0.0);
+    a.play_voice(0x27F, 1);
+    let mut muted = Vec::new();
+    a.tick(&mut muted);
+    assert!(muted.iter().all(|s| s[0] == 0.0 && s[1] == 0.0), "effects=0 must mute voices");
+}

@@ -160,6 +160,8 @@ pub struct Player {
     renderer: Renderer,
     text: Option<TextRenderer>,
     audio: Option<BattleAudio>,
+    /// Presentation-only EXE5DS battle voice observer (no-op unless EXE5 + DS voice bank + enabled).
+    ds_voices: crate::ds_voices::DsVoiceObserver,
     /// Client-local per-round background/music resolver and the last key applied.
     presentation: Option<RoundResolver>,
     presentation_key: Option<(u8, u8, u8)>,
@@ -213,7 +215,11 @@ impl Player {
     /// A player of what `driver` plays, shown and heard from a loaded game
     /// (its sound, if it was loaded).
     pub fn new(game: &Loaded, driver: Box<dyn Driver>) -> Player {
-        let audio = game.sound.as_ref().map(|s| BattleAudio::new(s.bank.clone(), s.songs.clone()));
+        let audio = game.sound.as_ref().map(|s| {
+            let mut audio = BattleAudio::new(s.bank.clone(), s.songs.clone());
+            audio.set_voice_bank(s.ds_voices.clone());
+            audio
+        });
         Player::with(game.renderer(), game.font.clone().map(TextRenderer::new), audio, driver)
     }
 
@@ -229,6 +235,7 @@ impl Player {
             renderer,
             text,
             audio,
+            ds_voices: crate::ds_voices::DsVoiceObserver::new(),
             presentation: None,
             presentation_key: None,
             samples: Vec::new(),
@@ -325,6 +332,10 @@ impl Player {
     fn start_over(&mut self) {
         self.renderer.reset();
         self.renderer.console_version = self.session.driver.console_version();
+        self.ds_voices.reset();
+        if let Some(audio) = &mut self.audio {
+            audio.stop_voices();
+        }
         self.clock.rest();
     }
 
@@ -717,6 +728,10 @@ impl Player {
         if self.session.new_round {
             self.renderer.reset();
             self.pointer.clear();
+            self.ds_voices.reset();
+            if let Some(audio) = &mut self.audio {
+                audio.stop_voices();
+            }
         }
         {
             let side = self.session.battle.setup.local_side;
@@ -767,6 +782,11 @@ impl Player {
                     }
                 }
                 None => audio.handle(&crate::session::heard(&self.session.battle, self.session.driver.layers())),
+            }
+            if self.session.fresh {
+                let observed = self.session.ended.as_deref().unwrap_or(&self.session.battle);
+                let side = observed.setup.local_side;
+                self.ds_voices.observe(observed, side, audio);
             }
         }
         self.apply_round_presentation();

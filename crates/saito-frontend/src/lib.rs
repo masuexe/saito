@@ -35,6 +35,7 @@
 
 pub mod connection;
 pub mod driver;
+pub mod ds_voices;
 pub mod game;
 pub mod lobby;
 pub mod netplay;

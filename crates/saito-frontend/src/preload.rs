@@ -148,6 +148,8 @@ pub struct Preload {
     sound: Option<SoundParts>,
     /// The music by the rounds' backgrounds ([`Preload::round_music`]).
     round_music: Option<Arc<saito_audio::RoundMusic>>,
+    /// Optional EXE5DS battle voice bank attached to [`BattleAudio`].
+    ds_voices: Option<Arc<sdat::VoiceBank>>,
     /// Extra backgrounds requested beyond the set's own stages (client-local stage overrides).
     extra_backgrounds: Vec<saito_battle::content::BackgroundId>,
     /// Optional client-local per-round presentation resolver for the resulting [`Player`].
@@ -168,7 +170,8 @@ impl Preload {
     /// drawn at that size).
     pub fn new(game: &Loaded, set: &Set, viewer: u8, size: (usize, usize)) -> Preload {
         let sound = game.sound.as_ref().map(|s| (vec![s.bank.clone().into()], s.songs.clone()));
-        Preload::with(game.renderer(), game.font.clone().map(TextRenderer::new), sound, set, viewer, size)
+        let ds_voices = game.sound.as_ref().and_then(|s| s.ds_voices.clone());
+        Preload::with(game.renderer(), game.font.clone().map(TextRenderer::new), sound, set, viewer, size).ds_voices(ds_voices)
     }
 
     /// The same from a player's parts ([`Player::with`]): the renderer, the
@@ -222,6 +225,7 @@ impl Preload {
             text,
             sound,
             round_music: None,
+            ds_voices: None,
             extra_backgrounds: Vec::new(),
             round_presentation: None,
             audio: None,
@@ -309,10 +313,17 @@ impl Preload {
         self
     }
 
+    /// Attach an optional EXE5DS battle voice bank to the constructed [`BattleAudio`].
+    pub fn ds_voices(mut self, voices: Option<Arc<sdat::VoiceBank>>) -> Preload {
+        self.ds_voices = voices;
+        self
+    }
+
     /// The battle's sound from its parts, with the music by background.
     fn audio_of(&mut self, (banks, songs): SoundParts) -> BattleAudio {
         let mut audio = BattleAudio::with_banks(banks, songs);
         audio.set_round_music(self.round_music.clone());
+        audio.set_voice_bank(self.ds_voices.clone());
         audio
     }
 

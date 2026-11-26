@@ -265,6 +265,8 @@ pub struct Exe5DsAssets {
     pub navi_danger_mugshots: Vec<Option<NaviDangerFace>>,
     /// EXE5DS battle music bank extracted from `data/rom/ds/sound_data.sdat`.
     pub sound: Option<sdat::SoundBank>,
+    /// EXE5DS battle voice bank extracted from `SEQARC[0]` inside `sound_data.sdat`.
+    pub voices: Option<sdat::VoiceBank>,
 }
 
 /// Mask off bit 15 of every BGR555 palette color (consistent with GBA `hud.palette`).
@@ -376,10 +378,15 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
         navi_danger_mugshots.push(Some(NaviDangerFace { tiles, box_tiles, palette }));
     }
 
-    let sound = fs.read_file(PATH_SOUND_DATA).and_then(|sdat_bytes| {
-        let seq_ids: Vec<u16> = EXE5DS_BATTLE_THEMES.iter().map(|&(_, id, _)| id).collect();
-        sdat::parse::extract_sdat(sdat_bytes, &seq_ids).ok()
-    });
+    let (sound, voices) = match fs.read_file(PATH_SOUND_DATA) {
+        Some(sdat_bytes) => {
+            let seq_ids: Vec<u16> = EXE5DS_BATTLE_THEMES.iter().map(|&(_, id, _)| id).collect();
+            let sound = sdat::parse::extract_sdat(sdat_bytes, &seq_ids).ok();
+            let voices = sdat::parse::extract_ssar_voices(sdat_bytes).ok().filter(|v| !v.is_empty());
+            (sound, voices)
+        }
+        None => (None, None),
+    };
 
     Ok(Exe5DsAssets {
         solcross_megaman,
@@ -388,6 +395,7 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
         mugshots,
         navi_danger_mugshots,
         sound,
+        voices,
     })
 }
 
@@ -402,23 +410,27 @@ pub fn extract_from_path(path: &Path) -> Result<Exe5DsAssets, Error> {
 
 /// Apply EXE5DS assets to an extracted EXE5 [`Bundle`]: uses the configured
 /// EXE5DS ROM if set and valid, otherwise seamlessly synthesizes GBA fallback
-/// assets. Returns the optional EXE5DS `SDAT` sound bank and any non-fatal
-/// warnings.
-pub fn apply_exe5_ds_assets(graphics: &mut Bundle) -> (Option<sdat::SoundBank>, Vec<String>) {
+/// assets. Returns the optional EXE5DS `SDAT` battle music bank, optional
+/// `SSAR` battle voice bank, and any non-fatal warnings.
+pub fn apply_exe5_ds_assets(graphics: &mut Bundle) -> (Option<sdat::SoundBank>, Option<sdat::VoiceBank>, Vec<String>) {
     let configured = exe5ds_rom_path();
     apply_exe5_ds_assets_from_path(graphics, configured.as_deref())
 }
 
 /// Like [`apply_exe5_ds_assets`], taking an explicit optional ROM path (useful
 /// for deterministic testing without touching global state).
-pub fn apply_exe5_ds_assets_from_path(graphics: &mut Bundle, rom_path: Option<&Path>) -> (Option<sdat::SoundBank>, Vec<String>) {
+pub fn apply_exe5_ds_assets_from_path(
+    graphics: &mut Bundle,
+    rom_path: Option<&Path>,
+) -> (Option<sdat::SoundBank>, Option<sdat::VoiceBank>, Vec<String>) {
     let mut warnings = Vec::new();
     if let Some(path) = rom_path {
         match extract_from_path(path) {
             Ok(mut ds) => {
                 let sound = ds.sound.take();
+                let voices = ds.voices.take();
                 merge_ds_assets(graphics, ds);
-                return (sound, warnings);
+                return (sound, voices, warnings);
             }
             Err(e) => {
                 warnings.push(format!("exe5ds ROM fallback ({e}); using synthesized GBA assets"));
@@ -426,7 +438,7 @@ pub fn apply_exe5_ds_assets_from_path(graphics: &mut Bundle, rom_path: Option<&P
         }
     }
     apply_gba_fallback(graphics);
-    (None, warnings)
+    (None, None, warnings)
 }
 
 fn upsert_sprite(sprites: &mut Vec<SpriteSheet>, sheet: SpriteSheet) {
@@ -785,8 +797,9 @@ mod tests {
     #[test]
     fn gba_fallback_synthesizes_all_solcross_and_danger_assets() {
         let mut bundle = sample_gba_exe5_bundle();
-        let (ds_sound, warnings) = apply_exe5_ds_assets_from_path(&mut bundle, None);
+        let (ds_sound, ds_voices, warnings) = apply_exe5_ds_assets_from_path(&mut bundle, None);
         assert!(ds_sound.is_none(), "GBA fallback should not provide DS sound bank");
+        assert!(ds_voices.is_none(), "GBA fallback should not provide DS voice bank");
         assert!(warnings.is_empty(), "silent fallback should not warn: {warnings:?}");
 
         // Sprites: `solcross-megaman` (`00-0d`), `sol-sun` (`10-00`), `buster-arm` (`0c-03`) anim `0x0E`
@@ -831,12 +844,17 @@ mod tests {
         assert!(is_exe5ds_rom(rom_path), "expected {LOCAL_EXE5DS_ROM} to validate as EXE5DS");
 
         let mut bundle = sample_gba_exe5_bundle();
-        let (ds_sound, warnings) = apply_exe5_ds_assets_from_path(&mut bundle, Some(rom_path));
+        let (ds_sound, ds_voices, warnings) = apply_exe5_ds_assets_from_path(&mut bundle, Some(rom_path));
         assert!(warnings.is_empty(), "real ROM extraction should produce no warnings: {warnings:?}");
         let ds_sound = ds_sound.expect("real EXE5DS ROM must yield SDAT battle music bank");
         for &(key, seq_id, _) in EXE5DS_BATTLE_THEMES {
             assert!(ds_sound.song(sdat::SongId(seq_id)).is_some(), "missing DS battle theme {key} (SEQ {seq_id})");
         }
+        let ds_voices = ds_voices.expect("real EXE5DS ROM must yield SSAR battle voice bank");
+        assert!(ds_voices.len() > 250, "expected >250 DS voice clips, got {}", ds_voices.len());
+        assert!(ds_voices.clip(0x27F).is_some(), "missing MegaMan attack cry");
+        assert!(ds_voices.clip(0x2E3).is_some(), "missing ProtoMan attack cry");
+        assert!(ds_voices.clip(0x347).is_some(), "missing Colonel attack cry");
 
         // pl0d.bin -> 00-0d (17 anims)
         let sol = bundle.sprite(0x00, 0x0d).expect("DS solcross-megaman");

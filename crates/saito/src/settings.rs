@@ -186,6 +186,8 @@ pub struct Settings {
     pub exe5ds_rom: Option<std::path::PathBuf>,
     /// Whether EXE5 default / background / escalating battles use arranged EXE5DS battle music when a DS ROM is loaded.
     pub exe5ds_music: bool,
+    /// Whether EXE5 battles play EXE5DS battle voices (Lan, MegaMan, ProtoMan, Colonel) when a DS ROM is loaded.
+    pub exe5ds_voices: bool,
     /// Opt-in privacy-first EXE5DS Danger microphone shout detection (default `false`).
     pub mic_shout_enabled: bool,
     /// Microphone sensitivity multiplier for EXE5DS Crisis Shout (`0.25..=4.0`, default `1.0`).
@@ -231,6 +233,7 @@ impl Default for Settings {
             legacy_collection: None,
             exe5ds_rom: None,
             exe5ds_music: true,
+            exe5ds_voices: true,
             mic_shout_enabled: false,
             mic_sensitivity: 1.0,
             quick_shout_tier: 3,
@@ -317,6 +320,7 @@ impl Settings {
         s.touch_pad_layout = s.touch_pad_layout.sanitized();
         saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
         crate::music::set_prefer_ds_music(s.exe5ds_music);
+        saito_frontend::ds_voices::set_enabled(s.exe5ds_voices);
         s
     }
 
@@ -449,6 +453,7 @@ mod tests {
         let legacy: Settings = toml::from_str("music = 55\n").unwrap();
         assert_eq!(legacy.exe5ds_rom, None);
         assert!(legacy.exe5ds_music);
+        assert!(legacy.exe5ds_voices);
         assert!(!legacy.mic_shout_enabled, "microphone shout must be opt-in by default");
         assert_eq!(legacy.mic_sensitivity, 1.0);
         assert_eq!(legacy.quick_shout_tier, 3);
@@ -457,6 +462,7 @@ mod tests {
         let s = Settings {
             exe5ds_rom: Some("/roms/exe5ds.nds".into()),
             exe5ds_music: false,
+            exe5ds_voices: false,
             mic_shout_enabled: true,
             mic_sensitivity: 1.75,
             quick_shout_tier: 2,

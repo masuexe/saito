@@ -88,6 +88,9 @@ pub struct Game {
     /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank extracted when
     /// an EXE5DS `.nds` ROM is configured.
     pub ds_sound: Option<Arc<sdat::SoundBank>>,
+    /// Optional EXE5DS `SSAR` battle voice bank extracted when an EXE5DS `.nds`
+    /// ROM is configured.
+    pub ds_voices: Option<Arc<sdat::VoiceBank>>,
     /// What its assets hold of the content's: each handle's number there
     /// (checked against the content as it loaded:
     /// `saito_content::load::asset_numbers`).
@@ -254,7 +257,7 @@ impl ContentLoaded {
                 others.insert(game, self::others(game, from, roms));
             }
         }
-        let Extraction { graphics, sound, ds_sound, index, .. } = own;
+        let Extraction { graphics, sound, ds_sound, ds_voices, index, .. } = own;
         Ok(Game {
             name,
             content: Arc::new(content),
@@ -262,6 +265,7 @@ impl ContentLoaded {
             graphics: Arc::new(graphics),
             sound: Arc::new(sound),
             ds_sound: ds_sound.map(Arc::new),
+            ds_voices: ds_voices.map(Arc::new),
             numbers: Arc::new(numbers),
             index: Arc::new(index),
             others: Arc::new(others),
@@ -316,6 +320,7 @@ impl Game {
         Ok(Sound {
             bank: self.sound.clone(),
             ds_bank: self.ds_sound.clone(),
+            ds_voices: self.ds_voices.clone(),
             songs: saito_audio::Songs::of(&self.numbers),
             report: Report::default(),
         })
@@ -358,6 +363,8 @@ pub struct Sound {
     pub bank: Arc<m4a::SoundBank>,
     /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank.
     pub ds_bank: Option<Arc<sdat::SoundBank>>,
+    /// Optional EXE5DS `SSAR` battle voice bank.
+    pub ds_voices: Option<Arc<sdat::VoiceBank>>,
     pub songs: saito_audio::Songs,
     pub report: Report,
 }
@@ -477,6 +484,11 @@ impl Loaded {
     /// Whether this loaded game has optional EXE5DS `SDAT` battle music available.
     pub fn has_ds_music(&self) -> bool {
         self.sound.as_ref().is_some_and(|s| s.ds_bank.is_some())
+    }
+
+    /// Whether this loaded game has optional EXE5DS `SSAR` battle voices available.
+    pub fn has_ds_voices(&self) -> bool {
+        self.sound.as_ref().is_some_and(|s| s.ds_voices.is_some())
     }
 
     /// Map a GBA EXE5 battle theme name (e.g. `"virus-battle"`) to its EXE5DS
