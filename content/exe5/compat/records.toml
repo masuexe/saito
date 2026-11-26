@@ -67,6 +67,7 @@
 "megaman/hells-rolling" = [0x69]
 "megaman/guard1" = [0x6A]
 "megaman/crsshld1" = [0x6B]
+"megaman/sol-gundelsol" = [0x6C]
 # The team navis' weapons (navis/<navi>: their stats rows' routines, 0x0801D55F's +0x05 and +0x07; their busters are
 # routine 0, MegaMan's).
 "protoman/charge" = [0x1E]

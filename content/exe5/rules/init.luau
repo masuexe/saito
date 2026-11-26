@@ -38,6 +38,7 @@ local tomahawkman_support = require("./navis/tomahawkman/support")
 local toadman_rescue = require("./navis/toadman/rescue")
 local save = require("@self/save")
 local shout = require("@self/shout")
+local sol_cross = require("@self/sol_cross")
 local soldier = require("./objects/soldier")
 local souls = require("@self/souls")
 local ticked = require("@self/ticked")
@@ -234,6 +235,8 @@ local rules: Rules = {
         party = schema.list({ navi = "navi", programs = schema.list("partycust_programs", 10) }, 2),
         -- The lead team navi's own PartyCust programs in a party battle (EXE5 DS Gate-Party: ./party). Empty for MegaMan.
         party_programs = schema.list("partycust_programs", 10),
+        -- EXE5 DS Boktai 2 double-slot Sol Cross MegaMan (./sol_cross: Senior 5DS only).
+        sol_cross = "bool",
     },
     -- A setup that says nothing: what every save brings at its highest, the base HP 1000, the Regular memory 50 and
     -- the sun, no level (MegaMan's); a fresh save's light/dark value (0x08010C00 writes 500: light for the chips, no
@@ -264,6 +267,7 @@ local rules: Rules = {
             "tomahawksoul",
         },
         chaos_unison = true,
+        sol_cross = false,
         -- Every SP navi deleted in no time (its chip's best damage), in the save's order.
         sp_times = {
             { chip = "protomn-sp", frames = 0 },
@@ -416,14 +420,16 @@ local rules: Rules = {
             save.round_setup(side)
             navicust.round_setup(side)
             patch_cards.apply(side)
+            sol_cross.round_setup(side)
             light_dark.round_setup(side)
+            shout.round_setup(side)
             -- The party's partners join (./party).
             party.round_setup(side)
-            -- The hooks asked each fight tick are called only while something can come of them (rules.listen): the
-            -- party's supports and KnightMan's guard with partners; Chaos Unison's drop and the auto battle's drive
-            -- from their starts (./souls/chaos_charge, ./auto_battle); and the holy panel's clearing on holy panels
-            -- while the side's value clears them (./light_dark).
-            rules.listen(side, "fight_tick", party.has_partners(side) and (battle.link() or side == 0))
+            -- The hooks asked each fight tick are called only while something can come of them (rules.listen): 5DS
+            -- Danger HUD updates, the party's supports and KnightMan's guard with partners; Chaos Unison's drop and the
+            -- auto battle's drive from their starts (./souls/chaos_charge, ./auto_battle); and the holy panel's clearing
+            -- on holy panels while the side's value clears them (./light_dark).
+            rules.listen(side, "fight_tick", shout.enabled() or (party.has_partners(side) and (battle.link() or side == 0)))
             rules.listen(side, "hit_guard", knightman_guard.in_party(side))
             light_dark.listen(side)
             rules.listen(side, "weapons_loaded", false)
@@ -462,7 +468,8 @@ local rules: Rules = {
         -- The party's supports (0x02003764), each fight tick, in a link battle for both sides and offline for side 0
         -- alone; their turn's flags start over as the fight starts (./party).
         fight_tick = function(side: number)
-            if not battle.link() and side ~= 0 then
+            shout.fight_tick(side)
+            if not party.has_partners(side) or (not battle.link() and side ~= 0) then
                 return
             end
             protoman_support.tick(side)
@@ -516,8 +523,11 @@ local rules: Rules = {
         end,
         -- A navi's weapons loaded: Chaos Unison's charge dropped (./souls/chaos_charge).
         weapons_loaded = chaos_charge.drop,
-        -- Full Synchro on a counter, and the NaviCust's swing bug (./emotion).
-        round_start = emotion.round_start,
+        -- Full Synchro on a counter, the NaviCust's swing bug (./emotion), and Sol Cross's corner sun (./sol_cross).
+        round_start = function(side: number)
+            emotion.round_start(side)
+            sol_cross.round_start(side)
+        end,
         countered = emotion.countered,
         -- Each navi's tick: the swing bug, then a driven navi's time (./auto_battle).
         navi_tick = function(side: number, navi: Object)
@@ -570,6 +580,7 @@ local rules: Rules = {
             folder.validate(side, problem)
             auto_battle.block.validate(side, problem)
             party.validate(side, problem)
+            sol_cross.validate(side, problem)
             return out
         end,
         -- What is wrong with a side's setup as a player's build, beside what `validate` says of any setup: dark

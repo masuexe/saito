@@ -29,6 +29,7 @@ local overlays = require("@exelib/overlays")
 local panels = require("@exelib/panels")
 local buster_arm_sprite = asset.sprite("buster-arm")
 local charge_glow_sprite = asset.sprite("charge-glow")
+local solcross_sprite = asset.sprite("solcross-megaman")
 
 local double_attack = {}
 
@@ -123,14 +124,15 @@ local function megaman_stats(me: Object): (Navi, boolean)
     return block, false
 end
 
--- 0x020A11D0: MegaMan's sprite: on the field, his form's (`sub_800FC9E` by his form and NaviStats +0x4C); else his base
--- form's (00-00), or 00-0D in the DS's Hub Style 3, its own sprite (the GBA has none at 00-0D: his base form's stands
--- in; EXE5's Hub Styles are 1 and 2, so no setup reaches it).
+-- 0x020A11D0: MegaMan's sprite: in a soul, his soul's sprite; in base form, `solcross-megaman` (00-0D) when
+-- `hub_style == 3` (EXE5DS Sol Cross), else his base form's (00-00).
 local function megaman_sprite(me: Object): SpriteAsset
-    local side = me.alliance
-    local stats = battle.navi(side)
-    if stats.navi.id == "megaman" then
+    local stats = megaman_stats(me)
+    if not stats.form.base then
         return stats.form.sprite
+    end
+    if stats.hub_style == 3 then
+        return solcross_sprite
     end
     return base_form.sprite
 end
@@ -191,7 +193,7 @@ function double_attack.raise_arm(me: Object, which: Slot)
     elseif hub == 2 then
         anim, palette = 0xD, 0xE
     elseif hub == 3 then
-        anim, palette = 0xD, 0x21
+        anim, palette = 0xE, 0x21
     end
     attachment.attach(me, ARM, which, { anim = anim, while_dimmed = true, palette_add = palette })
 end

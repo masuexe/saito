@@ -40,6 +40,8 @@ export type Spec = {
     beam: SunBeamLook,
     beam_in_sun: SunBeamLook,
     region: Region,
+    -- EXE5DS Sol Cross charged shot ([r7, #0xC] = 1): fires the full duration without holding A/B.
+    no_hold: boolean?,
 }
 
 gundels.beam_kind = beam.make_kind("gundels/beam", asset.sound("sun-beam"))
@@ -78,7 +80,10 @@ local function advance_gun(me: Object)
 end
 
 -- 0x080EDD30 / 0x080EDDCE: a player who must hold A to keep firing has let go of it.
-local function let_go(me: Object): boolean
+local function let_go(me: Object, no_hold: boolean?): boolean
+    if no_hold then
+        return false
+    end
     if operation_battle() then
         return false
     end
@@ -94,6 +99,7 @@ end
 -- A chip's GunDelSol.
 function gundels.action(spec: Spec): Action
     local region = spec.region
+    local no_hold = spec.no_hold
 
     -- 0x080EDCEC (`sub_80EDB14`): the gun comes out; 6 ticks later the beam lights up, if A is still held.
     local function wind_up(me: Object, s: State)
@@ -112,7 +118,7 @@ function gundels.action(spec: Spec): Action
         if t > 0 then
             return
         end
-        if let_go(me) then
+        if let_go(me, no_hold) then
             me.step, me.step_init = RECOVER, 0
             return
         end
@@ -125,7 +131,7 @@ function gundels.action(spec: Spec): Action
 
     -- 0x080EDDCC (`sub_80EDBCC`): one hit this tick, until A is let go, the battle is over or the timer runs out.
     local function fire(me: Object, s: State)
-        local stop = let_go(me) or battle.over()
+        local stop = let_go(me, no_hold) or battle.over()
         if not stop then
             local t = s.timer - 1
             s.timer = t

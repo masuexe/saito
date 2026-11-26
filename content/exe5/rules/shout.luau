@@ -25,6 +25,15 @@ type State = { shouted: boolean }
 -- The level a shout needs, and its strengths' lines.
 local LOUD, STRONGER, STRONGEST = 0x1E, 0x28, 0x4B
 
+-- Saito 5DS battle effect bits (`setup::effects::DS_SHOUT`, `DS_SHOUT_MAX_ONLY`):
+-- strict GBA isolation — when `DS_SHOUT` is not set, Danger HUD stays off and `mic_heard` never triggers.
+local DS_SHOUT = 0x0400_0000
+local DS_SHOUT_MAX_ONLY = 0x0800_0000
+
+function shout.enabled(): boolean
+    return bit32.btest(battle.effects(), DS_SHOUT)
+end
+
 -- What the heal does (the effect object's parameter 5): heal, charge the buster, raise a barrier.
 local HEAL, BUSTER, BARRIER = 0, 1, 2
 
@@ -61,7 +70,7 @@ local function gate(side: number, navi: Object): boolean
     if navi.hp > bit32.rshift(navi.max_hp, 2) then
         return false
     end
-    return not (rules.state() :: State).shouted
+    return not (rules.state_of(side) :: State).shouted
 end
 
 -- The effect object's steps (its state 4's sub-states on the object's phase; its timer, `timer`).
@@ -172,8 +181,28 @@ shout.kind = new.kind {
     update = update,
 }
 
+-- Clear the Danger HUD flag on round setup.
+function shout.round_setup(side: number)
+    battle.set_hud("danger", false, side)
+end
+
+-- Update the 5DS Danger HUD flag each fight tick (strictly off in pure GBA when `DS_SHOUT` is unset).
+function shout.fight_tick(side: number)
+    if not shout.enabled() then
+        battle.set_hud("danger", false, side)
+        return
+    end
+    local navi = battle.player(side)
+    local is_danger = navi ~= nil and gate(side, navi) and not battle.over()
+    battle.set_hud("danger", is_danger, side)
+end
+
 -- 0x022261A4 (the rules' `mic_heard`).
 function shout.mic_heard(side: number)
+    if not shout.enabled() then
+        battle.set_hud("danger", false, side)
+        return
+    end
     local navi = battle.player(side)
     if navi == nil or not gate(side, navi) then
         return
@@ -186,8 +215,9 @@ function shout.mic_heard(side: number)
         return
     end
     battle.set_dimmed(true)
-    local state = rules.state() :: State
+    local state = rules.state_of(side) :: State
     state.shouted = true
+    battle.set_hud("danger", false, side)
     local stats = battle.navi(side)
     local row = 1
     if navi.collision.barrier ~= "none" then
@@ -197,7 +227,11 @@ function shout.mic_heard(side: number)
         row += 2
     end
     local kind = ROWS[row][bit32.band(bit32.rshift(battle.rng_positive(), 5), 0xF) + 1]
-    local strength = if level > STRONGEST then 2 elseif level > STRONGER then 1 else 0
+    local strength = if bit32.btest(battle.effects(), DS_SHOUT_MAX_ONLY)
+        then 2
+        elseif level > STRONGEST then 2
+        elseif level > STRONGER then 1
+        else 0
     local o = battle.spawn(shout.kind)
     if o then
         -- (It runs through the dimming it starts, which only its end lifts.)

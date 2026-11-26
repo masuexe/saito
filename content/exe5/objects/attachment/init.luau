@@ -14,7 +14,8 @@ attachment.look = common.look
 -- to Y and Z, where EXE6's subtracts its signed byte: in the shared code's terms, -1.
 attachment.kind = common.make_kind("attachment", function(owner: Object, side: number): number?
     local identity = owner.identity
-    if (identity ~= nil and identity.changes_form and battle.navi(side).hub_style ~= 0) or (identity == nil and owner.related2 ~= nil) then
+    local hub = battle.navi(side).hub_style
+    if (identity ~= nil and identity.changes_form and (hub == 1 or hub == 2)) or (identity == nil and owner.related2 ~= nil) then
         return -1
     end
     return nil
