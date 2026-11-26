@@ -1597,3 +1597,392 @@ fn exe5_dark_survival_clears_guard_flag() {
     assert!(entered_survival, "lethal damage on evil MegaMan should trigger dark-survival");
     assert_eq!(b.objects.get(p0).hp, 1, "dark-survival should hold MegaMan at 1 HP");
 }
+
+/// EXE5DS Sol Cross ruleset gating and build validation:
+/// - Allowed ONLY in Senior 5DS (`senior_5ds`, `senior_5ds_mixed`)
+/// - Rejected in Masters (`masters`, `masters_mixed`, `masters_5ds`, `masters_5ds_mixed`),
+///   pure GBA (`senior`, `senior_mixed`, `gate`, `gate_mixed`), and `gate_party` / `gate_party_mixed`
+/// - Requires MegaMan as main navi and is mutually exclusive with `bass-cross-megaman` patch card.
+#[test]
+fn exe5_sol_cross_ruleset_gating_and_validation() {
+    use crate::Wrong;
+    use crate::build::{Builds, Checked};
+    use crate::ruleset::Rulesets;
+
+    let content = exe5_content();
+    let r = Rulesets::of(&content, "exe5").unwrap();
+    let builds = Builds::of(&content, "exe5").unwrap();
+
+    let mut side = builds.new_build(&content, "protoman").unwrap();
+    builds.take_preset(&content, &mut side, "sol_cross", "on").unwrap();
+    assert_eq!(side.facts.get(&content, "sol_cross"), Some(Stated::Flag(true)));
+
+    // Allowed in Senior 5DS (single-version and mixed).
+    for preset_id in ["senior_5ds", "senior_5ds_mixed"] {
+        let preset = r.preset(preset_id).unwrap();
+        let checked = Checked::under(&content, "exe5", &side, &r, preset);
+        assert!(checked.ready(), "Sol Cross must be allowed in {preset_id}, got: {:?}", checked.problems);
+    }
+
+    // Rejected as DS-only in all pure GBA rulesets.
+    for preset_id in ["masters", "masters_mixed", "senior", "senior_mixed", "gate", "gate_mixed"] {
+        let preset = r.preset(preset_id).unwrap();
+        let checked = Checked::under(&content, "exe5", &side, &r, preset);
+        assert!(
+            checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::DsOnly),
+            "Sol Cross must be rejected as DsOnly in {preset_id}, got: {:?}",
+            checked.problems
+        );
+    }
+
+    // Rejected in Masters 5DS and Gate-Party (patch cards allowed / non-Senior).
+    for preset_id in ["masters_5ds", "masters_5ds_mixed", "gate_party", "gate_party_mixed"] {
+        let preset = r.preset(preset_id).unwrap();
+        let checked = Checked::under(&content, "exe5", &side, &r, preset);
+        assert!(
+            checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross")),
+            "Sol Cross must be rejected in {preset_id}, got: {:?}",
+            checked.problems
+        );
+    }
+
+    // Validation: Team Navi cannot use Sol Cross.
+    let mut team_side = side.clone();
+    let protoman = crate::ids::navi(&content, "exe5", "protoman").unwrap();
+    team_side.set_navi(&content, protoman).unwrap();
+    team_side.set_level(&content, crate::play_level(&content, protoman)).unwrap();
+    team_side.set_fact(&content, "sol_cross", &flag(true)).unwrap();
+    let team_checked = Checked::of(&content, "exe5", &team_side);
+    assert!(
+        team_checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::NotTaken),
+        "Team Navi with sol_cross must fail validation with NotTaken, got: {:?}",
+        team_checked.problems
+    );
+
+    // Validation: Sol Cross is mutually exclusive with Bass-Cross MegaMan patch card.
+    let mut both = side.clone();
+    both.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "bass-cross-megaman/protoman")).unwrap();
+    let both_checked = Checked::of(&content, "exe5", &both);
+    assert!(
+        both_checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::Invalid),
+        "Sol Cross + Bass-Cross MegaMan must fail validation with Invalid, got: {:?}",
+        both_checked.problems
+    );
+}
+
+/// EXE5DS Sol Cross stats (+200 HP, SuperArmor, MegaFolder -2), HUD variants, sprite,
+/// and weapon 0x6C (`sol_gundelsol`) flat 130-frame charge & full 60-tick no-hold drain
+/// (120 HP in shade vs 240 HP in sun).
+#[test]
+fn exe5_sol_cross_stats_and_gundelsol_charge_shot() {
+    use crate::build::{Builds, Checked, Stat};
+    use saito_battle::input::{PlayerTick, keys};
+
+    let content = exe5_content();
+    let builds = Builds::of(&content, "exe5").unwrap();
+
+    // 1. Stats and Build Overview.
+    let mut side = builds.new_build(&content, "protoman").unwrap();
+    builds.take_preset(&content, &mut side, "sol_cross", "on").unwrap();
+    let mut checked = Checked::of(&content, "exe5", &side);
+    assert!(checked.ready(), "{:?}", checked.problems);
+    let stats = checked.stats().unwrap();
+    assert_eq!((stats.max_hp, stats.hp, stats.super_armor, stats.mega_level), (1200, 1200, true, 3));
+    let overview = checked.overview(&content, &side).unwrap();
+    assert_eq!(overview.hp, Stat { base: 1000, value: 1200 });
+    assert_eq!(overview.mega, Stat { base: 5, value: 3 });
+
+    // 2. Run Sol Cross GunDelSol in shade vs sun (also verifying flat 130-tick charge even with Charge=4).
+    let run_drain = |sun_enabled: bool| -> (u16, bool) {
+        let mut m = parse(&content, &exe5(&TANGO_EXE5, "sol_cross = true"), &exe5(&TANGO_EXE5, "")).unwrap();
+        m.sun_enabled = sun_enabled;
+        let mut setup = m.round(&content, 0x5EED);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+
+        // Verify HUD variants, sprite, and absence of HubShade overlay.
+        assert!(b.looks[0].face_variant_sol && b.looks[0].name_variant_sol);
+        assert!(!b.looks[0].face_variant && !b.looks[0].face_variant_alt && !b.looks[0].name_variant);
+        let p0 = b.player(0).expect("side 0 navi");
+        let p1 = b.player(1).expect("side 1 navi");
+        let sprite_id = b.objects.sprite(p0).id.expect("Sol Cross MegaMan sprite loaded");
+        assert_eq!(
+            content.assets.name(saito_content_api::AssetKind::Sprite, sprite_id.0),
+            Some("solcross-megaman"),
+            "Sol Cross MegaMan must load solcross-megaman sprite"
+        );
+        assert!(b.objects.get(p0).related[1].is_none(), "Sol Cross MegaMan must not wear HubShade overlay");
+
+        // Max out Charge stat to verify charge time stays flat at 130 ticks regardless of Charge+.
+        b.stats[0].charge = 4;
+
+        // Step side 0 right from (2, 2) to (3, 2), which is 2 columns ahead of side 1 at (5, 2)
+        // — directly in GunDelSol's column!
+        b.tick(&[PlayerTick { held: keys::RIGHT, ..Default::default() }, Default::default()], Default::default());
+        for _ in 0..10 {
+            b.tick(&Default::default(), Default::default());
+        }
+        assert_eq!(b.objects.get(p0).panel.x, 3);
+        assert_eq!(b.objects.get(p1).panel.x, 5);
+        let hp_before = b.objects.get(p1).hp;
+
+        // Verify releasing B at 120 ticks (< 130) does NOT fire SolCross GunDelSol even at Charge=4.
+        for t in 0..150 {
+            let input = if t < 120 {
+                [PlayerTick { held: keys::B, ..Default::default() }, Default::default()]
+            } else {
+                Default::default()
+            };
+            b.tick(&input, Default::default());
+            let a = b.actors.get(b.objects.get(p0).actor.unwrap());
+            if let saito_battle::kinds::player::NaviAction::Content(h) = a.navi_action {
+                assert_ne!(
+                    crate::ids::local(&content.defs.action(h).key),
+                    "megaman/sol-gundelsol/action",
+                    "Sol Cross GunDelSol must not fire before 130 ticks (even at Charge=4)"
+                );
+            }
+        }
+        // Reset opponent HP (the early B release fired a plain buster shot).
+        b.objects.get_mut(p1).hp = hp_before;
+
+        // Hold B for 155 ticks (past charge startup + 130-tick flat charge threshold), then release ALL buttons.
+        // Because `no_hold = true`, releasing B/A must NOT cut the 60-tick beam short.
+        let mut fired_sol_gundelsol = false;
+        for t in 0..270 {
+            let input = if t < 155 {
+                [PlayerTick { held: keys::B, ..Default::default() }, Default::default()]
+            } else {
+                Default::default()
+            };
+            b.tick(&input, Default::default());
+            let a = b.actors.get(b.objects.get(p0).actor.unwrap());
+            if let saito_battle::kinds::player::NaviAction::Content(h) = a.navi_action
+                && crate::ids::local(&content.defs.action(h).key) == "megaman/sol-gundelsol/action"
+            {
+                fired_sol_gundelsol = true;
+            }
+        }
+        let hp_after = b.objects.get(p1).hp;
+        (hp_before - hp_after, fired_sol_gundelsol)
+    };
+
+    let (shade_drain, shade_fired) = run_drain(false);
+    let (sun_drain, sun_fired) = run_drain(true);
+    assert!(shade_fired, "Sol Cross charged shot should fire megaman/sol-gundelsol/action in shade");
+    assert!(sun_fired, "Sol Cross charged shot should fire megaman/sol-gundelsol/action in sun");
+    assert_eq!(shade_drain, 120, "Sol Cross GunDelSol must drain 120 HP (60 x 2) in shade with no_hold");
+    assert_eq!(sun_drain, 240, "Sol Cross GunDelSol must drain 240 HP (60 x 4) in sun with no_hold");
+}
+
+/// EXE5DS Sol Cross corner Sun gradual +20 chip attack boost:
+/// - Ticks +1 every 5 frames on front damaging hand chip, capped at +20
+/// - Disabled when `sun_enabled = false` (NO_SUN), while Dark MegaMan's dark chips still work indoors
+/// - Continues working in Double Soul (`stats.navi == megaman`)
+/// - Pauses while switched to a Team Navi (`stats.navi != megaman`).
+#[test]
+fn exe5_sol_cross_sun_gradual_attack_boost_and_indoor_isolation() {
+    use saito_battle::input::{PlayerTick, keys};
+
+    let content = exe5_content();
+    let cannon = crate::ids::chip(&content, "exe5", "cannon").unwrap();
+    let protosoul = crate::ids::form(&content, "exe5", "protosoul").unwrap();
+
+    // 1. Outdoor (sun_enabled = true): gradual +1 every 5 ticks up to +20, works in Double Soul, pauses on Team Navi.
+    let mut m = parse(
+        &content,
+        &exe5(&TANGO_EXE5, "sol_cross = true\nparty = [{ navi = \"protoman\", programs = [] }]"),
+        &exe5(&TANGO_EXE5, ""),
+    )
+    .unwrap();
+    m.sun_enabled = true;
+    let mut setup = m.round(&content, 0x5EED);
+    setup.custom_screen_limit = Some(1);
+    let mut b = saito_battle::Battle::new(setup, content.clone());
+    fight(&mut b);
+
+    assert!(b.objects.in_order().any(|r| b.local_kind_key(r) == "sol-sun"), "sol-sun must spawn outdoors");
+    b.hands[0].cursor = 0;
+    b.hands[0].ids[0] = Some(cannon);
+    b.hands[0].ids[1] = Some(cannon);
+    b.hands[0].ids[2] = Some(cannon);
+    b.hands[0].attack_bonus = [0; 6];
+
+    // After 10 ticks, bonus should be small and positive (gradual +1 every 5 frames, not instant +20).
+    for _ in 0..10 {
+        b.tick(&Default::default(), Default::default());
+    }
+    let early = b.hands[0].attack_bonus[0];
+    assert!((1..=4).contains(&early), "expected gradual boost after 10 ticks, got {early}");
+
+    // After 120 more ticks, bonus must cap at exactly +20.
+    for _ in 0..120 {
+        b.tick(&Default::default(), Default::default());
+    }
+    assert_eq!(b.hands[0].attack_bonus[0], 20, "Sol Cross Sun bonus must cap at +20");
+
+    // Works in Double Soul (MegaMan still active navi, non-base form).
+    b.stats[0].form = protosoul;
+    b.hands[0].cursor = 1;
+    for _ in 0..120 {
+        b.tick(&Default::default(), Default::default());
+    }
+    assert_eq!(b.hands[0].attack_bonus[1], 20, "Sol Cross Sun must still boost in Double Soul");
+
+    // Switch to Team Navi (ProtoMan, member 1): boost must pause while Team Navi is active.
+    ask_switch(&mut b, 1);
+    for _ in 0..80 {
+        b.tick(&Default::default(), Default::default());
+        if navi_key(&b, 0) == "protoman" && !b.is_dimmed() && !b.paused {
+            break;
+        }
+    }
+    assert_eq!(navi_key(&b, 0), "protoman", "side 0 should have switched to ProtoMan");
+    b.hands[0].cursor = 2;
+    b.hands[0].attack_bonus[2] = 0;
+    for _ in 0..40 {
+        b.tick(&Default::default(), Default::default());
+    }
+    assert_eq!(b.hands[0].attack_bonus[2], 0, "Sol Cross Sun must pause while switched to a Team Navi");
+
+    // 2. Indoor (sun_enabled = false): no sol-sun spawned, no attack bonus.
+    let mut m_indoor = parse(&content, &exe5(&TANGO_EXE5, "sol_cross = true"), &exe5(&TANGO_EXE5, "")).unwrap();
+    m_indoor.sun_enabled = false;
+    let mut setup_indoor = m_indoor.round(&content, 0x5EED);
+    setup_indoor.custom_screen_limit = Some(1);
+    let mut b_in = saito_battle::Battle::new(setup_indoor, content.clone());
+    fight(&mut b_in);
+    assert!(!b_in.objects.in_order().any(|r| b_in.local_kind_key(r) == "sol-sun"), "sol-sun must not spawn indoors");
+    b_in.hands[0].cursor = 0;
+    b_in.hands[0].ids[0] = Some(cannon);
+    b_in.hands[0].attack_bonus[0] = 0;
+    for _ in 0..40 {
+        b_in.tick(&Default::default(), Default::default());
+    }
+    assert_eq!(b_in.hands[0].attack_bonus[0], 0, "indoor Sol Cross must grant 0 sun bonus");
+
+    // 3. Indoor (NO_SUN = 0x0010_0000) in a link battle must NOT fizzle Dark MegaMan's Dark Chips.
+    let mut m_dark = parse(&content, &exe5(&TANGO_EXE5, "karma = 0\nhp = 997"), &exe5(&TANGO_EXE5, "")).unwrap();
+    m_dark.sun_enabled = false;
+    let mut setup_dark = m_dark.round(&content, 0x5EED);
+    setup_dark.custom_screen_limit = Some(1);
+    let mut b_dark = saito_battle::Battle::new(setup_dark, content.clone());
+    fight(&mut b_dark);
+    let drksword = crate::ids::chip(&content, "exe5", "drksword").unwrap();
+    let p1 = b_dark.player(1).unwrap();
+    // Step side 0 right from (2, 2) to (3, 2) so DarkSword (2x3 ahead) reaches side 1 at (5, 2).
+    b_dark.tick(&[PlayerTick { held: keys::RIGHT, ..Default::default() }, Default::default()], Default::default());
+    for _ in 0..10 {
+        b_dark.tick(&Default::default(), Default::default());
+    }
+    let hp_before = b_dark.objects.get(p1).hp;
+    b_dark.hands[0].cursor = 0;
+    b_dark.hands[0].ids[0] = Some(drksword);
+    for t in 0..60 {
+        let input = if t == 0 {
+            [PlayerTick { held: keys::A, ..Default::default() }, Default::default()]
+        } else {
+            Default::default()
+        };
+        b_dark.tick(&input, Default::default());
+    }
+    assert!(b_dark.objects.get(p1).hp < hp_before, "Dark MegaMan's DarkSword must still hit indoors (NO_SUN must not collide with DARK_CHIPS_FIZZLE)");
+}
+
+/// EXE5DS Danger HUD and 5DS Shout gating:
+/// - Pure GBA (`ds_shout_enabled = false`): `is_danger(0)` stays false and shout never triggers
+/// - 5DS (`ds_shout_enabled = true`): `is_danger(0)` toggles accurately on/off with Danger conditions
+/// - 3-tier volume (`mic_tier = 1 / 2 / 3`): only Tier 3 grants Full Synchro, and each tier applies
+///   its corresponding boost magnitude (and shout is once per battle)
+/// - `ds_shout_max_only = true`: upgrades `mic_tier = 1` to Tier 3 / Full Synchro.
+#[test]
+fn exe5_ds_danger_hud_and_shout_gating() {
+    use saito_battle::input::PlayerTick;
+
+    let content = exe5_content();
+    let start_battle = |ds_shout_enabled: bool, ds_shout_max_only: bool| -> saito_battle::Battle {
+        let mut m = parse(&content, &exe5(&TANGO_EXE5, ""), &exe5(&TANGO_EXE5, "")).unwrap();
+        m.ds_shout_enabled = ds_shout_enabled;
+        m.ds_shout_max_only = ds_shout_max_only;
+        let mut setup = m.round(&content, 0x5EED);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+        b
+    };
+
+    let put_in_danger = |b: &mut saito_battle::Battle| {
+        let p0 = b.player(0).unwrap();
+        b.objects.get_mut(p0).hp = 200; // <= 1000 / 4 = 250
+        b.stats[0].mood = 32; // worried (< 65, > 0)
+        b.tick(&Default::default(), Default::default());
+    };
+
+    // 1. Pure GBA (`ds_shout_enabled = false`): Danger HUD stays false and shout never fires.
+    let mut b_gba = start_battle(false, false);
+    put_in_danger(&mut b_gba);
+    assert!(!b_gba.is_danger(0), "pure GBA must never raise Danger HUD flag");
+    b_gba.tick(&[PlayerTick { mic_tier: 3, ..Default::default() }, Default::default()], Default::default());
+    assert!(!b_gba.objects.in_order().any(|r| b_gba.local_kind_key(r) == "shout"), "pure GBA must never trigger shout");
+    assert!(!b_gba.is_danger(0));
+
+    // 2. 5DS Danger HUD toggles accurately.
+    let mut b_hud = start_battle(true, false);
+    assert!(!b_hud.is_danger(0), "full HP must not be in Danger");
+    let p0 = b_hud.player(0).unwrap();
+    b_hud.objects.get_mut(p0).hp = 200;
+    b_hud.stats[0].mood = 0x80; // normal, not worried
+    b_hud.tick(&Default::default(), Default::default());
+    assert!(!b_hud.is_danger(0), "normal mood must not be in Danger");
+    b_hud.stats[0].mood = 32; // worried
+    b_hud.tick(&Default::default(), Default::default());
+    assert!(b_hud.is_danger(0), "low HP + worried must enter Danger");
+    b_hud.objects.get_mut(p0).hp = 500; // above 1/4 HP
+    b_hud.tick(&Default::default(), Default::default());
+    assert!(!b_hud.is_danger(0), "healing above 1/4 HP must exit Danger");
+
+    // 3. 3-tier volume classification (`mic_tier = 1, 2, 3`) and `ds_shout_max_only = true`.
+    let run_shout = |ds_shout_max_only: bool, mic_tier: u8| -> (u8, u16, u8, bool) {
+        let mut b = start_battle(true, ds_shout_max_only);
+        // Set barrier & high buster levels so ROWS[4] heavily favors HEAL (entries 0..13), making
+        // the heal amount (100 / 200 / 300) cleanly observable on seed 0x5EED.
+        b.stats[0].attack = 4;
+        b.stats[0].charge = 4;
+        b.stats[0].rapid = 4;
+        put_in_danger(&mut b);
+        assert!(b.is_danger(0), "must be in Danger before shouting");
+        let p0 = b.player(0).unwrap();
+        let hp_before = b.objects.get(p0).hp;
+        b.tick(&[PlayerTick { mic_tier, ..Default::default() }, Default::default()], Default::default());
+        let spawned = b.objects.in_order().any(|r| b.local_kind_key(r) == "shout");
+        assert!(spawned, "shout object must spawn on mic_tier={mic_tier}");
+        assert!(!b.is_danger(0), "Danger HUD flag must clear immediately once shout triggers");
+        for _ in 0..140 {
+            b.tick(&Default::default(), Default::default());
+        }
+        let healed = b.objects.get(p0).hp - hp_before;
+        let mood = b.stats[0].mood;
+        let atk = b.stats[0].attack;
+        // Verify once-per-battle limit: dropping back to Danger and shouting again does nothing.
+        b.objects.get_mut(p0).hp = 100;
+        b.stats[0].mood = 32;
+        b.tick(&Default::default(), Default::default());
+        let danger_after_spent = b.is_danger(0);
+        b.tick(&[PlayerTick { mic_tier: 3, ..Default::default() }, Default::default()], Default::default());
+        assert!(!b.objects.in_order().any(|r| b.local_kind_key(r) == "shout"), "shout must only trigger once per battle");
+        (mood, healed, atk, danger_after_spent)
+    };
+
+    let (mood1, healed1, _atk1, spent1) = run_shout(false, 1);
+    let (mood2, healed2, _atk2, spent2) = run_shout(false, 2);
+    let (mood3, healed3, _atk3, spent3) = run_shout(false, 3);
+    let (mood_max, healed_max, _atk_max, spent_max) = run_shout(true, 1);
+
+    assert!(!spent1 && !spent2 && !spent3 && !spent_max, "Danger must stay false after shout is spent");
+    assert_ne!(mood1, 0xFF, "Tier 1 shout must NOT grant Full Synchro");
+    assert_ne!(mood2, 0xFF, "Tier 2 shout must NOT grant Full Synchro");
+    assert_eq!(mood3, 0xFF, "Tier 3 shout MUST grant Full Synchro");
+    assert_eq!(mood_max, 0xFF, "ds_shout_max_only must upgrade Tier 1 shout to Full Synchro");
+    assert_eq!((healed1, healed2, healed3, healed_max), (100, 200, 300, 300), "Tier 1/2/3/MaxOnly heal amounts must be 100/200/300/300");
+}

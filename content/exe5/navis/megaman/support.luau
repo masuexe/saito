@@ -23,6 +23,7 @@ local bomb_sprite = asset.sprite("bomb")
 local cannon_sprite = asset.sprite("cannon")
 local sword_slash_sprite = asset.sprite("sword-slash")
 local sword_sprite = asset.sprite("sword")
+local solcross_sprite = asset.sprite("solcross-megaman")
 
 -- His timer (0x020041E4: RNG2 bits 6–9 into 0x020CC2E8's offsets of 0x020CC2E0's ticks, weights 2/6/6/2).
 local TIMER: { number } = { 130, 130, 170, 170, 170, 170, 170, 170, 210, 210, 210, 210, 210, 210, 250, 250 }
@@ -96,10 +97,19 @@ local function palette(me: Object): number
     return p + exe5.light_dark_tier(party.megaman_karma(me.alliance))
 end
 
--- 0x021FF434: in Hub Style (but the DS's style 3) Hub Style's shade.
+-- 0x021FF434: in Hub Style 1/2 wear Hub Style's shade; in DS Sol Cross (style 3) swap to 00-0D (`solcross-megaman`).
 local function wears(me: Object)
     local b = block(me)
-    if b and b.hub_style ~= 0 and b.hub_style ~= 3 then
+    if b and b.hub_style == 3 then
+        local s = me.sprite
+        local shadow, p = s.shadow, s.palette
+        local anim = me.anim
+        s:load(solcross_sprite)
+        s:set_animation(anim)
+        s.shadow = shadow
+        s:set_flip(bit32.bxor(me.alliance, me.flip))
+        s.palette = p
+    elseif b and b.hub_style ~= 0 then
         me:add_parts(hub_shade, 0)
     end
 end

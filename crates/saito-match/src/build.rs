@@ -1093,6 +1093,8 @@ fn without_entries(content: &Content, side: &Side) -> Side {
             && holds_entries(elem)
         {
             let _ = bare.set_fact(content, f.name, &[]);
+        } else if f.name == "sol_cross" && matches!(f.ty, FieldType::Bool) {
+            let _ = bare.set_fact(content, f.name, &[Fact::Value(Value::Bool(false))]);
         }
     }
     bare
@@ -2364,13 +2366,14 @@ mod tests {
         // (The game, light's and dark's value and HP.)
         for (content, game, light, dark) in [(exe5_content(), "exe5", (1000, 1000), (0, 997)), (exe4_content(), "exe4", (1000, 1000), (460, 997))] {
             let builds = Builds::of(&content, game).unwrap();
-            assert_eq!(builds.choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["light_dark"], "{game}");
+            let expected_choices: &[&str] = if game == "exe5" { &["light_dark", "sol_cross"] } else { &["light_dark"] };
+            assert_eq!(builds.choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), expected_choices, "{game}");
             assert_eq!(builds.choices[0].presets.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["light", "dark"], "{game}");
             let mut side = builds.new_build(&content, &builds.groups[0].id.clone()).unwrap();
             let facts = |side: &Side| (number(&content, side, "karma").unwrap(), number(&content, side, "hp").unwrap());
             let on = |side: &Side| builds.preset_of(&content, side, "light_dark").map(|p| p.id.clone());
             assert_eq!((on(&side).as_deref(), facts(&side)), (Some("light"), light), "{game}");
-            assert_eq!(builds.choices_of(&content, &side).len(), 1);
+            assert_eq!(builds.choices_of(&content, &side).len(), expected_choices.len());
             assert!(!builds.never_stated(&content, "hp") && !builds.never_stated(&content, "karma"), "{game}: the choice states them");
             let light_face = Checked::of(&content, game, &side).face();
             builds.take_preset(&content, &mut side, "light_dark", "dark").unwrap();

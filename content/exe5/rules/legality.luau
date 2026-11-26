@@ -42,6 +42,7 @@ return {
         facts = {
             "party",
             "party_programs",
+            "sol_cross",
         },
     },
 }

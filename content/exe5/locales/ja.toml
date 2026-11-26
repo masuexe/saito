@@ -389,7 +389,7 @@ language = "ja"
 "knightman" = { name = "ナイトマン", run_message = "今は にげているばあいでは\nありませんぞ!" }
 "magnetman" = { name = "マグネットマン", run_message = "今は にげている\nばあいじゃないぜ!!" }
 "meddy" = { name = "メディ", run_message = "ちょっと、今は にげている\nばあいじゃないでしょ!" }
-"megaman" = { name = "ロックマン", variant_name = "FCロックマン", run_message = "熱斗くん、にげてるばあいじゃ\nないよ!" }
+"megaman" = { name = "ロックマン", variant_name = "FCロックマン", variant_name_sol = "SCロックマン", variant_long_name_sol = "ソルクロスロックマン", run_message = "熱斗くん、にげてるばあいじゃ\nないよ!" }
 "napalmman" = { name = "ナパームマン", run_message = "オレは にげる\nつもりなんてないぜ!\nもっと たたかわせろ!" }
 "numberman" = { name = "ナンバーマン", run_message = "こ、こわいですけど、\n今は にげている\nばあいじゃないようです!" }
 "protoman" = { name = "ブルース", run_message = "今は にげている\nばあいじゃないぞ" }
@@ -800,6 +800,8 @@ language = "ja"
 "version.colonel" = "チーム オブ カーネル"
 "light_dark.light" = "ライト"
 "light_dark.dark" = "ダーク"
+"sol_cross.off" = "通常"
+"sol_cross.on" = "ソルクロス"
 
 # The rulesets' words (en.toml's `[rulesets]` says what they are). Ours.
 [rulesets]

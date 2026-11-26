@@ -127,8 +127,8 @@ local function palette(side: number, navi: Object): number?
     else
         p = tier(value(side))
     end
-    -- Hub Style (NaviStats +0x4C: EXE5's patch card 111, applied at 0x08138214).
-    if hub and stats.hub_style ~= 0 then
+    -- Hub Style (NaviStats +0x4C: EXE5's patch card 111, applied at 0x08138214; not Sol Cross style 3).
+    if hub and stats.hub_style ~= 0 and stats.hub_style ~= 3 then
         return p + stats.hub_style * 5 + 20
     end
     return p + (if in_soul then 0 else stats.element) * 5
@@ -136,7 +136,8 @@ end
 
 -- 0x08010030: a dark chip's use; false when it fizzles.
 local function use_dark_chip(side: number, navi: Object): boolean
-    if effect(DARK_CHIPS_FIZZLE) then
+    -- In link battles, bit 0x0010_0000 is Saito's `effects::NO_SUN` (Indoor/Shade), not story `DARK_CHIPS_FIZZLE`.
+    if not battle.link() and effect(DARK_CHIPS_FIZZLE) then
         return false
     end
     if battle.link() and value(side) >= LIGHT_CHIPS then
@@ -244,12 +245,15 @@ local light_dark = {}
 light_dark.deal = offer_dark_chip
 
 -- Hub Style shows the base form's version-specific set of faces (0x0801AF8E: ProtoMan's gold at 1, Colonel's silver
--- at 2), and in a link battle the navi's variant name among the enemy names (0x0801AE3A).
+-- at 2; EXE5DS Sol Cross at 3), and in a link battle the navi's variant name among the enemy names (0x0801AE3A /
+-- 0x02009C08).
 function light_dark.round_setup(side: number)
     local hub = battle.navi(side).hub_style
     battle.set_hud("face_variant", hub == 1, side)
     battle.set_hud("face_variant_alt", hub == 2, side)
-    battle.set_hud("name_variant", hub ~= 0 and battle.link(), side)
+    battle.set_hud("face_variant_sol", hub == 3, side)
+    battle.set_hud("name_variant", (hub == 1 or hub == 2) and battle.link(), side)
+    battle.set_hud("name_variant_sol", hub == 3 and battle.link(), side)
 end
 
 -- 0x08010EC8: MegaMan's starting mood.

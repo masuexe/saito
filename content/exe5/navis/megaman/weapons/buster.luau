@@ -64,8 +64,9 @@ function exe5.setup(navi: Object): Action
         program = stats.buster_shot or variants.plain
     end
     local spread = false
-    -- MegaMan (navi 0, NaviStats +0x29) in his base form (+0x2C 0) in Hub Style (+0x4C): the spread.
-    if stats.navi.id == MEGAMAN and stats.form.base and stats.hub_style ~= 0 then
+    -- MegaMan (navi 0, NaviStats +0x29) in his base form (+0x2C 0) in BassCross Hub Style (+0x4C == 1 or 2): the spread.
+    -- Sol Cross (+0x4C == 3) fires MegaMan's normal buster, not BassCross's spread.
+    if stats.navi.id == MEGAMAN and stats.form.base and (stats.hub_style == 1 or stats.hub_style == 2) then
         program, spread = variants.hub, true
     end
     local s = navi:action_state(buster.shot) :: { spread: boolean, throw: MegaManBusterThrow?, projectile: ProjectileVariant? }

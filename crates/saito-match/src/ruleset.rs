@@ -790,9 +790,12 @@ impl Ruleset {
                 if already {
                     continue;
                 }
-                if let Some(Stated::List(items)) = side.facts.get(content, fact)
-                    && !items.is_empty()
-                {
+                let active = match side.facts.get(content, fact) {
+                    Some(Stated::List(items)) => !items.is_empty(),
+                    Some(Stated::Flag(true)) => true,
+                    _ => false,
+                };
+                if active {
                     out.push(Problem {
                         side: Some(0),
                         field: Some(fact.clone()),
@@ -802,6 +805,20 @@ impl Ruleset {
                     });
                 }
             }
+        }
+        // EXE5DS Sol Cross is only allowed in Senior 5DS (DS rulesets with patch cards banned);
+        // Masters 5DS and Gate-Party (which allow patch cards) forbid it.
+        if self.allow_ds
+            && matches!(side.facts.get(content, "sol_cross"), Some(Stated::Flag(true)))
+            && rulesets.category("patch_cards").is_some_and(|c| self.allowed_count(c) > 0)
+        {
+            out.push(Problem {
+                side: Some(0),
+                field: Some("sol_cross".to_string()),
+                entry: None,
+                what: Wrong::NotTaken,
+                text: "Sol Cross is only allowed in Senior 5DS (patch cards must be banned)".to_string(),
+            });
         }
         out
     }

@@ -37,6 +37,10 @@ local function story_hp(story: { hp: { number }, max_level: number }, level: num
     return nil
 end
 
+-- Saito link-battle indoor flag (`setup::effects::NO_SUN = 0x0010_0000`): overrides default `sun = true` so
+-- GunDelSol, Django, and Sol Cross run in shade/indoor mode.
+local NO_SUN = 0x0010_0000
+
 local function round_setup(side: number)
     local stats = battle.navi(side)
     local setup = rules.setup() :: Setup
@@ -57,7 +61,7 @@ local function round_setup(side: number)
             stats.hp = hp
         end
     else
-        stats.sun = setup.sun
+        stats.sun = setup.sun and not (battle.link() and bit32.btest(battle.effects(), NO_SUN))
         stats.max_base_hp = setup.hp
         stats.navi_variant = setup.hp // 100
     end

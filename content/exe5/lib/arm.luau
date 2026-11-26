@@ -83,6 +83,12 @@ function arm.raise_for(navi: Object, which: Slot, while_dimmed: boolean, holder:
                     elseif stats.element ~= 0 then
                         palette = 0x1B + stats.element
                     end
+                elseif dark == 3 then
+                    -- EXE5DS Sol Cross (0x020A1124 / buster-arm anim 0x0E).
+                    anim = 0x0E
+                    if navi:navi_state("no_charge") then
+                        palette = 1
+                    end
                 elseif navi:navi_state("no_charge") then
                     anim, palette = 13, 1
                 else

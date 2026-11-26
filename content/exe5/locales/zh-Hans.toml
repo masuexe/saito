@@ -393,7 +393,7 @@ language = "zh-Hans"
 "knightman" = { name = "骑士人", long_name = "骑士人", run_message = "现在可不是\n逃跑的时候啊！" }
 "magnetman" = { name = "磁铁人", long_name = "磁铁人", run_message = "现在可不是\n逃跑的时候！！" }
 "meddy" = { name = "梅蒂", run_message = "等等，现在不是\n该逃跑的时候吧！" }
-"megaman" = { name = "洛克人", variant_name = "FC洛克人", run_message = "热斗，现在可不是\n逃跑的时候！" }
+"megaman" = { name = "洛克人", variant_name = "FC洛克人", variant_name_sol = "SC洛克人", variant_long_name_sol = "太阳交错洛克人", run_message = "热斗，现在可不是\n逃跑的时候！" }
 "napalmman" = { name = "烧夷弹人", long_name = "烧夷弹人", run_message = "我可没有\n逃跑的打算呢！\n让我继续战斗吧！" }
 "numberman" = { name = "数字人", long_name = "数字人", run_message = "虽、虽然我很害怕，\n但现在\n不是逃跑的时候吧！" }
 "protoman" = { name = "布鲁斯", run_message = "现在可不是\n逃跑的时候" }
@@ -778,6 +778,8 @@ language = "zh-Hans"
 "version.colonel" = "卡尼尔队"
 "light_dark.light" = "光明"
 "light_dark.dark" = "黑暗"
+"sol_cross.off" = "通常"
+"sol_cross.on" = "太阳交错"
 
 [rulesets]
 "category.navi" = "领航员"
