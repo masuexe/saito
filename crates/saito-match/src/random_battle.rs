@@ -560,5 +560,53 @@ mod tests {
         assert_eq!(sides[0].folder(&content).tags, Some(tag_pair));
         assert_eq!(sides[1].folder(&content).regular, None);
         assert_eq!(sides[1].folder(&content).tags, Some(tag_pair));
+        // S-118 / S-120: check_match must accept Random Battle matches with 30MB Regular / 60MB Tag marks
+        // and pack combinations that exceed standard constructed copy limits, while still rejecting invalid marks.
+        let m = crate::Match {
+            game: "exe6".into(),
+            seed: Some(42),
+            rounds: vec![crate::RoundSettings::default(); 3],
+            sides,
+            backgrounds: crate::BackgroundPick::Game,
+            custom_screen_time: Some(120),
+            random_battle: Some(RandomRank::Rank3),
+            abd_mode: crate::AbdMode::Original,
+            abd_chip_cap: None,
+            cs_prob_fix: crate::CsProbFix::NONE,
+            all_guard_disabled: false,
+            dark_cut_in_fix: false,
+            sun_enabled: true,
+            ds_shout_enabled: false,
+            ds_shout_max_only: false,
+        };
+        assert_eq!(crate::check_match(&content, &m), Vec::<String>::new());
+
+        // Over-30MB regular chip is still refused by check_match in Random Battle.
+        let mut bad_folder = folder.clone();
+        bad_folder.regular = Some(reg_over);
+        let mut bad_m = m.clone();
+        bad_m.sides[0] = build_side(&content, &bad_folder).unwrap();
+        assert!(!crate::check_match(&content, &bad_m).is_empty());
+
+        // Verify many seeds across all 3 ranks with <=30MB regular chips pass check_match
+        // (including seeds whose 3 packs yield >5 copies of a chip like vulcan1).
+        for rank in RandomRank::ALL {
+            for seed in 0..40u32 {
+                let f = build_folder(&content, rank, seed).unwrap();
+                let reg = (0..30u8).find(|&i| {
+                    let mb = content.chip(f.chips[i as usize].unwrap().id).mb;
+                    mb > 4 && mb <= RANDOM_REGULAR_MEMORY
+                });
+                let sides = build_match_sides_with_marks(
+                    &content,
+                    rank,
+                    seed,
+                    [RandomMarks { regular: reg, tags: None }, RandomMarks::default()],
+                )
+                .unwrap();
+                let rm = crate::Match { seed: Some(seed), sides, random_battle: Some(rank), ..m.clone() };
+                assert_eq!(crate::check_match(&content, &rm), Vec::<String>::new(), "{rank:?} seed={seed}");
+            }
+        }
     }
 }

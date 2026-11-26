@@ -938,4 +938,57 @@ pub(crate) mod tests {
             assert_eq!((out.diverged, out.result), (None, Some(BattleResult::Won)));
         }
     }
+
+    /// S-118 / S-120: EXE6 Random Battle replays (with 30MB Regular / 60MB Tag selections)
+    /// must pass `check_match`, open for live spectating (`ReplayPlayer::new_from_round`),
+    /// and play back identically to the recording without being flagged as damaged.
+    #[test]
+    fn random_battle_replay_plays_back_without_damage() {
+        use saito_match::random_battle::{self, RANDOM_REGULAR_MEMORY, RANDOM_TAG_MEMORY, RandomMarks, RandomRank};
+        let content = saito_match::testing::exe6_content();
+        let seed = 0xC523_8FA4;
+        let folder = random_battle::build_folder(&content, RandomRank::Rank2, seed).unwrap();
+        let mb = |i: u8| content.chip(folder.chips[i as usize].unwrap().id).mb;
+        let reg = (0..30u8).find(|&i| mb(i) > 4 && mb(i) <= RANDOM_REGULAR_MEMORY).unwrap();
+        let tags = (0..30u8)
+            .filter(|&i| i != reg)
+            .find_map(|a| ((a + 1)..30u8).find(|&b| b != reg && mb(a) + mb(b) <= RANDOM_TAG_MEMORY).map(|b| (a, b)))
+            .unwrap();
+        let sides = random_battle::build_match_sides_with_marks(
+            &content,
+            RandomRank::Rank2,
+            seed,
+            [RandomMarks { regular: Some(reg), tags: Some(tags) }, RandomMarks::default()],
+        )
+        .unwrap();
+        let m = Match {
+            game: "exe6".into(),
+            seed: Some(seed),
+            rounds: vec![saito_match::RoundSettings::default(); 3],
+            sides,
+            backgrounds: saito_match::BackgroundPick::Game,
+            custom_screen_time: Some(120),
+            random_battle: Some(RandomRank::Rank2),
+            abd_mode: saito_match::AbdMode::Original,
+            abd_chip_cap: None,
+            cs_prob_fix: saito_match::CsProbFix::from_bits(0x0108),
+            all_guard_disabled: false,
+            dark_cut_in_fix: false,
+            sun_enabled: true,
+            ds_shout_enabled: false,
+            ds_shout_max_only: false,
+        };
+        let sink = Shared::default();
+        let mut s = Session::new(Box::new(LivePlayer::new(Set::of(&content, &m, seed))));
+        s.record(Recorder::new(Box::new(sink.clone()), &content, &m, &Info::of(MatchKind::Online, 0)).unwrap()).unwrap();
+        for _ in 0..300 {
+            if !s.step(PlayerTick::default()) {
+                break;
+            }
+        }
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let out = play_out(&content, &replay).unwrap();
+        assert_eq!((out.diverged, out.stopped, out.ticks), (None, None, s.ticks));
+        assert!(ReplayPlayer::new_from_round(&content, &replay, Some(0), Compat::Exact, None).is_ok());
+    }
 }

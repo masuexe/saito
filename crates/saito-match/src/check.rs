@@ -267,6 +267,30 @@ pub fn problems(content: &Arc<Content>, m: &Match) -> Vec<Problem> {
     if !out.is_empty() {
         return out;
     }
+    if m.random_battle.is_some() {
+        if !crate::random_battle::supported(&m.game) {
+            out.push(Problem::of(None, Wrong::Match, format!("random battle is not supported for {}", m.game)));
+            return out;
+        }
+        for (side, s) in m.sides.iter().enumerate() {
+            let folder = s.folder(content);
+            if folder.saved().is_none() {
+                out.push(Problem::of(Some(side), Wrong::Match, "random battle: folder isn't whole".into()));
+                continue;
+            }
+            let marks = crate::random_battle::RandomMarks { regular: folder.regular, tags: folder.tags };
+            if let Err(why) = crate::random_battle::validate_marks(content, &folder, marks) {
+                out.push(Problem::of(Some(side), Wrong::Match, why));
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+        if let Err(e) = set_up(content, m) {
+            out.push(Problem::of(None, Wrong::Internal, e));
+        }
+        return out;
+    }
     match set_up(content, m) {
         Ok(mut b) => {
             for side in 0..m.sides.len() {
