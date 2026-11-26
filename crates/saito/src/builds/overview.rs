@@ -213,13 +213,8 @@ pub fn sheet_of(words: &Words, label: &str, name: &str, side: &Side, checked: &m
     };
     // Its partners (a party battle's: EXE5's), a row each under the forms.
     let party = crate::builds::party::sheet_rows(kit, names, side);
-    // The presets of its choices, after the navi (EXE4's and EXE5's MegaMan's Light or Dark), plus Sol Cross if stated as a boolean fact.
-    let mut presets: Vec<String> = kit.builds.choices_of(content, side).iter().filter_map(|c| kit.builds.preset_of(content, side, &c.id).map(|p| crate::builds::preset_name(names, c, p))).collect();
-    if !kit.builds.choices.iter().any(|c| c.facts().contains(&"sol_cross"))
-        && matches!(side.facts.get(content, "sol_cross"), Some(facts::Stated::Flag(true)))
-    {
-        presets.push(names.text(build::TEXT_TABLE, "sol_cross.on").unwrap_or_else(|| "Sol Cross".to_string()));
-    }
+    // The presets of its choices, after the navi (EXE4's and EXE5's MegaMan's Light or Dark).
+    let presets: Vec<String> = kit.builds.choices_of(content, side).iter().filter_map(|c| kit.builds.preset_of(content, side, &c.id).map(|p| crate::builds::preset_name(names, c, p))).collect();
     // What is the game's own navi's alone (its NaviCust, patch cards and auto battle data: the editor's tabs that are)
     // a build of another navi has none of.
     let own = content.navi(navi).changes_form();

@@ -18,6 +18,7 @@ pub struct LegalitySet {
     pub chip_codes: BTreeMap<ChipHandle, BTreeSet<u8>>,
     pub navicust_colors: BTreeMap<EntryHandle, BTreeSet<String>>,
     pub navicust_programs: BTreeSet<EntryHandle>,
+    pub patch_cards: BTreeSet<EntryHandle>,
     pub facts: BTreeSet<String>,
 }
 
@@ -26,6 +27,7 @@ impl LegalitySet {
         self.chip_codes.is_empty()
             && self.navicust_colors.is_empty()
             && self.navicust_programs.is_empty()
+            && self.patch_cards.is_empty()
             && self.facts.is_empty()
     }
 
@@ -40,6 +42,10 @@ impl LegalitySet {
     pub fn has_navicust_color(&self, program: EntryHandle, color: &str) -> bool {
         self.navicust_programs.contains(&program)
             || self.navicust_colors.get(&program).is_some_and(|colors| colors.contains(color))
+    }
+
+    pub fn has_patch_card(&self, card: EntryHandle) -> bool {
+        self.patch_cards.contains(&card)
     }
 
     pub fn has_fact(&self, fact: &str) -> bool {
@@ -89,6 +95,13 @@ fn parse_set(content: &Content, game: &str, data: &Data) -> LegalitySet {
             }
         }
     }
+    if let Data::List(cards) = data.field("patch_cards") {
+        for c in cards {
+            if let Some(entry) = c.str().and_then(|name| ids::entry(content, game, "patch_cards", name)) {
+                set.patch_cards.insert(entry);
+            }
+        }
+    }
     if let Data::List(facts) = data.field("facts") {
         for f in facts {
             if let Some(name) = f.str() {
@@ -126,6 +139,11 @@ impl Legality {
     /// Whether NaviCust `program` in `color` is legal to pick in the build editor under `allow_ds`.
     pub fn navicust_color_allowed(&self, program: EntryHandle, color: &str, allow_ds: bool) -> bool {
         !self.unobtainable.has_navicust_color(program, color) && (allow_ds || !self.ds_only.has_navicust_color(program, color))
+    }
+
+    /// Whether patch card `card` is legal to pick in the build editor under `allow_ds`.
+    pub fn patch_card_allowed(&self, card: EntryHandle, allow_ds: bool) -> bool {
+        !self.unobtainable.has_patch_card(card) && (allow_ds || !self.ds_only.has_patch_card(card))
     }
 }
 
@@ -226,5 +244,10 @@ mod tests {
         let mut hub_side = Builds::of(&content, "exe5").unwrap().new_build(&content, "protoman").unwrap();
         set_navicust(&content, &mut hub_side, &[PlacedProgram { program: hubbatc, color: 0, x: 3, y: 3, rotation: 0, compressed: false }], 2);
         assert!(Checked::under(&content, "exe5", &hub_side, &r, r.preset("masters_5ds").unwrap()).problems.iter().any(|p| p.what == Wrong::Unobtainable));
+
+        // 4. DS-only patch card (sol-cross-megaman): hidden in GBA, allowed in 5DS.
+        let sol_cross = ids::entry(&content, "exe5", "patch_cards", "sol-cross-megaman").unwrap();
+        assert!(!r.legality.patch_card_allowed(sol_cross, false));
+        assert!(r.legality.patch_card_allowed(sol_cross, true));
     }
 }

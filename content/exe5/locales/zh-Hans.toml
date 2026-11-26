@@ -515,6 +515,7 @@ language = "zh-Hans"
 "basher" = { name = "特刚炮" }
 "bass" = { name = "佛鲁迪" }
 "bass-cross-megaman" = { name = "佛鲁迪交错\n洛克人   " }
+"sol-cross-megaman" = { name = "太阳交错\n洛克人" }
 "bassgs" = { name = "佛鲁迪GS" }
 "bassxx" = { name = "佛鲁迪XX" }
 "batty" = { name = "脉冲蝙蝠" }
@@ -693,6 +694,7 @@ language = "zh-Hans"
 "charged_shot.megaman/rapid-buster" = "Ⓑ集气高速乱射"
 "charged_shot.megaman/reflect" = "Ⓑ集气反射"
 "charged_shot.megaman/seaseed" = "Ⓑ集气海洋种子"
+"charged_shot.megaman/sol-gundelsol" = "Ⓑ集气太阳枪"
 "charged_shot.megaman/tankcan1" = "Ⓑ集气C加农炮"
 "charged_shot.megaman/thunder" = "Ⓑ集气雷电球"
 "charged_shot.megaman/tornado" = "Ⓑ集气龙卷风"

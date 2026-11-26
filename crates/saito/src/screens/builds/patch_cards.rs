@@ -187,6 +187,7 @@ impl PatchCards {
             let mut found: Vec<(String, u32, Card)> = self
                 .cards
                 .iter()
+                .filter(|&&h| draft.patch_card_allowed(h))
                 .filter(|&&h| slot_filter.is_none_or(|(s, slot)| s.own(content, h) == Some(slot)))
                 .filter_map(|&h| {
                     let name = words.names.entry(h);
@@ -958,7 +959,7 @@ mod tests {
     #[test]
     fn every_card_has_its_own_number() {
         let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../content"));
-        for (content, game, count) in [(saito_match::testing::exe6_content(), "exe6", 117), (saito_match::testing::exe5_content(), "exe5", 111), (saito_match::testing::exe4_content(), "exe4", 133)] {
+        for (content, game, count) in [(saito_match::testing::exe6_content(), "exe6", 117), (saito_match::testing::exe5_content(), "exe5", 112), (saito_match::testing::exe4_content(), "exe4", 133)] {
             let order = crate::builds::order::Order::load(dir, game);
             let collection = collection_of(&content, FIELD).unwrap();
             let mut cards: Vec<((), EntryHandle)> = edit::of_game(&content, game, Registry::Entry, Some(&collection)).into_iter().map(|h| ((), EntryHandle(h))).collect();

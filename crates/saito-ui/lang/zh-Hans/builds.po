@@ -758,6 +758,3 @@ msgstr "5DS 版（Double Team DS，仅 EXE5）"
 
 msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
 msgstr "• 内部芯片 ID 升序重排：在套用 4/4/2/2/1×12 权重前，标准/黑暗池与 MEGA 池均强制按游戏内部 BattleChip ID 从小到大排序（编号靠前的芯片自动获得高权重，不再按使用次数排序）。\n• 芯片后强制连射冷却：使用任意黑暗芯片、侦察人（无印/SP/DS）、摇星游行（1–3）或巨大噪音后，AI 必须先执行 8 次洛克炮三连射（原版仅 2 次）才能再次尝试出卡。"
-
-msgid "Sol Cross"
-msgstr "太阳交错"

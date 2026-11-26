@@ -235,8 +235,6 @@ local rules: Rules = {
         party = schema.list({ navi = "navi", programs = schema.list("partycust_programs", 10) }, 2),
         -- The lead team navi's own PartyCust programs in a party battle (EXE5 DS Gate-Party: ./party). Empty for MegaMan.
         party_programs = schema.list("partycust_programs", 10),
-        -- EXE5 DS Boktai 2 double-slot Sol Cross MegaMan (./sol_cross: Senior 5DS only).
-        sol_cross = "bool",
     },
     -- A setup that says nothing: what every save brings at its highest, the base HP 1000, the Regular memory 50 and
     -- the sun, no level (MegaMan's); a fresh save's light/dark value (0x08010C00 writes 500: light for the chips, no
@@ -267,7 +265,6 @@ local rules: Rules = {
             "tomahawksoul",
         },
         chaos_unison = true,
-        sol_cross = false,
         -- Every SP navi deleted in no time (its chip's best damage), in the save's order.
         sp_times = {
             { chip = "protomn-sp", frames = 0 },
@@ -420,7 +417,6 @@ local rules: Rules = {
             save.round_setup(side)
             navicust.round_setup(side)
             patch_cards.apply(side)
-            sol_cross.round_setup(side)
             light_dark.round_setup(side)
             shout.round_setup(side)
             -- The party's partners join (./party).

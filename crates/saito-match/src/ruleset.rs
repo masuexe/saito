@@ -785,6 +785,32 @@ impl Ruleset {
                     }
                 }
             }
+            if !ds.patch_cards.is_empty()
+                && let Some(Stated::List(items)) = side.facts.get(content, "patch_cards")
+            {
+                for (i, item) in items.iter().enumerate() {
+                    let card_def = match item {
+                        Stated::Def(Registry::Entry, Some(h)) => Some(*h),
+                        Stated::Record(fields) => fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
+                            ("card", Stated::Def(Registry::Entry, Some(h))) => Some(*h),
+                            _ => None,
+                        }),
+                        _ => None,
+                    };
+                    let Some(h) = card_def else { continue };
+                    let entry = saito_content_api::EntryHandle(h);
+                    if ds.has_patch_card(entry) && !out.iter().any(|p| p.field.as_deref() == Some("patch_cards") && p.at(i)) {
+                        let name = ids::shown(content, Registry::Entry, h);
+                        out.push(Problem {
+                            side: Some(0),
+                            field: Some("patch_cards".to_string()),
+                            entry: Some(i),
+                            what: Wrong::DsOnly,
+                            text: format!("{name} is only available in 5DS"),
+                        });
+                    }
+                }
+            }
             for fact in &ds.facts {
                 let already = out.iter().any(|p| p.field.as_deref() == Some(fact.as_str()));
                 if already {
@@ -805,20 +831,6 @@ impl Ruleset {
                     });
                 }
             }
-        }
-        // EXE5DS Sol Cross is only allowed in Senior 5DS (DS rulesets with patch cards banned);
-        // Masters 5DS and Gate-Party (which allow patch cards) forbid it.
-        if self.allow_ds
-            && matches!(side.facts.get(content, "sol_cross"), Some(Stated::Flag(true)))
-            && rulesets.category("patch_cards").is_some_and(|c| self.allowed_count(c) > 0)
-        {
-            out.push(Problem {
-                side: Some(0),
-                field: Some("sol_cross".to_string()),
-                entry: None,
-                what: Wrong::NotTaken,
-                text: "Sol Cross is only allowed in Senior 5DS (patch cards must be banned)".to_string(),
-            });
         }
         out
     }
@@ -1359,9 +1371,9 @@ mod tests {
                 let m5m = r.preset("masters_5ds_mixed").unwrap();
                 assert!(!m5m.one_per_build && m5m.allowed_count(navi) == 1 && m5m.allowed_count(party) == party.items.len());
                 let s5 = r.preset("senior_5ds").unwrap();
-                assert!(s5.one_per_build && s5.allowed_count(navi) == 1 && s5.allowed_count(cards) == 0);
+                assert!(s5.one_per_build && s5.allowed_count(navi) == 1 && s5.allowed_count(cards) == 3);
                 let s5m = r.preset("senior_5ds_mixed").unwrap();
-                assert!(!s5m.one_per_build && s5m.allowed_count(navi) == 1 && s5m.allowed_count(cards) == 0);
+                assert!(!s5m.one_per_build && s5m.allowed_count(navi) == 1 && s5m.allowed_count(cards) == 3);
                 let gate = r.preset("gate").unwrap();
                 assert_eq!(gate.allowed_count(party), 0);
                 assert_eq!(gate.allowed_count(navi), navi.items.len() - 1);

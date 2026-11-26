@@ -106,6 +106,7 @@ return merge {
     require("@self/shrimpy"),
     require("@self/snakeman"),
     require("@self/snowblow"),
+    require("@self/sol-cross-megaman"),
     require("@self/sparkman"),
     require("@self/spikey"),
     require("@self/swordy"),

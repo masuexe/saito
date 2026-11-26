@@ -167,6 +167,7 @@ patch_cards = [
     "dads-repair-program",
     "hub-hikari",
     "bass-cross-megaman",
+    "sol-cross-megaman",
 ]
 partycust_programs = [
     "p-hp-50",

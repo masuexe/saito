@@ -208,6 +208,11 @@ impl Draft {
         self.kit.rulesets().is_none_or(|r| r.legality.navicust_color_allowed(program, color, self.allow_ds()))
     }
 
+    /// Whether patch card `card` is legally pickable under the build's ruleset (hiding disallowed DS-only cards).
+    pub fn patch_card_allowed(&self, card: saito_content_api::EntryHandle) -> bool {
+        self.kit.rulesets().is_none_or(|r| r.legality.patch_card_allowed(card, self.allow_ds()))
+    }
+
     /// Whether the build's ruleset allows definition `h` of the build's fact `fact` (a navi, a chip, a program, a
     /// soul, a Cross, a Cybeast, an auto battle place's chip): where it holds nothing of that fact back, or there is
     /// none, yes. What it doesn't allow is marked where it is offered, and refused where it would be added.

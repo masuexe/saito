@@ -1,38 +1,17 @@
 --!strict
--- EXE5DS Sol Cross MegaMan (Boktai 2 Slot-2 double-slot bonus: 0x0205B14E, 0x02098B54):
--- - Sets `hub_style = 3`, `max_hp += 200` (`hp = max_hp`), `super_armor = true`,
+-- EXE5DS Sol Cross MegaMan (Boktai 2/3 Slot-2 bonus, modeled as the 70 MB 5DS-only patch card `sol-cross-megaman`):
+-- - Patch card `sol-cross-megaman` sets `hub_style = 3`, `max_hp += 200`, `super_armor = true`,
 --   `mega_level = math.max(mega_level - 2, 1)`, and `charge_shot_weapon = sol_gundelsol.weapon` (0x6C).
 -- - Spawns the corner `sol-sun` object at round start when fighting in sunlight (`stats.sun`).
--- - Requires MegaMan as the main navi and is mutually exclusive with the Bass-Cross MegaMan patch card.
+-- - Mutually exclusive with `bass-cross-megaman` on the same build (even if custom rulesets raise the MB limit).
 
-local sol_gundelsol = require("../navis/megaman/weapons/sol_gundelsol")
 local sol_sun = require("../objects/sol_sun")
 
 type Setup = {
-    navi: NaviDef?,
-    sol_cross: boolean,
     patch_cards: { InstalledPatchCard },
 }
 
 local sol_cross = {}
-
--- 0x0205B14E: apply Sol Cross stats to MegaMan after NaviCust and patch cards.
-function sol_cross.round_setup(side: number)
-    local setup = rules.setup_of(side) :: Setup
-    if not setup.sol_cross then
-        return
-    end
-    local stats = battle.navi(side)
-    if stats.navi.forms == nil then
-        return
-    end
-    stats.hub_style = 3
-    stats.max_hp = math.min(stats.max_hp + 200, 0xFFFF)
-    stats.hp = stats.max_hp
-    stats.super_armor = true
-    stats.mega_level = math.max(stats.mega_level - 2, 1)
-    stats.charge_shot_weapon = sol_gundelsol.weapon
-end
 
 -- 0x02098B54: spawn the Sol Cross sun object at round start when fighting in sunlight.
 function sol_cross.round_start(side: number)
@@ -42,33 +21,27 @@ function sol_cross.round_start(side: number)
     end
 end
 
--- `validate`: Sol Cross is MegaMan-only and mutually exclusive with Bass-Cross MegaMan.
+-- `validate`: Sol-Cross MegaMan cannot be combined with Bass-Cross MegaMan on the same build.
 function sol_cross.validate(side: number, problem: (p: SetupProblem) -> ())
     local setup = rules.setup_of(side) :: Setup
-    if not setup.sol_cross then
-        return
-    end
-    local navi = setup.navi
-    if navi == nil then
-        return
-    end
-    if navi.forms == nil then
-        problem({
-            kind = "not_taken",
-            field = "sol_cross",
-            text = string.format("sol_cross: %s cannot use Sol Cross (MegaMan only)", battle.name(navi)),
-        })
-        return
-    end
-    for _, installed in setup.patch_cards do
-        if installed.card and installed.card.id == "bass-cross-megaman" then
-            problem({
-                kind = "invalid",
-                field = "sol_cross",
-                text = "sol_cross: Sol Cross cannot be combined with Bass-Cross MegaMan",
-            })
-            break
+    local sol_entry: number? = nil
+    local has_bass = false
+    for i, installed in setup.patch_cards do
+        if installed.card then
+            if installed.card.id == "sol-cross-megaman" then
+                sol_entry = i
+            elseif installed.card.id == "bass-cross-megaman" then
+                has_bass = true
+            end
         end
+    end
+    if sol_entry ~= nil and has_bass then
+        problem({
+            kind = "invalid",
+            field = "patch_cards",
+            entry = sol_entry,
+            text = "patch_cards: Sol-Cross MegaMan cannot be combined with Bass-Cross MegaMan",
+        })
     end
 end
 

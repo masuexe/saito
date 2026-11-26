@@ -39,15 +39,6 @@ return {
                 { id = "dark", from = 0, set = { karma = 0, hp = 997 } },
             },
         },
-        {
-            id = "sol_cross",
-            navi = "megaman",
-            fact = "sol_cross",
-            presets = {
-                { id = "off", set = { sol_cross = false } },
-                { id = "on", set = { sol_cross = true } },
-            },
-        },
     },
     -- The facts a build never states: every build plays at the most the game allows, so these are always the rules'
     -- defaults (the most Regular memory, the sun, a team navi's last level, every SP navi deleted in no time, the auto

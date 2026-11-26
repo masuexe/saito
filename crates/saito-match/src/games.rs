@@ -1598,11 +1598,12 @@ fn exe5_dark_survival_clears_guard_flag() {
     assert_eq!(b.objects.get(p0).hp, 1, "dark-survival should hold MegaMan at 1 HP");
 }
 
-/// EXE5DS Sol Cross ruleset gating and build validation:
-/// - Allowed ONLY in Senior 5DS (`senior_5ds`, `senior_5ds_mixed`)
-/// - Rejected in Masters (`masters`, `masters_mixed`, `masters_5ds`, `masters_5ds_mixed`),
-///   pure GBA (`senior`, `senior_mixed`, `gate`, `gate_mixed`), and `gate_party` / `gate_party_mixed`
-/// - Requires MegaMan as main navi and is mutually exclusive with `bass-cross-megaman` patch card.
+/// EXE5DS Sol Cross (`sol-cross-megaman` 70 MB DS-only patch card) ruleset gating and validation:
+/// - Allowed in Senior 5DS (`senior_5ds`, `senior_5ds_mixed`, alongside `bass-cross-megaman`)
+///   and Masters 5DS (`masters_5ds`, `masters_5ds_mixed`, at 70 MB out of 80 MB)
+/// - Rejected as DS-only in GBA Masters (`masters`, `masters_mixed`) and disallowed in all pure GBA rulesets
+/// - Regular patch cards remain banned in Senior 5DS (`senior_5ds`, `senior_5ds_mixed`)
+/// - Mutually exclusive with `bass-cross-megaman` patch card.
 #[test]
 fn exe5_sol_cross_ruleset_gating_and_validation() {
     use crate::Wrong;
@@ -1614,63 +1615,70 @@ fn exe5_sol_cross_ruleset_gating_and_validation() {
     let builds = Builds::of(&content, "exe5").unwrap();
 
     let mut side = builds.new_build(&content, "protoman").unwrap();
-    builds.take_preset(&content, &mut side, "sol_cross", "on").unwrap();
-    assert_eq!(side.facts.get(&content, "sol_cross"), Some(Stated::Flag(true)));
+    side.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman")).unwrap();
 
-    // Allowed in Senior 5DS (single-version and mixed).
-    for preset_id in ["senior_5ds", "senior_5ds_mixed"] {
+    // Allowed in Senior 5DS and Masters 5DS (single-version and mixed).
+    for preset_id in ["senior_5ds", "senior_5ds_mixed", "masters_5ds", "masters_5ds_mixed"] {
         let preset = r.preset(preset_id).unwrap();
         let checked = Checked::under(&content, "exe5", &side, &r, preset);
         assert!(checked.ready(), "Sol Cross must be allowed in {preset_id}, got: {:?}", checked.problems);
     }
 
-    // Rejected as DS-only in all pure GBA rulesets.
-    for preset_id in ["masters", "masters_mixed", "senior", "senior_mixed", "gate", "gate_mixed"] {
+    // Bass-Cross MegaMan is also allowed in Senior 5DS, while regular patch cards remain banned.
+    let mut fcr_side = builds.new_build(&content, "protoman").unwrap();
+    fcr_side.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "bass-cross-megaman/protoman")).unwrap();
+    for preset_id in ["senior_5ds", "senior_5ds_mixed"] {
+        let preset = r.preset(preset_id).unwrap();
+        let checked = Checked::under(&content, "exe5", &fcr_side, &r, preset);
+        assert!(checked.ready(), "Bass-Cross must be allowed in {preset_id}, got: {:?}", checked.problems);
+    }
+    let mut regular_side = builds.new_build(&content, "protoman").unwrap();
+    regular_side.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "mettaur")).unwrap();
+    for preset_id in ["senior_5ds", "senior_5ds_mixed"] {
+        let preset = r.preset(preset_id).unwrap();
+        let checked = Checked::under(&content, "exe5", &regular_side, &r, preset);
+        assert!(
+            checked.problems.iter().any(|p| p.field.as_deref() == Some("patch_cards") && matches!(p.what, Wrong::NotAllowed { .. })),
+            "Regular patch cards must stay banned in {preset_id}, got: {:?}",
+            checked.problems
+        );
+    }
+
+    // Rejected as DS-only in GBA Masters (where patch cards are otherwise allowed).
+    for preset_id in ["masters", "masters_mixed"] {
         let preset = r.preset(preset_id).unwrap();
         let checked = Checked::under(&content, "exe5", &side, &r, preset);
         assert!(
-            checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::DsOnly),
+            checked.problems.iter().any(|p| p.field.as_deref() == Some("patch_cards") && p.what == Wrong::DsOnly),
             "Sol Cross must be rejected as DsOnly in {preset_id}, got: {:?}",
             checked.problems
         );
     }
 
-    // Rejected in Masters 5DS and Gate-Party (patch cards allowed / non-Senior).
-    for preset_id in ["masters_5ds", "masters_5ds_mixed", "gate_party", "gate_party_mixed"] {
+    // Rejected in GBA Senior and Gate rulesets.
+    for preset_id in ["senior", "senior_mixed", "gate", "gate_mixed", "gate_party", "gate_party_mixed"] {
         let preset = r.preset(preset_id).unwrap();
         let checked = Checked::under(&content, "exe5", &side, &r, preset);
-        assert!(
-            checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross")),
-            "Sol Cross must be rejected in {preset_id}, got: {:?}",
-            checked.problems
-        );
+        assert!(!checked.ready(), "Sol Cross build must be rejected in {preset_id}");
     }
 
-    // Validation: Team Navi cannot use Sol Cross.
-    let mut team_side = side.clone();
-    let protoman = crate::ids::navi(&content, "exe5", "protoman").unwrap();
-    team_side.set_navi(&content, protoman).unwrap();
-    team_side.set_level(&content, crate::play_level(&content, protoman)).unwrap();
-    team_side.set_fact(&content, "sol_cross", &flag(true)).unwrap();
-    let team_checked = Checked::of(&content, "exe5", &team_side);
-    assert!(
-        team_checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::NotTaken),
-        "Team Navi with sol_cross must fail validation with NotTaken, got: {:?}",
-        team_checked.problems
-    );
-
     // Validation: Sol Cross is mutually exclusive with Bass-Cross MegaMan patch card.
-    let mut both = side.clone();
-    both.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "bass-cross-megaman/protoman")).unwrap();
+    let mut both = builds.new_build(&content, "protoman").unwrap();
+    both.set_fact(
+        &content,
+        crate::facts::PATCH_CARDS,
+        &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman, bass-cross-megaman/protoman"),
+    )
+    .unwrap();
     let both_checked = Checked::of(&content, "exe5", &both);
     assert!(
-        both_checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross") && p.what == Wrong::Invalid),
+        both_checked.problems.iter().any(|p| p.field.as_deref() == Some("patch_cards") && p.what == Wrong::Invalid),
         "Sol Cross + Bass-Cross MegaMan must fail validation with Invalid, got: {:?}",
         both_checked.problems
     );
 }
 
-/// EXE5DS Sol Cross stats (+200 HP, SuperArmor, MegaFolder -2), HUD variants, sprite,
+/// EXE5DS Sol Cross stats (+200 HP, SuperArmor, MegaFolder -2, 70 MB), HUD variants, sprite,
 /// and weapon 0x6C (`sol_gundelsol`) flat 130-frame charge & full 60-tick no-hold drain
 /// (120 HP in shade vs 240 HP in sun).
 #[test]
@@ -1681,9 +1689,9 @@ fn exe5_sol_cross_stats_and_gundelsol_charge_shot() {
     let content = exe5_content();
     let builds = Builds::of(&content, "exe5").unwrap();
 
-    // 1. Stats and Build Overview.
+    // 1. Stats and Build Overview (70 MB cost, same as Bass-Cross MegaMan).
     let mut side = builds.new_build(&content, "protoman").unwrap();
-    builds.take_preset(&content, &mut side, "sol_cross", "on").unwrap();
+    side.set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman")).unwrap();
     let mut checked = Checked::of(&content, "exe5", &side);
     assert!(checked.ready(), "{:?}", checked.problems);
     let stats = checked.stats().unwrap();
@@ -1691,10 +1699,15 @@ fn exe5_sol_cross_stats_and_gundelsol_charge_shot() {
     let overview = checked.overview(&content, &side).unwrap();
     assert_eq!(overview.hp, Stat { base: 1000, value: 1200 });
     assert_eq!(overview.mega, Stat { base: 5, value: 3 });
+    let budget = overview.budget(crate::facts::PATCH_CARDS).unwrap();
+    assert_eq!((budget.count.used, budget.count.limit), (70, 80));
 
     // 2. Run Sol Cross GunDelSol in shade vs sun (also verifying flat 130-tick charge even with Charge=4).
     let run_drain = |sun_enabled: bool| -> (u16, bool) {
-        let mut m = parse(&content, &exe5(&TANGO_EXE5, "sol_cross = true"), &exe5(&TANGO_EXE5, "")).unwrap();
+        let mut m = parse(&content, &exe5(&TANGO_EXE5, ""), &exe5(&TANGO_EXE5, "")).unwrap();
+        m.sides[0]
+            .set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman"))
+            .unwrap();
         m.sun_enabled = sun_enabled;
         let mut setup = m.round(&content, 0x5EED);
         setup.custom_screen_limit = Some(1);
@@ -1792,10 +1805,13 @@ fn exe5_sol_cross_sun_gradual_attack_boost_and_indoor_isolation() {
     // 1. Outdoor (sun_enabled = true): gradual +1 every 5 ticks up to +20, works in Double Soul, pauses on Team Navi.
     let mut m = parse(
         &content,
-        &exe5(&TANGO_EXE5, "sol_cross = true\nparty = [{ navi = \"protoman\", programs = [] }]"),
+        &exe5(&TANGO_EXE5, "party = [{ navi = \"protoman\", programs = [] }]"),
         &exe5(&TANGO_EXE5, ""),
     )
     .unwrap();
+    m.sides[0]
+        .set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman"))
+        .unwrap();
     m.sun_enabled = true;
     let mut setup = m.round(&content, 0x5EED);
     setup.custom_screen_limit = Some(1);
@@ -1847,7 +1863,10 @@ fn exe5_sol_cross_sun_gradual_attack_boost_and_indoor_isolation() {
     assert_eq!(b.hands[0].attack_bonus[2], 0, "Sol Cross Sun must pause while switched to a Team Navi");
 
     // 2. Indoor (sun_enabled = false): no sol-sun spawned, no attack bonus.
-    let mut m_indoor = parse(&content, &exe5(&TANGO_EXE5, "sol_cross = true"), &exe5(&TANGO_EXE5, "")).unwrap();
+    let mut m_indoor = parse(&content, &exe5(&TANGO_EXE5, ""), &exe5(&TANGO_EXE5, "")).unwrap();
+    m_indoor.sides[0]
+        .set_fact(&content, crate::facts::PATCH_CARDS, &crate::testing::patch_cards(&content, "exe5", "sol-cross-megaman"))
+        .unwrap();
     m_indoor.sun_enabled = false;
     let mut setup_indoor = m_indoor.round(&content, 0x5EED);
     setup_indoor.custom_screen_limit = Some(1);

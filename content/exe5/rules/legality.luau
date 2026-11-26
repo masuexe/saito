@@ -39,10 +39,12 @@ return {
             "navchg_2",
             "spport",
         },
+        patch_cards = {
+            "sol-cross-megaman",
+        },
         facts = {
             "party",
             "party_programs",
-            "sol_cross",
         },
     },
 }
