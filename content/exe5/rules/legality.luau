@@ -41,6 +41,7 @@ return {
         },
         facts = {
             "party",
+            "party_programs",
         },
     },
 }

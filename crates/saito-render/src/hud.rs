@@ -381,9 +381,9 @@ struct Face {
     /// look's is the moment's, as the window draws).
     form: FormHandle,
     emotion: Emotion,
-    /// The base form's second set, as the side's rules ask
-    /// (`base_face_variant`: EXE5's Hub Style).
-    base_variant: bool,
+    /// The base form's variant set index, as the side's rules ask
+    /// (0 own, 1 ProtoMan Hub Style gold, 2 Colonel Hub Style silver).
+    base_variant: u8,
 }
 
 impl Face {
@@ -403,8 +403,21 @@ impl Face {
     ) -> Face {
         let emotion = emotion_of_stats(b, side, stats, live, Some(form));
         let f = b.content.form(form);
-        let base_variant = b.looks[side as usize & 1].face_variant && f.base;
-        let variant = base_variant || (live && saito_battle::kinds::player::face_variant_any_form(b, side));
+        let looks = b.looks[side as usize & 1];
+        let base_variant = if !f.base {
+            0
+        } else if looks.face_variant_alt {
+            2
+        } else if looks.face_variant {
+            1
+        } else {
+            0
+        };
+        let variant = if live && saito_battle::kinds::player::face_variant_any_form(b, side) {
+            1
+        } else {
+            base_variant
+        };
         Face {
             picture: f.mugshot.as_ref().map(|faces| faces.shown(&b.game_rules().emotion, emotion, variant)),
             own: f.base,
@@ -549,7 +562,7 @@ impl HudState {
             if m.now.own && m.blink > 0 {
                 let on = m.blink & 2 != 0;
                 m.blink -= 1;
-                if m.now.full_synchro && m.now.base_variant {
+                if m.now.full_synchro && m.now.base_variant != 0 {
                     // The second set's Full Synchro face (EXE5's Hub
                     // Style's, picture 14, 0x08019614) is among the faces
                     // that blink back to
@@ -1880,12 +1893,17 @@ fn mugshot_parts<'a>(
     if let Some(form) = crate::custom::face(b, side) {
         face = Face::for_window(b, side as u8, stats, live, form);
     }
+    let face_variant = if live && saito_battle::kinds::player::face_variant_any_form(b, side as u8) {
+        1
+    } else {
+        face.base_variant
+    };
     let (picture, Some((gfx, palettes))) = crate::lookups::form_face(
         graphics,
         &b.content,
         face.form,
         face.emotion,
-        face.base_variant || (live && saito_battle::kinds::player::face_variant_any_form(b, side as u8)),
+        face_variant,
         problems,
     ) else { return items };
     // (The white of a change to Full Synchro: `byte_801CD80`.)
@@ -3425,6 +3443,7 @@ mod tests {
                 every: None,
             },
             variant: None,
+            variant2: None,
         });
         c.defs.navis[partner.index()].record.mugshot = Some(MugshotId(2));
 

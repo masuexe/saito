@@ -237,7 +237,7 @@ fn check(c: &Content, graphics: &Graphics, text: &DisplayText, lettered: bool, b
     // (A form's faces by each of its game's emotions.)
     for i in 0..c.defs.forms.len() {
         for e in 0..c.rules().emotion.names.len() {
-            for variant in [false, true] {
+            for variant in [0u8, 1, 2] {
                 lookups::form_face(graphics, c, FormHandle(i as u16), saito_battle::content::Emotion(e as u8), variant, p);
             }
         }

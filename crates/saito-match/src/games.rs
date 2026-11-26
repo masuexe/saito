@@ -510,11 +510,33 @@ fn a_dark_side_starts_dark() {
     assert_eq!(at(Some(100)), (0, "evil".to_string()));
     assert_eq!(at(None), ((500 / 20 + 103) as u8, "normal".to_string()));
     assert_eq!(at(Some(1000)), (190, "normal".to_string()));
-    // The face a mood of 0 shows: the base form's dark one.
+    // The face a mood of 0 shows: the base form's dark one, plus ProtoMan (1) and Colonel (2) Hub Style faces.
     let base = content.base_form_for(crate::ids::navi(&content, "exe5", "megaman").unwrap());
     let emotions = &content.rules().emotion;
-    let face = content.form(base).mugshot.as_ref().unwrap().shown(emotions, emotions.by_name("evil").unwrap(), false);
+    let mugshot = content.form(base).mugshot.as_ref().unwrap();
+    let face = mugshot.shown(emotions, emotions.by_name("evil").unwrap(), 0);
     assert_eq!(content.assets.handle(saito_content_api::AssetKind::Mugshot, "megaman-dark"), Some(face.0));
+    let hub_proto = mugshot.shown(emotions, emotions.by_name("normal").unwrap(), 1);
+    assert_eq!(content.assets.handle(saito_content_api::AssetKind::Mugshot, "megaman-hub"), Some(hub_proto.0));
+    let hub_colonel = mugshot.shown(emotions, emotions.by_name("normal").unwrap(), 2);
+    assert_eq!(content.assets.handle(saito_content_api::AssetKind::Mugshot, "megaman-hub-colonel"), Some(hub_colonel.0));
+    // Equipping Bass-Cross MegaMan (protoman vs colonel) sets face_variant 1 vs 2 on battle start (S-110).
+    let card = crate::ids::entry(&content, "exe5", "patch_cards", "bass-cross-megaman").unwrap();
+    let builds = crate::build::Builds::of(&content, "exe5").unwrap();
+    for (variant, expected) in [("protoman", 1u8), ("colonel", 2u8)] {
+        let mut side = builds.new_build(&content, variant).unwrap();
+        side.set_fact(
+            &content,
+            "patch_cards",
+            &[Fact::Record(vec![
+                ("card", Fact::Value(Value::Def(Registry::Entry, card.0))),
+                ("variant", Fact::Name(variant)),
+            ])],
+        )
+        .unwrap();
+        let face = crate::build::Checked::of(&content, "exe5", &side).face();
+        assert_eq!(face, Some(crate::build::Face::Form(base, "normal".into(), expected)), "variant {variant}");
+    }
 }
 
 /// The soul button (EXE5's rules/souls's) offers only a soul the side has:
@@ -1055,7 +1077,13 @@ fn a_partys_setup_is_held_to_the_rules() {
     assert!(problems(&party(r#"{ navi = "protoman" }, { navi = "protoman" }"#)).contains("in the party at 1 too"));
     assert!(problems(&party(r#"{ navi = "megaman" }"#)).contains("is no team navi"));
     let team_navi = side("protoman", &TANGO_EXE5, "level = 6\nparty = [{ navi = \"gyroman\" }]");
-    assert!(problems(&team_navi).contains("brings no party"));
+    assert_eq!(problems(&team_navi), "");
+    let self_partner = side("protoman", &TANGO_EXE5, "level = 6\nparty = [{ navi = \"protoman\" }]");
+    assert!(problems(&self_partner).contains("is no team navi"));
+    let megaman_own = exe5(&TANGO_EXE5, "party_programs = [\"p-hp-50\"]");
+    assert!(problems(&megaman_own).contains("takes no PartyCust programs"));
+    let team_over = side("protoman", &TANGO_EXE5, "level = 6\nparty_programs = [\"p-hp-300\", \"p-hp-100\"]");
+    assert!(problems(&team_over).contains("fill 7 slots of its 6"));
 }
 
 /// The in-battle switch (the DS's action 0x59): a request takes the

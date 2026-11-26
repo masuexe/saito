@@ -658,8 +658,11 @@ pub struct SideState {
 pub struct SideLooks {
     /// The emotion window shows the second set of the base form's faces
     /// (EXE5's Hub Style, NaviStats +0x4C: 0x0801AF8E adds 11 to the face;
-    /// `battle.set_hud("face_variant", ..)`, `kinds::player::shows_face_variant`).
+    /// `battle.set_hud("face_variant", ..)`, `kinds::player::face_variant`).
     pub face_variant: bool,
+    /// Alternate variant set of the base form's faces (EXE5's Team Colonel
+    /// Hub Style / silver Bass-Cross; `battle.set_hud("face_variant_alt", ..)`).
+    pub face_variant_alt: bool,
     /// And whatever its form (EXE5's Chaos Unison look while its charge is
     /// armed, 0x080125F6, which its rules set and clear).
     pub face_variant_any_form: bool,
@@ -2733,7 +2736,7 @@ mod tests {
     fn a_sides_looks_outlast_the_players_init() {
         let c = testing::content();
         let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c)), c);
-        let looks = SideLooks { face_variant: true, face_variant_any_form: false, window_count: false, name_variant: true };
+        let looks = SideLooks { face_variant: true, face_variant_alt: false, face_variant_any_form: false, window_count: false, name_variant: true };
         b.looks = [looks; 2];
         b.sides[1].takeover_ticks = 3;
         b.spawn_actors();

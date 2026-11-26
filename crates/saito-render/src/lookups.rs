@@ -297,15 +297,15 @@ pub fn navi_face<'a>(graphics: &Graphics<'a>, c: &Content, navi: NaviHandle, pro
 }
 
 /// The face a form shows for an emotion (its definition's mugshot for it, of
-/// its second set when `variant`): the mugshot's number in the game's HUD,
-/// and the picture with its palettes.
+/// its variant set `variant`: `0` own, `1` primary variant, `2` alternate):
+/// the mugshot's number in the game's HUD, and the picture with its palettes.
 #[allow(clippy::type_complexity)]
 pub fn form_face<'a>(
     graphics: &Graphics<'a>,
     c: &Content,
     form: FormHandle,
     emotion: saito_battle::content::Emotion,
-    variant: bool,
+    variant: u8,
     problems: &mut Problems,
 ) -> (Option<u8>, Option<(&'a Tiles, &'a [Palette])>) {
     let picture = c.form(form).mugshot.as_ref().and_then(|faces| graphics.mugshot(faces.shown(&c.rules().emotion, emotion, variant)));

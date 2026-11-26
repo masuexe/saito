@@ -473,6 +473,9 @@ pub struct Faces {
     /// The second set, which the side's rules may show instead
     /// (`SideLooks::face_variant`, `face_variant_any_form`).
     pub variant: Option<FaceSet>,
+    /// An alternate variant set (`SideLooks::face_variant_alt`: EXE5 Team
+    /// Colonel Hub Style / silver Bass-Cross).
+    pub variant2: Option<FaceSet>,
 }
 
 /// One set of faces, keyed by its game's emotions' names (the rules'
@@ -514,11 +517,13 @@ impl FaceSet {
 }
 
 impl Faces {
-    /// The face for `emotion` in the set the side shows: the second set's
-    /// when `variant` and the form has one.
-    pub fn shown(&self, emotions: &super::EmotionRules, emotion: super::Emotion, variant: bool) -> super::MugshotId {
-        match &self.variant {
-            Some(v) if variant => v.of(emotions, emotion),
+    /// The face for `emotion` in the set the side shows: `variant == 1` uses
+    /// `variant`, `variant == 2` uses `variant2` (falling back to `variant`
+    /// then `own`), `0` uses `own`.
+    pub fn shown(&self, emotions: &super::EmotionRules, emotion: super::Emotion, variant: u8) -> super::MugshotId {
+        match variant {
+            2 => self.variant2.as_ref().or(self.variant.as_ref()).unwrap_or(&self.own).of(emotions, emotion),
+            1 => self.variant.as_ref().unwrap_or(&self.own).of(emotions, emotion),
             _ => self.own.of(emotions, emotion),
         }
     }
@@ -531,7 +536,11 @@ pub(crate) fn check_faces(content: &super::Content) -> Result<(), saito_content_
     let Some(rules) = &content.rules else { return Ok(()) };
     for d in &content.defs.forms {
         let Some(faces) = &d.record.mugshot else { continue };
-        for (set, at) in [(Some(&faces.own), "mugshot"), (faces.variant.as_ref(), "mugshot.variant")] {
+        for (set, at) in [
+            (Some(&faces.own), "mugshot"),
+            (faces.variant.as_ref(), "mugshot.variant"),
+            (faces.variant2.as_ref(), "mugshot.variant2"),
+        ] {
             if let Some(Err(m)) = set.map(|s| s.check(&rules.emotion)) {
                 return Err(saito_content_api::ContentError::new(format!("form {}: {at}: {m}", d.key)));
             }
@@ -541,7 +550,7 @@ pub(crate) fn check_faces(content: &super::Content) -> Result<(), saito_content_
 }
 
 /// A form definition's `mugshot`: one face, or faces by emotion name (and
-/// a second set, `variant`).
+/// optional variant sets `variant`, `variant2`).
 fn faces<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Faces>, D::Error> {
     use serde::de::Error;
     #[derive(Deserialize)]
@@ -558,7 +567,7 @@ fn faces<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Faces>, D::Err
     }
     let Some(spec) = Option::<Spec>::deserialize(d)? else { return Ok(None) };
     let entries = match spec {
-        Spec::One(face) => return Ok(Some(Faces { own: FaceSet { every: Some(face), ..FaceSet::default() }, variant: None })),
+        Spec::One(face) => return Ok(Some(Faces { own: FaceSet { every: Some(face), ..FaceSet::default() }, variant: None, variant2: None })),
         Spec::ByEmotion(entries) => entries,
     };
     let mut faces = Faces::default();
@@ -566,8 +575,10 @@ fn faces<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Faces>, D::Err
         match (name.as_str(), entry) {
             ("variant", Entry::Set(set)) => faces.variant = Some(FaceSet { by_emotion: set.into_iter().collect(), every: None }),
             ("variant", Entry::Face(_)) => return Err(D::Error::custom("`variant` is a set of faces by emotion")),
+            ("variant2", Entry::Set(set)) => faces.variant2 = Some(FaceSet { by_emotion: set.into_iter().collect(), every: None }),
+            ("variant2", Entry::Face(_)) => return Err(D::Error::custom("`variant2` is a set of faces by emotion")),
             (_, Entry::Face(face)) => faces.own.by_emotion.push((name, face)),
-            (_, Entry::Set(_)) => return Err(D::Error::custom(format!("`{name}` is a face, not a set (only `variant` is)"))),
+            (_, Entry::Set(_)) => return Err(D::Error::custom(format!("`{name}` is a face, not a set (only `variant` and `variant2` are)"))),
         }
     }
     Ok(Some(faces))
@@ -1135,16 +1146,17 @@ mod tests {
         let e = |name: &str| emotions.by_name(name).unwrap();
         // One face, whatever the emotion.
         let one = read(r#"{ "mugshot": 15 }"#).unwrap();
-        assert_eq!(["normal", "tired", "full_synchro"].map(|n| one.shown(&emotions, e(n), false).0), [15; 3]);
+        assert_eq!(["normal", "tired", "full_synchro"].map(|n| one.shown(&emotions, e(n), 0).0), [15; 3]);
         // A Cross's: its own, and a tired one.
         let cross = read(r#"{ "mugshot": { "normal": 5, "tired": 10 } }"#).unwrap();
-        assert_eq!(["normal", "angry", "tired"].map(|n| cross.shown(&emotions, e(n), false).0), [5, 5, 10]);
+        assert_eq!(["normal", "angry", "tired"].map(|n| cross.shown(&emotions, e(n), 0).0), [5, 5, 10]);
         assert_eq!(read("{}"), None);
-        // EXE5's MegaMan: a worried face, and a second set the side may show.
-        let exe5 = read(r#"{ "mugshot": { "normal": 0, "worried": 2, "variant": { "normal": 11, "worried": 13 } } }"#).unwrap();
-        assert_eq!(["worried", "angry"].map(|n| exe5.shown(&emotions, e(n), false).0), [2, 0]);
-        assert_eq!(["worried", "angry"].map(|n| exe5.shown(&emotions, e(n), true).0), [13, 11]);
-        assert_eq!(cross.shown(&emotions, e("tired"), true).0, 10);
+        // EXE5's MegaMan: a worried face, a ProtoMan Hub Style set (`variant`), and a Colonel Hub Style set (`variant2`).
+        let exe5 = read(r#"{ "mugshot": { "normal": 0, "worried": 2, "variant": { "normal": 11, "worried": 13 }, "variant2": { "normal": 34, "worried": 36 } } }"#).unwrap();
+        assert_eq!(["worried", "angry"].map(|n| exe5.shown(&emotions, e(n), 0).0), [2, 0]);
+        assert_eq!(["worried", "angry"].map(|n| exe5.shown(&emotions, e(n), 1).0), [13, 11]);
+        assert_eq!(["worried", "angry"].map(|n| exe5.shown(&emotions, e(n), 2).0), [36, 34]);
+        assert_eq!(cross.shown(&emotions, e("tired"), 1).0, 10);
         // A set holds to its game's emotions: their names, and a face for
         // the default (the first's).
         assert!(exe5.own.check(&emotions).is_ok() && one.own.check(&emotions).is_ok());

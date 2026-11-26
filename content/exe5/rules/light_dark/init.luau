@@ -243,12 +243,13 @@ local light_dark = {}
 -- 0x08025114: a worried or dark MegaMan's dark chip offer, as the custom screen deals.
 light_dark.deal = offer_dark_chip
 
--- Hub Style shows the base form's second set of faces (0x0801AF8E), and in a link battle the navi's variant
--- name among the enemy names (0x0801AE3A).
+-- Hub Style shows the base form's version-specific set of faces (0x0801AF8E: ProtoMan's gold at 1, Colonel's silver
+-- at 2), and in a link battle the navi's variant name among the enemy names (0x0801AE3A).
 function light_dark.round_setup(side: number)
-    local hub = battle.navi(side).hub_style ~= 0
-    battle.set_hud("face_variant", hub, side)
-    battle.set_hud("name_variant", hub and battle.link(), side)
+    local hub = battle.navi(side).hub_style
+    battle.set_hud("face_variant", hub == 1, side)
+    battle.set_hud("face_variant_alt", hub == 2, side)
+    battle.set_hud("name_variant", hub ~= 0 and battle.link(), side)
 end
 
 -- 0x08010EC8: MegaMan's starting mood.

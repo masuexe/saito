@@ -975,7 +975,7 @@ impl Checked {
                 return Some(Face::Navi(stats.navi));
             }
             let emotion = b.game_rules().emotion.name(player::emotion(&b, 0)).to_string();
-            Some(Face::Form(stats.form, emotion, player::shows_face_variant(&b, 0)))
+            Some(Face::Form(stats.form, emotion, player::face_variant(&b, 0)))
         }))
         .ok()
         .flatten()
@@ -1073,7 +1073,7 @@ fn named_stat(d: &Data) -> Option<NamedStat> {
 /// where the rules ask), or a navi's own where it doesn't change form.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Face {
-    Form(FormHandle, String, bool),
+    Form(FormHandle, String, u8),
     Navi(NaviHandle),
 }
 

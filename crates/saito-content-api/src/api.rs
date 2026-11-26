@@ -912,8 +912,11 @@ named_fields! {
     /// it).
     pub enum HudField {
         /// The side's emotion window shows its base form's second set of
-        /// faces (EXE5's Hub Style, 0x0801AF8E).
+        /// faces (EXE5's Hub Style, 0x0801AF8E: Team ProtoMan gold).
         FaceVariant = "face_variant", Bool, rw;
+        /// The side's emotion window shows its base form's alternate variant
+        /// set of faces (EXE5's Team Colonel Hub Style / silver Bass-Cross).
+        FaceVariantAlt = "face_variant_alt", Bool, rw;
         /// And whatever its form (EXE5's Chaos Unison look while its charge
         /// is armed, 0x080125F6, which its rules set and clear).
         FaceVariantAnyForm = "face_variant_any_form", Bool, rw;

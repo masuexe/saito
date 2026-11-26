@@ -101,6 +101,7 @@ export type Offer = { marks: number?, listed: boolean?, shades: boolean? }
 -- "hp_box" (7: its drawing only, the low-HP alarm sounds on).
 export type HudField =
     "face_variant"
+    | "face_variant_alt"
     | "face_variant_any_form"
     | "name_variant"
     | "window_count"
@@ -2415,6 +2416,8 @@ export type MugshotFaces = {
     -- A second set, shown where the side's rules ask (`battle.set_hud`'s face variants): while the navi's rules' B
     -- charge is armed (EXE5's soul's Chaos Unison look), or in the base form (EXE5's Hub Style).
     variant: FaceSet?,
+    -- An alternate variant set (EXE5's Team Colonel Hub Style / silver Bass-Cross, shown by "face_variant_alt").
+    variant2: FaceSet?,
     [Emotion]: Mugshot,
 }
 

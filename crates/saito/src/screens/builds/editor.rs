@@ -123,15 +123,31 @@ impl Draft {
     /// aside, or put back). Whether it changed.
     pub fn choose_navi(&mut self, navi: NaviHandle) -> bool {
         let kit = self.kit.clone();
+        let content = kit.content();
         let before = self.build.clone();
-        if let Err(why) = self.build.set_navi(kit.content(), &kit.builds, navi, &self.navi_only) {
+        if let Err(why) = self.build.set_navi(content, &kit.builds, navi, &self.navi_only) {
             crate::errors::log("choosing a build's navi", &why);
             return false;
+        }
+        if self.build.side.stated_navi(content) != before.side.stated_navi(content) {
+            // Changing lead navi clears its own PartyCust programs (another navi's gauge isn't its, and MegaMan takes
+            // none) and removes the newly chosen lead navi from the partner list if it was a partner.
+            if saito_match::facts::takes(content, crate::builds::party::OWN_PROGRAMS_FIELD) {
+                let _ = crate::builds::party::write_own_programs(content, &mut self.build.side, &[]);
+            }
+            if let Some(shape) = crate::builds::party::Shape::of(content) {
+                let mut ps = crate::builds::party::partners(content, &self.build.side, &shape);
+                let len = ps.len();
+                ps.retain(|p| p.navi != Some(navi));
+                if ps.len() != len {
+                    let _ = crate::builds::party::write(content, &mut self.build.side, &shape, &ps);
+                }
+            }
         }
         if self.build == before {
             return false;
         }
-        self.active_side = self.build.side_for(kit.content(), self.abd_mode);
+        self.active_side = self.build.side_for(content, self.abd_mode);
         self.recheck();
         true
     }
@@ -319,6 +335,11 @@ pub trait Tab {
     /// and auto battle data are its).
     fn own_navi_only(&self) -> bool {
         false
+    }
+
+    /// Whether the tab can currently be entered for `draft` (defaults to `own_navi_only` gating).
+    fn enabled_for(&self, draft: &Draft) -> bool {
+        !self.own_navi_only() || draft.build.own_navi(draft.content())
     }
 
     /// The control the focus starts on, the first time the tab is shown.
@@ -750,10 +771,9 @@ impl Editor {
         }
     }
 
-    /// Whether tab `i` can be gone to: one that is the game's own navi's alone can't while the build's navi
-    /// is another.
+    /// Whether tab `i` can be gone to for the current build and ruleset.
     fn enabled(&self, i: usize) -> bool {
-        !self.tabs[i].own_navi_only() || self.draft.build.own_navi(self.draft.content())
+        self.tabs[i].enabled_for(&self.draft)
     }
 
     fn tab(&mut self) -> (&mut dyn Tab, &mut Draft) {
@@ -991,6 +1011,16 @@ impl Editor {
 
     /// The frame and the tab shown, after the build's ruleset changed or was found again.
     fn show_marks(&mut self, shell: &mut Shell) {
+        if !self.enabled(self.at) {
+            if self.rules.is_none() {
+                let (tab, draft) = self.tab();
+                tab.hide(shell, draft);
+                self.at = 0;
+                self.show(shell);
+                return;
+            }
+            self.at = 0;
+        }
         self.show_frame(shell);
         // (Under the ruleset's page the tab is shown again as the page closes: its focus is the page's meanwhile.)
         if self.rules.is_none() {
@@ -1307,7 +1337,7 @@ mod tests {
         assert_eq!(tabs(&exe5_content()), six);
         assert_eq!(tabs(&exe4_content()), five);
         assert_eq!(navi_only_fields(&exe6_content()), ["navicust_programs", "navicust_expansions", "patch_cards"]);
-        assert_eq!(navi_only_fields(&exe5_content()), ["party", "navicust_programs", "navicust_expansions", "patch_cards", "auto_battle_places"]);
+        assert_eq!(navi_only_fields(&exe5_content()), ["navicust_programs", "navicust_expansions", "patch_cards", "auto_battle_places"]);
         assert_eq!(navi_only_fields(&exe4_content()), ["navicust_programs", "patch_cards", "auto_battle_places"]);
     }
 

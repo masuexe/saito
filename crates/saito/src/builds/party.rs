@@ -12,6 +12,9 @@ use saito_match::facts::Stated;
 /// The setup field of the party.
 pub const FIELD: &str = "party";
 
+/// The setup field of a lead team navi's own PartyCust programs (EXE5 DS Gate-Party).
+pub const OWN_PROGRAMS_FIELD: &str = "party_programs";
+
 /// The field of a program's definition that names its color.
 const COLOR: &str = "color";
 
@@ -101,6 +104,34 @@ pub fn write(content: &Content, side: &mut saito_match::Side, shape: &Shape, par
 }
 
 
+/// Whether `side`'s lead navi takes its own PartyCust programs (a team navi in a game whose setup has `party_programs`).
+pub fn has_own_party_cust(content: &Content, side: &saito_match::Side) -> bool {
+    saito_match::facts::takes(content, OWN_PROGRAMS_FIELD) && !content.navi(side.navi(content)).changes_form()
+}
+
+/// The lead team navi's own PartyCust programs, in order.
+pub fn own_programs(content: &Content, side: &saito_match::Side) -> Vec<EntryHandle> {
+    let Some(Stated::List(xs)) = side.facts.get(content, OWN_PROGRAMS_FIELD) else { return Vec::new() };
+    xs.iter().filter_map(|x| if let Stated::Def(Registry::Entry, Some(h)) = x { Some(EntryHandle(*h)) } else { None }).collect()
+}
+
+/// Write the lead team navi's own PartyCust programs: whether the facts took them.
+pub fn write_own_programs(content: &Content, side: &mut saito_match::Side, programs: &[EntryHandle]) -> bool {
+    let values: Vec<Fact> = programs.iter().map(|h| Fact::Value(Value::Def(Registry::Entry, h.0))).collect();
+    match side.set_fact(content, OWN_PROGRAMS_FIELD, &values) {
+        Ok(()) => true,
+        Err(why) => {
+            crate::errors::log("changing lead navi's party programs", &why);
+            false
+        }
+    }
+}
+
+/// The lead team navi's PartyCust gauge budget, if the overview reports one.
+pub fn own_budget(overview: Option<&Overview>) -> Option<Budget> {
+    overview?.budget(OWN_PROGRAMS_FIELD).cloned()
+}
+
 /// Each partner's gauge, by its entry: the overview's budget of it.
 pub fn budgets(content: &Content, side: &saito_match::Side, overview: Option<&Overview>) -> Vec<Option<Budget>> {
     let Some(o) = overview else { return Vec::new() };
@@ -111,27 +142,35 @@ pub fn budgets(content: &Content, side: &saito_match::Side, overview: Option<&Ov
     (0..n).map(|i| o.budget_of(FIELD, i).cloned()).collect()
 }
 
-/// The blocks partner `p` fills of its gauge, each in its program's color, the programs in their order.
-pub fn tones(content: &Content, p: &Partner, budget: Option<&Budget>) -> Vec<slint::Color> {
-    p.programs.iter().flat_map(|&h| std::iter::repeat_n(tone(content, h), budget.map_or(0, |b| b.cost_of(content, h)) as usize)).collect()
+/// The blocks `programs` fill of a gauge, each in its program's color, in order.
+pub fn program_tones(content: &Content, programs: &[EntryHandle], budget: Option<&Budget>) -> Vec<slint::Color> {
+    programs.iter().flat_map(|&h| std::iter::repeat_n(tone(content, h), budget.map_or(0, |b| b.cost_of(content, h)) as usize)).collect()
 }
 
-/// The build overview's rows of `side`'s partners (none: no party, or a game whose setup takes none): each its face
-/// and name, and its PartyCust programs by name (the user: "there's no need to show the slot gauge or hp for the party
-/// navi").
+/// The build overview's rows of `side`'s party (none: no party and no lead PartyCust programs, or a game whose setup
+/// takes none): lead team navi's own programs if any, then each partner with its face, name, and PartyCust programs.
 pub fn sheet_rows(kit: &crate::builds::Kit, names: &crate::games::Names, side: &saito_match::Side) -> Vec<saito_ui::SheetPartner> {
     let content = kit.content();
     let Some(shape) = Shape::of(content) else { return Vec::new() };
-    partners(content, side, &shape)
-        .iter()
-        .filter_map(|p| {
-            let navi = p.navi?;
-            Some(saito_ui::SheetPartner {
-                face: kit.pictures.navi(navi),
-                name: names.navi_long(navi).into(),
-                version: kit.version_tag_of(names, Registry::Navi, &saito_match::ruleset::Item::of(navi.0)),
-                programs: crate::builds::overview::items(p.programs.iter().map(|&h| names.entry(h))),
-            })
+    let mut rows = Vec::new();
+    let lead_progs = own_programs(content, side);
+    if !lead_progs.is_empty() {
+        let navi = side.navi(content);
+        rows.push(saito_ui::SheetPartner {
+            face: kit.pictures.navi(navi),
+            name: names.navi_long(navi).into(),
+            version: kit.version_tag_of(names, Registry::Navi, &saito_match::ruleset::Item::of(navi.0)),
+            programs: crate::builds::overview::items(lead_progs.iter().map(|&h| names.entry(h))),
+        });
+    }
+    rows.extend(partners(content, side, &shape).iter().filter_map(|p| {
+        let navi = p.navi?;
+        Some(saito_ui::SheetPartner {
+            face: kit.pictures.navi(navi),
+            name: names.navi_long(navi).into(),
+            version: kit.version_tag_of(names, Registry::Navi, &saito_match::ruleset::Item::of(navi.0)),
+            programs: crate::builds::overview::items(p.programs.iter().map(|&h| names.entry(h))),
         })
-        .collect()
+    }));
+    rows
 }

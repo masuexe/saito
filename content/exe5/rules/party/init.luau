@@ -47,6 +47,7 @@ export type Partner = {
 export type Setup = {
     navi: NaviDef?,
     party: { Partner },
+    party_programs: { PartyCustProgram? }?,
     karma: number,
     level: number?,
 }
@@ -78,9 +79,33 @@ export type Supports = {
 
 type State = { rescued: boolean, dice_bonus: boolean, mag_barr: boolean, supports: Supports }
 
+-- The lead team navi's PartyCust programs, compacted.
+local function own_programs(setup: Setup?): { PartyCustProgram }
+    local programs: { PartyCustProgram } = {}
+    if setup and setup.party_programs then
+        for _, program in setup.party_programs do
+            if program then
+                table.insert(programs, program)
+            end
+        end
+    end
+    return programs
+end
+
 -- Whether the side has partners.
 function party.has_partners(side: number): boolean
     return battle.party(side).count > 1
+end
+
+-- Whether the side's lead team navi has PartyCust programs.
+function party.has_own_programs(side: number): boolean
+    local setup = rules.setup_of(side) :: Setup?
+    return #own_programs(setup) > 0
+end
+
+-- Whether the side uses EXE5 DS party battle stats/damage (partners or lead PartyCust programs).
+function party.uses_ds_stats(side: number): boolean
+    return party.has_partners(side) or party.has_own_programs(side)
 end
 
 -- 0x0200DEE8: the member of `side`'s party whose block is of `navi`, the first; none offline for side 1.
@@ -119,9 +144,9 @@ function party.megaman_karma(side: number): number
 end
 
 -- The light/dark value of the navi on the field (exe5_8012882 reads the side's NaviStats +0x44): MegaMan's while he
--- fights, a partner's its own.
+-- fights, a partner's or lead team navi's its own.
 function party.karma(side: number): number
-    if battle.party(side).active ~= 0 then
+    if battle.party(side).active ~= 0 or battle.navi(side).navi.forms == nil then
         return PARTNER_KARMA
     end
     return party.megaman_karma(side)
@@ -176,12 +201,16 @@ function party.benched(side: number, navi: NaviDef): boolean
     return false
 end
 
--- The side's level for a team navi's party data (none: a side without partners, whose team navi reads its story's).
+-- The side's level for a team navi's party data (none: a side without DS party stats, whose team navi reads its
+-- story's). Team navis store their GBA story level (0..6) in `setup.level`, so in DS party mode they use `party.LEVEL`.
 function party.level(side: number): number?
-    if not party.has_partners(side) then
+    if not party.uses_ds_stats(side) then
         return nil
     end
     local s = rules.setup_of(side) :: Setup?
+    if s and s.navi ~= nil and s.navi.forms == nil then
+        return party.LEVEL
+    end
     return if s and s.level ~= nil then s.level else party.LEVEL
 end
 
@@ -194,16 +223,22 @@ end
 
 -- What joins the side's party as the round is set up (0x02097BDC, the members' blocks from the init exchange's): each
 -- of the setup's partners in its order, its block the navi's fresh stats with its PartyCust programs, its maximum HP the
--- base at the side's level and the programs' (0x02004C84), which it enters at. (A link battle's partners are Navi
--- Select's, 0x02097DD4; a build states them.)
+-- base at the side's level and the programs' (0x02004C84), which it enters at. When the lead navi is a team navi in a
+-- DS party battle (partners or lead PartyCust programs), its own PartyCust programs apply to member 0 at the DS level.
 function party.round_setup(side: number)
     local setup = rules.setup_of(side) :: Setup
-    if #setup.party == 0 then
+    local own_progs = own_programs(setup)
+    if #setup.party == 0 and #own_progs == 0 then
         return
     end
     local level = party.LEVEL
-    if setup.level ~= nil then
+    if setup.level ~= nil and (setup.navi == nil or setup.navi.forms ~= nil) then
         level = setup.level
+    end
+    local own = setup.navi
+    local own_data = if own then (own :: any).party else nil
+    if own and own_data then
+        partycust.apply(battle.navi(side), own_data.hp[level + 1], own_progs)
     end
     for _, p in setup.party do
         local navi = p.navi
@@ -271,7 +306,7 @@ end
 -- more: 0x02132044's rows, three voices each), one drawn again (0x02001100). The voice is left out, as the switch's
 -- are; the draws stay.
 function party.navi_hit_shown(side: number, _navi: Object)
-    if party.has_partners(side) and battle.party(side).active == 0 then
+    if party.has_partners(side) and battle.party(side).active == 0 and battle.navi(side).navi.forms ~= nil then
         if bit32.band(battle.console_rng_positive(side), 7) >= 6 then
             battle.console_rng_positive(side)
         end
@@ -283,7 +318,7 @@ end
 -- (the attack's damage and bonus: to 80, 139, 200, more; sounds 0x27F on), drawn from its RNG1 (0x02001100). The voice is
 -- left out; the draw stays.
 function party.chip_ready(side: number, _navi: Object, chip: Chip)
-    if party.has_partners(side) and battle.party(side).active == 0 then
+    if party.has_partners(side) and battle.party(side).active == 0 and battle.navi(side).navi.forms ~= nil then
         if chip.flags ~= nil and table.find(chip.flags, "has_damage") ~= nil then
             battle.console_rng_positive(side)
         end
@@ -355,7 +390,7 @@ local function own_chip_damage(side: number, s: Navi): (number?, number)
     end
     local damage = own.chip.damage
     local value = if type(damage) == "function" then damage(side, own.chip) elseif type(damage) == "number" then damage else nil
-    return value, if party.has_partners(side) then s.chip_attack_bonus else 0
+    return value, if party.uses_ds_stats(side) then s.chip_attack_bonus else 0
 end
 
 -- `members`' entry for member `m` of the side's party (0 the build's navi, then the partners in the setup's order):
@@ -383,6 +418,13 @@ end
 function party.overview(side: number, out: SetupOverview)
     local setup = rules.setup_of(side) :: Setup
     member_stats(side, 0, out)
+    local own = setup.navi
+    local own_data = if own then (own :: any).party else nil
+    if own_data then
+        local own_progs = own_programs(setup)
+        local list: SetupList = { field = "party_programs", cost = "cost", used = partycust.cost(own_progs), limit = own_data.gauge, once = false }
+        table.insert(out.lists, list)
+    end
     for i, p in setup.party do
         local data = if p.navi then (p.navi :: any).party else nil
         if data then
@@ -399,8 +441,7 @@ function party.overview(side: number, out: SetupOverview)
     for m = 1, battle.party(side).count - 1 do
         member_stats(side, m, out)
     end
-    -- (The limit is MegaMan's, partners or none: the Party tab says it before any is chosen. The stat is a party's.)
-    if setup.navi == nil or setup.navi.forms == nil then
+    if setup.navi == nil then
         return
     end
     local limit = party.limit(side)
@@ -414,17 +455,34 @@ function party.overview(side: number, out: SetupOverview)
     out.stats = stats
 end
 
--- `validate`'s part: a party is MegaMan's (the navi that changes form, member 0: the DS's); its partners are team navis
--- (a navi with party data), none twice and none the side's own; each partner's programs fit its gauge; the level a
--- party battle reads is 0 to the DS's highest.
+-- `validate`'s part: lead team navi PartyCust programs fit its gauge (MegaMan uses NaviCust, not PartyCust);
+-- partners are team navis (a navi with party data), none twice and none the side's own; each partner's programs
+-- fit its gauge; MegaMan's party battle level is 0 to the DS's highest.
 function party.validate(side: number, problem: (p: SetupProblem) -> ())
     local setup = rules.setup_of(side) :: Setup
     local own = setup.navi
-    if #setup.party == 0 or own == nil then
+    if own == nil then
         return
     end
-    if own.forms == nil then
-        problem({ kind = "not_taken", field = "party", text = string.format("party: %s brings no party (MegaMan does)", battle.name(own)) })
+    local own_progs = own_programs(setup)
+    if #own_progs > 0 then
+        local own_data = (own :: any).party
+        if own_data == nil then
+            problem({ kind = "not_taken", field = "party_programs", text = string.format("party_programs: %s takes no PartyCust programs", battle.name(own)) })
+        else
+            local used = partycust.cost(own_progs)
+            if used > own_data.gauge then
+                problem({
+                    kind = "budget",
+                    field = "party_programs",
+                    used = used,
+                    limit = own_data.gauge,
+                    text = string.format("party_programs: %s's programs fill %d slots of its %d", battle.name(own), used, own_data.gauge),
+                })
+            end
+        end
+    end
+    if #setup.party == 0 then
         return
     end
     local seen: { [NaviDef]: number } = {}
@@ -464,7 +522,7 @@ function party.validate(side: number, problem: (p: SetupProblem) -> ())
         end
     end
     local level = setup.level
-    if level ~= nil and level > party.LEVEL then
+    if own.forms ~= nil and level ~= nil and level > party.LEVEL then
         problem({
             kind = "range",
             field = "level",

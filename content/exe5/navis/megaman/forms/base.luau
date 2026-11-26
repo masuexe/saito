@@ -46,6 +46,13 @@ local form: FormDef = {
             full_synchro = asset.mugshot("megaman-hub-full-synchro"),
             evil = asset.mugshot("megaman-hub-dark"),
         },
+        variant2 = {
+            normal = asset.mugshot("megaman-hub-colonel"),
+            angry = asset.mugshot("megaman-hub-colonel-angry"),
+            worried = asset.mugshot("megaman-hub-colonel-worried"),
+            full_synchro = asset.mugshot("megaman-hub-colonel-full-synchro"),
+            evil = asset.mugshot("megaman-hub-colonel-dark"),
+        },
     },
     buster_arm = { anim = 0 },
     put_on = put_on,

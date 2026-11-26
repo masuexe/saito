@@ -62,9 +62,9 @@ pub enum Lookup {
     Mugshot(MugshotId),
     /// A link navi's own face in the emotion window.
     NaviFace(NaviHandle),
-    /// A form's face for an emotion of its game's, of its second set or
-    /// not.
-    FormFace(FormHandle, saito_battle::content::Emotion, bool),
+    /// A form's face for an emotion of its game's, by variant set index
+    /// (`0` own, `1` primary variant, `2` alternate variant).
+    FormFace(FormHandle, saito_battle::content::Emotion, u8),
     /// A navi's name on the custom screen (the enemy names).
     NaviName(NaviHandle),
     /// A navi's variant name there (`battle.set_hud("name_variant", ..)`: EXE5's Hub
@@ -131,7 +131,12 @@ impl Lookup {
             Lookup::Mugshot(id) => format!("mugshot {}", asset(AssetKind::Mugshot, id.0)),
             Lookup::NaviFace(h) => format!("navi {} face", navi(h)),
             Lookup::FormFace(h, e, variant) => {
-                format!("form {} face {}{}", form(h), c.rules().emotion.name(e), if variant { " (second set)" } else { "" })
+                let tag = match variant {
+                    0 => "",
+                    1 => " (second set)",
+                    _ => " (alternate set)",
+                };
+                format!("form {} face {}{tag}", form(h), c.rules().emotion.name(e))
             }
             Lookup::NaviName(h) => format!("navi {} name", navi(h)),
             Lookup::NaviVariantName(h) => format!("navi {} variant name", navi(h)),

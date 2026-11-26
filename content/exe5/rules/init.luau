@@ -228,10 +228,12 @@ local rules: Rules = {
         -- How long the save took to delete each SP navi (./sp_chips: the save's 0x02002670, a battle's copy
         -- 0x0203E560), by its SP chip, in frames.
         sp_times = schema.list({ chip = "chip", frames = "u16" }, 18),
-        -- The team navis MegaMan brings to a party battle (./party, EXE5 DS's: the save's team, or Navi Select's two in a
+        -- The team navis brought to a party battle (./party, EXE5 DS's: the save's team, or Navi Select's two in a
         -- link battle), in order, each with its PartyCust programs (./party/partycust: no more than its gauge holds,
         -- ten blocks at most). None: no party.
         party = schema.list({ navi = "navi", programs = schema.list("partycust_programs", 10) }, 2),
+        -- The lead team navi's own PartyCust programs in a party battle (EXE5 DS Gate-Party: ./party). Empty for MegaMan.
+        party_programs = schema.list("partycust_programs", 10),
     },
     -- A setup that says nothing: what every save brings at its highest, the base HP 1000, the Regular memory 50 and
     -- the sun, no level (MegaMan's); a fresh save's light/dark value (0x08010C00 writes 500: light for the chips, no

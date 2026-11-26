@@ -90,10 +90,9 @@ function exe5.wind(side: number): WindSlot
     return (rules.state_of(side) :: { wind: WindSlot }).wind
 end
 
--- Whether the side has partners (EXE5 DS's party battle: ./party), whose team navis' damage is the DS's
--- (lib/navi_level).
+-- Whether the side uses EXE5 DS party battle stats/damage (has partners or lead PartyCust programs: ./party).
 function exe5.in_party(side: number): boolean
-    return party.has_partners(side)
+    return party.uses_ds_stats(side)
 end
 
 -- The last navi chip used, of either side (0x0203C430): the chip, and the element and the damage word, bonus included,

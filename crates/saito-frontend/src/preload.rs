@@ -448,7 +448,7 @@ impl Preload {
         let p = &mut self.renderer.problems;
         let (hud, a) = (&view.bundle().hud, &view.bundle().custom);
         for e in 0..c.rules().emotion.names.len() {
-            for variant in [false, true] {
+            for variant in [0u8, 1, 2] {
                 lookups::form_face(&view, c, form, Emotion(e as u8), variant, p);
             }
         }

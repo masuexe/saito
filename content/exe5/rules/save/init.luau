@@ -86,9 +86,9 @@ local function validate(side: number, problem: (p: SetupProblem) -> ())
     local story = navi.story
     -- (A party battle's level is MegaMan's side's: ../party's validate holds it to its range.)
     local in_party = #((setup :: any).party or {}) > 0
-    if level ~= nil and not in_party then
-        if story == nil then
-            problem({ kind = "not_taken", field = "level", text = string.format("level %d: %s takes no level", level, name) })
+    if story ~= nil then
+        if level == nil then
+            problem({ kind = "missing", field = "level", text = string.format("%s has no level (0 to %d)", name, story.max_level) })
         elseif level > story.max_level then
             problem({
                 kind = "range",
@@ -99,8 +99,8 @@ local function validate(side: number, problem: (p: SetupProblem) -> ())
                 text = string.format("level %d: %s's level is 0 to %d", level, name, story.max_level),
             })
         end
-    elseif story ~= nil then
-        problem({ kind = "missing", field = "level", text = string.format("%s has no level (0 to %d)", name, story.max_level) })
+    elseif level ~= nil and not in_party then
+        problem({ kind = "not_taken", field = "level", text = string.format("level %d: %s takes no level", level, name) })
     end
     if navi.forms == nil and setup.hp ~= MAX_HP then
         problem({

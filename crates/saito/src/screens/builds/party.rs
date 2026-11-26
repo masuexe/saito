@@ -36,7 +36,9 @@
 //! under way (a model set anew would let the pointer go: see `select`).
 
 use crate::builds::overview::{stat_line, stat_name};
-use crate::builds::party::{FIELD, Partner, Shape, partners, tone, write};
+use crate::builds::party::{
+    FIELD, OWN_PROGRAMS_FIELD, Partner, Shape, has_own_party_cust, own_budget, own_programs, partners, program_tones, tone, write, write_own_programs,
+};
 use crate::input::Action;
 use crate::screens::builds::editor::{self, Draft, Tab};
 use crate::shell::Shell;
@@ -53,9 +55,22 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 const SLOTS: &str = "slots";
 const ROWS: &str = "lib.rows";
 
+/// Who owns a PartyCust program slot: the lead team navi (Gate-Party) or partner `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Owner {
+    Lead,
+    Partner(usize),
+}
+
 /// A slot of PARTY's list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Slot {
+    /// The lead team navi's head (locked: not replaceable here; selects the program library).
+    LeadHead,
+    /// The lead team navi's PartyCust program `k`.
+    LeadProgram(usize),
+    /// The Empty row at the end of the lead team navi's programs, while its list has room.
+    LeadEnd,
     /// Partner `i`'s head.
     Head(usize),
     /// Partner `i`'s program `k`.
@@ -67,24 +82,33 @@ enum Slot {
 }
 
 impl Slot {
-    /// A head (a partner's, or an Empty one): what it takes is a navi.
+    /// A partner head (a partner's, or an Empty one): what it takes is a navi.
     fn is_head(self) -> bool {
         matches!(self, Slot::Head(_) | Slot::Open(_))
     }
 
-    /// The partner it is of (an Empty head's: none).
-    fn partner(self) -> Option<usize> {
+    /// Whose PartyCust list this slot belongs to (an Empty head's: none).
+    fn owner(self) -> Option<Owner> {
         match self {
-            Slot::Head(i) | Slot::Program(i, _) | Slot::End(i) => Some(i),
+            Slot::LeadHead | Slot::LeadProgram(_) | Slot::LeadEnd => Some(Owner::Lead),
+            Slot::Head(i) | Slot::Program(i, _) | Slot::End(i) => Some(Owner::Partner(i)),
             Slot::Open(_) => None,
         }
     }
 }
 
-/// PARTY's slots, in the list's order: each partner's head, its programs and (while its list has room) its Empty row;
-/// then an Empty head for each place left of the party's `room`.
-fn slots_of(counts: &[usize], room: usize, program_room: usize) -> Vec<Slot> {
+/// PARTY's slots, in the list's order: optionally the lead team navi's head, its programs and Empty row; then each
+/// partner's head, its programs and (while its list has room) its Empty row; then an Empty head for each place left of
+/// the party's `room`.
+fn slots_of(lead_count: Option<usize>, counts: &[usize], room: usize, program_room: usize) -> Vec<Slot> {
     let mut out = Vec::new();
+    if let Some(n) = lead_count {
+        out.push(Slot::LeadHead);
+        out.extend((0..n).map(Slot::LeadProgram));
+        if n < program_room {
+            out.push(Slot::LeadEnd);
+        }
+    }
     for (i, &n) in counts.iter().enumerate() {
         out.push(Slot::Head(i));
         out.extend((0..n).map(|k| Slot::Program(i, k)));
@@ -96,35 +120,59 @@ fn slots_of(counts: &[usize], room: usize, program_room: usize) -> Vec<Slot> {
     out
 }
 
-/// Where a program let go over slot row `row` (the pointer in its upper half: `upper`) goes in: the partner the row is
+/// Where a program let go over slot row `row` (the pointer in its upper half: `upper`) goes in: the owner the row is
 /// of and the place among its programs (over its head, the first; over a program, before it or after it; over its
 /// Empty row, the end). None: over an Empty head, or past the slots.
-fn program_place(slots: &[Slot], row: usize, upper: bool, counts: &[usize]) -> Option<(usize, usize)> {
+fn program_place(slots: &[Slot], row: usize, upper: bool, lead_count: usize, counts: &[usize]) -> Option<(Owner, usize)> {
     match *slots.get(row)? {
-        Slot::Head(i) => Some((i, 0)),
-        Slot::Program(i, k) => Some((i, if upper { k } else { k + 1 })),
-        Slot::End(i) => Some((i, counts.get(i).copied().unwrap_or(0))),
+        Slot::LeadHead => Some((Owner::Lead, 0)),
+        Slot::LeadProgram(k) => Some((Owner::Lead, if upper { k } else { k + 1 })),
+        Slot::LeadEnd => Some((Owner::Lead, lead_count)),
+        Slot::Head(i) => Some((Owner::Partner(i), 0)),
+        Slot::Program(i, k) => Some((Owner::Partner(i), if upper { k } else { k + 1 })),
+        Slot::End(i) => Some((Owner::Partner(i), counts.get(i).copied().unwrap_or(0))),
         Slot::Open(_) => None,
     }
 }
 
-/// The slot row a program going into partner `i` at place `at` shows its gap at: the row it goes before (its Empty
+/// The slot row a program going into `owner` at place `at` shows its gap at: the row it goes before (its Empty
 /// row at the end; with none, the row after its last program).
-fn row_of_place(slots: &[Slot], i: usize, at: usize) -> Option<usize> {
+fn row_of_place(slots: &[Slot], owner: Owner, at: usize) -> Option<usize> {
+    let (target, end) = match owner {
+        Owner::Lead => (Slot::LeadProgram(at), Slot::LeadEnd),
+        Owner::Partner(i) => (Slot::Program(i, at), Slot::End(i)),
+    };
     slots
         .iter()
-        .position(|&s| s == Slot::Program(i, at))
-        .or_else(|| slots.iter().position(|&s| s == Slot::End(i)))
-        .or_else(|| slots.iter().rposition(|&s| s.partner() == Some(i)).map(|r| r + 1))
+        .position(|&s| s == target)
+        .or_else(|| slots.iter().position(|&s| s == end))
+        .or_else(|| slots.iter().rposition(|&s| s.owner() == Some(owner)).map(|r| r + 1))
 }
 
-/// The head a navi let go over slot row `row` goes in: the row's partner's head, or the Empty head itself.
+/// The partner head a navi let go over slot row `row` goes in: the row's partner's head, or the Empty head itself
+/// (never the locked lead navi head).
 fn head_at(slots: &[Slot], row: usize) -> Option<usize> {
     match *slots.get(row)? {
         Slot::Open(_) => Some(row),
-        s => {
-            let i = s.partner()?;
-            slots.iter().position(|&t| t == Slot::Head(i))
+        s => match s.owner()? {
+            Owner::Partner(i) => slots.iter().position(|&t| t == Slot::Head(i)),
+            Owner::Lead => None,
+        },
+    }
+}
+
+/// The PartyCust budgets for the lead team navi (if any) and each partner.
+#[derive(Clone, Default)]
+struct PartyBudgets {
+    lead: Option<Budget>,
+    partners: Vec<Option<Budget>>,
+}
+
+impl PartyBudgets {
+    fn of(&self, owner: Owner) -> Option<&Budget> {
+        match owner {
+            Owner::Lead => self.lead.as_ref(),
+            Owner::Partner(i) => self.partners.get(i).and_then(Option::as_ref),
         }
     }
 }
@@ -154,16 +202,25 @@ struct NaviFacts {
 }
 
 impl NaviFacts {
-    /// Partner `i` of a checked build (its party's member `i + 1`).
-    fn of(checked: &mut Checked, content: &std::sync::Arc<Content>, side: &saito_match::Side, i: usize) -> Option<NaviFacts> {
-        let s = *checked.members().get(i + 1)?;
+    /// Member `member` of a checked build (0 for lead team navi, `i + 1` for partner `i`).
+    fn of_member(checked: &mut Checked, content: &std::sync::Arc<Content>, side: &saito_match::Side, member: usize) -> Option<NaviFacts> {
+        let s = *checked.members().get(member)?;
         let o = checked.overview(content, side);
+        let gauge = match member {
+            0 => o.as_ref().and_then(|o| o.budget(OWN_PROGRAMS_FIELD)).map(|b| b.count.limit),
+            m => o.as_ref().and_then(|o| o.budget_of(FIELD, m - 1)).map(|b| b.count.limit),
+        };
         Some(NaviFacts {
             hp: s.max_hp.into(),
             attack: i32::from(s.attack) + 1,
-            named: o.as_ref().and_then(|o| o.members.iter().find(|(m, _)| *m == i + 1)).map(|(_, s)| s.clone()).unwrap_or_default(),
-            gauge: o.as_ref().and_then(|o| o.budget_of(FIELD, i)).map(|b| b.count.limit),
+            named: o.as_ref().and_then(|o| o.members.iter().find(|(m, _)| *m == member)).map(|(_, s)| s.clone()).unwrap_or_default(),
+            gauge,
         })
+    }
+
+    /// Partner `i` of a checked build (its party's member `i + 1`).
+    fn of(checked: &mut Checked, content: &std::sync::Arc<Content>, side: &saito_match::Side, i: usize) -> Option<NaviFacts> {
+        Self::of_member(checked, content, side, i + 1)
     }
 
     /// Its stats as the strip says them, by what the navi `alone` (no programs) has: what its programs added in cyan,
@@ -245,9 +302,9 @@ pub struct Party {
     /// A navi's facts alone (no programs), as the build would field it: asked once a navi (a check of the build with it
     /// the one partner), for the strip's description of a navi, and what a partner's programs add to it.
     alone: std::collections::HashMap<NaviHandle, Option<NaviFacts>>,
-    /// The partners' budgets, asked once until the build changes (`changed` forgets them): a drag asks them at every
+    /// The party's budgets, asked once until the build changes (`changed` forgets them): a drag asks them at every
     /// move.
-    kept_budgets: Option<Vec<Option<Budget>>>,
+    kept_budgets: Option<PartyBudgets>,
     /// A budget the programs are costed by (`learn_costing`).
     costing: Option<Budget>,
 }
@@ -270,26 +327,34 @@ impl Party {
         self.shape.as_ref().map(|s| partners(draft.content(), draft.side(), s)).unwrap_or_default()
     }
 
+    fn lead_programs(&self, draft: &Draft) -> Vec<EntryHandle> {
+        own_programs(draft.content(), draft.side())
+    }
+
     /// The marked slot: what the library is of.
     fn marked(&self) -> Slot {
         self.slots.get(self.slot).copied().unwrap_or(Slot::Open(0))
     }
 
-    /// The library lists navis (the marked slot is a head).
+    /// The library lists navis (the marked slot is a partner head).
     fn navis_shown(&self) -> bool {
         self.marked().is_head()
     }
 
-    /// Each partner's gauge, by its entry: the rules' overview's budget of it; and the round's navi changes.
-    fn budgets(draft: &mut Draft) -> (Vec<Option<Budget>>, Option<u32>) {
+    /// Lead team navi and each partner's gauge, and the round's navi changes.
+    fn budgets(draft: &mut Draft) -> (PartyBudgets, Option<u32>) {
         let content = draft.content().clone();
         let side = draft.side().clone();
         let overview = draft.checked.overview(&content, &side);
-        (crate::builds::party::budgets(&content, &side, overview.as_ref()), overview.and_then(|o| o.switches))
+        let budgets = PartyBudgets {
+            lead: own_budget(overview.as_ref()),
+            partners: crate::builds::party::budgets(&content, &side, overview.as_ref()),
+        };
+        (budgets, overview.and_then(|o| o.switches))
     }
 
-    /// The partners' budgets, asked once until the build changes.
-    fn kept_budgets(&mut self, draft: &mut Draft) -> Vec<Option<Budget>> {
+    /// The party's budgets, asked once until the build changes.
+    fn kept_budgets(&mut self, draft: &mut Draft) -> PartyBudgets {
         if self.kept_budgets.is_none() {
             self.kept_budgets = Some(Party::budgets(draft).0);
         }
@@ -300,6 +365,16 @@ impl Party {
     /// path (`party.programs`: saito-match's categories over a field of a list's records).
     fn programs_category(&self) -> String {
         format!("{FIELD}.{}", self.shape.as_ref().map_or("", |s| s.programs.as_str()))
+    }
+
+    /// The build's problems with the lead team navi's own PartyCust programs.
+    fn own_problems(draft: &Draft) -> Vec<&Problem> {
+        draft
+            .checked
+            .problems
+            .iter()
+            .filter(|p| draft.facts_of(p).iter().any(|f| f == OWN_PROGRAMS_FIELD))
+            .collect()
     }
 
     /// The build's problems with partner `i`, `partner` (its own, the party's about no partner, and a mix of versions
@@ -320,31 +395,52 @@ impl Party {
             .collect()
     }
 
-    /// Why program `h` can't go into slot `slot` now, if it can't: the build's ruleset holds it back (for every partner,
-    /// or for the slot's partner's navi), or the gauge has no room for it (in a program's place, with that program's
-    /// slots free; at a list's end, as it is; a list full: no words).
-    fn program_refusal(&self, shell: &Shell, draft: &Draft, budgets: &[Option<Budget>], slot: Slot, h: EntryHandle) -> Option<String> {
+    /// Why program `h` can't go into slot `slot` now, if it can't: the build's ruleset holds it back (DS-only, for
+    /// every partner, or for the slot's owner's navi), or the gauge has no room for it (in a program's place, with
+    /// that program's slots free; at a list's end, as it is; a list full: no words).
+    fn program_refusal(&self, shell: &Shell, draft: &Draft, budgets: &PartyBudgets, slot: Slot, h: EntryHandle) -> Option<String> {
         let ui = shell.ui();
+        if !draft.allow_ds() {
+            return Some(ui.global::<BuildWords>().invoke_not_allowed_here().into());
+        }
+        let content = draft.content();
         let partners = self.partners(draft);
-        let partner = slot.partner().and_then(|i| partners.get(i));
-        if !draft.allows_for(&self.programs_category(), partner.and_then(|p| p.navi).map(|n| n.0), h.0) {
+        let owner_navi = match slot.owner()? {
+            Owner::Lead => Some(draft.side().navi(content)),
+            Owner::Partner(i) => partners.get(i).and_then(|p| p.navi),
+        };
+        if !draft.allows_for(&self.programs_category(), owner_navi.map(|n| n.0), h.0) {
             return Some(ui.global::<BuildWords>().invoke_not_allowed_here().into());
         }
         let needs = |needs: u32| Some(ui.global::<PartyView>().invoke_needs_blocks(needs as i32).into());
-        let content = draft.content();
+        let room = self.shape.as_ref().map_or(0, |s| s.program_room);
         match slot {
+            Slot::LeadHead | Slot::LeadEnd => {
+                if self.lead_programs(draft).len() >= room {
+                    return Some(String::new());
+                }
+                match budgets.of(Owner::Lead).and_then(|b| b.refusal(content, draft.side(), h)) {
+                    Some(EntryRefusal::Needs { needs: n, .. }) => needs(n),
+                    _ => None,
+                }
+            }
+            Slot::LeadProgram(k) => {
+                let b = budgets.of(Owner::Lead)?;
+                let old = self.lead_programs(draft).get(k).copied()?;
+                let (cost, free) = (b.cost_of(content, h), b.count.free() + b.cost_of(content, old));
+                if cost > free { needs(cost) } else { None }
+            }
             Slot::End(i) => {
-                let room = self.shape.as_ref().map_or(0, |s| s.program_room);
                 if partners.get(i).is_none_or(|p| p.programs.len() >= room) {
                     return Some(String::new());
                 }
-                match budgets.get(i).and_then(Option::as_ref).and_then(|b| b.refusal(content, draft.side(), h)) {
+                match budgets.of(Owner::Partner(i)).and_then(|b| b.refusal(content, draft.side(), h)) {
                     Some(EntryRefusal::Needs { needs: n, .. }) => needs(n),
                     _ => None,
                 }
             }
             Slot::Program(i, k) => {
-                let b = budgets.get(i).cloned().flatten()?;
+                let b = budgets.of(Owner::Partner(i))?;
                 let old = partners.get(i).and_then(|p| p.programs.get(k).copied())?;
                 let (cost, free) = (b.cost_of(content, h), b.count.free() + b.cost_of(content, old));
                 if cost > free { needs(cost) } else { None }
@@ -354,11 +450,13 @@ impl Party {
     }
 
     /// Why navi `n` can't go into a head now, if it can't: it is in the party already, or the build's ruleset holds it
-    /// back. One of the other version (a ruleset of one version per build) goes in, as anything of it does anywhere (the
-    /// user: "it should be marked red and still addable like it is everywhere else"): the mix is the build's problem,
-    /// its partners' heads red.
+    /// back (or forbids 5DS). One of the other version (a ruleset of one version per build) goes in, as anything of it
+    /// does anywhere: the mix is the build's problem, its partners' heads red.
     fn navi_refusal(&self, shell: &Shell, draft: &Draft, n: NaviHandle) -> Option<String> {
         let ui = shell.ui();
+        if !draft.allow_ds() {
+            return Some(ui.global::<BuildWords>().invoke_not_allowed_here().into());
+        }
         if self.partners(draft).iter().any(|p| p.navi == Some(n)) {
             return Some(ui.global::<PartyView>().get_in_party().into());
         }
@@ -370,7 +468,7 @@ impl Party {
 
     /// The library's rows for the marked slot: the navis (each its face, name and version's mark) or the programs
     /// (each its slots, name and cost), and why each can't go into the slot (red, the row greyed).
-    fn library_rows(&self, shell: &Shell, draft: &Draft, words: &crate::builds::words::Words, budgets: &[Option<Budget>]) -> Vec<PartyRow> {
+    fn library_rows(&self, shell: &Shell, draft: &Draft, words: &crate::builds::words::Words, budgets: &PartyBudgets) -> Vec<PartyRow> {
         let content = draft.content();
         let kit = &draft.kit;
         let slot = self.marked();
@@ -387,11 +485,11 @@ impl Party {
                 })
                 .collect();
         }
-        let budget = slot.partner().and_then(|i| budgets.get(i).cloned().flatten());
+        let budget = slot.owner().and_then(|o| budgets.of(o));
         self.shown_programs
             .iter()
             .map(|&h| {
-                let mut r = program_row(words, content, h, budget.as_ref().or(self.costing.as_ref()));
+                let mut r = program_row(words, content, h, budget.or(self.costing.as_ref()));
                 if let Some(why) = self.program_refusal(shell, draft, budgets, slot, h) {
                     r.why = why.into();
                 }
@@ -401,13 +499,13 @@ impl Party {
     }
 
     /// A budget to cost the programs by, learned once (its cost field is the rules' overview's, every partner's the
-    /// same): a partner's, else a check's of the build with the first navi offered its one partner. The library's rows
-    /// have their slots with no partner too, and the slots' column is as wide as the most a program fills.
-    fn learn_costing(&mut self, draft: &Draft, budgets: &[Option<Budget>]) {
+    /// same): the lead's or a partner's, else a check's of the build with the first navi offered its one partner. The
+    /// library's rows have their slots with no partner too, and the slots' column is as wide as the most a program fills.
+    fn learn_costing(&mut self, draft: &Draft, budgets: &PartyBudgets) {
         if self.costing.is_some() {
             return;
         }
-        self.costing = budgets.iter().flatten().next().cloned().or_else(|| {
+        self.costing = budgets.lead.clone().or_else(|| budgets.partners.iter().flatten().next().cloned()).or_else(|| {
             let shape = self.shape.clone()?;
             let n = *self.navis.first()?;
             let content = draft.content().clone();
@@ -417,7 +515,7 @@ impl Party {
         });
     }
 
-    /// The navis offered, in their versions' order (the builds data's groups, in their order; those of none last).
+    /// The navis offered as partners, in their versions' order (team navis other than the build's lead navi).
     fn offered(&self, draft: &Draft) -> Vec<NaviHandle> {
         let content = draft.content();
         let kit = &draft.kit;
@@ -425,7 +523,10 @@ impl Party {
         let rulesets = kit.rulesets();
         let group_of = |n: NaviHandle| rulesets.as_ref().and_then(|r| r.group_of(Registry::Navi, &Item::of(n.0))).map(|g| g.id.clone());
         let rank = |n: NaviHandle| group_of(n).and_then(|id| kit.builds.groups.iter().position(|g| g.id == id)).unwrap_or(usize::MAX);
-        let mut offered: Vec<NaviHandle> = saito_match::navis(content, &kit.game).into_iter().filter(|&n| n != own).collect();
+        let mut offered: Vec<NaviHandle> = saito_match::navis(content, &kit.game)
+            .into_iter()
+            .filter(|&n| n != own && !content.navi(n).changes_form())
+            .collect();
         offered.sort_by_key(|&n| rank(n));
         offered
     }
@@ -486,7 +587,7 @@ impl Party {
         }
         let navis = self.navis_shown();
         let listing = self.listing().clone();
-        let free = self.marked().partner().and_then(|i| budgets.get(i).cloned().flatten()).map_or(0, |b| b.count.free());
+        let free = self.marked().owner().and_then(|o| budgets.of(o)).map_or(0, |b| b.count.free());
         view.set_slot(self.slot as i32);
         view.set_navis_shown(navis);
         view.set_search(listing.search.as_str().into());
@@ -503,53 +604,66 @@ impl Party {
         let Some(shape) = self.read(draft) else { return };
         let content = draft.content().clone();
         let partners = partners(&content, draft.side(), &shape);
+        let own = draft.side().navi(&content);
+        let lead_progs = own_programs(&content, draft.side());
+        let show_lead = has_own_party_cust(&content, draft.side());
         let (budgets, changes) = Party::budgets(draft);
         let ui = shell.ui();
         let view = ui.global::<PartyView>();
         let say = ui.global::<BuildWords>();
         let kit = draft.kit.clone();
-        let budget = |i: usize| budgets.get(i).cloned().flatten();
         let category = self.programs_category();
         self.navis = self.offered(draft);
         self.learn_costing(draft, &budgets);
         let most = self.costing.as_ref().and_then(|b| self.library.iter().map(|&h| b.cost_of(&content, h)).max()).unwrap_or(1);
         self.list(shell, draft);
         let counts: Vec<usize> = partners.iter().map(|p| p.programs.len()).collect();
-        self.slots = slots_of(&counts, shape.room, shape.program_room);
+        self.slots = slots_of(show_lead.then_some(lead_progs.len()), &counts, shape.room, shape.program_room);
         self.slot = self.slot.min(self.slots.len().saturating_sub(1));
         let slot_rows: Vec<PartySlot> = draft.with_words(shell, |words| {
+            let head_slot = |navi: Option<NaviHandle>, progs: &[EntryHandle], b: Option<&Budget>, bad: bool, locked: bool| {
+                let mut runs: Vec<i32> = progs.iter().enumerate().flat_map(|(k, &h)| std::iter::repeat_n(k as i32, b.map_or(0, |b| b.cost_of(&content, h)) as usize)).collect();
+                let gauge = b.map_or(0, |b| b.count.limit as usize);
+                let last = progs.len() as i32;
+                while runs.len() < gauge {
+                    runs.push(last);
+                }
+                PartySlot {
+                    kind: PartySlotKind::Head,
+                    locked,
+                    face: navi.map(|n| kit.pictures.navi(n)).unwrap_or_default(),
+                    name: navi.map(|n| words.names.navi_long(n)).unwrap_or_default().into(),
+                    version: navi.map(|n| kit.version_tag_of(words.names, Registry::Navi, &Item::of(n.0))).unwrap_or_default(),
+                    bad,
+                    gauge: gauge as i32,
+                    used: b.map_or(0, |b| b.count.used as i32),
+                    tones: ModelRc::new(VecModel::from(program_tones(&content, progs, b))),
+                    runs: ModelRc::new(VecModel::from(runs)),
+                    ..Default::default()
+                }
+            };
             self.slots
                 .iter()
                 .map(|&s| match s {
+                    Slot::LeadHead => head_slot(Some(own), &lead_progs, budgets.of(Owner::Lead), !Party::own_problems(draft).is_empty(), true),
+                    Slot::LeadProgram(k) => {
+                        let h = lead_progs[k];
+                        let mut row = program_row(words, &content, h, budgets.of(Owner::Lead));
+                        if !draft.allow_ds() || !draft.allows_for(&category, Some(own.0), h.0) {
+                            row.note = say.invoke_not_allowed_here();
+                            row.bad = true;
+                        }
+                        PartySlot { kind: PartySlotKind::Program, row, ..Default::default() }
+                    }
+                    Slot::LeadEnd => PartySlot { kind: PartySlotKind::End, ..Default::default() },
                     Slot::Head(i) => {
                         let p = &partners[i];
-                        let b = budget(i);
-                        // (Each slot's program, in order; the empty slots one run after them.)
-                        let mut runs: Vec<i32> = p.programs.iter().enumerate().flat_map(|(k, &h)| std::iter::repeat_n(k as i32, b.as_ref().map_or(0, |b| b.cost_of(&content, h)) as usize)).collect();
-                        let gauge = b.as_ref().map_or(0, |b| b.count.limit as usize);
-                        let last = p.programs.len() as i32;
-                        while runs.len() < gauge {
-                            runs.push(last);
-                        }
-                        PartySlot {
-                            kind: PartySlotKind::Head,
-                            face: p.navi.map(|n| kit.pictures.navi(n)).unwrap_or_default(),
-                            name: p.navi.map(|n| words.names.navi_long(n)).unwrap_or_default().into(),
-                            version: p.navi.map(|n| kit.version_tag_of(words.names, Registry::Navi, &Item::of(n.0))).unwrap_or_default(),
-                            bad: !Party::problems(draft, i, Some(p)).is_empty(),
-                            gauge: gauge as i32,
-                            used: b.as_ref().map_or(0, |b| b.count.used as i32),
-                            tones: ModelRc::new(VecModel::from(crate::builds::party::tones(&content, p, b.as_ref()))),
-                            runs: ModelRc::new(VecModel::from(runs)),
-                            ..Default::default()
-                        }
+                        head_slot(p.navi, &p.programs, budgets.of(Owner::Partner(i)), !Party::problems(draft, i, Some(p)).is_empty(), false)
                     }
                     Slot::Program(i, k) => {
                         let h = partners[i].programs[k];
-                        let mut row = program_row(words, &content, h, budget(i).as_ref());
-                        // (One the build's ruleset holds back all the same, for every partner or for this one's navi,
-                        // says so, red: it can be taken out.)
-                        if !draft.allows_for(&category, partners[i].navi.map(|n| n.0), h.0) {
+                        let mut row = program_row(words, &content, h, budgets.of(Owner::Partner(i)));
+                        if !draft.allow_ds() || !draft.allows_for(&category, partners[i].navi.map(|n| n.0), h.0) {
                             row.note = say.invoke_not_allowed_here();
                             row.bad = true;
                         }
@@ -565,7 +679,7 @@ impl Party {
         view.set_room(shape.room as i32);
         view.set_changes(changes.unwrap_or(0) as i32);
         view.set_slots(ModelRc::new(VecModel::from(slot_rows)));
-        view.set_problems(draft.pane_line(shell, &[FIELD.to_string()], false).into());
+        view.set_problems(draft.pane_line(shell, &[FIELD.to_string(), OWN_PROGRAMS_FIELD.to_string()], false).into());
         // (The library anew: its kind may be the same, its rows another number.)
         view.set_rows(ModelRc::new(VecModel::from(Vec::<PartyRow>::new())));
         self.select(shell, draft, self.slot);
@@ -584,31 +698,51 @@ impl Party {
     /// A navi's facts as the build would field it, and alone (no programs; kept, a navi once): a partner's its own,
     /// its programs' in; a navi not in the party's as a check of the build with it the one partner says.
     fn navi_facts(&mut self, draft: &mut Draft, n: NaviHandle) -> Option<(NaviFacts, NaviFacts)> {
+        let content = draft.content().clone();
+        let own = draft.side().navi(&content);
         if !self.alone.contains_key(&n) {
             let shape = self.shape.clone()?;
-            let content = draft.content().clone();
             let mut side = draft.side().clone();
-            let facts = write(&content, &mut side, &shape, &[Partner { navi: Some(n), programs: Vec::new() }])
-                .then(|| NaviFacts::of(&mut Checked::of(&content, &draft.kit.game, &side), &content, &side, 0))
-                .flatten();
+            let facts = if n == own {
+                let dummy = *self.navis.first()?;
+                let _ = write_own_programs(&content, &mut side, &[]);
+                write(&content, &mut side, &shape, &[Partner { navi: Some(dummy), programs: Vec::new() }])
+                    .then(|| NaviFacts::of_member(&mut Checked::of(&content, &draft.kit.game, &side), &content, &side, 0))
+                    .flatten()
+            } else {
+                write(&content, &mut side, &shape, &[Partner { navi: Some(n), programs: Vec::new() }])
+                    .then(|| NaviFacts::of(&mut Checked::of(&content, &draft.kit.game, &side), &content, &side, 0))
+                    .flatten()
+            };
             self.alone.insert(n, facts);
         }
         let alone = self.alone.get(&n).cloned().flatten()?;
         let partners = self.partners(draft);
-        let with = match partners.iter().position(|p| p.navi == Some(n)) {
-            Some(i) => {
-                let (content, side) = (draft.content().clone(), draft.side().clone());
-                NaviFacts::of(&mut draft.checked, &content, &side, i)?
+        let with = if n == own {
+            let side = draft.side().clone();
+            if partners.is_empty() && own_programs(&content, &side).is_empty() {
+                alone.clone()
+            } else {
+                NaviFacts::of_member(&mut draft.checked, &content, &side, 0)?
             }
-            None => alone.clone(),
+        } else {
+            match partners.iter().position(|p| p.navi == Some(n)) {
+                Some(i) => {
+                    let side = draft.side().clone();
+                    NaviFacts::of(&mut draft.checked, &content, &side, i)?
+                }
+                None => alone.clone(),
+            }
         };
         Some((with, alone))
     }
 
-    /// The strip: what the cursor is on; while the pointer is on a slot or a row, that one. A partner's head or a navi
+    /// The strip: what the cursor is on; while the pointer is on a slot or a row, that one. A head or a navi
     /// of the library: the navi, its stats; a program: the program, and (the library's) whether it fits the marked slot.
     fn show_detail(&mut self, shell: &Shell, draft: &mut Draft) {
         let content = draft.content().clone();
+        let own = draft.side().navi(&content);
+        let lead_progs = own_programs(&content, draft.side());
         let partners = self.partners(draft);
         let budgets = self.kept_budgets(draft);
         let ui = shell.ui();
@@ -620,6 +754,7 @@ impl Party {
         let marked = self.marked();
         let navi = match described {
             Some(Described::Slot(r)) => match self.slots.get(r) {
+                Some(&Slot::LeadHead) => Some(own),
                 Some(&Slot::Head(i)) => partners.get(i).and_then(|p| p.navi),
                 _ => None,
             },
@@ -635,7 +770,15 @@ impl Party {
                 (_, Some(n)) => {
                     let tag = kit.version_tag_of(words.names, Registry::Navi, &Item::of(n.0));
                     let stats = facts.as_ref().map(|(with, alone)| with.lines(alone, words, &view.invoke_slots_label())).unwrap_or_default();
-                    let i = partners.iter().position(|p| p.navi == Some(n));
+                    let fault = if library_navi {
+                        String::new()
+                    } else if n == own {
+                        draft.line(shell, Party::own_problems(draft))
+                    } else if let Some(i) = partners.iter().position(|p| p.navi == Some(n)) {
+                        draft.line(shell, Party::problems(draft, i, partners.get(i)))
+                    } else {
+                        String::new()
+                    };
                     saito_ui::PartyDetail {
                         there: true,
                         face: kit.pictures.navi(n),
@@ -643,12 +786,20 @@ impl Party {
                         version: tag,
                         stats: ModelRc::new(VecModel::from(stats)),
                         element: element.clone().unwrap_or_default(),
-                        fault: i.filter(|_| !library_navi).map(|i| draft.line(shell, Party::problems(draft, i, partners.get(i)))).unwrap_or_default().into(),
+                        fault: fault.into(),
                         problem: refusal.clone().unwrap_or_default().into(),
                         ..Default::default()
                     }
                 }
                 (Some(Described::Slot(r)), _) => match self.slots.get(r) {
+                    Some(&Slot::LeadProgram(k)) => match lead_progs.get(k) {
+                        Some(&h) => {
+                            let mut d = self.program_detail(shell, draft, words, &table, &budgets, Slot::LeadProgram(k), h, false);
+                            d.fault = draft.line(shell, Party::own_problems(draft)).into();
+                            d
+                        }
+                        None => Default::default(),
+                    },
                     Some(&Slot::Program(i, k)) => match partners.get(i).and_then(|p| p.programs.get(k)) {
                         Some(&h) => {
                             let mut d = self.program_detail(shell, draft, words, &table, &budgets, Slot::Program(i, k), h, false);
@@ -676,16 +827,16 @@ impl Party {
     /// A program as the strip describes it, as the Folder tab's strip a chip: its slots and name, what it does; its
     /// slots, its kind, and whether they fit slot `slot` (`fitting`: it is the library's, which puts it there).
     #[allow(clippy::too_many_arguments)]
-    fn program_detail(&self, shell: &Shell, draft: &Draft, words: &crate::builds::words::Words, table: &str, budgets: &[Option<Budget>], slot: Slot, h: EntryHandle, fitting: bool) -> saito_ui::PartyDetail {
+    fn program_detail(&self, shell: &Shell, draft: &Draft, words: &crate::builds::words::Words, table: &str, budgets: &PartyBudgets, slot: Slot, h: EntryHandle, fitting: bool) -> saito_ui::PartyDetail {
         let content = draft.content();
         let ui = shell.ui();
         let view = ui.global::<PartyView>();
-        let b = slot.partner().and_then(|i| budgets.get(i).cloned().flatten());
-        let cost = b.as_ref().or(self.costing.as_ref()).map_or(0, |b| b.cost_of(content, h)) as i32;
+        let b = slot.owner().and_then(|o| budgets.of(o));
+        let cost = b.or(self.costing.as_ref()).map_or(0, |b| b.cost_of(content, h)) as i32;
         let kind = content.defs.definitions.get(Registry::Entry, &content.defs.entry(h).key).and_then(|d| d.spec.field("kind").str().map(str::to_string));
         let kind = kind.and_then(|k| words.names.text(table, &format!("kind.{k}")));
         let why = if fitting { self.program_refusal(shell, draft, budgets, slot, h) } else { None };
-        let fits = (fitting && why.is_none() && b.is_some()).then(|| view.invoke_fits_word(b.as_ref().map_or(0, |b| b.count.free()) as i32));
+        let fits = (fitting && why.is_none() && b.is_some()).then(|| view.invoke_fits_word(b.map_or(0, |b| b.count.free()) as i32));
         let facts: Vec<slint::SharedString> = [Some(view.invoke_blocks_word(cost)), kind.map(Into::into), fits].into_iter().flatten().collect();
         saito_ui::PartyDetail {
             there: true,
@@ -705,6 +856,21 @@ impl Party {
         draft.edit(|content, side| {
             let mut ps = partners(content, side, &shape);
             change(&mut ps) && write(content, side, &shape, &ps)
+        })
+    }
+
+    /// Change the build's lead PartyCust programs and/or partners together: whether anything changed.
+    fn change_all(&self, draft: &mut Draft, change: impl FnOnce(&mut Vec<EntryHandle>, &mut Vec<Partner>) -> bool) -> bool {
+        let Some(shape) = self.shape.clone() else { return false };
+        draft.edit(|content, side| {
+            let mut lead = own_programs(content, side);
+            let mut ps = partners(content, side, &shape);
+            if !change(&mut lead, &mut ps) {
+                return false;
+            }
+            let ok_lead = !saito_match::facts::takes(content, OWN_PROGRAMS_FIELD) || write_own_programs(content, side, &lead);
+            let ok_ps = write(content, side, &shape, &ps);
+            ok_lead && ok_ps
         })
     }
 
@@ -758,14 +924,22 @@ impl Party {
     }
 
     /// Program `h` (the library's row `row`) put in program slot `slot`: in a program's place, in place of it; from a
-    /// partner's Empty row, at its list's end. Refused as its row says.
+    /// head or Empty row, at its list's end. Refused as its row says.
     fn put_program(&mut self, shell: &mut Shell, draft: &mut Draft, row: usize, slot: Slot) {
         let Some(&h) = self.shown_programs.get(row) else { return };
         let budgets = self.kept_budgets(draft);
         if self.program_refusal(shell, draft, &budgets, slot, h).is_some() {
             return self.refuse(shell, row);
         }
-        let changed = self.change(draft, |ps| match slot {
+        let changed = self.change_all(draft, |lead, ps| match slot {
+            Slot::LeadProgram(k) if k < lead.len() => {
+                lead[k] = h;
+                true
+            }
+            Slot::LeadHead | Slot::LeadEnd => {
+                lead.push(h);
+                true
+            }
             Slot::Program(i, k) if k < ps.get(i).map_or(0, |p| p.programs.len()) => {
                 ps[i].programs[k] = h;
                 true
@@ -778,11 +952,14 @@ impl Party {
         });
         if changed {
             shell.sound.play(Cue::Pick);
-            // (From an Empty row, the next goes after it: its Empty row, or, the list full, its last program.)
+            let room = self.shape.as_ref().map_or(0, |s| s.program_room);
             let to = match slot {
+                Slot::LeadHead | Slot::LeadEnd => {
+                    let n = self.lead_programs(draft).len();
+                    if n < room { Slot::LeadEnd } else { Slot::LeadProgram(n.saturating_sub(1)) }
+                }
                 Slot::End(i) => {
                     let n = self.partners(draft).get(i).map_or(0, |p| p.programs.len());
-                    let room = self.shape.as_ref().map_or(0, |s| s.program_room);
                     if n < room { Slot::End(i) } else { Slot::Program(i, n.saturating_sub(1)) }
                 }
                 s => s,
@@ -791,22 +968,37 @@ impl Party {
         }
     }
 
-    /// Program `h` (the library's row `row`) put in among partner `i`'s at place `at` (a drag lets it go there),
+    /// Program `h` (the library's row `row`) put in among `owner`'s at place `at` (a drag lets it go there),
     /// refused as an Empty row's would be.
-    fn install(&mut self, shell: &mut Shell, draft: &mut Draft, row: usize, i: usize, at: usize) {
+    fn install(&mut self, shell: &mut Shell, draft: &mut Draft, row: usize, owner: Owner, at: usize) {
         let Some(&h) = self.shown_programs.get(row) else { return };
         let budgets = self.kept_budgets(draft);
-        if self.program_refusal(shell, draft, &budgets, Slot::End(i), h).is_some() {
+        let end = match owner {
+            Owner::Lead => Slot::LeadEnd,
+            Owner::Partner(i) => Slot::End(i),
+        };
+        if self.program_refusal(shell, draft, &budgets, end, h).is_some() {
             return self.refuse(shell, row);
         }
-        if self.change(draft, |ps| {
-            let Some(p) = ps.get_mut(i) else { return false };
-            let at = at.min(p.programs.len());
-            p.programs.insert(at, h);
-            true
+        if self.change_all(draft, |lead, ps| match owner {
+            Owner::Lead => {
+                let at = at.min(lead.len());
+                lead.insert(at, h);
+                true
+            }
+            Owner::Partner(i) => {
+                let Some(p) = ps.get_mut(i) else { return false };
+                let at = at.min(p.programs.len());
+                p.programs.insert(at, h);
+                true
+            }
         }) {
             shell.sound.play(Cue::Pick);
-            self.changed_to(shell, draft, Slot::Program(i, at));
+            let to = match owner {
+                Owner::Lead => Slot::LeadProgram(at),
+                Owner::Partner(i) => Slot::Program(i, at),
+            };
+            self.changed_to(shell, draft, to);
         }
     }
 
@@ -827,44 +1019,88 @@ impl Party {
         }
     }
 
-    /// Program `k` of partner `i`'s taken out.
-    fn uninstall(&mut self, shell: &mut Shell, draft: &mut Draft, i: usize, k: usize) {
-        if self.change(draft, |ps| match ps.get_mut(i) {
-            Some(p) if k < p.programs.len() => {
-                p.programs.remove(k);
+    /// Program `k` of `owner`'s taken out.
+    fn uninstall(&mut self, shell: &mut Shell, draft: &mut Draft, owner: Owner, k: usize) {
+        if self.change_all(draft, |lead, ps| match owner {
+            Owner::Lead if k < lead.len() => {
+                lead.remove(k);
                 true
             }
+            Owner::Partner(i) => match ps.get_mut(i) {
+                Some(p) if k < p.programs.len() => {
+                    p.programs.remove(k);
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }) {
             shell.sound.play(Cue::Back);
-            // (The cursor stays where it was: on the program now there, or the list's Empty row.)
-            let n = self.partners(draft).get(i).map_or(0, |p| p.programs.len());
-            self.changed_to(shell, draft, if k < n { Slot::Program(i, k) } else { Slot::End(i) });
+            let to = match owner {
+                Owner::Lead => {
+                    let n = self.lead_programs(draft).len();
+                    if k < n { Slot::LeadProgram(k) } else { Slot::LeadEnd }
+                }
+                Owner::Partner(i) => {
+                    let n = self.partners(draft).get(i).map_or(0, |p| p.programs.len());
+                    if k < n { Slot::Program(i, k) } else { Slot::End(i) }
+                }
+            };
+            self.changed_to(shell, draft, to);
         } else {
             shell.sound.play(Cue::Refused);
         }
     }
 
-    /// Program `k` of partner `from`'s moved to place `to` of partner `into`'s (the same or the other); into the other,
+    /// Program `k` of `from`'s moved to place `to` of `into`'s (the same or another owner); into another,
     /// refused as an install is.
-    fn shift(&mut self, shell: &mut Shell, draft: &mut Draft, from: usize, k: usize, into: usize, to: usize) {
-        let partners = self.partners(draft);
-        let Some(&h) = partners.get(from).and_then(|p| p.programs.get(k)) else { return };
+    fn shift(&mut self, shell: &mut Shell, draft: &mut Draft, from: Owner, k: usize, into: Owner, to: usize) {
+        let h = match from {
+            Owner::Lead => self.lead_programs(draft).get(k).copied(),
+            Owner::Partner(i) => self.partners(draft).get(i).and_then(|p| p.programs.get(k).copied()),
+        };
+        let Some(h) = h else { return };
         if into != from {
             let budgets = self.kept_budgets(draft);
-            if self.program_refusal(shell, draft, &budgets, Slot::End(into), h).is_some() {
+            let end = match into {
+                Owner::Lead => Slot::LeadEnd,
+                Owner::Partner(i) => Slot::End(i),
+            };
+            if self.program_refusal(shell, draft, &budgets, end, h).is_some() {
                 return shell.sound.play(Cue::Refused);
             }
         }
-        if self.change(draft, |ps| {
-            let h = ps[from].programs.remove(k);
-            let at = to.min(ps[into].programs.len());
-            ps[into].programs.insert(at, h);
+        if self.change_all(draft, |lead, ps| {
+            let h = match from {
+                Owner::Lead => lead.remove(k),
+                Owner::Partner(i) => ps[i].programs.remove(k),
+            };
+            let at = match into {
+                Owner::Lead => {
+                    let at = to.min(lead.len());
+                    lead.insert(at, h);
+                    at
+                }
+                Owner::Partner(i) => {
+                    let at = to.min(ps[i].programs.len());
+                    ps[i].programs.insert(at, h);
+                    at
+                }
+            };
             from != into || at != k
         }) {
             shell.sound.play(Cue::Pick);
-            let at = to.min(self.partners(draft).get(into).map_or(0, |p| p.programs.len().saturating_sub(1)));
-            self.changed_to(shell, draft, Slot::Program(into, at));
+            let slot = match into {
+                Owner::Lead => {
+                    let at = to.min(self.lead_programs(draft).len().saturating_sub(1));
+                    Slot::LeadProgram(at)
+                }
+                Owner::Partner(i) => {
+                    let at = to.min(self.partners(draft).get(i).map_or(0, |p| p.programs.len().saturating_sub(1)));
+                    Slot::Program(i, at)
+                }
+            };
+            self.changed_to(shell, draft, slot);
         }
     }
 
@@ -934,13 +1170,14 @@ impl Party {
         editor::show_landing(shell, "", None, false);
     }
 
-    /// Where a program dragged to window point `at` would go among PARTY's: the partner and the place, and the slot row
+    /// Where a program dragged to window point `at` would go among PARTY's: the owner and the place, and the slot row
     /// its gap shows at.
-    fn program_landing(&self, shell: &Shell, draft: &Draft, at: i32) -> Option<(usize, usize, usize)> {
+    fn program_landing(&self, shell: &Shell, draft: &Draft, at: i32) -> Option<(Owner, usize, usize)> {
         let (row, upper) = self.slot_at(shell, editor::pointer_at(at))?;
+        let lead_count = self.lead_programs(draft).len();
         let counts: Vec<usize> = self.partners(draft).iter().map(|p| p.programs.len()).collect();
-        let (i, place) = program_place(&self.slots, row, upper, &counts)?;
-        Some((i, place, row_of_place(&self.slots, i, place)?))
+        let (owner, place) = program_place(&self.slots, row, upper, lead_count, &counts)?;
+        Some((owner, place, row_of_place(&self.slots, owner, place)?))
     }
 }
 
@@ -950,12 +1187,23 @@ impl Tab for Party {
     }
 
     fn fields(&self, _content: &Content) -> Vec<String> {
-        vec![FIELD.into()]
+        vec![FIELD.into(), OWN_PROGRAMS_FIELD.into()]
     }
 
-    /// A party is the game's own navi's (EXE5's MegaMan's, as the DS's member 0).
+    /// Party is available to both MegaMan (5DS) and team navis (Gate-Party) under DS rulesets.
     fn own_navi_only(&self) -> bool {
-        true
+        false
+    }
+
+    fn enabled_for(&self, draft: &Draft) -> bool {
+        if draft.allow_ds() {
+            return true;
+        }
+        let content = draft.content();
+        let side = draft.side();
+        let has_partners = Shape::of(content).is_some_and(|s| !partners(content, side, &s).is_empty());
+        let has_own = !own_programs(content, side).is_empty();
+        has_partners || has_own
     }
 
     fn main(&self) -> &'static str {
@@ -1018,7 +1266,8 @@ impl Tab for Party {
             }
             "clear" => {
                 let question = shell.ui().global::<PartyView>().get_clear_question();
-                editor::ask_clear(shell, question, self.partners(draft).is_empty());
+                let empty = self.partners(draft).is_empty() && self.lead_programs(draft).is_empty();
+                editor::ask_clear(shell, question, empty);
             }
             _ => {}
         }
@@ -1027,34 +1276,50 @@ impl Tab for Party {
     fn choose(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, index: i32, choice: i32) {
         let list = shell.ui().global::<saito_ui::Drag>().get_list().to_string();
         let from = usize::try_from(index).ok();
+        let dragged_program = |slot: Option<Slot>| match slot {
+            Some(Slot::LeadProgram(k)) => Some((Owner::Lead, k)),
+            Some(Slot::Program(i, k)) => Some((Owner::Partner(i), k)),
+            _ => None,
+        };
+        let end_slot = |owner: Owner| match owner {
+            Owner::Lead => Slot::LeadEnd,
+            Owner::Partner(i) => Slot::End(i),
+        };
         match id {
             "lib.sort" => {
                 let sorts = if self.navis_shown() { NAVI_SORTS.len() } else { PROGRAM_SORTS.len() };
                 self.listing().sort = (choice.max(0) as usize).min(sorts - 1);
                 self.changed(shell, draft);
             }
-            // A slot dragged: a program among the programs (a gap where it would go; into the other partner's, why it
-            // can't, where it can't), a head onto another (outlined: they would trade places); onto the library, what
-            // it holds is taken out let go there; elsewhere, nowhere (it goes back).
+            // A slot dragged: a program among the programs (a gap where it would go; into another owner's, why it
+            // can't, where it can't), a partner head onto another (outlined: they would trade places); onto the
+            // library, what it holds is taken out let go there; elsewhere, nowhere (it goes back).
             "drag-over" if list == SLOTS => match from.and_then(|r| self.slots.get(r).copied()) {
-                Some(Slot::Head(_) | Slot::Program(..)) if editor::over_library(shell, choice) => {
+                Some(Slot::Head(_) | Slot::Program(..) | Slot::LeadProgram(_)) if editor::over_library(shell, choice) => {
                     shell.ui().global::<PartyView>().set_drag_why(Default::default());
                     editor::show_remove(shell);
                 }
-                Some(Slot::Program(i, k)) => match self.program_landing(shell, draft, choice) {
-                    Some((j, _, gap)) => {
-                        let row = from.unwrap_or(0);
-                        let to = if gap > row { gap - 1 } else { gap };
-                        let why = if j == i {
-                            None
-                        } else {
-                            let budgets = self.kept_budgets(draft);
-                            self.partners(draft).get(i).and_then(|p| p.programs.get(k).copied()).and_then(|h| self.program_refusal(shell, draft, &budgets, Slot::End(j), h))
-                        };
-                        self.show_slot_landing(shell, to, false, why);
+                slot if dragged_program(slot).is_some() => {
+                    let (src, k) = dragged_program(slot).unwrap();
+                    match self.program_landing(shell, draft, choice) {
+                        Some((dst, _, gap)) => {
+                            let row = from.unwrap_or(0);
+                            let to = if gap > row { gap - 1 } else { gap };
+                            let why = if dst == src {
+                                None
+                            } else {
+                                let budgets = self.kept_budgets(draft);
+                                let h = match src {
+                                    Owner::Lead => self.lead_programs(draft).get(k).copied(),
+                                    Owner::Partner(i) => self.partners(draft).get(i).and_then(|p| p.programs.get(k).copied()),
+                                };
+                                h.and_then(|h| self.program_refusal(shell, draft, &budgets, end_slot(dst), h))
+                            };
+                            self.show_slot_landing(shell, to, false, why);
+                        }
+                        None => self.show_no_landing(shell),
                     }
-                    None => self.show_no_landing(shell),
-                },
+                }
                 Some(Slot::Head(i)) => match self.slot_at(shell, editor::pointer_at(choice)).and_then(|(r, _)| head_at(&self.slots, r)) {
                     Some(h) if matches!(self.slots[h], Slot::Head(j) if j != i) => self.show_slot_landing(shell, h, true, None),
                     _ => self.show_no_landing(shell),
@@ -1064,12 +1329,16 @@ impl Tab for Party {
             "drag-drop" if list == SLOTS => {
                 self.show_no_landing(shell);
                 match from.and_then(|r| self.slots.get(r).copied()) {
-                    Some(Slot::Program(i, k)) if editor::over_library(shell, choice) => self.uninstall(shell, draft, i, k),
+                    slot if dragged_program(slot).is_some() && editor::over_library(shell, choice) => {
+                        let (src, k) = dragged_program(slot).unwrap();
+                        self.uninstall(shell, draft, src, k);
+                    }
                     Some(Slot::Head(i)) if editor::over_library(shell, choice) => self.remove_partner(shell, draft, i),
-                    Some(Slot::Program(i, k)) => {
-                        if let Some((j, place, _)) = self.program_landing(shell, draft, choice) {
-                            let to = if j == i && place > k { place - 1 } else { place };
-                            self.shift(shell, draft, i, k, j, to);
+                    slot if dragged_program(slot).is_some() => {
+                        let (src, k) = dragged_program(slot).unwrap();
+                        if let Some((dst, place, _)) = self.program_landing(shell, draft, choice) {
+                            let to = if dst == src && place > k { place - 1 } else { place };
+                            self.shift(shell, draft, src, k, dst, to);
                         }
                     }
                     Some(Slot::Head(i)) => {
@@ -1080,7 +1349,7 @@ impl Tab for Party {
                     _ => {}
                 }
             }
-            // A library's row dragged: a program among a partner's (a gap where it would go), a navi onto a head
+            // A library's row dragged: a program among an owner's (a gap where it would go), a navi onto a partner head
             // (outlined), each saying why it can't go in where it can't; let go there, it goes in, refused as Enter's
             // is; anywhere else, nothing.
             "drag-in-over" if index >= 0 => {
@@ -1096,9 +1365,9 @@ impl Tab for Party {
                     }
                 } else {
                     match (self.program_landing(shell, draft, choice), self.shown_programs.get(r).copied()) {
-                        (Some((j, _, gap)), Some(h)) => {
+                        (Some((dst, _, gap)), Some(h)) => {
                             let budgets = self.kept_budgets(draft);
-                            let why = self.program_refusal(shell, draft, &budgets, Slot::End(j), h);
+                            let why = self.program_refusal(shell, draft, &budgets, end_slot(dst), h);
                             self.show_slot_landing(shell, gap, false, why);
                         }
                         _ => self.show_no_landing(shell),
@@ -1113,8 +1382,8 @@ impl Tab for Party {
                         let slot = self.slots[h];
                         self.put_navi(shell, draft, r, slot);
                     }
-                } else if let Some((j, place, _)) = self.program_landing(shell, draft, choice) {
-                    self.install(shell, draft, r, j, place);
+                } else if let Some((dst, place, _)) = self.program_landing(shell, draft, choice) {
+                    self.install(shell, draft, r, dst, place);
                 }
             }
             _ => {}
@@ -1166,7 +1435,13 @@ impl Tab for Party {
     }
 
     fn answered(&mut self, shell: &mut Shell, draft: &mut Draft, tag: &str, choice: usize) {
-        if editor::cleared(tag, choice) && self.change(draft, |ps| !std::mem::take(ps).is_empty()) {
+        if editor::cleared(tag, choice)
+            && self.change_all(draft, |lead, ps| {
+                let had_lead = !std::mem::take(lead).is_empty();
+                let had_ps = !std::mem::take(ps).is_empty();
+                had_lead || had_ps
+            })
+        {
             self.slot = 0;
             self.changed(shell, draft);
         }
@@ -1188,7 +1463,8 @@ impl Tab for Party {
         }
         let Some(key) = shell.nav.focused() else { return false };
         match (key.id.as_str(), self.slots.get(key.index.max(0) as usize).copied()) {
-            (SLOTS, Some(Slot::Program(i, k))) => self.uninstall(shell, draft, i, k),
+            (SLOTS, Some(Slot::LeadProgram(k))) => self.uninstall(shell, draft, Owner::Lead, k),
+            (SLOTS, Some(Slot::Program(i, k))) => self.uninstall(shell, draft, Owner::Partner(i), k),
             (SLOTS, Some(Slot::Head(i))) => self.remove_partner(shell, draft, i),
             _ => shell.sound.play(Cue::Refused),
         }
@@ -1221,35 +1497,38 @@ mod tests {
     #[test]
     fn the_slots_are_heads_programs_and_empties() {
         use Slot::*;
-        assert_eq!(slots_of(&[], 2, 10), vec![Open(0), Open(1)]);
-        assert_eq!(slots_of(&[2], 2, 10), vec![Head(0), Program(0, 0), Program(0, 1), End(0), Open(1)]);
-        assert_eq!(slots_of(&[0, 1], 2, 1), vec![Head(0), End(0), Head(1), Program(1, 0)]);
+        assert_eq!(slots_of(None, &[], 2, 10), vec![Open(0), Open(1)]);
+        assert_eq!(slots_of(None, &[2], 2, 10), vec![Head(0), Program(0, 0), Program(0, 1), End(0), Open(1)]);
+        assert_eq!(slots_of(None, &[0, 1], 2, 1), vec![Head(0), End(0), Head(1), Program(1, 0)]);
+        assert_eq!(slots_of(Some(1), &[], 2, 10), vec![LeadHead, LeadProgram(0), LeadEnd, Open(0), Open(1)]);
     }
 
-    /// A program let go over the slots goes into the partner the row is of, where the pointer is: over its head, its
+    /// A program let go over the slots goes into the owner the row is of, where the pointer is: over its head, its
     /// top; over a program, before or after it; over its Empty row, its end; over an Empty head, nowhere. Its gap shows
     /// at the row it goes before.
     #[test]
     fn a_program_lands_where_the_pointer_is() {
-        let slots = slots_of(&[2, 1], 2, 10);
+        let slots = slots_of(None, &[2, 1], 2, 10);
         let counts = [2, 1];
         // Head(0) Program(0,0) Program(0,1) End(0) Head(1) Program(1,0) End(1)
-        assert_eq!(program_place(&slots, 0, false, &counts), Some((0, 0)));
-        assert_eq!(program_place(&slots, 1, true, &counts), Some((0, 0)));
-        assert_eq!(program_place(&slots, 1, false, &counts), Some((0, 1)));
-        assert_eq!(program_place(&slots, 3, true, &counts), Some((0, 2)));
-        assert_eq!(program_place(&slots, 4, true, &counts), Some((1, 0)));
-        assert_eq!(program_place(&slots, 6, false, &counts), Some((1, 1)));
-        assert_eq!(program_place(&slots, 7, false, &counts), None);
-        assert_eq!(row_of_place(&slots, 0, 1), Some(2));
-        assert_eq!(row_of_place(&slots, 0, 2), Some(3));
-        assert_eq!(row_of_place(&slots, 1, 0), Some(5));
+        assert_eq!(program_place(&slots, 0, false, 0, &counts), Some((Owner::Partner(0), 0)));
+        assert_eq!(program_place(&slots, 1, true, 0, &counts), Some((Owner::Partner(0), 0)));
+        assert_eq!(program_place(&slots, 1, false, 0, &counts), Some((Owner::Partner(0), 1)));
+        assert_eq!(program_place(&slots, 3, true, 0, &counts), Some((Owner::Partner(0), 2)));
+        assert_eq!(program_place(&slots, 4, true, 0, &counts), Some((Owner::Partner(1), 0)));
+        assert_eq!(program_place(&slots, 6, false, 0, &counts), Some((Owner::Partner(1), 1)));
+        assert_eq!(program_place(&slots, 7, false, 0, &counts), None);
+        assert_eq!(row_of_place(&slots, Owner::Partner(0), 1), Some(2));
+        assert_eq!(row_of_place(&slots, Owner::Partner(0), 2), Some(3));
+        assert_eq!(row_of_place(&slots, Owner::Partner(1), 0), Some(5));
         // (A list full, no Empty row: the gap after its last program.)
-        let full = slots_of(&[1], 2, 1);
-        assert_eq!(row_of_place(&full, 0, 1), Some(2));
-        // A navi let go over a partner's rows goes in at its head; over an Empty head, there.
-        let open = slots_of(&[1], 2, 10);
-        assert_eq!((head_at(&open, 2), head_at(&open, 3)), (Some(0), Some(3)));
+        let full = slots_of(None, &[1], 2, 1);
+        assert_eq!(row_of_place(&full, Owner::Partner(0), 1), Some(2));
+        // A navi let go over a partner's rows goes in at its head; over an Empty head, there; over LeadHead, nowhere.
+        let open = slots_of(Some(1), &[1], 2, 10);
+        assert_eq!(head_at(&open, 0), None);
+        assert_eq!(head_at(&open, 1), None);
+        assert_eq!((head_at(&open, 5), head_at(&open, 6)), (Some(3), Some(6)));
     }
 
     /// EXE5's party read from its schema (two partners, each a navi and ten programs of PartyCust's), and a party

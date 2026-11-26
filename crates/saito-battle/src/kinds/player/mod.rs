@@ -542,20 +542,46 @@ pub(crate) fn lose_hp_and_gauge(b: &mut Battle, r: ObjectRef, amount: u16) -> bo
     hp_emptied(b, r)
 }
 
-/// Presentation: whether side `side`'s emotion window shows its form's
-/// second set of faces, as the side's rules ask: whatever its form
-/// (`face_variant_any_form`), or in the base form (`base_face_variant`).
+/// Presentation: which variant set of faces side `side`'s emotion window shows
+/// (`0` own, `1` primary variant, `2` alternate variant), as the side's rules
+/// ask: whatever its form (`face_variant_any_form`), or in the base form
+/// (`base_face_variant_index`).
+pub fn face_variant(b: &Battle, side: u8) -> u8 {
+    if face_variant_any_form(b, side) {
+        1
+    } else {
+        base_face_variant_index(b, side)
+    }
+}
+
+/// Presentation: whether side `side`'s emotion window shows any variant set of
+/// faces, as the side's rules ask.
 pub fn shows_face_variant(b: &Battle, side: u8) -> bool {
-    face_variant_any_form(b, side) || base_face_variant(b, side)
+    face_variant(b, side) != 0
+}
+
+/// Presentation: the variant set index for the side's base form when its rules
+/// ask (`SideLooks::face_variant` -> 1 for ProtoMan Hub Style gold;
+/// `SideLooks::face_variant_alt` -> 2 for Colonel Hub Style silver).
+pub fn base_face_variant_index(b: &Battle, side: u8) -> u8 {
+    let Some(p) = b.player(side) else { return 0 };
+    if !form_of(b, p).base {
+        return 0;
+    }
+    let looks = b.looks[side as usize & 1];
+    if looks.face_variant_alt {
+        2
+    } else if looks.face_variant {
+        1
+    } else {
+        0
+    }
 }
 
 /// Presentation: the second set for the side's base form when its rules
-/// ask (`SideLooks::face_variant`: EXE5's Hub Style, 0x0801AF8E's picture 11
-/// on, which a soul's face doesn't take). Part of the picture as it is
-/// picked.
+/// ask (`SideLooks::face_variant` / `face_variant_alt`).
 pub fn base_face_variant(b: &Battle, side: u8) -> bool {
-    let Some(p) = b.player(side) else { return false };
-    b.looks[side as usize & 1].face_variant && form_of(b, p).base
+    base_face_variant_index(b, side) != 0
 }
 
 /// Presentation: the second set whatever the form, where the side's rules

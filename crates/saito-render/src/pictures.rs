@@ -276,15 +276,15 @@ pub fn element_icon_svg(graphics: &Graphics, family: saito_battle::content::Chip
 /// picture for a tool.
 pub fn form_face(graphics: &Graphics, c: &Content, form: saito_content_api::FormHandle) -> Option<Image> {
     // (The emotion when nothing else holds: the plain one.)
-    let (_, face) = crate::lookups::form_face(graphics, c, form, saito_battle::content::Emotion::default(), false, &mut Problems::default());
+    let (_, face) = crate::lookups::form_face(graphics, c, form, saito_battle::content::Emotion::default(), 0, &mut Problems::default());
     let (tiles, palettes) = face?;
     image(tiles, 4, 2, palettes.first()?)
 }
 
 /// A form's face in the emotion window for `emotion` (by its name in the
-/// game's rules), of its second set with `variant`, 32x16, in its first
+/// game's rules), of its variant set `variant`, 32x16, in its first
 /// palette: what a round shows of a navi, for a tool.
-pub fn face(graphics: &Graphics, c: &Content, form: saito_content_api::FormHandle, emotion: &str, variant: bool) -> Option<Image> {
+pub fn face(graphics: &Graphics, c: &Content, form: saito_content_api::FormHandle, emotion: &str, variant: u8) -> Option<Image> {
     let emotion = c.rules().emotion.by_name(emotion)?;
     let (_, face) = crate::lookups::form_face(graphics, c, form, emotion, variant, &mut Problems::default());
     let (tiles, palettes) = face?;

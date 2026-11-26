@@ -58,8 +58,8 @@ local HIDDEN_ICON = pointer_in_each({ 0x0801_8C6C, 0x0801_8C64, 0x0801_8C40, 0x0
 -- palettes: picture n's at FACE_PALETTES + 0x20 n; a soul's in Chaos Unison n + 11 (+ 0x160).
 --
 -- Pictures 0-4 and the counts are the same in the four ROMs. The souls' are each version's own six, with their
--- palettes. Pictures 11-15 are the same and four of their palettes differ by version in two or three colors: the pack
--- has Team ProtoMan's.
+-- palettes. Pictures 11-15 are the same and their palettes differ by version (Team ProtoMan's gold Bass-Cross at
+-- 0x0B-0x0F, Team Colonel's silver Bass-Cross at 0x22-0x26).
 local FACES = pointer_in_each({ 0x0801_97F0, 0x0801_97E8, 0x0801_97C4, 0x0801_97BC })
 local SOUL_FACES = pointer_in_each({ 0x0801_97F8, 0x0801_97F0, 0x0801_97CC, 0x0801_97C4 })
 local FACES_DARK = pointer_in_each({ 0x0801_97F4, 0x0801_97EC, 0x0801_97C8, 0x0801_97C0 })
@@ -185,6 +185,9 @@ local function mugshots(set: Set, h: Hud)
     end
     for picture = 5, 10 do
         push(colonel, picture, picture + DARK_PALETTES)
+    end
+    for picture = 11, 15 do
+        push(colonel, picture, picture)
     end
     h.mugshots = faces
     h.mugshot_boxes = boxes

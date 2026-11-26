@@ -691,7 +691,20 @@ impl Ruleset {
     pub fn problems(&self, rulesets: &Rulesets, content: &Content, side: &Side) -> Vec<Problem> {
         let mut out = Vec::new();
         let mut held: Vec<(Registry, Item)> = Vec::new();
+        let changes_form = side.stated_navi(content).is_none_or(|n| content.navi(n).changes_form());
+        let non_version_form_facts: Vec<&str> = if changes_form {
+            Vec::new()
+        } else {
+            facts::form_facts(content)
+                .into_iter()
+                .filter(|f| !facts::is_version_form(content, f))
+                .map(|f| f.name)
+                .collect()
+        };
         for category in &rulesets.categories {
+            if non_version_form_facts.contains(&category.fact.as_str()) {
+                continue;
+            }
             let Some((registry, _, field)) = definitions_of(content, &category.fact) else { continue };
             if let Some(by) = &category.by {
                 out.extend(self.problems_by(content, side, category, by, registry));
@@ -832,7 +845,7 @@ impl Ruleset {
                 }
             }
         }
-        refused
+        let mut out: Vec<Problem> = refused
             .into_iter()
             .map(|(item, entries, keys)| {
                 let shown_item = shown(content, registry, &item);
@@ -845,7 +858,45 @@ impl Ruleset {
                 let entry = entries.first().copied();
                 Problem { side: Some(0), field: Some(outer.to_string()), entry, what: Wrong::NotAllowed { registry, item, entries }, text }
             })
-            .collect()
+            .collect();
+        // Also enforce `party.programs` bans (global and per-navi) on the lead team navi's `party_programs`.
+        if outer == "party"
+            && inner == "programs"
+            && let Some(Stated::List(own_list)) = side.facts.get(content, "party_programs")
+        {
+            let key = side.stated_navi(content).map(|n| n.0);
+            let mut own_refused: Vec<(Item, Vec<usize>, bool)> = Vec::new();
+            for (i, v) in own_list.iter().enumerate() {
+                for h in v.defs() {
+                    let item = Item::of(h);
+                    let all = !self.allows_item(&category.fact, &item);
+                    let own = key.is_some_and(|k| self.banned_for(&category.fact, k).any(|x| *x == item));
+                    if !all && !own {
+                        continue;
+                    }
+                    let at = match own_refused.iter().position(|(x, _, _)| *x == item) {
+                        Some(at) => at,
+                        None => {
+                            own_refused.push((item, Vec::new(), !all));
+                            own_refused.len() - 1
+                        }
+                    };
+                    if !own_refused[at].1.contains(&i) {
+                        own_refused[at].1.push(i);
+                    }
+                }
+            }
+            for (item, entries, per_navi) in own_refused {
+                let shown_item = shown(content, registry, &item);
+                let text = match (per_navi, key) {
+                    (true, Some(k)) => format!("{shown_item} isn't allowed for {} ({})", ids::shown(content, by.registry, k), category.fact),
+                    _ => format!("{shown_item} isn't allowed ({})", category.fact),
+                };
+                let entry = entries.first().copied();
+                out.push(Problem { side: Some(0), field: Some("party_programs".to_string()), entry, what: Wrong::NotAllowed { registry, item, entries }, text });
+            }
+        }
+        out
     }
 
     /// What it holds back per record, by name: each category kept by a
@@ -1265,13 +1316,19 @@ mod tests {
             let expected: Vec<Name> = expected_ids.iter().map(|n| Name::Preset(n.to_string())).collect();
             assert_eq!(names, expected, "{game}");
             if game == "exe5" {
-                assert!(r.first().one_per_build);
-                assert!(!r.preset("masters_5ds").unwrap().bans_anything() && r.preset("masters_5ds").unwrap().one_per_build);
-                assert!(!r.preset("masters_5ds_mixed").unwrap().bans_anything() && !r.preset("masters_5ds_mixed").unwrap().one_per_build);
                 let party = r.category("party").unwrap();
                 let navi = r.category("navi").unwrap();
+                assert!(r.first().one_per_build);
                 assert_eq!(r.first().allowed_count(party), 0);
                 assert_eq!(r.first().allowed_count(navi), 1);
+                let m5 = r.preset("masters_5ds").unwrap();
+                assert!(m5.one_per_build && m5.allowed_count(navi) == 1 && m5.allowed_count(party) == party.items.len());
+                let m5m = r.preset("masters_5ds_mixed").unwrap();
+                assert!(!m5m.one_per_build && m5m.allowed_count(navi) == 1 && m5m.allowed_count(party) == party.items.len());
+                let s5 = r.preset("senior_5ds").unwrap();
+                assert!(s5.one_per_build && s5.allowed_count(navi) == 1 && s5.allowed_count(cards) == 0);
+                let s5m = r.preset("senior_5ds_mixed").unwrap();
+                assert!(!s5m.one_per_build && s5m.allowed_count(navi) == 1 && s5m.allowed_count(cards) == 0);
                 let gate = r.preset("gate").unwrap();
                 assert_eq!(gate.allowed_count(party), 0);
                 assert_eq!(gate.allowed_count(navi), navi.items.len() - 1);
@@ -1486,7 +1543,7 @@ mod tests {
         let checked = Checked::under(&content, "exe5", &side, &r, &ruleset);
         assert!(!checked.ready() && checked.problems.iter().any(|p| p.field.as_deref() == Some("party") && p.at(1)), "{:?}", checked.problems);
         let names = ruleset.banned_names(&content);
-        assert_eq!(names, [("party.programs".to_string(), vec!["p-spport".to_string()])]);
+        assert!(names.contains(&("party.programs".to_string(), vec!["p-spport".to_string()])), "{names:?}");
         let mut back = Ruleset::of_names(&r, &content, ruleset.name.clone(), ruleset.one_per_build, &names, &[]).unwrap();
         back.allow_ds = ruleset.allow_ds;
         assert!(back.same_rules(&ruleset));
@@ -1688,5 +1745,94 @@ mod tests {
         custom6.limits.mb_tier_copies[0] = Some(2);
         let checked6 = Checked::under(&content6, "exe6", &side6, &r6, &custom6);
         assert!(checked6.problems.iter().any(|p| matches!(p.what, Wrong::Copies { chip, count } if chip == cannon6 && count.limit == 2)));
+    }
+
+    /// S-109: EXE5 Masters/Senior (including 5DS) restrict main navi to MegaMan, and switching a ProtoMan-default
+    /// build to a Team Colonel navi under Gate (one_per_build) does not falsely flag Mixed versions from MegaMan's
+    /// leftover souls.
+    #[test]
+    fn exe5_gate_colonel_navi_has_no_false_mixed_version_and_masters_forbids_team_navis() {
+        use crate::build::Checked;
+        let content = exe5_content();
+        let r = Rulesets::of(&content, "exe5").unwrap();
+        let builds = Builds::of(&content, "exe5").unwrap();
+        let knightman = ids::navi(&content, "exe5", "knightman").unwrap();
+        let colonel = ids::navi(&content, "exe5", "colonel").unwrap();
+
+        // Start from a ProtoMan build (so `souls` holds ProtoMan souls), then switch main navi to KnightMan.
+        let mut side = builds.new_build(&content, "protoman").unwrap();
+        builds.set_navi(&content, &mut side, knightman).unwrap();
+
+        // Under Gate (one_per_build), KnightMan must have zero problems (no Mixed versions from unused souls).
+        let gate = r.preset("gate").unwrap();
+        let checked_gate = Checked::under(&content, "exe5", &side, &r, gate);
+        assert!(checked_gate.ready(), "expected KnightMan under Gate to be ready, got: {:?}", checked_gate.problems);
+
+        // Under Masters/Senior (including 5DS variants), Colonel/KnightMan must be disallowed as main navi.
+        for preset_id in ["masters", "masters_mixed", "masters_5ds", "masters_5ds_mixed", "senior", "senior_mixed", "senior_5ds", "senior_5ds_mixed"] {
+            let preset = r.preset(preset_id).unwrap();
+            assert!(!preset.allows("navi", colonel.0), "{preset_id} must disallow Colonel as main navi");
+            assert!(!preset.allows("navi", knightman.0), "{preset_id} must disallow KnightMan as main navi");
+        }
+    }
+
+    /// S-107: EXE5 Gate-Party allows a non-MegaMan lead team navi to bring partners and configure PartyCust
+    /// (`party_programs` for the lead + `party[].programs` for partners), whereas GBA Gate / Gate-Mixed reject both.
+    #[test]
+    fn exe5_gate_party_supports_team_navi_lead_party_and_party_programs() {
+        use crate::build::Checked;
+        let content = exe5_content();
+        let r = Rulesets::of(&content, "exe5").unwrap();
+        let builds = Builds::of(&content, "exe5").unwrap();
+        let protoman = ids::navi(&content, "exe5", "protoman").unwrap();
+        let gyroman = ids::navi(&content, "exe5", "gyroman").unwrap();
+        let hp_300 = ids::entry(&content, "exe5", "partycust_programs", "p-hp-300").unwrap();
+        let atk_1 = ids::entry(&content, "exe5", "partycust_programs", "p-atk-1").unwrap();
+
+        let mut side = builds.new_build(&content, "protoman").unwrap();
+        builds.set_navi(&content, &mut side, protoman).unwrap();
+        side.set_fact(&content, "party_programs", &[Fact::Value(Value::Def(Registry::Entry, hp_300.0))]).unwrap();
+        side.set_fact(
+            &content,
+            "party",
+            &[Fact::Record(vec![
+                ("navi", Fact::Value(Value::Def(Registry::Navi, gyroman.0))),
+                ("programs", Fact::List(vec![Fact::Value(Value::Def(Registry::Entry, atk_1.0))])),
+            ])],
+        )
+        .unwrap();
+
+        // Valid under Gate-Party (one_per_build, ds = true), applying DS base HP (700) + P.HP+300 = 1000 to lead.
+        let gate_party = r.preset("gate_party").unwrap();
+        let mut checked = Checked::under(&content, "exe5", &side, &r, gate_party);
+        assert!(checked.ready(), "expected Gate-Party build to be valid, got: {:?}", checked.problems);
+        assert_eq!(checked.stats().unwrap().max_hp, 1000);
+        assert_eq!(checked.members().len(), 2);
+        let overview = checked.overview(&content, &side).unwrap();
+        let lead_budget = overview.budget("party_programs").expect("lead PartyCust budget");
+        assert_eq!((lead_budget.count.used, lead_budget.count.limit), (5, 6));
+        assert_eq!(overview.switches, Some(3));
+
+        // Disallowed under Gate and Gate-Mixed (ds = false).
+        for preset_id in ["gate", "gate_mixed"] {
+            let preset = r.preset(preset_id).unwrap();
+            let bad = Checked::under(&content, "exe5", &side, &r, preset);
+            assert!(
+                bad.problems.iter().any(|p| p.field.as_deref() == Some("party_programs") && matches!(p.what, Wrong::DsOnly)),
+                "{preset_id} must reject lead party_programs as DS-only, got: {:?}",
+                bad.problems
+            );
+        }
+
+        // Per-navi `party.programs` ban also applies to the lead team navi's `party_programs`.
+        let mut banned = gate_party.clone();
+        let cat = r.category("party.programs").unwrap();
+        banned.set_allowed_for(cat, protoman.0, &Item::of(hp_300.0), false);
+        let bad = Checked::under(&content, "exe5", &side, &r, &banned);
+        assert!(
+            bad.problems.iter().any(|p| p.field.as_deref() == Some("party_programs") && matches!(p.what, Wrong::NotAllowed { .. })),
+            "expected per-navi ban on lead party_programs, got: {:?}",
+            bad.problems
+        );
     }
 }

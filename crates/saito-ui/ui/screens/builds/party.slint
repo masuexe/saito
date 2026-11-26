@@ -65,6 +65,7 @@ export enum PartySlotKind {
 // row.
 export struct PartySlot {
     kind: PartySlotKind,
+    locked: bool,
     face: image,
     name: string,
     // A head's navi's version, marked after its name (as a Giga chip's in the folder, a card's in the patch cards).
@@ -411,8 +412,8 @@ component SlotView inherits Rectangle {
     touch := RowTouch {
         nav: "slots";
         nav-index: root.nav-index;
-        removable: root.slot.kind == PartySlotKind.head || root.slot.kind == PartySlotKind.program;
-        drag: root.slot.kind == PartySlotKind.head || root.slot.kind == PartySlotKind.program ? "slots" : "";
+        removable: !root.slot.locked && (root.slot.kind == PartySlotKind.head || root.slot.kind == PartySlotKind.program);
+        drag: !root.slot.locked && (root.slot.kind == PartySlotKind.head || root.slot.kind == PartySlotKind.program) ? "slots" : "";
         describes: true;
     }
 }
