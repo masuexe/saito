@@ -115,6 +115,8 @@ pub struct Look {
     pub graphics: Graphics,
     pub enhancements: Enhancements,
     pub font: Option<Arc<VectorFont>>,
+    /// Optional Round 0 stage background override from the replay's recorded presentation (`S-129`).
+    pub background: Option<saito_battle::content::BackgroundId>,
 }
 
 /// Parameters for executing a legacy replay inside a sandboxed historical WASM simulation kernel.
@@ -449,6 +451,10 @@ fn still_of(path: &Path, side: u8, content: &Arc<Content>, look: &Look, compat: 
     // (A still is a picture at rest: the background where the game puts it.)
     let renderer = look.graphics.renderer(Enhancements { motion: false, ..look.enhancements }, look.font.clone());
     let mut viewer = Viewer::with_compat(content, &replay, Some(side), renderer, None, None, compat).ok()?;
+    if let Some(bg) = look.background {
+        viewer.wait_backgrounds(&[bg]);
+        viewer.set_round_presentation(Some(Box::new(move |_| saito_frontend::player::RoundLook { background: Some(bg), sound: None })));
+    }
     let mut fought = 0;
     while fought < STILL_AFTER && viewer.step_forward() {
         fought += (viewer.battle().round.mode == mode::FIGHTING) as u32;

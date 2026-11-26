@@ -82,6 +82,7 @@ interface SpectateRoom {
 	meta: RoomMeta;
 	watchers: Map<string, WebSocket>;
 	currentSet?: SpectateSet;
+	lastSet?: SpectateSet;
 }
 
 interface PeerMeta {
@@ -672,12 +673,15 @@ function handleSpectateHostUpgrade(
 				const setId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : 0;
 				const headerB64 = typeof msg.header_b64 === "string" ? msg.header_b64 : "";
 				if (!headerB64 || headerB64.length > MAX_HEADER_B64_BYTES) return;
-				if (targetRoom.currentSet && targetRoom.currentSet.released && !targetRoom.currentSet.endReleased) {
-					targetRoom.currentSet.endReleased = true;
-					broadcastWatchers(
-						targetRoom,
-						JSON.stringify({ type: "set_end", set_id: targetRoom.currentSet.setId, reason: "next-set" }),
-					);
+				if (targetRoom.currentSet) {
+					if (targetRoom.currentSet.released && !targetRoom.currentSet.endReleased) {
+						targetRoom.currentSet.endReleased = true;
+						broadcastWatchers(
+							targetRoom,
+							JSON.stringify({ type: "set_end", set_id: targetRoom.currentSet.setId, reason: "next-set" }),
+						);
+					}
+					targetRoom.lastSet = targetRoom.currentSet;
 				}
 				const released = delayMs === 0;
 				targetRoom.currentSet = {
@@ -848,6 +852,36 @@ function handleSpectateWatchUpgrade(
 			const text = typeof data === "string" ? data : data.toString("utf8");
 			if (text === "ping") {
 				tell(ws, "pong");
+				return;
+			}
+			let msg: Record<string, unknown>;
+			try {
+				msg = JSON.parse(text);
+			} catch {
+				return;
+			}
+			if (msg.type === "request_history") {
+				const reqSetId = typeof msg.set_id === "number" ? Math.floor(msg.set_id) : -1;
+				flushDelayedSet(room, Date.now());
+				const targetSet =
+					room.currentSet && room.currentSet.setId === reqSetId
+						? room.currentSet
+						: room.lastSet && room.lastSet.setId === reqSetId
+							? room.lastSet
+							: undefined;
+				if (!targetSet || !targetSet.released) return;
+				const releasedChunks = targetSet.chunks
+					.filter((c) => c.released)
+					.map((c) => ({ from_tick: c.from_tick, count: c.count, data_b64: c.data_b64 }));
+				tell(
+					ws,
+					JSON.stringify({
+						type: "set_history",
+						set_id: targetSet.setId,
+						header_b64: targetSet.headerB64,
+						chunks: releasedChunks,
+					}),
+				);
 			}
 		});
 		const handleGone = () => {

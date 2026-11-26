@@ -366,11 +366,11 @@ msgstr "随机战：{}"
 msgid "ABD: Original"
 msgstr "黑暗AI：原版"
 
+msgid "ABD: LC"
+msgstr "黑暗AI：合集"
+
 msgid "ABD: 5DS"
 msgstr "黑暗AI：5DS"
-
-msgid "ABD: Off"
-msgstr "黑暗AI：禁用"
 
 msgid "CS Fix: Original"
 msgstr "CS修复：原版"

@@ -175,6 +175,13 @@ struct TacticFile {
     abd_profiles: BTreeMap<String, JsonFacts>,
 }
 
+/// Which subset of per-ABD-mode profile overrides a copy/reset operation acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileScope {
+    Folder,
+    AutoBattle,
+}
+
 /// Per-ABD-mode overrides (folder and/or auto battle data) stored alongside the primary GBA side
 /// for EXE4 (Legacy Collection) and EXE5 (Legacy Collection, Double Team DS).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -324,6 +331,78 @@ impl Build {
     /// Whether `mode` has a customized auto-battle override (always true for `Original`).
     pub fn has_custom_auto_battle(&self, mode: AbdMode) -> bool {
         mode == AbdMode::Original || self.profiles.get(&mode).is_some_and(|p| p.auto_battle.is_some())
+    }
+
+    /// Whether `a` and `b` currently resolve to identical facts for `scope`.
+    pub fn profile_fields_equal(&self, content: &Content, scope: ProfileScope, a: AbdMode, b: AbdMode) -> bool {
+        let fields = match scope {
+            ProfileScope::Folder => folder_fields(content),
+            ProfileScope::AutoBattle => auto_battle_fields(content),
+        };
+        let fa = self.side_for(content, a).facts;
+        let fb = self.side_for(content, b).facts;
+        fields_equal(content, &fa, &fb, &fields)
+    }
+
+    /// Copy resolved `scope` facts (folder or auto-battle) from `from` into `to`.
+    /// Returns `true` if `to`'s resolved facts changed.
+    pub fn copy_profile(&mut self, content: &Content, scope: ProfileScope, from: AbdMode, to: AbdMode) -> bool {
+        if from == to {
+            return false;
+        }
+        let fields = match scope {
+            ProfileScope::Folder => folder_fields(content),
+            ProfileScope::AutoBattle => auto_battle_fields(content),
+        };
+        if fields.is_empty() {
+            return false;
+        }
+        let src = self.side_for(content, from).facts;
+        if to == AbdMode::Original {
+            if fields_equal(content, &self.side.facts, &src, &fields) {
+                return false;
+            }
+            copy_fields(content, &src, &mut self.side.facts, &fields);
+            return true;
+        }
+        let mut next = Facts::defaults(content);
+        copy_fields(content, &src, &mut next, &fields);
+        let existing = self.profiles.get(&to).and_then(|p| match scope {
+            ProfileScope::Folder => p.folder.as_ref(),
+            ProfileScope::AutoBattle => p.auto_battle.as_ref(),
+        });
+        if let Some(cur) = existing {
+            if fields_equal(content, cur, &next, &fields) {
+                return false;
+            }
+        } else if fields_equal(content, &self.side.facts, &next, &fields) {
+            return false;
+        }
+        let entry = self.profiles.entry(to).or_default();
+        match scope {
+            ProfileScope::Folder => entry.folder = Some(next),
+            ProfileScope::AutoBattle => entry.auto_battle = Some(next),
+        }
+        true
+    }
+
+    /// Remove `mode`'s custom override for `scope` so it follows the primary GBA side again.
+    /// Returns `true` if an override was removed.
+    pub fn reset_profile(&mut self, scope: ProfileScope, mode: AbdMode) -> bool {
+        if mode == AbdMode::Original {
+            return false;
+        }
+        let Some(entry) = self.profiles.get_mut(&mode) else {
+            return false;
+        };
+        let removed = match scope {
+            ProfileScope::Folder => entry.folder.take().is_some(),
+            ProfileScope::AutoBattle => entry.auto_battle.take().is_some(),
+        };
+        if entry.is_empty() {
+            self.profiles.remove(&mode);
+        }
+        removed
     }
 
     /// The build made for ruleset `ruleset` (none: the game's first preset).
@@ -971,5 +1050,55 @@ mod tests {
         let back2 = read(&content, "exe5", &text(&content, "exe5", &build)).unwrap();
         assert!(back2.has_custom_auto_battle(AbdMode::LegacyCollection));
         assert!(back2.side_for(&content, AbdMode::LegacyCollection).facts.is_default(&content, "auto_battle_places"));
+    }
+
+    /// Copying and resetting per-ABD-mode folder and auto-battle profiles works across GBA/LC/5DS.
+    #[test]
+    fn exe5_abd_profile_copy_and_reset() {
+        use saito_battle::content::ChipCode;
+        use saito_battle::custom::FolderChip;
+        use saito_battle::rules::Fact;
+        use saito_content_api::{Registry, Value};
+
+        let content = exe5_content();
+        let builds = Builds::of(&content, "exe5").unwrap();
+        let mut build = Build::new(&content, "Copy Test", builds.new_build(&content, "protoman").unwrap());
+        let sword = saito_match::ids::chip(&content, "exe5", "sword").unwrap();
+        let cannon = saito_match::ids::chip(&content, "exe5", "cannon").unwrap();
+
+        // Customize LC folder and auto-battle.
+        let mut lc = build.side_for(&content, AbdMode::LegacyCollection);
+        let mut folder = lc.folder(&content);
+        folder.chips[0] = Some(FolderChip::new(sword, ChipCode::ASTERISK));
+        lc.set_folder(&content, &folder).unwrap();
+        let mut places: Vec<Fact> = (0..4).map(|_| Fact::Record(Vec::new())).collect();
+        places[3] = Fact::Record(vec![("chip", Fact::Value(Value::Def(Registry::Chip, cannon.0)))]);
+        lc.set_fact(&content, "auto_battle_places", &places).unwrap();
+        build.apply_edited_side(&content, AbdMode::LegacyCollection, &lc);
+
+        // Copy LC -> 5DS for folder only; auto-battle stays separate.
+        assert!(build.copy_profile(&content, ProfileScope::Folder, AbdMode::LegacyCollection, AbdMode::DoubleTeamDs));
+        assert!(!build.copy_profile(&content, ProfileScope::Folder, AbdMode::LegacyCollection, AbdMode::DoubleTeamDs), "idempotent");
+        assert!(build.has_custom_folder(AbdMode::DoubleTeamDs));
+        assert!(!build.has_custom_auto_battle(AbdMode::DoubleTeamDs));
+        assert!(build.profile_fields_equal(&content, ProfileScope::Folder, AbdMode::LegacyCollection, AbdMode::DoubleTeamDs));
+
+        // Copy LC -> 5DS for auto-battle.
+        assert!(build.copy_profile(&content, ProfileScope::AutoBattle, AbdMode::LegacyCollection, AbdMode::DoubleTeamDs));
+        assert!(build.has_custom_auto_battle(AbdMode::DoubleTeamDs));
+        assert!(build.profile_fields_equal(&content, ProfileScope::AutoBattle, AbdMode::LegacyCollection, AbdMode::DoubleTeamDs));
+
+        // Overwrite GBA folder from 5DS.
+        assert!(build.copy_profile(&content, ProfileScope::Folder, AbdMode::DoubleTeamDs, AbdMode::Original));
+        assert_eq!(build.side.folder(&content).chips[0], Some(FolderChip::new(sword, ChipCode::ASTERISK)));
+
+        // Reset 5DS folder and auto-battle back to following GBA; empty profile entry is pruned.
+        assert!(build.reset_profile(ProfileScope::Folder, AbdMode::DoubleTeamDs));
+        assert!(!build.has_custom_folder(AbdMode::DoubleTeamDs));
+        assert!(build.has_custom_auto_battle(AbdMode::DoubleTeamDs));
+        assert!(build.reset_profile(ProfileScope::AutoBattle, AbdMode::DoubleTeamDs));
+        assert!(!build.has_custom_auto_battle(AbdMode::DoubleTeamDs));
+        assert!(!build.profiles.contains_key(&AbdMode::DoubleTeamDs));
+        assert!(!build.reset_profile(ProfileScope::Folder, AbdMode::DoubleTeamDs), "already following GBA");
     }
 }

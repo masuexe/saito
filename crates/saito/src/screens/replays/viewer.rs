@@ -856,7 +856,10 @@ impl Watching {
                 }
             } else {
                 let Some(ready) = self.ready_in(shell) else { return };
-                self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone(), self.viewer.compat()));
+                let presentation = crate::replays::read(&self.path)
+                    .ok()
+                    .and_then(|r| crate::screens::play::stage::replay_presentation(&shell.games, &ready, &r));
+                self.thumbs = Some(Thumbnails::start(game_for_thread(shell, &ready, false), self.path.clone(), self.viewer.compat(), presentation));
             }
         }
         // (At the window's density, as the picture is: a whole multiple of the frame.)

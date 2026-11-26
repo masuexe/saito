@@ -248,7 +248,7 @@ enum Stage {
     /// EXE6 Random Battle pre-battle prep: stats check, 30-chip folder check, and Regular/Tag selection.
     RandomPrep,
     /// A match is agreed and is being made ready behind the two cards.
-    Loading { seed: u32, gate: Rc<Gate> },
+    Loading { seed: u32, gate: Rc<Gate>, presentation: String },
     /// The match is on: how its set ended, once it has.
     Match { result: Option<Ended> },
     /// Spectating another room live.
@@ -1012,7 +1012,7 @@ impl Play {
             shell.nav.close("abd-guide.");
             shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
         }
-        let presentation = Some(self.stage_config.build_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to()));
+        let (presentation, recorded_presentation) = self.stage_config.resolve_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to());
         let (me, other) = (agreed.side, 1 - agreed.side);
         let ui = shell.ui();
         let view = ui.global::<PlayView>();
@@ -1054,7 +1054,7 @@ impl Play {
             }),
         });
         self.close_random_prep(shell);
-        self.stage = Stage::Loading { seed: agreed.seed, gate };
+        self.stage = Stage::Loading { seed: agreed.seed, gate, presentation: recorded_presentation };
         self.changing = false;
         shell.nav.close("change.");
         if self.stage_dialog {
@@ -2835,7 +2835,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.abd-cap" | "lobby.cs-prob" | "lobby.extra-rule" | "lobby.sun" | "lobby.shout-mode" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.abd-cap" | "lobby.cs-prob" | "lobby.extra-rule" | "lobby.sun" | "lobby.shout-mode" | "lobby.change" | "lobby.card-change" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("abd-guide.") => self.abd_guide_dialog,
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
@@ -2844,7 +2844,8 @@ impl Screen for Play {
             _ if id.starts_with("name.") => self.naming.is_some(),
             _ if id.starts_with("direct.") => self.direct.is_some(),
             _ if id.starts_with("boxes.") => self.boxes.is_some(),
-            _ if id.starts_with("lobby.") || id.starts_with("change.") => matches!(self.stage, Stage::Lobby),
+            _ if id.starts_with("change.") => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            _ if id.starts_with("lobby.") => matches!(self.stage, Stage::Lobby),
             _ if id.starts_with("prep.") => matches!(self.stage, Stage::RandomPrep),
             _ => true,
         };
@@ -2932,6 +2933,11 @@ impl Screen for Play {
                     w.set_both(true);
                     self.sync_watch_view(shell);
                 }
+            }
+            "watch.save" => {
+                let ok = self.watching.as_mut().is_some_and(|w| w.save_replay());
+                shell.sound.play(if ok { Cue::Pick } else { Cue::Refused });
+                self.sync_watch_view(shell);
             }
             "watch.settings" => self.open_watch_menu(shell, MatchPage::Settings),
             "watch.leave" => self.stop_watching(shell, None),
@@ -3058,7 +3064,10 @@ impl Screen for Play {
                 self.set_ruleset_mixed(shell, next);
             }
             "lobby.rules" => self.open_rules(shell),
-            "lobby.change" => {
+            "lobby.change" | "lobby.card-change" => {
+                if matches!(self.stage, Stage::Waiting) && practice::running(shell) {
+                    practice::stop(shell);
+                }
                 self.changing = true;
                 shell.nav.open("change.", Key::new("change.builds", self.chosen as i32));
                 shell.ui().global::<PlayView>().set_changing(true);
@@ -3067,7 +3076,11 @@ impl Screen for Play {
             // the lobby's to say: it can't be made ready, and the line says why.)
             "change.builds" => {
                 let index = index.max(0) as usize;
-                let abd_mode = self.session.as_mut().and_then(Session::lobby).map_or(self.live.abd_mode, |l| l.settings().abd_mode);
+                let abd_mode = self
+                    .session
+                    .as_mut()
+                    .and_then(Session::lobby)
+                    .map_or_else(|| self.waiting.as_ref().map_or(self.live.abd_mode, |w| w.abd_mode), |l| l.settings().abd_mode);
                 let side = shell
                     .ready()
                     .and_then(|(_, r)| self.builds.get(index).and_then(|b| b.side_for(r.content(), abd_mode)))
@@ -3078,9 +3091,9 @@ impl Screen for Play {
                     if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
                         lobby.set_side(side);
                     }
-                    {
-                        self.show_card(shell);
-                    }
+                    self.wait_checked = None;
+                    self.show_card(shell);
+                    self.show_live(shell);
                     self.close_change(shell);
                 } else {
                     shell.sound.play(Cue::Refused);
@@ -3566,13 +3579,14 @@ impl Screen for Play {
     fn battle(&mut self, shell: &mut Shell, event: BattleEvent) {
         match (event, &self.stage) {
             // The match begins: it is recorded from its first tick, by its agreement.
-            (BattleEvent::Started, Stage::Loading { .. }) => {
+            (BattleEvent::Started, Stage::Loading { presentation, .. }) => {
+                let recorded_presentation = presentation.clone();
                 self.stage = Stage::Match { result: None };
                 self.recorded_replay = None;
                 // (Not in the screenshot pass, which keeps nothing, unless it is told where the replays go.)
                 if (!shell.still || std::env::var_os("SAITO_REPLAYS").is_some())
                     && let (Some(agreed), Some((game, ready)), Some(b)) = (&self.agreed, shell.ready(), shell.battle.as_mut())
-                    && let Some((recorder, path)) = recorder(ready.content(), agreed, &game, self.stage_config.encode_presentation())
+                    && let Some((recorder, path)) = recorder(ready.content(), agreed, &game, recorded_presentation)
                 {
                     if let Err(why) = b.stage.player.record(recorder) {
                         crate::errors::log("recording the match", &why);
@@ -3669,12 +3683,12 @@ impl Screen for Play {
                     self.load(shell, agreed);
                 }
             }
-            (Stands::Loading(seed), Stage::Loading { seed: loading, gate }) if seed == *loading => {
+            (Stands::Loading(seed), Stage::Loading { seed: loading, gate, .. }) if seed == *loading => {
                 let theirs = session.lobby().map_or(0.0, |l| l.their_loading());
                 gate.theirs.set(theirs);
             }
             // Both sides have loaded: the match's driver, on the channel the lobby gives it once.
-            (Stands::Start(seed), Stage::Loading { seed: loading, gate }) if seed == *loading => {
+            (Stands::Start(seed), Stage::Loading { seed: loading, gate, .. }) if seed == *loading => {
                 if !gate.go.get()
                     && let (Some(agreed), Some(channel)) = (&self.agreed, session.channel())
                 {
@@ -3756,6 +3770,9 @@ impl Play {
         let view = ui.global::<PlayView>();
         view.set_changing(false);
         view.set_build(self.build().map(|b| b.row.clone()).unwrap_or_default());
+        if matches!(self.stage, Stage::Waiting) && !shell.scale.handheld() {
+            self.train(shell);
+        }
     }
 
     /// The link's own error: before the other player came, the control that asked says it; after, it ends
@@ -4147,6 +4164,7 @@ impl Play {
         view.set_watch_catching_up(w.catching_up());
         view.set_watch_view(if w.both() { 2 } else { w.view() as i32 });
         view.set_watch_problem(w.problem().unwrap_or_default().into());
+        view.set_watch_save_state(w.save_state());
     }
 
     fn stop_watching(&mut self, shell: &mut Shell, notice: Option<String>) {

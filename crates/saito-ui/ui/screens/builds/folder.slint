@@ -180,6 +180,36 @@ export component AbdProfileBar inherits HorizontalLayout {
             nav-index: idx;
         }
     }
+
+    Rectangle {
+        width: sync-lbl.preferred-width + 20px;
+        height: 20px;
+        border-radius: 3px;
+        background: sync-hit.has-hover ? Theme.tint-hover : Theme.inset;
+        border-width: 1px;
+        border-color: Theme.line;
+
+        sync-lbl := Text {
+            x: 6px;
+            width: self.preferred-width;
+            height: parent.height;
+            text: @tr("Copy");
+            color: Theme.text;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+
+        ArrowDown {
+            x: sync-lbl.x + sync-lbl.preferred-width + 3px;
+            y: (parent.height - self.height) / 2;
+        }
+
+        sync-hit := Focusable {
+            nav: root.count > 0 ? "abd.sync" : "";
+        }
+    }
 }
 
 // One of the folder's counts: its word, and what the folder holds of its limit, which ticks as it changes. In the
@@ -844,7 +874,7 @@ export component FolderTab inherits Rectangle {
         color: FolderView.in-library ? Theme.muted : Theme.cursor;
     }
 
-    AbdProfileBar {
+    abd-bar := AbdProfileBar {
         x: Theme.phone ? 0px : folder-title.x + folder-title.preferred-width + 10px;
         y: Theme.phone ? 0px : root.pane-y + (Theme.sideways ? 5px : 2px);
         mode: FolderView.abd-mode;
@@ -925,9 +955,9 @@ export component FolderTab inherits Rectangle {
     }
 
     // (What is wrong with the folder: a phone's last line of its counts' box; sideways on the header's first line,
-    // between the title and SORT/CLEAR.)
+    // between the title/profile bar and SORT/CLEAR.)
     ProblemNote {
-        x: Theme.sideways ? folder-title.x + folder-title.preferred-width + 12px : 12px;
+        x: Theme.sideways ? (FolderView.abd-count > 0 ? abd-bar.x + abd-bar.width + 10px : folder-title.x + folder-title.preferred-width + 12px) : 12px;
         y: Theme.sideways ? root.pane-y + 7px : root.phone-abd-y + root.counts-height - 12px - self.height;
         width: Theme.sideways ? max(0px, sort-btn.x - 6px - self.x) : parent.width - 24px;
         visible: Theme.handheld;

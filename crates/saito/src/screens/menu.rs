@@ -173,7 +173,13 @@ impl Menu {
             };
             // (The console shown has its side at the left.)
             shell.ui().global::<MenuView>().set_playing(true);
-            return Some(Reel { stage: Stage::new(player(shell, ready, Box::new(driver))), game: game.to_string(), ticks: 0, pressed: false });
+            let mut p = player(shell, ready, Box::new(driver));
+            if let Some(pres) = crate::screens::play::stage::replay_presentation(&shell.games, ready, &replay) {
+                p.renderer().graphics().want_backgrounds(content, pres.extra_backgrounds.iter().copied());
+                p.renderer().set_background_override(pres.first_background);
+                p.set_round_presentation(Some(pres.resolver));
+            }
+            return Some(Reel { stage: Stage::new(p), game: game.to_string(), ticks: 0, pressed: false });
         }
         // No replay: a new build of each of the game's first two versions, on a picked match's arenas.
         let seed = if shell.still { 7 } else { clock_seed() };

@@ -283,6 +283,8 @@ export global PlayView {
     in property <int> watch-view;
     in property <string> watch-problem;
     in property <bool> watch-menu;
+    // Spectator replay saving state (S-121): 0 = none, 1 = ready, 2 = fetching history, 3 = saved.
+    in property <int> watch-save-state;
 
     // ---- In a match --------------------------------------------------------------------------------------
     in property <MatchPage> page;
@@ -643,11 +645,15 @@ component LobbyCard inherits Rectangle {
     in property <bool> ready;
     in property <int> ready-seq;
     in property <bool> marked: true;
+    // Interactive build switcher on the local player's card (S-126).
+    in property <bool> can-change: false;
     property <length> pad: Theme.handheld ? 16px : 24px;
     // (A phone held sideways has the two side by side, 94 tall: its lines closer.)
     property <length> name-y: Theme.phone ? root.pad + 18px : Theme.sideways ? 22px : root.pad + 22px;
-    property <length> build-y: Theme.phone ? root.pad + 52px : Theme.sideways ? 50px : root.pad + 66px;
-    property <length> navi-y: Theme.phone ? root.pad + 78px : Theme.sideways ? 72px : root.pad + 95px;
+    property <length> build-y: Theme.phone ? root.pad + 50px : Theme.sideways ? 49px : root.pad + 64px;
+    property <length> build-h: Theme.phone ? 28px : Theme.sideways ? 22px : 32px;
+    property <length> navi-y: Theme.phone ? root.pad + 82px : Theme.sideways ? 74px : root.pad + 102px;
+    property <length> row-right-pad: Theme.handheld && root.marked ? mark.width + 12px : 0px;
     stamp := Pulse {
         seq: root.ready-seq;
         duration: Theme.settle;
@@ -676,10 +682,39 @@ component LobbyCard inherits Rectangle {
         font-weight: 900;
     }
 
-    HorizontalLayout {
+    if root.can-change: Rectangle {
         x: root.pad;
         y: root.build-y;
-        width: parent.width - 2 * root.pad - (Theme.handheld ? mark.width + 12px : 0px);
+        width: max(0px, parent.width - 2 * root.pad - root.row-right-pad);
+        height: root.build-h;
+        background: card-change-hit.pressed ? Theme.line : (card-change-hit.has-hover ? Theme.raised : Theme.inset);
+        border-width: 1px;
+        border-color: card-change-hit.has-hover || Nav.id == "lobby.card-change" ? Theme.cursor : Theme.line;
+        border-radius: 3px;
+
+        Value {
+            x: 8px;
+            y: 0;
+            width: max(0px, parent.width - 30px);
+            height: parent.height;
+            text: root.build.name;
+            font-size: Theme.handheld ? 14px : 16px;
+        }
+
+        ArrowDown {
+            x: parent.width - 18px;
+        }
+
+        card-change-hit := Focusable {
+            nav: "lobby.card-change";
+            kind: NavKind.button;
+        }
+    }
+
+    if !root.can-change: HorizontalLayout {
+        x: root.pad;
+        y: root.build-y;
+        width: parent.width - 2 * root.pad - root.row-right-pad;
         height: 22px;
         spacing: 8px;
         alignment: start;
@@ -692,7 +727,7 @@ component LobbyCard inherits Rectangle {
     Value {
         x: root.pad;
         y: root.navi-y;
-        width: parent.width - 2 * root.pad - (Theme.handheld ? mark.width + 12px : 0px);
+        width: parent.width - 2 * root.pad - root.row-right-pad;
         height: 16px;
         text: root.build.navi;
         color: Theme.muted;
@@ -1126,6 +1161,7 @@ component LobbyBody inherits Rectangle {
             ready: PlayView.ready;
             ready-seq: PlayView.ready-seq;
             marked: !PlayView.waiting;
+            can-change: true;
         }
 
         // The wait's practice battle, at twice the battle's size, in this player's place.
@@ -1279,9 +1315,18 @@ component LobbyBody inherits Rectangle {
             big: Theme.sideways;
         }
 
-        // While the host waits: the way out, CANCEL INVITE (STOP HOSTING), as the practice menu has it in
-        // EXIT's place; on a phone PRACTICE before it, which starts the practice battle filling the window (held
-        // sideways the two in READY's row).
+        // While the host waits: on desktop CHANGE BUILD sits beside CANCEL INVITE (STOP HOSTING); on handheld
+        // the player card's build selector handles switching and PRACTICE sits over CANCEL INVITE.
+        change-wait := Button {
+            x: (root.width - self.width - 12px - cancel.width) / 2;
+            y: root.buttons-top;
+            width: self.natural-width;
+            visible: PlayView.waiting && !Theme.handheld;
+            enabled: PlayView.waiting && !Theme.handheld;
+            nav: PlayView.waiting && !Theme.handheld ? "lobby.card-change" : "";
+            text: I18n.upper(@tr("Change build"));
+        }
+
         train := Button {
             x: Theme.sideways ? (connection.width + 14px) : 0px;
             y: root.buttons-top;
@@ -1295,7 +1340,7 @@ component LobbyBody inherits Rectangle {
         }
 
         cancel := Button {
-            x: Theme.phone ? 0px : Theme.sideways ? root.width - self.width : (root.width - self.width) / 2;
+            x: Theme.phone ? 0px : Theme.sideways ? root.width - self.width : change-wait.x + change-wait.width + 12px;
             y: Theme.phone ? root.buttons-top + 60px : root.buttons-top;
             width: Theme.phone ? root.width : self.natural-width;
             visible: PlayView.waiting;
@@ -1915,8 +1960,20 @@ export component PlayScreen inherits Page {
                 color: Theme.dim;
             }
 
+            property <length> wait-row-w: (save-wait.visible ? save-wait.width + 12px : 0px) + settings-wait.width + 12px + leave-wait.width;
+
+            save-wait := Button {
+                x: (parent.width - parent.wait-row-w) / 2;
+                y: parent.height - self.height - 24px;
+                visible: PlayView.watch-save-state > 0;
+                enabled: PlayView.watch-save-state == 1;
+                nav: "watch.save";
+                kind: PlayView.watch-save-state == 1 ? ButtonKind.main : ButtonKind.ghost;
+                text: PlayView.watch-save-state == 3 ? I18n.upper(@tr("Saved")) : PlayView.watch-save-state == 2 ? @tr("Saving…") : I18n.upper(@tr("Save replay"));
+            }
+
             settings-wait := Button {
-                x: (parent.width - self.width - 12px - leave-wait.width) / 2;
+                x: save-wait.visible ? save-wait.x + save-wait.width + 12px : (parent.width - parent.wait-row-w) / 2;
                 y: parent.height - self.height - 24px;
                 nav: "watch.settings";
                 text: I18n.upper(@tr("Settings"));
@@ -1947,7 +2004,8 @@ export component PlayScreen inherits Page {
 
             // Bottom spectator HUD bar (two compact rows on portrait phone; single row on sideways/desktop)
             Rectangle {
-                property <length> seg-w: Theme.phone ? (parent.width - 28px) / 3 : 0px;
+                property <bool> show-save: PlayView.watch-save-state > 0;
+                property <length> seg-w: Theme.phone ? (parent.width - (self.show-save ? 34px : 28px)) / (self.show-save ? 4 : 3) : 0px;
                 x: 0;
                 y: parent.height - (Theme.phone ? 84px : 44px);
                 width: parent.width;
@@ -2000,7 +2058,7 @@ export component PlayScreen inherits Page {
                 }
 
                 view-both := Button {
-                    x: Theme.phone ? 20px + 2 * parent.seg-w : watch-settings-btn.x - self.width - 10px;
+                    x: Theme.phone ? 20px + 2 * parent.seg-w : (watch-save-btn.visible ? watch-save-btn.x : watch-settings-btn.x) - self.width - 10px;
                     y: view-p1.y;
                     width: Theme.phone ? parent.seg-w : self.natural-width;
                     height: view-p1.height;
@@ -2008,6 +2066,19 @@ export component PlayScreen inherits Page {
                     nav: "watch.view-both";
                     kind: PlayView.watch-view == 2 ? ButtonKind.main : ButtonKind.ghost;
                     text: @tr("sides" => "Both");
+                }
+
+                watch-save-btn := Button {
+                    x: Theme.phone ? 26px + 3 * parent.seg-w : watch-settings-btn.x - self.width - 6px;
+                    y: Theme.phone ? 44px : 6px;
+                    width: Theme.phone ? parent.seg-w : self.natural-width;
+                    height: view-p1.height;
+                    compact: true;
+                    visible: parent.show-save;
+                    enabled: PlayView.watch-save-state == 1;
+                    nav: "watch.save";
+                    kind: PlayView.watch-save-state == 1 ? ButtonKind.main : ButtonKind.ghost;
+                    text: PlayView.watch-save-state == 3 ? I18n.upper(@tr("Saved")) : PlayView.watch-save-state == 2 ? @tr("Saving…") : (Theme.phone ? I18n.upper(@tr("Save")) : I18n.upper(@tr("Save replay")));
                 }
 
                 watch-settings-btn := Button {

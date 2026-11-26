@@ -99,8 +99,10 @@ export component MenuOverlay inherits Rectangle {
 // The connection's quality, in a corner for the whole match: four bars and the round trip, or how long the link
 // has been down. A click on it opens the link panel over it, and another closes it.
 component Connection inherits Rectangle {
+    // Compact sizing in mobile landscape when the virtual pad is hidden so it fits cleanly inside the side gutter.
+    in property <bool> compact: false;
     // (One width whichever it says: room for the longest thing it says, the link down with all its time left.)
-    width: max(132px, longest.preferred-width + 28px);
+    width: root.compact && Shell.connection-down < 0 ? max(92px, ping-text.preferred-width + 52px) : max(132px, longest.preferred-width + 28px);
     height: 30px;
     Rectangle {
         background: Theme.shade;
@@ -122,7 +124,7 @@ component Connection inherits Rectangle {
         level: Shell.connection-level;
     }
 
-    Mono {
+    ping-text := Mono {
         x: Shell.connection-down < 0 ? 42px : 12px;
         width: parent.width - self.x - 12px;
         text: Shell.connection-down >= 0 ? @tr("Reconnecting {} s", Shell.connection-down) : (Shell.connection-ping < 0 ? "" : @tr("{} ms", Shell.connection-ping));
@@ -1057,11 +1059,25 @@ export component BattleScreen inherits Rectangle {
         }
     }
 
-    // (A phone held sideways: at the foot, right of the pad's MENU, clear of START in the corner.)
+    // (A phone held sideways: with virtual pad on, at the foot right of MENU; with virtual pad hidden,
+    // moved into the side margin outside the battle picture so nothing covers the field, S-123.)
     property <bool> overlay: Theme.phone-app && !Theme.phone;
+    property <bool> overlay-no-pad: self.overlay && !Shell.landscape-pad;
+    property <length> overlay-u: root.height / 100;
+    property <length> picture-right: Shell.picture-width > 0 ? Shell.picture-x + Shell.picture-width : root.width;
+    property <length> right-gutter: max(0px, root.width - self.picture-right);
     corner := Connection {
-        x: root.overlay ? (parent.width + parent.height * 0.21) / 2 + parent.height * 0.03 : parent.width - self.width - (Theme.phone ? Theme.margin : 56px);
-        y: root.overlay ? parent.height - parent.height * 0.03 - (parent.height * 0.085 + self.height) / 2 : (Theme.phone ? root.picture-height : parent.height) - self.height - 16px;
+        compact: root.overlay-no-pad;
+        x: root.overlay-no-pad
+            ? min(parent.width - self.width - 2 * root.overlay-u, max(root.picture-right + (root.right-gutter - self.width) / 2, parent.width - self.width - 3 * root.overlay-u))
+            : root.overlay
+                ? (parent.width + parent.height * 0.21) / 2 + parent.height * 0.03
+                : parent.width - self.width - (Theme.phone ? Theme.margin : 56px);
+        y: root.overlay-no-pad
+            ? parent.height - 3 * root.overlay-u - self.height
+            : root.overlay
+                ? parent.height - parent.height * 0.03 - (parent.height * 0.085 + self.height) / 2
+                : (Theme.phone ? root.picture-height : parent.height) - self.height - 16px;
         visible: Shell.connection-shown;
 
         Rectangle { }  // (Copied in: docs/app.md §14.)
@@ -1151,7 +1167,7 @@ export component BattleScreen inherits Rectangle {
 
     if Shell.connection-shown && Shell.connection-open: LinkPanel {
         width: min(340px, parent.width - 2 * Theme.margin);
-        x: corner.x + corner.width - self.width;
+        x: clamp(corner.x + corner.width - self.width, Theme.margin, max(Theme.margin, parent.width - Theme.margin - self.width));
         y: max(8px, corner.y - self.height - 8px);
 
         Rectangle { }  // (Copied in: docs/app.md §14.)
@@ -1171,13 +1187,14 @@ export component BattleScreen inherits Rectangle {
         height: parent.height;
     }
 
-    // Center-bottom menu trigger remains accessible when the landscape virtual pad is hidden.
-    if root.overlay && !Shell.landscape-pad: Rectangle {
-        property <length> u: parent.height / 100;
-        x: (parent.width - self.width) / 2;
-        y: parent.height - 3 * self.u - self.height;
-        width: 21 * self.u;
+    // Menu trigger remains accessible when the landscape virtual pad is hidden; placed in the right side margin
+    // outside the battle picture (stacked above the latency indicator when online, S-123).
+    if root.overlay-no-pad: Rectangle {
+        property <length> u: root.overlay-u;
+        width: root.right-gutter >= 14 * self.u ? min(21 * self.u, root.right-gutter - 4 * self.u) : 21 * self.u;
         height: 8.5 * self.u;
+        x: min(parent.width - self.width - 2 * self.u, max(root.picture-right + (root.right-gutter - self.width) / 2, parent.width - self.width - 3 * self.u));
+        y: Shell.connection-shown ? corner.y - 2.5 * self.u - self.height : parent.height - 3 * self.u - self.height;
         Rectangle {
             background: off-menu-touch.pressed ? Theme.line : Theme.raised;
             border-width: 1px;

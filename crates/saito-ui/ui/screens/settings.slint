@@ -1102,10 +1102,12 @@ component SettingsPage inherits Page {
                 }
 
                 Rectangle {
+                    property <bool> stack-abd: Theme.phone || abd-fmt.width + 8px + abd-export.width > root.control-width;
                     height: row-abd-stats.height;
                     row-abd-stats := SettingLabel {
                         label: @tr("ABD usage stats");
                         note: SettingsView.abd-stats-summary;
+                        row-height: parent.stack-abd ? 94px : 48px;
                         control-x: root.control-x;
                         control-width: root.control-width;
                     }
@@ -1120,9 +1122,9 @@ component SettingsPage inherits Page {
                         chosen: SettingsView.abd-stats-format;
                     }
 
-                    Button {
-                        x: abd-fmt.x + abd-fmt.width + 8px;
-                        y: 4px;
+                    abd-export := Button {
+                        x: parent.stack-abd ? root.control-x : abd-fmt.x + abd-fmt.width + 8px;
+                        y: parent.stack-abd ? 48px : 4px;
                         nav: "set.abd-export";
                         enabled: SettingsView.abd-stats-has-records;
                         text: I18n.upper(@tr("verb" => "Export"));

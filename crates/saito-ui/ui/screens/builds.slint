@@ -60,6 +60,15 @@ export global BuildsView {
     out property <[string]> tab-names: [I18n.upper(@tr("Navi")), I18n.upper(@tr("Party")), I18n.upper(@tr("Folder")), I18n.upper(@tr("NaviCust")), I18n.upper(@tr("Patch cards")), I18n.upper(@tr("Auto battle"))];
     // A tab's CLEAR's dialog's button (docs/design/app-ui.md §2.71).
     out property <string> clear-word: I18n.upper(@tr("Clear"));
+    // Version profile copy/sync menu labels (S-124).
+    out property <[string]> abd-mode-names: [@tr("GBA"), @tr("LC"), @tr("5DS")];
+    public pure function abd-copy-from-word(from: string) -> string {
+        return @tr("Copy from {}", from);
+    }
+    public pure function abd-copy-to-word(to: string) -> string {
+        return @tr("Copy to {}", to);
+    }
+    out property <string> abd-follow-gba-word: @tr("Follow GBA (reset)");
 }
 
 // The editor's body: the tab chosen, arriving from the way it was reached each time it changes. A tab is here by

@@ -154,10 +154,10 @@ pub struct Thumbnails {
 
 impl Thumbnails {
     /// Start the thread for the replay at `path`, played on `game` (whose sound is left out: none is made).
-    pub fn start(game: Loaded, path: PathBuf, compat: Compat) -> Thumbnails {
+    pub fn start(game: Loaded, path: PathBuf, compat: Compat, presentation: Option<crate::battle::BattlePresentation>) -> Thumbnails {
         let (asks, asked) = mpsc::channel();
         let (done, drawn) = mpsc::channel();
-        let started = saito_threads::spawn("previews", move || work(game, path, compat, asked, done));
+        let started = saito_threads::spawn("previews", move || work(game, path, compat, presentation, asked, done));
         if let Err(why) = &started {
             crate::errors::log("starting the bar's previews", why);
         }
@@ -238,7 +238,7 @@ impl Thumbnails {
 
 /// The thread: a silent viewer of the replay, indexing ahead while nothing is asked, and drawing the latest preview
 /// asked for. It ends when the screen drops its end of the channel, or when the engine stops it.
-fn work(game: Loaded, path: PathBuf, compat: Compat, asks: Receiver<Ask>, drawn: Sender<Drawn>) {
+fn work(game: Loaded, path: PathBuf, compat: Compat, presentation: Option<crate::battle::BattlePresentation>, asks: Receiver<Ask>, drawn: Sender<Drawn>) {
     let doing = format!("previewing {}", path.display());
     let replay = match crate::replays::read(&path) {
         Ok(replay) => replay,
@@ -249,6 +249,10 @@ fn work(game: Loaded, path: PathBuf, compat: Compat, asks: Receiver<Ask>, drawn:
         Ok(Err(refused)) => return crate::errors::log(&doing, &refused),
         Err(panic) => return crate::errors::log(&doing, &format_args!("the engine stopped: {}", saito_frontend::session::panic_message(panic.as_ref()))),
     };
+    if let Some(pres) = presentation {
+        viewer.wait_backgrounds(&pres.extra_backgrounds);
+        viewer.set_round_presentation(Some(pres.resolver));
+    }
     viewer.set_paused(true);
     let mut whole = false;
     loop {

@@ -355,11 +355,11 @@ msgstr "랜덤: {}"
 msgid "ABD: Original"
 msgstr "ABD: 원작"
 
+msgid "ABD: LC"
+msgstr "ABD: 어드컬"
+
 msgid "ABD: 5DS"
 msgstr "ABD: 5DS"
-
-msgid "ABD: Off"
-msgstr "ABD: 끔"
 
 msgid "CS Fix: Original"
 msgstr "CS수정: 원작"

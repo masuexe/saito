@@ -1183,7 +1183,8 @@ impl Replays {
                         self.library.still_wasm(&entry, s.info.side, ctx, roms, shell.i18n.code.to_string(), enhancements);
                     } else {
                         let font = on.loaded.font_in(shell.i18n.code).filter(|_| enhancements.wants_font());
-                        let look = Look { graphics: on.graphics(shell.i18n.code), enhancements, font };
+                        let background = crate::screens::play::stage::replay_first_background(&on, &s.info.presentation, &s.match_bytes);
+                        let look = Look { graphics: on.graphics(shell.i18n.code), enhancements, font, background };
                         self.library.still_with(&entry, s.info.side, on.content(), look, *compat);
                     }
                 }

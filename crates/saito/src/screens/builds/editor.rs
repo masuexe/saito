@@ -731,6 +731,14 @@ impl History {
     }
 }
 
+/// An action in the per-ABD-mode profile copy/sync menu (`S-124`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AbdSyncAction {
+    CopyFrom(saito_match::AbdMode),
+    CopyTo(saito_match::AbdMode),
+    ResetToGba,
+}
+
 /// The editor's frame: the build, the game's tabs, and the one shown.
 pub struct Editor {
     pub draft: Draft,
@@ -1057,6 +1065,100 @@ impl Editor {
         }
     }
 
+    /// Which per-ABD-mode profile scope the active tab edits, if any.
+    fn abd_profile_scope(&self) -> Option<store::ProfileScope> {
+        match self.tabs[self.at].id() {
+            EditorTab::Folder => Some(store::ProfileScope::Folder),
+            EditorTab::AutoBattle => Some(store::ProfileScope::AutoBattle),
+            _ => None,
+        }
+    }
+
+    /// Actions shown in the ABD profile copy/sync menu for the active tab and profile (`S-124`).
+    /// Each entry is `(action, separator_line_before, dim)`.
+    fn abd_sync_actions(&self) -> Vec<(AbdSyncAction, bool, bool)> {
+        let Some(scope) = self.abd_profile_scope() else {
+            return Vec::new();
+        };
+        let modes = saito_match::abd_mode::available(&self.draft.kit.game);
+        if modes.len() <= 1 {
+            return Vec::new();
+        }
+        let cur = self.draft.abd_mode;
+        let content = self.draft.content();
+        let others: Vec<saito_match::AbdMode> = modes.iter().copied().filter(|&m| m != cur).collect();
+        let mut out = Vec::new();
+        for other in &others {
+            let dim = self.draft.build.profile_fields_equal(content, scope, *other, cur);
+            out.push((AbdSyncAction::CopyFrom(*other), false, dim));
+        }
+        for (i, other) in others.iter().enumerate() {
+            let dim = self.draft.build.profile_fields_equal(content, scope, cur, *other);
+            out.push((AbdSyncAction::CopyTo(*other), i == 0, dim));
+        }
+        if cur != saito_match::AbdMode::Original {
+            let custom = match scope {
+                store::ProfileScope::Folder => self.draft.build.has_custom_folder(cur),
+                store::ProfileScope::AutoBattle => self.draft.build.has_custom_auto_battle(cur),
+            };
+            out.push((AbdSyncAction::ResetToGba, true, !custom));
+        }
+        out
+    }
+
+    fn open_abd_sync(&self, shell: &mut Shell) {
+        let actions = self.abd_sync_actions();
+        if actions.is_empty() {
+            return;
+        }
+        let ui = shell.ui();
+        let view = ui.global::<BuildsView>();
+        let mode_names = view.get_abd_mode_names();
+        let mode_name = |m: saito_match::AbdMode| -> slint::SharedString {
+            slint::Model::row_data(&mode_names, m.as_u8() as usize).unwrap_or_default()
+        };
+        let rows: Vec<(String, saito_ui::PickMark)> = actions
+            .into_iter()
+            .map(|(action, line, dim)| {
+                let text = match action {
+                    AbdSyncAction::CopyFrom(from) => view.invoke_abd_copy_from_word(mode_name(from)).to_string(),
+                    AbdSyncAction::CopyTo(to) => view.invoke_abd_copy_to_word(mode_name(to)).to_string(),
+                    AbdSyncAction::ResetToGba => view.get_abd_follow_gba_word().to_string(),
+                };
+                (text, saito_ui::PickMark { check: false, dim, line, value: Default::default() })
+            })
+            .collect();
+        shell.pick_marked("abd.sync", 0, &crate::nav::Key::new("abd.sync", 0), rows);
+    }
+
+    fn apply_abd_sync(&mut self, shell: &mut Shell, choice: usize) {
+        let Some(scope) = self.abd_profile_scope() else {
+            return;
+        };
+        let actions = self.abd_sync_actions();
+        let Some((action, _, _)) = actions.get(choice).copied() else {
+            return;
+        };
+        let cur = self.draft.abd_mode;
+        let content = self.draft.kit.content().clone();
+        let changed = match action {
+            AbdSyncAction::CopyFrom(from) => self.draft.build.copy_profile(&content, scope, from, cur),
+            AbdSyncAction::CopyTo(to) => self.draft.build.copy_profile(&content, scope, cur, to),
+            AbdSyncAction::ResetToGba => self.draft.build.reset_profile(scope, cur),
+        };
+        if !changed {
+            shell.sound.play(crate::sound::Cue::Refused);
+            return;
+        }
+        let before_cursor = self.tabs[self.at].cursor();
+        self.draft.active_side = self.draft.build.side_for(&content, cur);
+        self.draft.recheck();
+        self.after(shell, before_cursor);
+        let (tab, draft) = self.tab();
+        tab.show(shell, draft);
+        shell.sound.play(crate::sound::Cue::Pick);
+    }
+
     /// The ruleset's controls: the select (its list, or a step through the rulesets), and EDIT (its page).
     fn ruleset_control(&mut self, shell: &mut Shell, id: &str, index: i32, by: Option<i32>) {
         let (picks, at) = self.ruleset_choices();
@@ -1108,6 +1210,10 @@ impl Editor {
                 let (tab, draft) = self.tab();
                 tab.show(shell, draft);
             }
+            return;
+        }
+        if id == "abd.sync" {
+            self.open_abd_sync(shell);
             return;
         }
         let before_cursor = self.tabs[self.at].cursor();
@@ -1165,6 +1271,10 @@ impl Editor {
             if let Some(picked) = picks.into_iter().nth(choice.max(0) as usize) {
                 self.make_for(shell, picked);
             }
+            return;
+        }
+        if id == "abd.sync" {
+            self.apply_abd_sync(shell, choice.max(0) as usize);
             return;
         }
         let before_cursor = self.tabs[self.at].cursor();

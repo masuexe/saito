@@ -367,11 +367,11 @@ msgstr "ランダム：{}"
 msgid "ABD: Original"
 msgstr "ABD：原作"
 
+msgid "ABD: LC"
+msgstr "ABD：アドコレ"
+
 msgid "ABD: 5DS"
 msgstr "ABD：5DS"
-
-msgid "ABD: Off"
-msgstr "ABD：無効"
 
 msgid "CS Fix: Original"
 msgstr "CS修正：原作"

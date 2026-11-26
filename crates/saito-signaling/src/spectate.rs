@@ -180,6 +180,17 @@ pub enum ServerToHost {
     },
 }
 
+/// Messages sent from a watcher to the server on `/spectate/watch/<CODE>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WatcherToServer {
+    /// Request the full released tick history from tick 0 for `set_id` so a
+    /// mid-match spectator can save a complete local `.bin` replay (`S-121`).
+    RequestHistory {
+        set_id: u32,
+    },
+}
+
 /// Messages sent from the server to a watcher on `/spectate/watch/<CODE>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -204,6 +215,13 @@ pub enum ServerToWatcher {
         from_tick: u32,
         count: u32,
         data_b64: String,
+    },
+    /// Full released header and tick chunks from tick 0 in response to `RequestHistory`.
+    SetHistory {
+        set_id: u32,
+        header_b64: String,
+        #[serde(default)]
+        chunks: Vec<TickChunk>,
     },
     SetEnd {
         set_id: u32,
@@ -449,6 +467,11 @@ pub enum WatcherEvent {
         count: u32,
         data_b64: String,
     },
+    SetHistory {
+        set_id: u32,
+        header_b64: String,
+        chunks: Vec<TickChunk>,
+    },
     SetEnd {
         set_id: u32,
         reason: String,
@@ -496,6 +519,17 @@ impl SpectateWatcher {
 
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Ask the server for the full released tick history from tick 0 for `set_id` (`S-121`).
+    pub fn request_history(&mut self, set_id: u32) -> bool {
+        if let Some(s) = &mut self.socket
+            && self.open
+        {
+            s.send(serde_json::to_string(&WatcherToServer::RequestHistory { set_id }).expect("JSON"));
+            return true;
+        }
+        false
     }
 
     pub fn close(&mut self) {
@@ -555,6 +589,9 @@ impl SpectateWatcher {
                     }
                     Ok(ServerToWatcher::Ticks { set_id, from_tick, count, data_b64 }) => {
                         return Ok(Some(WatcherEvent::Ticks { set_id, from_tick, count, data_b64 }));
+                    }
+                    Ok(ServerToWatcher::SetHistory { set_id, header_b64, chunks }) => {
+                        return Ok(Some(WatcherEvent::SetHistory { set_id, header_b64, chunks }));
                     }
                     Ok(ServerToWatcher::SetEnd { set_id, reason }) => {
                         return Ok(Some(WatcherEvent::SetEnd { set_id, reason }));

@@ -542,3 +542,9 @@ msgstr "常に最大"
 
 msgid "3-Tier"
 msgstr "3段階"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Saving…"
+msgstr "保存中…"

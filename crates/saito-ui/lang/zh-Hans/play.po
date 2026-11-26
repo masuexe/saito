@@ -542,3 +542,9 @@ msgstr "恒定最大"
 
 msgid "3-Tier"
 msgstr "真实三档"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Saving…"
+msgstr "保存中…"
