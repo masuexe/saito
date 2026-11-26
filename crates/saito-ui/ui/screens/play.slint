@@ -1783,7 +1783,7 @@ export component PlayScreen inherits Page {
             host := Button {
                 x: Theme.phone ? 0px : root.side-x;
                 y: root.host-y;
-                width: Theme.phone ? root.body-width : Theme.sideways ? root.side-width : self.natural-width;
+                width: Theme.phone ? root.body-width : Theme.sideways ? root.side-width : max(148px, self.natural-width);
                 nav: "invite";
                 text: I18n.upper(@tr("Host"));
                 kind: root.none ? ButtonKind.normal : ButtonKind.main;
@@ -3438,21 +3438,29 @@ export component PlayOverlay inherits Rectangle {
     // EXE6 Random Battle pre-battle prep: stats confirmation, 30-chip folder check, and Regular (30MB) / Tag (60MB) selection.
     if PlayView.random-prep: prep := DialogFrame {
         property <bool> narrow: Theme.phone;
-        property <length> left-w: self.narrow ? self.inner-width : 272px;
-        property <length> right-x: self.narrow ? 0px : self.left-w + 16px;
-        property <length> right-w: self.narrow ? self.inner-width : self.inner-width - self.right-x;
-        property <length> body-h: self.narrow ? 430px : 416px;
-        property <length> footer-y: self.body-h + 12px;
+        property <bool> sideways: Theme.sideways;
+        property <bool> phone-status: PlayView.prep-notice != "" || PlayView.prep-tagging || PlayView.prep-ready || PlayView.prep-their-ready;
+        property <length> left-w: self.narrow ? self.inner-width : self.sideways ? min(252px, floor(self.inner-width * 0.44 / 1px) * 1px) : 272px;
+        property <length> right-x: self.narrow ? 0px : self.left-w + (self.sideways ? 12px : 16px);
+        property <length> right-w: self.narrow ? self.inner-width : max(120px, self.inner-width - self.right-x);
+        property <length> max-body-h: max(180px, root.height - (self.sideways ? 148px : 172px));
+        property <length> body-h: self.narrow ? min(456px, self.max-body-h) : self.sideways ? min(320px, self.max-body-h) : min(416px, self.max-body-h);
+        property <length> left-h: self.narrow ? (self.phone-status ? 174px : 150px) : self.body-h;
+        property <length> footer-y: self.body-h + (self.sideways ? 8px : 12px);
+        property <length> btn-w: max(48px, floor((self.left-w - 20px - 12px) / 3 / 1px) * 1px);
+        property <length> btn-y: self.narrow ? 102px : self.sideways ? 96px : 148px;
+        property <length> btn-h: self.narrow ? 36px : 32px;
+        wide: true;
         title: @tr("Random Battle — Rank {}", PlayView.prep-rank);
-        panel-width: self.narrow ? 356px : 760px;
-        content-height: self.footer-y + 38px;
+        panel-width: self.narrow ? 356px : self.sideways ? 680px : 760px;
+        content-height: self.footer-y + (self.sideways ? 32px : 40px);
 
         // ---- Left column (or top summary on phone): MegaMan stats & abilities + Regular/Tag controls.
         Rectangle {
             x: 0;
             y: 0;
             width: prep.left-w;
-            height: prep.narrow ? 148px : prep.body-h;
+            height: prep.left-h;
             background: Theme.inset;
             border-width: 1px;
             border-color: Theme.line;
@@ -3460,16 +3468,16 @@ export component PlayOverlay inherits Rectangle {
 
             Image {
                 x: 10px;
-                y: 10px;
-                width: prep.narrow ? 36px : 48px;
-                height: prep.narrow ? 36px : 48px;
+                y: prep.sideways ? 8px : 10px;
+                width: prep.narrow || prep.sideways ? 36px : 48px;
+                height: prep.narrow || prep.sideways ? 36px : 48px;
                 source: PlayView.prep-sheet.face;
                 image-rendering: pixelated;
             }
 
             Value {
-                x: prep.narrow ? 54px : 68px;
-                y: 10px;
+                x: prep.narrow || prep.sideways ? 54px : 68px;
+                y: prep.sideways ? 8px : 10px;
                 width: parent.width - self.x - 10px;
                 height: 20px;
                 text: PlayView.prep-sheet.navi;
@@ -3477,28 +3485,30 @@ export component PlayOverlay inherits Rectangle {
             }
 
             Note {
-                x: prep.narrow ? 54px : 68px;
-                y: 30px;
+                x: prep.narrow || prep.sideways ? 54px : 68px;
+                y: prep.sideways ? 26px : 30px;
                 width: parent.width - self.x - 10px;
-                height: 20px;
+                height: 18px;
                 text: @tr("HP {} · {}/{}/{} · Custom {}", PlayView.prep-sheet.stats.length > 0 ? PlayView.prep-sheet.stats[0].value : "", PlayView.prep-sheet.stats.length > 1 ? PlayView.prep-sheet.stats[1].value : "", PlayView.prep-sheet.stats.length > 2 ? PlayView.prep-sheet.stats[2].value : "", PlayView.prep-sheet.stats.length > 3 ? PlayView.prep-sheet.stats[3].value : "", PlayView.prep-sheet.stats.length > 4 ? PlayView.prep-sheet.stats[4].value : "");
                 color: Theme.cursor;
+                overflow: elide;
             }
 
             // Abilities (SuperArmor / UnderShirt / AirShoes / ChipShuffle / Shield).
             Note {
                 x: 10px;
-                y: prep.narrow ? 52px : 68px;
+                y: prep.narrow ? 52px : prep.sideways ? 48px : 68px;
                 width: parent.width - 20px;
-                height: prep.narrow ? 18px : 36px;
+                height: prep.narrow || prep.sideways ? 18px : 36px;
                 text: @tr("Abilities: {}", I18n.join(PlayView.prep-sheet.abilities));
                 color: Theme.text;
-                wrap: word-wrap;
+                wrap: prep.narrow || prep.sideways ? no-wrap : word-wrap;
+                overflow: elide;
             }
 
             Rule {
                 x: 10px;
-                y: prep.narrow ? 74px : 112px;
+                y: prep.narrow ? 74px : prep.sideways ? 70px : 112px;
                 width: parent.width - 20px;
                 Rectangle { }
             }
@@ -3506,87 +3516,112 @@ export component PlayOverlay inherits Rectangle {
             // Regular & Tag memory usage.
             Note {
                 x: 10px;
-                y: prep.narrow ? 80px : 122px;
+                y: prep.narrow ? 80px : prep.sideways ? 75px : 122px;
                 width: parent.width - 20px;
                 height: 18px;
                 text: @tr("Reg {}/30 MB · Tag {}/60 MB", PlayView.prep-reg-mb, PlayView.prep-tag-mb);
                 color: PlayView.prep-tagging ? Theme.action : Theme.text;
+                overflow: elide;
             }
 
-            // Regular / Tag / Clear buttons for the focused chip.
-            HorizontalLayout {
+            // Regular / Tag / Clear buttons for the focused chip (explicit widths so Theme.phone never overflows).
+            Button {
                 x: 10px;
-                y: prep.narrow ? 102px : 148px;
+                y: prep.btn-y;
+                width: prep.btn-w;
+                height: prep.btn-h;
+                compact: true;
+                tight: true;
+                nav: "prep.reg";
+                enabled: !PlayView.prep-ready;
+                kind: ButtonKind.ghost;
+                text: @tr("Reg (R)");
+            }
+
+            Button {
+                x: 10px + prep.btn-w + 6px;
+                y: prep.btn-y;
+                width: prep.btn-w;
+                height: prep.btn-h;
+                compact: true;
+                tight: true;
+                nav: "prep.tag";
+                enabled: !PlayView.prep-ready;
+                kind: PlayView.prep-tagging ? ButtonKind.normal : ButtonKind.ghost;
+                text: @tr("Tag (T)");
+            }
+
+            Button {
+                x: 10px + 2 * (prep.btn-w + 6px);
+                y: prep.btn-y;
+                width: max(48px, parent.width - 10px - self.x);
+                height: prep.btn-h;
+                compact: true;
+                tight: true;
+                nav: "prep.clear";
+                enabled: !PlayView.prep-ready && (PlayView.prep-reg-mb > 0 || PlayView.prep-tag-mb > 0 || PlayView.prep-tagging);
+                kind: ButtonKind.ghost;
+                text: I18n.upper(@tr("Clear"));
+            }
+
+            // Portrait compact status/notice line under the buttons.
+            Note {
+                x: 10px;
+                y: prep.btn-y + prep.btn-h + 6px;
                 width: parent.width - 20px;
-                height: 32px;
-                spacing: 6px;
-
-                Button {
-                    horizontal-stretch: 1;
-                    height: 32px;
-                    compact: true;
-                    nav: "prep.reg";
-                    enabled: !PlayView.prep-ready;
-                    kind: ButtonKind.ghost;
-                    text: @tr("Reg (R)");
-                }
-
-                Button {
-                    horizontal-stretch: 1;
-                    height: 32px;
-                    compact: true;
-                    nav: "prep.tag";
-                    enabled: !PlayView.prep-ready;
-                    kind: PlayView.prep-tagging ? ButtonKind.normal : ButtonKind.ghost;
-                    text: @tr("Tag (T)");
-                }
-
-                Button {
-                    horizontal-stretch: 1;
-                    height: 32px;
-                    compact: true;
-                    nav: "prep.clear";
-                    enabled: !PlayView.prep-ready && (PlayView.prep-reg-mb > 0 || PlayView.prep-tag-mb > 0 || PlayView.prep-tagging);
-                    kind: ButtonKind.ghost;
-                    text: I18n.upper(@tr("Clear"));
-                }
+                height: 22px;
+                visible: prep.narrow && prep.phone-status;
+                text: PlayView.prep-notice != "" ? PlayView.prep-notice
+                    : PlayView.prep-tagging ? @tr("Select a second chip to complete the Tag pair (max 60 MB total).")
+                    : PlayView.prep-ready && !PlayView.prep-their-ready ? @tr("Ready! Waiting for opponent…")
+                    : !PlayView.prep-ready && PlayView.prep-their-ready ? @tr("Opponent is ready.")
+                    : "";
+                color: PlayView.prep-notice != "" ? Theme.bad : PlayView.prep-tagging ? Theme.action : PlayView.prep-ready ? Theme.cursor : Theme.action;
+                font-size: 12px;
+                wrap: no-wrap;
+                overflow: elide;
             }
 
             // Notice / refusal (e.g. over 30 MB Regular or 60 MB Tag) or Tag prompt.
             Note {
                 x: 10px;
-                y: 190px;
+                y: prep.sideways ? 134px : 190px;
                 width: parent.width - 20px;
-                height: 54px;
+                height: max(20px, parent.height - self.y - (prep.sideways ? 28px : 52px));
                 visible: !prep.narrow;
                 text: PlayView.prep-notice != "" ? PlayView.prep-notice
                     : PlayView.prep-tagging ? @tr("Select a second chip to complete the Tag pair (max 60 MB total).")
                     : @tr("Inspect the shared 30-chip folder and optionally set your Regular (30 MB) and Tag (60 MB) chips.");
                 color: PlayView.prep-notice != "" ? Theme.bad : PlayView.prep-tagging ? Theme.action : Theme.muted;
+                font-size: prep.sideways ? 12px : 13px;
+                vertical-alignment: TextVerticalAlignment.top;
                 wrap: word-wrap;
+                overflow: elide;
             }
 
             // Opponent & local ready status.
             Note {
                 x: 10px;
-                y: parent.height - 46px;
+                y: parent.height - (prep.sideways ? 26px : 46px);
                 width: parent.width - 20px;
-                height: 36px;
+                height: prep.sideways ? 20px : 36px;
                 visible: !prep.narrow;
                 text: PlayView.prep-ready && !PlayView.prep-their-ready ? @tr("Ready! Waiting for opponent…")
                     : !PlayView.prep-ready && PlayView.prep-their-ready ? @tr("Opponent is ready.")
                     : "";
                 color: PlayView.prep-ready ? Theme.cursor : Theme.action;
+                font-size: prep.sideways ? 12px : 13px;
                 wrap: word-wrap;
+                overflow: elide;
             }
         }
 
         // ---- Right column (or bottom list on phone): 30-chip folder inspection & selection.
         Rectangle {
             x: prep.right-x;
-            y: prep.narrow ? 156px : 0px;
+            y: prep.narrow ? prep.left-h + 8px : 0px;
             width: prep.right-w;
-            height: prep.narrow ? prep.body-h - 156px : prep.body-h;
+            height: max(80px, prep.narrow ? prep.body-h - prep.left-h - 8px : prep.body-h);
 
             Note {
                 x: 4px;
@@ -3602,7 +3637,7 @@ export component PlayOverlay inherits Rectangle {
                 x: 0;
                 y: 24px;
                 width: parent.width;
-                height: parent.height - 24px;
+                height: max(40px, parent.height - 24px);
                 nav: "prep.slot";
                 count: PlayView.prep-sheet.chips.length;
                 row-height: Theme.handheld ? 36px : Theme.chip-row;
@@ -3632,6 +3667,7 @@ export component PlayOverlay inherits Rectangle {
         Button {
             x: 0;
             y: prep.footer-y;
+            compact: prep.sideways;
             nav: "prep.leave";
             text: I18n.upper(@tr("Leave"));
             kind: ButtonKind.ghost;
@@ -3641,6 +3677,7 @@ export component PlayOverlay inherits Rectangle {
         Button {
             x: prep.inner-width - self.width;
             y: prep.footer-y;
+            compact: prep.sideways;
             nav: "prep.ready";
             text: PlayView.prep-ready ? I18n.upper(@tr("Cancel")) : I18n.upper(@tr("Ready"));
             kind: PlayView.prep-ready ? ButtonKind.ghost : ButtonKind.main;

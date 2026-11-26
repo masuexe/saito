@@ -1474,10 +1474,11 @@ component Transport inherits Rectangle {
     property <bool> can-change: root.exporting && ReplaysView.export-state != ExportState.running;
     property <length> edge: root.phone ? 12px : 16px;
     property <length> clock: root.phone ? 44px : 48px;
-    property <length> buttons-y: root.phone ? 48px : 52px;
-    // (Where the round shown begins, after the speed's badge; a phone's export rows, each 52 under the last.)
+    property <length> buttons-y: root.phone ? (root.exporting ? 44px : 48px) : 52px;
+    // (Where the round shown begins, after the speed's badge; a phone's export rows, each 46 under the last.)
     property <length> after-buttons: root.edge + 156px + (ReplaysView.speed == "" ? 0px : speed.width + 10px);
-    property <length> phone-row: root.buttons-y + 56px;
+    property <length> phone-row: root.buttons-y + (root.exporting ? 50px : 56px);
+    property <length> phone-pitch: 46px;
     property <length> half: (root.width - 2 * root.edge - 8px) / 2;
     property <length> right-end: ReplaysView.queued ? queue.x : more.x;
     PanelBack { }
@@ -1601,7 +1602,7 @@ component Transport inherits Rectangle {
     // The Range's list: the whole match, each round, the last range of the player's own; and the range's times.
     Select {
         x: root.phone ? root.edge : end-here.x + end-here.width + 12px;
-        y: root.phone ? root.phone-row + 52px : root.buttons-y;
+        y: root.phone ? root.phone-row + root.phone-pitch : root.buttons-y;
         width: root.phone ? root.width - 2 * root.edge : max(120px, times.x - 12px - self.x);
         visible: root.exporting;
         nav: "export.part";
@@ -1624,7 +1625,7 @@ component Transport inherits Rectangle {
     // CANCEL leaves the export mode (stops an export under way; CLOSE once one is saved); EXPORT starts one.
     cancel := Button {
         x: root.phone ? root.edge : go.x - 12px - self.width;
-        y: root.phone ? root.phone-row + 104px : root.buttons-y;
+        y: root.phone ? root.phone-row + 2 * root.phone-pitch : root.buttons-y;
         width: root.phone ? root.half : self.natural-width;
         visible: root.exporting;
         nav: "export.cancel";
@@ -1688,107 +1689,120 @@ component PathBox inherits Rectangle {
 component ExportOptions inherits Rectangle {
     property <bool> phone: Theme.phone;
     property <bool> busy: ReplaysView.export-state == ExportState.running;
-    property <length> edge: root.phone ? 12px : 16px;
-    property <length> label: root.phone ? 84px : size-label.preferred-width;
-    property <length> line-y: root.phone ? 168px : 68px;
+    property <bool> show-path: !Theme.web && !Theme.phone-app;
+    property <length> edge: root.phone ? 10px : 16px;
+    property <length> row-pitch: 46px;
+    property <length> label: root.phone ? max(48px, min(84px, max(size-label.preferred-width, view-label.preferred-width, sides-label.preferred-width) + 4px)) : size-label.preferred-width;
+    property <length> line-y: root.phone ? root.edge + (root.show-path ? 4 : 3) * root.row-pitch : 68px;
+    out property <length> natural-height: root.phone ? root.line-y + 34px : 108px;
     PanelBack { }
 
-    size-label := Value {
-        x: root.edge;
-        y: root.edge;
-        width: root.label;
-        height: 40px;
-        text: @tr("Size");
-    }
+    Flickable {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.width;
+        content-height: max(self.height, root.natural-height);
+        interactive: root.phone && root.natural-height > self.height;
 
-    size := Select {
-        x: size-label.x + size-label.width + 12px;
-        y: root.edge;
-        width: root.phone ? root.width - root.edge - self.x : 220px;
-        nav: "export.size";
-        value: ReplaysView.export-size;
-        enabled: !root.busy;
-    }
+        size-label := Value {
+            x: root.edge;
+            y: root.edge;
+            width: root.label;
+            height: 40px;
+            text: @tr("Size");
+        }
 
-    view-label := Value {
-        x: root.phone ? root.edge : size.x + size.width + 24px;
-        y: root.phone ? root.edge + 52px : root.edge;
-        width: root.phone ? root.label : self.preferred-width;
-        height: 40px;
-        text: @tr("Player");
-    }
+        size := Select {
+            x: size-label.x + size-label.width + (root.phone ? 10px : 12px);
+            y: root.edge;
+            width: root.phone ? parent.width - root.edge - self.x : 220px;
+            nav: "export.size";
+            value: ReplaysView.export-size;
+            enabled: !root.busy;
+        }
 
-    view := Seg {
-        x: view-label.x + view-label.width + 12px;
-        y: view-label.y + 2px;
-        nav: "export.view";
-        first: ReplaysView.p1;
-        second: ReplaysView.p2;
-        chosen: ReplaysView.export-view;
-        enabled: !root.busy;
-    }
+        view-label := Value {
+            x: root.phone ? root.edge : size.x + size.width + 24px;
+            y: root.phone ? root.edge + root.row-pitch : root.edge;
+            width: root.phone ? root.label : self.preferred-width;
+            height: 40px;
+            text: @tr("Player");
+        }
 
-    // (Both: on one screen, the view's console's field, its player's pieces at the left; side by side: the view's
-    // console at the left, heard first, and the other's at the right.)
-    sides-label := Value {
-        x: view.x + view.width + 24px;
-        y: view-label.y;
-        width: self.preferred-width;
-        height: 40px;
-        text: @tr("Sides");
-    }
+        view := Seg {
+            x: view-label.x + view-label.width + (root.phone ? 10px : 12px);
+            y: view-label.y + 2px;
+            nav: "export.view";
+            first: ReplaysView.p1;
+            second: ReplaysView.p2;
+            chosen: ReplaysView.export-view;
+            enabled: !root.busy;
+        }
 
-    sides := Seg {
-        x: sides-label.x + sides-label.width + 12px;
-        y: view.y;
-        nav: "export.sides";
-        first: @tr("sides" => "One");
-        second: @tr("sides" => "Both");
-        third: @tr("sides" => "Side by side");
-        chosen: ReplaysView.export-sides;
-        enabled: !root.busy;
-    }
+        // (Both: on one screen, the view's console's field, its player's pieces at the left; side by side: the view's
+        // console at the left, heard first, and the other's at the right.)
+        sides-label := Value {
+            x: root.phone ? root.edge : view.x + view.width + 24px;
+            y: root.phone ? root.edge + 2 * root.row-pitch : view-label.y;
+            width: root.phone ? root.label : self.preferred-width;
+            height: 40px;
+            text: @tr("Sides");
+        }
 
-    // (Not in a browser, which asks where each time, nor on a phone, which hands the video over once made.)
-    path-label := Value {
-        visible: !Theme.web && !Theme.phone-app;
-        x: root.phone ? root.edge : sides.x + sides.width + 24px;
-        y: root.phone ? root.edge + 104px : root.edge;
-        width: root.phone ? root.label : self.preferred-width;
-        height: 40px;
-        text: @tr("Save as");
-    }
+        sides := Seg {
+            x: sides-label.x + sides-label.width + (root.phone ? 10px : 12px);
+            y: sides-label.y + 2px;
+            nav: "export.sides";
+            first: @tr("sides" => "One");
+            second: @tr("sides" => "Both");
+            third: @tr("sides" => "Side by side");
+            chosen: ReplaysView.export-sides;
+            enabled: !root.busy;
+        }
 
-    PathBox {
-        visible: !Theme.web && !Theme.phone-app;
-        x: path-label.x + path-label.width + 12px;
-        y: path-label.y;
-        width: max(80px, root.width - root.edge - self.x);
-        nav: "export.path";
-        value: ReplaysView.export-path;
-        enabled: !root.busy && !Theme.web && !Theme.phone-app;
+        // (Not in a browser, which asks where each time, nor on a phone, which hands the video over once made.)
+        path-label := Value {
+            visible: root.show-path;
+            x: root.phone ? root.edge : sides.x + sides.width + 24px;
+            y: root.phone ? root.edge + 3 * root.row-pitch : root.edge;
+            width: root.phone ? root.label : self.preferred-width;
+            height: 40px;
+            text: @tr("Save as");
+        }
 
-        Rectangle { }  // (Copied in: docs/app.md §14.)
-    }
+        PathBox {
+            visible: root.show-path;
+            x: path-label.x + path-label.width + (root.phone ? 10px : 12px);
+            y: path-label.y;
+            width: max(80px, parent.width - root.edge - self.x);
+            nav: "export.path";
+            value: ReplaysView.export-path;
+            enabled: !root.busy && root.show-path;
 
-    Bar {
-        x: root.edge;
-        y: root.line-y;
-        width: root.width - 2 * root.edge;
-        value: ReplaysView.export-state == ExportState.done ? 1 : (root.busy ? ReplaysView.export-progress : 0);
-        smooth: false;
-    }
+            Rectangle { }  // (Copied in: docs/app.md §14.)
+        }
 
-    Note {
-        x: root.edge;
-        y: root.line-y + 8px;
-        width: root.width - 2 * root.edge;
-        height: 20px;
-        text: root.busy ? @tr("Exporting round {} of {} · {}%", ReplaysView.export-round, ReplaysView.export-rounds, round(ReplaysView.export-progress * 100)) : ReplaysView.export-state == ExportState.done ? @tr("Saved.") : ReplaysView.export-state == ExportState.canceled ? @tr("Export canceled.") : ReplaysView.export-state == ExportState.failed ? ReplaysView.export-error : @tr("Drag the handles on the bar to choose the part to export.");
-        color: ReplaysView.export-state == ExportState.failed ? Theme.bad : ReplaysView.export-state == ExportState.done ? Theme.good : Theme.muted;
-        font-size: 12px;
-        wrap: no-wrap;
-        overflow: elide;
+        Bar {
+            x: root.edge;
+            y: root.line-y;
+            width: parent.width - 2 * root.edge;
+            value: ReplaysView.export-state == ExportState.done ? 1 : (root.busy ? ReplaysView.export-progress : 0);
+            smooth: false;
+        }
+
+        Note {
+            x: root.edge;
+            y: root.line-y + 8px;
+            width: parent.width - 2 * root.edge;
+            height: 20px;
+            text: root.busy ? @tr("Exporting round {} of {} · {}%", ReplaysView.export-round, ReplaysView.export-rounds, round(ReplaysView.export-progress * 100)) : ReplaysView.export-state == ExportState.done ? @tr("Saved.") : ReplaysView.export-state == ExportState.canceled ? @tr("Export canceled.") : ReplaysView.export-state == ExportState.failed ? ReplaysView.export-error : @tr("Drag the handles on the bar to choose the part to export.");
+            color: ReplaysView.export-state == ExportState.failed ? Theme.bad : ReplaysView.export-state == ExportState.done ? Theme.good : Theme.muted;
+            font-size: 12px;
+            wrap: no-wrap;
+            overflow: elide;
+        }
     }
 }
 
@@ -1959,16 +1973,16 @@ component ViewerPage inherits Rectangle {
             // page shown.)
             if ReplaysView.exporting: ExportOptions {
                 x: 0;
-                y: root.phone ? controls.y + controls.height + 12px : controls.y - 12px - self.height;
+                y: root.phone ? controls.y + controls.height + 8px : controls.y - 12px - self.height;
                 width: page.body-width;
-                height: root.phone ? 208px : 108px;
+                height: root.phone ? min(self.natural-height, max(120px, page.body-height - (controls.y + controls.height + 8px))) : 108px;
             }
             // (A touch under the transport: the pointer resting on it holds the page.)
             controls := TouchArea {
                 x: 0;
                 y: root.phone ? root.phone-transport : page.body-height - self.height;
                 width: page.body-width;
-                height: root.phone ? (ReplaysView.exporting ? 260px : 104px) : 108px;
+                height: root.phone ? (ReplaysView.exporting ? 236px : 104px) : 108px;
                 Transport {
                     width: parent.width;
                     height: parent.height;

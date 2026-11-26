@@ -1061,9 +1061,9 @@ export component NavicustTab inherits Rectangle {
     property <length> column-width: Theme.sideways && NavicustView.board ? 132px : 0px;
     property <length> frame-width: root.board-width + root.column-width;
     // (A phone's: as large as the tab's width takes, or where the tab is too short for that (an iPhone SE's), as large as
-    // leaves the room under the board for the key, the notice's line, the effects' and the bugs' and PROGRAMS.)
+    // leaves the room under the board for the key, the held-piece/notice line, PROGRAMS/tools, and wrapped effects/bugs.)
     property <length> across: floor((root.board-width - 2 * root.pad-x - (NavicustView.columns - 1) * root.gap) / NavicustView.columns / 1px) * 1px;
-    property <length> under-board: 12px + root.key-height + 72px + 12px + 40px;
+    property <length> under-board: 10px + root.key-height + 8px + 20px + 8px + 40px + 12px + 64px;
     property <length> down: floor((root.height - root.head-height - root.under-board - 2 * root.pad-y - (NavicustView.columns - 1) * root.gap) / NavicustView.columns / 1px) * 1px;
     property <length> pitch: root.cell + root.gap;
     property <length> grid-width: NavicustView.columns * root.pitch - root.gap;
@@ -1086,9 +1086,11 @@ export component NavicustTab inherits Rectangle {
     // is EXE6's board's width in every game, so the columns are where they are whatever the game.
     property <length> list-x: Theme.phone ? 0px : Theme.sideways ? (NavicustView.board ? root.frame-width + 12px : 0px) : 436px + 24px;
     property <length> list-width: Theme.phone ? self.width : Theme.sideways ? self.width - root.list-x : 320px;
-    property <length> lines-y: root.key-y + root.key-height + 10px + 16px + 8px;
-    // (On a phone the list is a sheet: PROGRAMS, 12 under the lines, opens it.)
-    property <length> list-y: Theme.phone ? root.lines-y + 2 * 22px - 6px + 12px : root.body-y;
+    property <length> status-y: root.key-y + root.key-height + 8px;
+    // (On a phone: PROGRAMS / piece tools sit right under the board & held-piece line; wrapped effects & bugs take all remaining space below.)
+    property <length> list-y: Theme.phone ? root.status-y + 20px + 8px : root.body-y;
+    property <length> lines-y: root.list-y + 40px + 10px;
+    property <length> summary-label-w: max(48px, min(96px, max(phone-nc-eff-lbl.preferred-width, phone-nc-bug-lbl.preferred-width) + 8px));
     property <length> side-x: root.list-x + root.list-width + 24px;
     property <length> side-width: self.width - root.side-x;
     property <length> effects-height: (self.height - root.body-y - 12px) * 0.5;
@@ -1577,23 +1579,56 @@ export component NavicustTab inherits Rectangle {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
 
-    // (Sideways at the foot of the column beside the board; what the game's rules have against the NaviCust is after
-    // PROGRAMS there.)
-    Message {
+    // (On handheld while holding a piece: show its color swatch and name so players know which block is selected.)
+    if Theme.handheld && NavicustView.holding && NavicustView.detail.there: Rectangle {
         x: Theme.sideways ? root.column-x : 0px;
-        y: Theme.sideways ? root.notice-y : root.key-y + root.key-height + 10px;
+        y: Theme.sideways ? root.facts-y : root.status-y;
         width: Theme.sideways ? root.column-width - 12px : root.board-width;
+        height: 20px;
+        Rectangle {
+            x: 0px;
+            y: 3px;
+            width: 14px;
+            height: 14px;
+            background: NavicustView.detail.tone;
+            Cross {
+                visible: NavicustView.detail.plus;
+                bar: 1.5px;
+            }
+        }
+
+        Text {
+            x: 20px;
+            y: 0px;
+            width: Theme.phone && NavicustView.notice != "" ? max(60px, (parent.width - 20px) * 0.52) : parent.width - 20px;
+            height: parent.height;
+            text: NavicustView.detail.name;
+            color: Theme.text;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // (Sideways at the foot of the column beside the board; on portrait right-aligned beside held name when holding, else full width.)
+    Message {
+        x: Theme.sideways ? root.column-x : (NavicustView.holding && NavicustView.detail.there ? root.board-width * 0.56 : 0px);
+        y: Theme.sideways ? root.notice-y : root.status-y + 2px;
+        width: Theme.sideways ? root.column-width - 12px : (NavicustView.holding && NavicustView.detail.there ? root.board-width * 0.44 : root.board-width);
+        horizontal-alignment: Theme.phone && NavicustView.holding && NavicustView.detail.there ? right : left;
         visible: Theme.handheld;
         text: NavicustView.notice;
     }
 
-    // (Where nothing was refused, what the game's rules have against the NaviCust, on the same line.)
+    // (Where nothing was refused and not holding a piece, what the game's rules have against the NaviCust, on the same line.)
     ProblemNote {
         x: 0;
-        y: root.key-y + root.key-height + 10px;
+        y: root.status-y + 2px;
         width: root.board-width;
         horizontal-alignment: left;
-        visible: Theme.phone && NavicustView.notice == "";
+        visible: Theme.phone && NavicustView.notice == "" && !NavicustView.holding;
         text: NavicustView.problems;
     }
 
@@ -1626,7 +1661,7 @@ export component NavicustTab inherits Rectangle {
     property <length> turn-width: Theme.sideways ? (root.column-width - 12px - 8px) / 2 : 44px;
     property <length> compress-width: Theme.sideways ? root.column-width - 12px : max(120px, compress-word.preferred-width + 32px);
     property <length> tools-x: Theme.sideways ? root.column-x : 0px;
-    property <length> tools-y: Theme.sideways ? root.facts-y : root.list-y;
+    property <length> tools-y: Theme.sideways ? root.facts-y + 24px : root.list-y;
     property <length> put-away-x: root.tools && Theme.phone ? 2 * (root.turn-width + 8px) + (NavicustView.held-compresses ? root.compress-width + 8px : 0px) : 0px;
     // (COMPRESS's words as an upright phone's button sets them, measured: it is as wide as they ask, PUT AWAY the
     // rest.)
@@ -1731,18 +1766,18 @@ export component NavicustTab inherits Rectangle {
         }
     }
 
-    if Theme.handheld: Rectangle {
+    if Theme.sideways: Rectangle {
         for line[i] in [{ title: @tr("Effects"), text: I18n.join(NavicustView.effect-items), bug: false }, { title: @tr("Bugs"), text: I18n.join(NavicustView.bug-items), bug: true }]: Rectangle {
-            x: Theme.sideways ? root.column-x : 0px;
-            y: Theme.sideways ? root.facts-y + i * root.fact-pitch : root.lines-y + i * 22px;
-            width: Theme.sideways ? root.column-width - 12px : root.width;
-            height: Theme.sideways ? root.fact-pitch - 6px : 16px;
+            x: root.column-x;
+            y: root.facts-y + i * root.fact-pitch;
+            width: root.column-width - 12px;
+            height: root.fact-pitch - 6px;
             // (Sideways a piece in hand's buttons take their place.)
-            visible: !Theme.sideways || (NavicustView.board && !root.tools);
+            visible: NavicustView.board && !root.tools;
             Text {
                 x: 0;
                 y: 0;
-                width: Theme.sideways ? parent.width : 96px;
+                width: parent.width;
                 height: 16px;
                 text: line.title;
                 color: Theme.muted;
@@ -1753,19 +1788,120 @@ export component NavicustTab inherits Rectangle {
             }
 
             Text {
-                x: Theme.sideways ? 0px : 100px;
-                y: Theme.sideways ? 18px : 0px;
-                width: parent.width - self.x;
+                x: 0px;
+                y: 18px;
+                width: parent.width;
                 height: parent.height - self.y;
                 text: line.text == "" ? @tr("None") : line.text;
                 color: line.text == "" ? Theme.dim : (line.bug ? Theme.bug : Theme.text);
                 font-family: Theme.body;
                 font-size: 13px;
                 font-weight: 600;
-                vertical-alignment: Theme.sideways ? TextVerticalAlignment.top : TextVerticalAlignment.center;
-                wrap: Theme.sideways ? TextWrap.word-wrap : TextWrap.no-wrap;
+                vertical-alignment: TextVerticalAlignment.top;
+                wrap: TextWrap.word-wrap;
                 overflow: elide;
             }
+        }
+    }
+
+    // Hidden measurements for portrait wrapped Effects & Bugs.
+    phone-nc-eff-lbl := Text {
+        visible: false;
+        text: @tr("Effects");
+        font-family: Theme.body;
+        font-size: 13px;
+    }
+
+    phone-nc-bug-lbl := Text {
+        visible: false;
+        text: @tr("Bugs");
+        font-family: Theme.body;
+        font-size: 13px;
+    }
+
+    phone-nc-eff-val := Text {
+        visible: false;
+        width: max(80px, root.width - root.summary-label-w - 8px);
+        text: NavicustView.effect-items.length == 0 ? @tr("None") : I18n.join(NavicustView.effect-items);
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 600;
+        wrap: word-wrap;
+        height: max(18px, self.preferred-height);
+    }
+
+    phone-nc-bug-val := Text {
+        visible: false;
+        width: max(80px, root.width - root.summary-label-w - 8px);
+        text: NavicustView.bug-items.length == 0 ? @tr("None") : I18n.join(NavicustView.bug-items);
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: 600;
+        wrap: word-wrap;
+        height: max(18px, self.preferred-height);
+    }
+
+    if Theme.phone: Flickable {
+        x: 0px;
+        y: root.lines-y;
+        width: root.width;
+        height: max(0px, root.height - self.y);
+        content-width: self.width;
+        content-height: max(self.height, phone-nc-eff-val.height + 6px + phone-nc-bug-val.height + 4px);
+        interactive: phone-nc-eff-val.height + 6px + phone-nc-bug-val.height + 4px > self.height;
+
+        Text {
+            x: 0px;
+            y: 0px;
+            width: root.summary-label-w;
+            height: 18px;
+            text: @tr("Effects");
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            vertical-alignment: TextVerticalAlignment.top;
+            overflow: elide;
+        }
+
+        Text {
+            x: root.summary-label-w + 8px;
+            y: 0px;
+            width: max(80px, parent.width - self.x);
+            height: phone-nc-eff-val.height;
+            text: phone-nc-eff-val.text;
+            color: NavicustView.effect-items.length == 0 ? Theme.dim : Theme.text;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: TextVerticalAlignment.top;
+            wrap: word-wrap;
+        }
+
+        Text {
+            x: 0px;
+            y: phone-nc-eff-val.height + 6px;
+            width: root.summary-label-w;
+            height: 18px;
+            text: @tr("Bugs");
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            vertical-alignment: TextVerticalAlignment.top;
+            overflow: elide;
+        }
+
+        Text {
+            x: root.summary-label-w + 8px;
+            y: phone-nc-eff-val.height + 6px;
+            width: max(80px, parent.width - self.x);
+            height: phone-nc-bug-val.height;
+            text: phone-nc-bug-val.text;
+            color: NavicustView.bug-items.length == 0 ? Theme.dim : Theme.bug;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: TextVerticalAlignment.top;
+            wrap: word-wrap;
         }
     }
 }

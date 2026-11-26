@@ -301,6 +301,9 @@ component RowsList inherits Rectangle {
 // the name of the navi".)
 component HeadLine inherits Rectangle {
     in property <PartySlot> slot;
+    property <length> block-size: Theme.phone ? 9px : 12px;
+    property <length> used-width: Theme.phone ? 34px : 44px;
+    property <length> gauge-gap: Theme.phone ? 8px : 16px;
     Image {
         x: 8px;
         y: (root.height - 16px) / 2;
@@ -310,9 +313,9 @@ component HeadLine inherits Rectangle {
         image-rendering: pixelated;
     }
 
-    property <length> name-room: max(0px, gauge.x - 16px - name.x);
+    property <length> name-room: max(0px, gauge.x - root.gauge-gap - name.x);
     name := Text {
-        x: 8px + 32px + 8px;
+        x: 8px + 32px + (Theme.phone ? 6px : 8px);
         width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
         text: root.slot.name;
         color: root.slot.bad ? Theme.bad : Theme.text;
@@ -331,18 +334,18 @@ component HeadLine inherits Rectangle {
     }
 
     gauge := Blocks {
-        x: used.x - 8px - 10 * 12px;
+        x: used.x - (Theme.phone ? 6px : 8px) - 10 * root.block-size;
         y: (root.height - self.height) / 2;
         count: root.slot.gauge;
         filled: root.slot.used;
         tones: root.slot.tones;
         runs: root.slot.runs;
-        size: 12px;
+        size: root.block-size;
     }
 
     used := Text {
         x: root.width - 8px - self.width;
-        width: 44px;
+        width: root.used-width;
         text: root.slot.used + "/" + root.slot.gauge;
         color: root.slot.used > root.slot.gauge ? Theme.bad : Theme.muted;
         font-family: Theme.mono;

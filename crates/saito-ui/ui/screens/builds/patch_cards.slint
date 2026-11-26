@@ -464,9 +464,11 @@ export component PatchCardsTab inherits Rectangle {
     property <length> side-x: root.library-x + root.library-width + 24px;
     property <length> side-width: self.width - root.side-x;
     property <length> effects-height: (root.pane-height - 12px) / 2;
-    // A phone: the counts' box over the cards, and what they add up to under them, a line each.
+    // A phone: the counts' box over the cards, and what they add up to under them (wrapped so effects & bugs stay legible).
     property <length> counts-height: 44px;
-    property <length> lines-height: Theme.handheld ? 2 * 22px + 8px : 0px;
+    property <length> summary-label-w: Theme.phone ? max(48px, min(96px, max(phone-eff-lbl.preferred-width, phone-bug-lbl.preferred-width) + 8px)) : 96px;
+    property <length> summary-content-h: phone-eff-val.height + 6px + phone-bug-val.height;
+    property <length> lines-height: Theme.phone ? min(max(48px, root.summary-content-h + 12px), max(72px, floor(root.height * 0.36 / 1px) * 1px)) : Theme.sideways ? 2 * 22px + 8px : 0px;
     // (The strip's right of the card's name: its two groups, and the place at the top right every tab's strip keeps for
     // a refusal or a problem, a third as wide as each, which the groups' lines end before, so neither runs into the
     // other whatever the language or the window's width.)
@@ -713,11 +715,11 @@ export component PatchCardsTab inherits Rectangle {
         }
     }
 
-    if Theme.handheld: Rectangle {
+    if Theme.sideways: Rectangle {
         for line[i] in [{ title: @tr("Effects"), text: I18n.join(PatchCardsView.effect-items), bug: false }, { title: @tr("Bugs"), text: I18n.join(PatchCardsView.bug-items), bug: true }]: Rectangle {
-            x: Theme.sideways ? 12px : 0px;
-            y: (Theme.sideways ? root.pane-y + root.pane-height : root.height) - root.lines-height + (Theme.sideways ? 2px : 8px) + i * 22px;
-            width: Theme.sideways ? root.pane-width - 24px : root.width;
+            x: 12px;
+            y: root.pane-y + root.pane-height - root.lines-height + 2px + i * 22px;
+            width: root.pane-width - 24px;
             height: 16px;
             Text {
                 x: 0;
@@ -741,6 +743,107 @@ export component PatchCardsTab inherits Rectangle {
                 vertical-alignment: center;
                 overflow: elide;
             }
+        }
+    }
+
+    // Hidden measurements for portrait summary label width & wrapped heights.
+    phone-eff-lbl := Text {
+        visible: false;
+        text: @tr("Effects");
+        font-family: Theme.body;
+        font-size: 13px;
+    }
+
+    phone-bug-lbl := Text {
+        visible: false;
+        text: @tr("Bugs");
+        font-family: Theme.body;
+        font-size: 13px;
+    }
+
+    phone-eff-val := Text {
+        visible: false;
+        width: max(80px, root.width - root.summary-label-w - 8px);
+        text: PatchCardsView.effect-items.length == 0 ? @tr("None") : I18n.join(PatchCardsView.effect-items);
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: PatchCardsView.effect-items.length == 0 ? 400 : 600;
+        wrap: word-wrap;
+        height: max(18px, self.preferred-height);
+    }
+
+    phone-bug-val := Text {
+        visible: false;
+        width: max(80px, root.width - root.summary-label-w - 8px);
+        text: PatchCardsView.bug-items.length == 0 ? @tr("None") : I18n.join(PatchCardsView.bug-items);
+        font-family: Theme.body;
+        font-size: 13px;
+        font-weight: PatchCardsView.bug-items.length == 0 ? 400 : 600;
+        wrap: word-wrap;
+        height: max(18px, self.preferred-height);
+    }
+
+    if Theme.phone: Flickable {
+        x: 0px;
+        y: root.height - root.lines-height + 8px;
+        width: root.width;
+        height: max(0px, root.lines-height - 8px);
+        content-width: self.width;
+        content-height: max(self.height, root.summary-content-h + 4px);
+        interactive: root.summary-content-h + 4px > self.height;
+
+        Text {
+            x: 0px;
+            y: 0px;
+            width: root.summary-label-w;
+            height: 18px;
+            text: @tr("Effects");
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            vertical-alignment: TextVerticalAlignment.top;
+            overflow: elide;
+        }
+
+        Text {
+            x: root.summary-label-w + 8px;
+            y: 0px;
+            width: max(80px, parent.width - self.x);
+            height: phone-eff-val.height;
+            text: phone-eff-val.text;
+            color: PatchCardsView.effect-items.length == 0 ? Theme.dim : Theme.text;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: PatchCardsView.effect-items.length == 0 ? 400 : 600;
+            vertical-alignment: TextVerticalAlignment.top;
+            wrap: word-wrap;
+        }
+
+        Text {
+            x: 0px;
+            y: phone-eff-val.height + 6px;
+            width: root.summary-label-w;
+            height: 18px;
+            text: @tr("Bugs");
+            color: Theme.muted;
+            font-family: Theme.body;
+            font-size: 13px;
+            vertical-alignment: TextVerticalAlignment.top;
+            overflow: elide;
+        }
+
+        Text {
+            x: root.summary-label-w + 8px;
+            y: phone-eff-val.height + 6px;
+            width: max(80px, parent.width - self.x);
+            height: phone-bug-val.height;
+            text: phone-bug-val.text;
+            color: PatchCardsView.bug-items.length == 0 ? Theme.dim : Theme.bug;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: PatchCardsView.bug-items.length == 0 ? 400 : 600;
+            vertical-alignment: TextVerticalAlignment.top;
+            wrap: word-wrap;
         }
     }
 

@@ -1259,10 +1259,13 @@ export component Header inherits Rectangle {
         background: back-hit.pressed || back-reach.pressed ? Theme.line : (back-hit.has-hover ? Theme.tint : transparent);
         Chevron {
             x: Theme.handheld ? 13px : 12px;
+            y: (parent.height - self.height) / 2;
         }
 
         back-text := Text {
             x: 25px;
+            y: Theme.cjk ? -1px : 0px;
+            height: parent.height;
             visible: !Theme.handheld;
             text: root.back;
             color: Theme.muted;
