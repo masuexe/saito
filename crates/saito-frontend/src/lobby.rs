@@ -3875,4 +3875,73 @@ mod tests {
         assert_eq!(start0.digest(), start1.digest());
         assert_eq!(start0.setup.cs_prob_fix, custom.bits() as u32);
     }
+
+    #[test]
+    fn exe5ds_sun_and_shout_wire_roundtrip_and_lobby_sync() {
+        let exe5 = saito_match::testing::exe5_content();
+        let exe6 = saito_match::testing::exe6_content();
+        let rules5 = Rulesets::of(&exe5, "exe5").unwrap();
+        let rules6 = Rulesets::of(&exe6, "exe6").unwrap();
+
+        let senior_5ds = rules5.preset("senior_5ds").unwrap().clone();
+        let senior_gba = rules5.preset("senior").unwrap().clone();
+        let base5 = Settings::new("exe5", TRIPLE_BATTLE, senior_5ds);
+        let base5_bytes = base5.to_bytes(&exe5);
+        assert_eq!(Settings::from_bytes(&exe5, &rules5, &base5_bytes).unwrap(), base5);
+
+        let mut indoor_max = base5.clone();
+        indoor_max.sun_enabled = false;
+        indoor_max.ds_shout_max_only = true;
+        let bytes = indoor_max.to_bytes(&exe5);
+        assert_eq!(bytes.len(), base5_bytes.len() + 2, "0x43 + 0x44 trailers");
+        assert_eq!(Settings::from_bytes(&exe5, &rules5, &bytes).unwrap(), indoor_max);
+
+        // EXE6 rejects raw 0x43 and 0x44 tags.
+        let base6_bytes = Settings::new("exe6", TRIPLE_BATTLE, rules6.presets[0].clone()).to_bytes(&exe6);
+        for tag in [0x43u8, 0x44u8] {
+            let mut tampered = base6_bytes.clone();
+            tampered.push(tag);
+            assert!(Settings::from_bytes(&exe6, &rules6, &tampered).is_err(), "exe6 must reject tag {tag:#04x}");
+        }
+
+        // Host syncs Indoor + Always-Max Shout under senior_5ds to joiner and propagates effects bits.
+        let now = Instant::now();
+        let rules5 = Arc::new(rules5);
+        let builds5 = saito_match::build::Builds::of(&exe5, "exe5").unwrap();
+        let side5 = builds5.new_build(&exe5, &builds5.groups[0].id).unwrap();
+        let mut lobbies = [
+            Lobby::new(Role::Host, &exe5, rules5.clone(), indoor_max.clone(), side5.clone(), 101, Duration::from_secs(10)),
+            Lobby::new(Role::Join, &exe5, rules5.clone(), base5, side5.clone(), 202, Duration::from_secs(10)),
+        ];
+        run(&mut lobbies, now, 4, &mut |_, _| {});
+        assert!(!lobbies[1].settings().sun_enabled, "joiner adopts sun_enabled=false");
+        assert!(lobbies[1].settings().ds_shout_max_only, "joiner adopts ds_shout_max_only=true");
+        assert!(!lobbies[1].set_sun_enabled(true), "joiner cannot change sun_enabled");
+        assert!(!lobbies[1].set_ds_shout_max_only(false), "joiner cannot change ds_shout_max_only");
+        assert!(lobbies[0].set_ready(true));
+        assert!(lobbies[1].set_ready(true));
+        run(&mut lobbies, now, 20, &mut |_, _| {});
+        load(&mut lobbies, now);
+        let agreed = [0, 1].map(|i| started(&mut lobbies[i], now));
+        assert!(!agreed[0].m.sun_enabled && !agreed[1].m.sun_enabled);
+        assert!(agreed[0].m.ds_shout_enabled && agreed[1].m.ds_shout_enabled);
+        assert!(agreed[0].m.ds_shout_max_only && agreed[1].m.ds_shout_max_only);
+        let start0 = agreed[0].set.start();
+        let start1 = agreed[1].set.start();
+        assert_eq!(start0.digest(), start1.digest());
+        let fx = start0.setup.settings.effects;
+        assert_ne!(fx & saito_battle::setup::effects::NO_SUN, 0);
+        assert_ne!(fx & saito_battle::setup::effects::DS_SHOUT, 0);
+        assert_ne!(fx & saito_battle::setup::effects::DS_SHOUT_MAX_ONLY, 0);
+
+        // Under pure GBA ruleset (allow_ds = false), DS_SHOUT stays disabled even if ds_shout_max_only is set.
+        let mut gba_settings = Settings::new("exe5", TRIPLE_BATTLE, senior_gba);
+        gba_settings.ds_shout_max_only = true;
+        let (set_gba, m_gba) = crate::netplay::netplay_setup(&exe5, 42, &gba_settings, [side5.clone(), side5]).unwrap();
+        assert!(!m_gba.ds_shout_enabled);
+        assert!(!m_gba.ds_shout_max_only);
+        let gba_fx = set_gba.start().setup.settings.effects;
+        assert_eq!(gba_fx & saito_battle::setup::effects::DS_SHOUT, 0);
+        assert_eq!(gba_fx & saito_battle::setup::effects::DS_SHOUT_MAX_ONLY, 0);
+    }
 }

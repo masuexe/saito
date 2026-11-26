@@ -54,6 +54,10 @@ pub fn classify_level(level: f32, sensitivity: f32) -> u8 {
 
 /// Compute a normalized amplitude (`0.0..=1.0`) from a slice of floating-point samples in `-1.0..=1.0`.
 /// Blends RMS and peak so short impulsive shouts and sustained voices both register cleanly.
+#[cfg(any(
+    test,
+    all(feature = "playback", not(target_arch = "wasm32"), not(target_os = "android"), not(target_os = "ios"))
+))]
 fn buffer_amplitude(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;

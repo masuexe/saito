@@ -571,8 +571,8 @@ impl Screen for Settings {
             "set.exe5ds-rom-clear" => {
                 shell.settings.exe5ds_rom = None;
                 shell.save_settings();
-                // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(None);
-                shell.games.reload("exe5");
+                saito_extract::nds::set_exe5ds_rom_path(None);
+                shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
                 self.show(shell);
             }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, !shell.settings.mic_shout_enabled),
@@ -804,10 +804,16 @@ impl Screen for Settings {
     fn chosen(&mut self, shell: &mut Shell, purpose: &str, paths: &[std::path::PathBuf]) {
         if purpose == "exe5ds-rom" {
             let Some(path) = paths.first().cloned() else { return };
-            // TODO(integrate): validate with saito_extract::nds::is_exe5ds_rom(&path) and call saito_extract::nds::set_exe5ds_rom_path(Some(path.clone()));
+            if !saito_extract::nds::is_exe5ds_rom(&path) {
+                crate::errors::log("selecting EXE5DS ROM", &format!("{} is not a Mega Man Battle Network 5 Double Team DS ROM", path.display()));
+                shell.sound.play(Cue::Refused);
+                self.show(shell);
+                return;
+            }
+            saito_extract::nds::set_exe5ds_rom_path(Some(path.clone()));
             shell.settings.exe5ds_rom = Some(path);
             shell.save_settings();
-            shell.games.reload("exe5");
+            shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
             shell.sound.play(Cue::Pick);
             self.show(shell);
             return;

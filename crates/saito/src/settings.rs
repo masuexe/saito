@@ -312,7 +312,7 @@ impl Settings {
         };
         s.quick_shout_tier = s.quick_shout_tier.clamp(1, 3);
         s.touch_pad_layout = s.touch_pad_layout.sanitized();
-        // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
+        saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
         s
     }
 

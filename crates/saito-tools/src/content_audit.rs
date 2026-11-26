@@ -185,6 +185,9 @@ fn check(c: &Content, graphics: &Graphics, text: &DisplayText, lettered: bool, b
         if let Some(name) = text.navi_variant_name(c, navi).filter(|_| lettered) {
             lookups::navi_name(hud, navi, true, name, p);
         }
+        if let Some(name) = text.navi_variant_name_sol(c, navi).filter(|_| lettered) {
+            lookups::navi_name(hud, navi, true, name, p);
+        }
         if let Some(said) = text.run_message(c, navi).filter(|_| lettered) {
             lookups::dialogue(font, Lookup::RunMessage(navi), said.text, p);
         }
@@ -237,9 +240,12 @@ fn check(c: &Content, graphics: &Graphics, text: &DisplayText, lettered: bool, b
     // (A form's faces by each of its game's emotions.)
     for i in 0..c.defs.forms.len() {
         for e in 0..c.rules().emotion.names.len() {
-            for variant in [0u8, 1, 2] {
+            for variant in [0u8, 1, 2, 3] {
                 lookups::form_face(graphics, c, FormHandle(i as u16), saito_battle::content::Emotion(e as u8), variant, p);
             }
+        }
+        for variant in [0u8, 1, 2, 3] {
+            lookups::form_danger_face(graphics, c, FormHandle(i as u16), variant, p);
         }
     }
 

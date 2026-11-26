@@ -282,6 +282,8 @@ pub fn check(s: &Strings, defs: &Defs, text_tables: &[String], own: bool) -> Vec
         text(format!("navis.{key}.long_name"), &n.long_name);
         text(format!("navis.{key}.variant_name"), &n.variant_name);
         text(format!("navis.{key}.variant_long_name"), &n.variant_long_name);
+        text(format!("navis.{key}.variant_name_sol"), &n.variant_name_sol);
+        text(format!("navis.{key}.variant_long_name_sol"), &n.variant_long_name_sol);
         text(format!("navis.{key}.run_message"), &n.run_message);
     }
     for (key, f) in &s.forms {

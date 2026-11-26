@@ -188,7 +188,6 @@ impl Games {
         if own_data {
             remove_packs();
         }
-        // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(settings.exe5ds_rom.clone()) when loading games.
         let mut games = Games { chosen: chosen.map(Path::to_path_buf), ..Games::read_of(Vec::new()) };
         let ids = match crate::contents::games() {
             Ok(ids) => ids,
@@ -309,8 +308,13 @@ impl Games {
 
     /// Mark every currently loaded game for reload (e.g. after importing `vol2.dat` for HD chip art).
     pub fn reload_all(&mut self) {
+        self.reload_where(|_| true);
+    }
+
+    /// Mark every currently loaded game whose id satisfies `predicate` for reload.
+    pub fn reload_where(&mut self, mut predicate: impl FnMut(&str) -> bool) {
         for entry in &mut self.list {
-            if matches!(entry.state, State::Ready(_)) {
+            if predicate(&entry.id) && matches!(entry.state, State::Ready(_)) {
                 entry.state = State::NotLoaded;
             }
         }

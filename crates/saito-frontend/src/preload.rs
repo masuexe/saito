@@ -429,9 +429,12 @@ impl Preload {
         if let Some(name) = text.navi_variant_name(c, navi) {
             lookups::navi_name(hud, navi, true, name, p);
         }
+        if let Some(name) = text.navi_variant_name_sol(c, navi) {
+            lookups::navi_name(hud, navi, true, name, p);
+        }
         // The sharp text's glyphs of its names, on their bar.
         if let Some(t) = self.text.as_mut().filter(|_| sharp) {
-            for name in [Some(text.navi_name(c, navi)), text.navi_variant_name(c, navi)].into_iter().flatten() {
+            for name in [Some(text.navi_name(c, navi)), text.navi_variant_name(c, navi), text.navi_variant_name_sol(c, navi)].into_iter().flatten() {
                 t.prepare(name, Role::FittedCell);
             }
         }
@@ -448,9 +451,12 @@ impl Preload {
         let p = &mut self.renderer.problems;
         let (hud, a) = (&view.bundle().hud, &view.bundle().custom);
         for e in 0..c.rules().emotion.names.len() {
-            for variant in [0u8, 1, 2] {
+            for variant in [0u8, 1, 2, 3] {
                 lookups::form_face(&view, c, form, Emotion(e as u8), variant, p);
             }
+        }
+        for variant in [0u8, 1, 2, 3] {
+            lookups::form_danger_face(&view, c, form, variant, p);
         }
         let windowed = c.defs.rules().is_some_and(|r| r.views.form_list.is_some());
         if windowed && lookups::custom_graphics(a, p) && saito_render::custom::form_name_picture(c, a, navi, form).is_some() {
