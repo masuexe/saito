@@ -139,11 +139,12 @@ impl Tab for Navi {
         EditorTab::Navi
     }
 
-    /// The navi, its base HP (where customizable), and the forms the build chooses.
+    /// The navi, its base HP (where customizable), optional boolean `sol_cross`, and the forms the build chooses.
     fn fields(&self, content: &Content) -> Vec<String> {
         let navi = content.defs.fact_name(PlayerFact::Navi).map(str::to_string);
         let hp = content.defs.fact_name(PlayerFact::BaseHp).map(str::to_string);
-        navi.into_iter().chain(hp).chain(saito_match::facts::form_facts(content).iter().map(|f| f.name.to_string())).collect()
+        let sol_cross = saito_match::facts::field(content, "sol_cross").map(|_| "sol_cross".to_string());
+        navi.into_iter().chain(hp).chain(sol_cross).chain(saito_match::facts::form_facts(content).iter().map(|f| f.name.to_string())).collect()
     }
 
     fn main(&self) -> &'static str {
@@ -210,6 +211,21 @@ impl Tab for Navi {
                 view.set_base_hp(Default::default());
                 view.set_base_hp_min(false);
                 view.set_base_hp_max(false);
+            }
+            let has_sol_cross = has_sol_cross_toggle(&content, &kit, chosen);
+            if has_sol_cross {
+                let on = matches!(draft.side().facts.get(&content, "sol_cross"), Some(saito_match::facts::Stated::Flag(true)));
+                let banned = sol_cross_banned(&content, &kit, draft);
+                let flagged = draft.checked.problems.iter().any(|p| p.field.as_deref() == Some("sol_cross"));
+                view.set_has_sol_cross(true);
+                view.set_sol_cross(on);
+                view.set_sol_cross_banned(banned);
+                view.set_sol_cross_flagged(flagged);
+            } else {
+                view.set_has_sol_cross(false);
+                view.set_sol_cross(false);
+                view.set_sol_cross_banned(false);
+                view.set_sol_cross_flagged(false);
             }
             let own = saito_match::first_navi(&content, &kit.game);
             view.set_own(own.map(|n| names.navi(n)).unwrap_or_default().into());
@@ -324,7 +340,7 @@ impl Tab for Navi {
         view.set_face(face);
         view.set_element(kit.pictures.element(family(&content, content.navi(chosen).element), shell.settings.hd_chip_art));
         // (The focus starts on the build's navi's card: in the grid, or on a phone the one that opens its sheet.)
-        let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "base-hp", "base-hp-step", "tab", "ruleset", "ruleset-edit", "practice"];
+        let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "base-hp", "base-hp-step", "sol-cross", "tab", "ruleset", "ruleset-edit", "practice"];
         if shell.nav.focused().is_none_or(|k| (!known.contains(&k.id.as_str()) && !k.id.starts_with(SHEET)) || (!phone && k.id == "navi-pick")) {
             if phone {
                 shell.nav.focus("navi-pick", 0);
@@ -432,6 +448,10 @@ impl Tab for Navi {
                     shell.sound.play(crate::sound::Cue::Refused);
                 }
             }
+            "sol-cross" => {
+                let cur = matches!(draft.side().facts.get(draft.content(), "sol_cross"), Some(saito_match::facts::Stated::Flag(true)));
+                toggle_sol_cross(self, shell, draft, !cur);
+            }
             _ => {}
         }
     }
@@ -467,6 +487,10 @@ impl Tab for Navi {
 
     /// Left or Right on a choice: its preset that way, none past its ends (a segmented control's).
     fn step(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, index: i32, by: i32) {
+        if id == "sol-cross" {
+            toggle_sol_cross(self, shell, draft, by > 0);
+            return;
+        }
         if id != "choice" {
             return;
         }
@@ -480,6 +504,10 @@ impl Tab for Navi {
 
     /// A click or a tap on a choice's segment: its preset.
     fn choose(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, index: i32, choice: i32) {
+        if id == "sol-cross" {
+            toggle_sol_cross(self, shell, draft, choice == 1);
+            return;
+        }
         if id == "choice" {
             take(self, shell, draft, index, choice);
         }
@@ -548,4 +576,52 @@ fn step_base_hp(draft: &mut Draft, delta: i32) -> bool {
         return false;
     }
     set_base_hp(draft, next)
+}
+
+/// Whether the Navi tab should show a dedicated boolean Sol Cross toggle for `chosen`:
+/// true when `content` declares a boolean `sol_cross` setup fact, `builds.choices` does not already
+/// render a Choice for it, and `chosen` is the game's form-changing navi (MegaMan).
+fn has_sol_cross_toggle(content: &Content, kit: &crate::builds::Kit, chosen: NaviHandle) -> bool {
+    content.navi(chosen).changes_form()
+        && saito_match::facts::field(content, "sol_cross").is_some_and(|f| matches!(f.ty, saito_content_api::FieldType::Bool))
+        && !kit.builds.choices.iter().any(|c| c.facts().contains(&"sol_cross"))
+}
+
+/// Whether enabling `sol_cross` is disallowed under the build's current ruleset.
+fn sol_cross_banned(content: &Content, kit: &crate::builds::Kit, draft: &Draft) -> bool {
+    let Some(made) = &draft.ruleset else { return false };
+    if !made.pick.ruleset.allow_ds {
+        return true;
+    }
+    let Some(rulesets) = kit.rulesets() else { return false };
+    let mut probe = draft.side().clone();
+    let _ = probe.set_fact(content, "sol_cross", &[saito_battle::rules::Fact::Value(saito_content_api::Value::Bool(true))]);
+    made.pick.ruleset.problems(&rulesets, content, &probe).iter().any(|p| p.field.as_deref() == Some("sol_cross"))
+}
+
+fn toggle_sol_cross(tab: &mut Navi, shell: &mut Shell, draft: &mut Draft, next: bool) {
+    let content = draft.content().clone();
+    let kit = draft.kit.clone();
+    let chosen = draft.side().navi(&content);
+    if !has_sol_cross_toggle(&content, &kit, chosen) {
+        return;
+    }
+    if next && sol_cross_banned(&content, &kit, draft) {
+        shell.sound.play(crate::sound::Cue::Refused);
+        return;
+    }
+    let changed = draft.edit(|content, side| {
+        let before = side.clone();
+        match side.set_fact(content, "sol_cross", &[saito_battle::rules::Fact::Value(saito_content_api::Value::Bool(next))]) {
+            Ok(()) => *side != before,
+            Err(why) => {
+                crate::errors::log("setting sol_cross", &why);
+                false
+            }
+        }
+    });
+    if changed {
+        shell.sound.play(crate::sound::Cue::Pick);
+        tab.show(shell, draft);
+    }
 }

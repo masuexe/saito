@@ -59,6 +59,10 @@ export enum PracticeOption {
     abd-cap,
     // EXE5 / EXE6 per-effect ChargeShot Addition probability fix.
     cs-prob-fix,
+    // EXE5 outdoor sunlight state (Outdoor / Indoor).
+    sunlight,
+    // EXE5DS Shout volume mode (Real 3-Tier / Always Max), shown for 5DS builds.
+    ds-shout-mode,
     input-display,
     // Netplay's input delay, in frames (the one setting: changed here, it is changed for netplay too).
     input-delay,
@@ -178,6 +182,12 @@ export global PracticeView {
         if option == PracticeOption.cs-prob-fix {
             return @tr("CS Prob Fix");
         }
+        if option == PracticeOption.sunlight {
+            return @tr("Sunlight");
+        }
+        if option == PracticeOption.ds-shout-mode {
+            return @tr("Shout volume");
+        }
         if option == PracticeOption.input-display {
             return @tr("Input display");
         }
@@ -221,6 +231,12 @@ export global PracticeView {
         }
         if option == PracticeOption.cs-prob-fix {
             return value == 1 ? @tr("All Fixed") : @tr("Original");
+        }
+        if option == PracticeOption.sunlight {
+            return value == 0 ? @tr("Outdoor") : @tr("Indoor");
+        }
+        if option == PracticeOption.ds-shout-mode {
+            return value == 0 ? @tr("3-Tier") : @tr("Always Max");
         }
         if option == PracticeOption.input-display {
             return value == 0 ? @tr("Off") : @tr("On");

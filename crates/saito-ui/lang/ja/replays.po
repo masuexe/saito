@@ -399,3 +399,15 @@ msgstr "善ダークカットイン：原作"
 
 msgid "ABD Cap: {}"
 msgstr "ABD上限: {}回"
+
+msgid "Sunlight: Outdoor"
+msgstr "太陽：屋外"
+
+msgid "Sunlight: Indoor"
+msgstr "太陽：屋内"
+
+msgid "Shout: Always Max"
+msgstr "マイク：常に最大"
+
+msgid "Shout: 3-Tier"
+msgstr "マイク：3段階"

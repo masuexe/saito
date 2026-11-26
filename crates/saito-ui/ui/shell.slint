@@ -392,6 +392,14 @@ export global Shell {
     // The player's party beside the battle, in a party battle (`PartyHud`): read from the battle each frame. On a
     // phone the pad has the switches' two buttons (bits 14 and 15), each with the member it names.
     in property <PartyHud> party;
+    // EXE5DS Crisis Shout HUD state: true only in 5DS ruleset matches when the local navi is in Danger and hasn't shouted yet.
+    in property <bool> shout-available;
+    // True only while the microphone input stream is actively open and listening in Danger state.
+    in property <bool> mic-listening;
+    // Key/gamepad hint for the Quick-Shout action.
+    in property <Hint> shout-key;
+    // Triggered by clicking/tapping the on-screen SHOUT! button during live battle / practice.
+    callback quick-shout();
     // Customizable offsets and scale multipliers for the mobile virtual touch pad (`Settings::touch_pad_layout`).
     in property <PadLayout> portrait-pad-layout: { dpad: { scale: 1 }, a: { scale: 1 }, b: { scale: 1 }, l: { scale: 1 }, r: { scale: 1 }, select: { scale: 1 }, start: { scale: 1 } };
     in property <PadLayout> landscape-pad-layout: { dpad: { scale: 1 }, a: { scale: 1 }, b: { scale: 1 }, l: { scale: 1 }, r: { scale: 1 }, select: { scale: 1 }, start: { scale: 1 } };

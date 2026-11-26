@@ -1203,6 +1203,8 @@ pub enum NavInput {
     /// The pointer on the battle's picture, for the custom screen (`Shell.picture-pointer`): its kind, its button,
     /// its place in the picture (logical pixels), whether it is a finger.
     Picture { kind: i32, button: i32, x: f32, y: f32 },
+    /// On-screen EXE5DS Crisis Shout HUD button clicked/tapped.
+    QuickShout,
     /// Interactive virtual touch pad layout adjustments from Settings.
     TouchLayout(TouchLayoutEdit),
 }
@@ -1790,6 +1792,7 @@ impl App {
             }
             NavInput::PadKey(bit, rect) => self.shell.touch.place(bit.clamp(0, 15) as u8, rect),
             NavInput::Picture { kind, button, x, y } => self.shell.picture_pointer(kind, button, x, y),
+            NavInput::QuickShout => self.shell.quick_shout(),
             NavInput::TouchLayout(edit) => self.edit_touch_layout(edit),
         }
         self.settle();

@@ -524,3 +524,21 @@ msgstr "ABD 상한: 끔"
 
 msgid "ABD Chip Usage"
 msgstr "ABD 칩 사용 횟수"
+
+msgid "Sunlight: {}"
+msgstr "태양광: {}"
+
+msgid "Outdoor"
+msgstr "실외(태양광)"
+
+msgid "Indoor"
+msgstr "실내(그늘)"
+
+msgid "Shout: {}"
+msgstr "외치기 음량: {}"
+
+msgid "Always Max"
+msgstr "항상 최대"
+
+msgid "3-Tier"
+msgstr "3단계"

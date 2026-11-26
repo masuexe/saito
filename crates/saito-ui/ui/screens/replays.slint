@@ -327,6 +327,12 @@ export global ReplaysView {
     pure public function dark-cut-in-word(fix: bool) -> string {
         return fix ? @tr("Dark Cut-In: LC") : @tr("Dark Cut-In: Original");
     }
+    pure public function sun-word(sun: bool) -> string {
+        return sun ? @tr("Sunlight: Outdoor") : @tr("Sunlight: Indoor");
+    }
+    pure public function ds-shout-word(max-only: bool) -> string {
+        return max-only ? @tr("Shout: Always Max") : @tr("Shout: 3-Tier");
+    }
 }
 
 // ---- The list -------------------------------------------------------------------------------------------

@@ -741,3 +741,6 @@ msgstr "5DS판 (더블 팀 DS — EXE5 전용)"
 
 msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
 msgstr "• 내부 칩 ID 오름차순 정렬: 4/4/2/2/1×12 가중치를 적용하기 전에 스탠다드/다크 풀과 메가 풀이 내부 배틀칩 ID 오름차순으로 정렬됩니다(사용 횟수가 아닌 앞선 ID가 높은 가중치를 차지).\n• 칩 사용 후 버스터 쿨타임: 다크 칩, 서치맨(일반/SP/DS), 샤크파(1~3), 빅노이즈 사용 후 다음 칩을 시도하기 전에 3연발 버스터를 8회(원작은 2회) 발사해야 합니다."
+
+msgid "Sol Cross"
+msgstr "솔 크로스"

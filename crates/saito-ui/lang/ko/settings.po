@@ -296,3 +296,66 @@ msgstr "기록이 아직 없습니다."
 
 msgid "{} rounds (GBA: {} · LC: {} · NDS: {})"
 msgstr "{} 라운드 (GBA: {} · 컬렉션: {} · NDS: {})"
+
+msgid "Quick shout"
+msgstr "빠른 외치기"
+
+msgid "EXE5DS ROM"
+msgstr "EXE5DS ROM"
+
+msgid "Not set (using GBA fallback)"
+msgstr "미설정 (GBA 대체 리소스 사용)"
+
+msgid "EXE5DS Crisis Microphone"
+msgstr "EXE5DS 위기 마이크"
+
+msgid "Danger microphone"
+msgstr "위기 상태 시 마이크 자동 활성화"
+
+msgid "Auto-enable microphone in Danger state."
+msgstr "위기 상태에서만 마이크를 자동으로 켜고 벗어나면 즉시 닫습니다."
+
+msgid "Mic sensitivity"
+msgstr "마이크 감도"
+
+msgid "Microphone gain (25–400%). Default is 100%."
+msgstr "마이크 입력 게인(25–400%). 기본값은 100%입니다."
+
+msgid "Mic test"
+msgstr "마이크 테스트"
+
+msgid "Peak: High"
+msgstr "최고 음량: 높음"
+
+msgid "Peak: Medium"
+msgstr "최고 음량: 보통"
+
+msgid "Peak: Low"
+msgstr "최고 음량: 낮음"
+
+msgid "Listening…"
+msgstr "입력 대기 중…"
+
+msgid "Test Low / Medium / High shout thresholds."
+msgstr "낮음 / 보통 / 높음 3단계 외치기 음량 기준을 테스트합니다."
+
+msgid "Stop test"
+msgstr "테스트 중지"
+
+msgid "Test mic"
+msgstr "마이크 테스트"
+
+msgid "Quick-Shout tier"
+msgstr "빠른 외치기 음량"
+
+msgid "Volume tier sent by the Quick-Shout key or button in 3-Tier mode."
+msgstr "3단계 모드에서 빠른 외치기 키 또는 버튼으로 전송할 음량 단계입니다."
+
+msgid "Low"
+msgstr "낮음"
+
+msgid "Medium"
+msgstr "보통"
+
+msgid "High"
+msgstr "높음"

@@ -44,8 +44,23 @@ export global SettingsView {
     in property <bool> hd-chip-art;
     in property <bool> has-hd-art;
     in property <bool> importing-hd-art;
+    // Optional EXE5DS (.nds) ROM filename for DS-authentic SolCross & Danger HUD art (empty = GBA fallback).
+    in property <string> exe5ds-rom;
     in property <int> music;
     in property <int> effects;
+    // EXE5DS Crisis Microphone settings & live test meter.
+    in property <bool> mic-supported: true;
+    in property <bool> mic-shout-enabled: false;
+    // Gain in percent (25..=400 -> 0.25x..=4.00x).
+    in property <int> mic-sensitivity: 100;
+    // Simulated Quick-Shout volume tier: 1 = Low, 2 = Medium, 3 = High.
+    in property <int> quick-shout-tier: 3;
+    in property <bool> mic-testing: false;
+    // Scaled live input level (0.0..=1.0) and tier (0..=3) while testing.
+    in property <float> mic-level: 0.0;
+    in property <int> mic-tier: 0;
+    in property <int> mic-last-tier: 0;
+    in property <string> mic-error;
     in property <int> input-delay;
     in property <string> signaling-server;
     in property <string> default-signaling-server;
@@ -202,7 +217,7 @@ export component BindBox inherits Rectangle {
 component SettingsPage inherits Page {
     property <[string]> groups: [@tr("General"), @tr("Video"), @tr("Audio"), @tr("Online"), @tr("Controls"), @tr("About")];
     // (A pad's A and B are the menus' confirm and back too: they say so. The keyboard's are Enter and Esc.)
-    property <[string]> actions: [@tr("Up"), @tr("Down"), @tr("Left"), @tr("Right"), @tr("A · Pad confirms"), @tr("B · Pad goes back"), "L", "R", "START", "SELECT", @tr("Navi change left"), @tr("Navi change right")];
+    property <[string]> actions: [@tr("Up"), @tr("Down"), @tr("Left"), @tr("Right"), @tr("A · Pad confirms"), @tr("B · Pad goes back"), "L", "R", "START", "SELECT", @tr("Navi change left"), @tr("Navi change right"), @tr("Quick shout")];
     // (A phone has the page alone.)
     property <[string]> shown-groups: Theme.phone ? [] : root.groups;
     property <length> list-width: Theme.phone ? 0px : Theme.sideways ? 172px : 260px;
@@ -575,6 +590,32 @@ component SettingsPage inherits Page {
                     }
                 }
 
+                Rectangle {
+                    height: exe5ds-rom-row.height;
+                    exe5ds-rom-row := SettingLabel {
+                        label: @tr("EXE5DS ROM");
+                        note: SettingsView.exe5ds-rom == "" ? @tr("Not set (using GBA fallback)") : SettingsView.exe5ds-rom;
+                        cut: SettingsView.exe5ds-rom != "";
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    exe5ds-browse := Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.exe5ds-rom";
+                        text: I18n.upper(@tr("Choose file"));
+                    }
+
+                    if SettingsView.exe5ds-rom != "": Button {
+                        x: exe5ds-browse.x + exe5ds-browse.width + 8px;
+                        y: 4px;
+                        nav: "set.exe5ds-rom-clear";
+                        kind: ButtonKind.ghost;
+                        text: I18n.upper(@tr("Clear"));
+                    }
+                }
+
                 g-audio := GroupTitle {
                     text: I18n.upper(@tr("Audio"));
                 }
@@ -610,6 +651,147 @@ component SettingsPage inherits Page {
                         width: root.control-width;
                         nav: "set.effects";
                         value: SettingsView.effects;
+                    }
+                }
+
+                SubTitle {
+                    text: @tr("EXE5DS Crisis Microphone");
+                }
+
+                Rectangle {
+                    height: mic-shout-row.height;
+                    mic-shout-row := SettingLabel {
+                        label: @tr("Danger microphone");
+                        note: @tr("Auto-enable microphone in Danger state.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.mic-shout";
+                        enabled: SettingsView.mic-supported;
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.mic-shout-enabled ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: mic-sens-row.height;
+                    mic-sens-row := SettingLabel {
+                        label: @tr("Mic sensitivity");
+                        note: @tr("Microphone gain (25–400%). Default is 100%.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Slider {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width;
+                        nav: "set.mic-sensitivity";
+                        value: SettingsView.mic-sensitivity;
+                        maximum: 400;
+                    }
+                }
+
+                Rectangle {
+                    height: mic-test-row.height;
+                    mic-test-row := SettingLabel {
+                        label: @tr("Mic test");
+                        note: SettingsView.mic-error != ""
+                            ? SettingsView.mic-error
+                            : SettingsView.mic-testing
+                                ? (SettingsView.mic-last-tier == 3
+                                    ? @tr("Peak: High")
+                                    : SettingsView.mic-last-tier == 2
+                                        ? @tr("Peak: Medium")
+                                        : SettingsView.mic-last-tier == 1
+                                            ? @tr("Peak: Low")
+                                            : @tr("Listening…"))
+                                : @tr("Test Low / Medium / High shout thresholds.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    mic-test-btn := Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.mic-test";
+                        enabled: SettingsView.mic-supported;
+                        kind: SettingsView.mic-testing ? ButtonKind.main : ButtonKind.normal;
+                        text: I18n.upper(SettingsView.mic-testing ? @tr("Stop test") : @tr("Test mic"));
+                    }
+
+                    // Live level meter with Low (0.12), Medium (0.28), High (0.52) threshold markers.
+                    Rectangle {
+                        x: mic-test-btn.x + mic-test-btn.width + 10px;
+                        y: 12px;
+                        width: max(0px, root.control-width - mic-test-btn.width - 10px);
+                        height: 24px;
+                        background: Theme.inset;
+                        border-width: 1px;
+                        border-color: SettingsView.mic-testing ? Theme.cursor : Theme.line;
+                        clip: true;
+
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            width: parent.width * clamp(SettingsView.mic-level, 0, 1);
+                            height: parent.height;
+                            background: SettingsView.mic-tier >= 3
+                                ? Theme.bad
+                                : SettingsView.mic-tier == 2
+                                    ? Theme.action
+                                    : SettingsView.mic-tier == 1
+                                        ? Theme.good
+                                        : Theme.muted;
+                        }
+
+                        // Threshold markers: Low (12%), Medium (28%), High (52%) of full scale.
+                        Rectangle {
+                            x: parent.width * 0.12;
+                            y: 0;
+                            width: 1px;
+                            height: parent.height;
+                            background: Theme.text.with-alpha(0.35);
+                        }
+                        Rectangle {
+                            x: parent.width * 0.28;
+                            y: 0;
+                            width: 1px;
+                            height: parent.height;
+                            background: Theme.text.with-alpha(0.35);
+                        }
+                        Rectangle {
+                            x: parent.width * 0.52;
+                            y: 0;
+                            width: 1px;
+                            height: parent.height;
+                            background: Theme.text.with-alpha(0.5);
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: quick-shout-row.height;
+                    quick-shout-row := SettingLabel {
+                        label: @tr("Quick-Shout tier");
+                        note: @tr("Volume tier sent by the Quick-Shout key or button in 3-Tier mode.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.quick-shout-tier";
+                        first: I18n.upper(@tr("Low"));
+                        second: I18n.upper(@tr("Medium"));
+                        third: I18n.upper(@tr("High"));
+                        chosen: clamp(SettingsView.quick-shout-tier - 1, 0, 2);
                     }
                 }
 

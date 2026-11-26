@@ -131,6 +131,8 @@ const REMEMBERED_CUSTOM_TIME: &str = "play.custom-time";
 const REMEMBERED_SPECTATE_VISIBILITY: &str = "play.spectate-visibility";
 const REMEMBERED_SPECTATE_DELAY: &str = "play.spectate-delay";
 const REMEMBERED_RANDOM_BATTLE: &str = "play.random-battle";
+const REMEMBERED_SUN_ENABLED: &str = "play.sun-enabled";
+const REMEMBERED_DS_SHOUT_MAX_ONLY: &str = "play.ds-shout-max-only";
 const UNLIMITED: &str = "unlimited";
 
 fn remembered_abd_mode(game: &str) -> String {
@@ -316,6 +318,10 @@ struct Live {
     all_guard_disabled: bool,
     /// EXE5 Legacy Collection Light MegaMan dimming dark chip cut-in fix.
     dark_cut_in_fix: bool,
+    /// EXE5 outdoor sunlight state (`true` = Outdoor/Sunny default, `false` = Indoor/Shade).
+    sun_enabled: bool,
+    /// EXE5DS rule: force any Shout trigger to Tier 3 / Full Synchro (`false` = Real 3-Tier, `true` = Always Max).
+    ds_shout_max_only: bool,
     bars: i32,
     ping: i32,
     note: Option<LobbyNote>,
@@ -839,6 +845,10 @@ impl Play {
         let view = view.global::<PlayView>();
         let rows = if full { vec![view.get_stop_practice().to_string()] } else { Vec::new() };
         let mut start = practice::Start::beside(&game, practice::Build { name, side, stored }, ScreenId::Play, WAIT_ROWS, rows);
+        let caps = saito_match::capabilities::for_game(&game);
+        start.sun_enabled = self.waiting.as_ref().map_or(true, |s| s.sun_enabled);
+        start.ds_shout_enabled = caps.ds_shout_toggle && self.waiting.as_ref().is_some_and(|s| s.ruleset.allow_ds);
+        start.ds_shout_max_only = start.ds_shout_enabled && self.waiting.as_ref().is_some_and(|s| s.ds_shout_max_only);
         start.exit = Some(view.invoke_wait_exit(direct).to_string());
         start.full = full;
         if shell.still {
@@ -899,6 +909,12 @@ impl Play {
         if caps.dark_cut_in_fix {
             settings.dark_cut_in_fix = true;
         }
+        if caps.ds_sun_toggle {
+            settings.sun_enabled = remembered(REMEMBERED_SUN_ENABLED).and_then(|r| r.parse().ok()).unwrap_or(true);
+        }
+        if caps.ds_shout_toggle {
+            settings.ds_shout_max_only = remembered(REMEMBERED_DS_SHOUT_MAX_ONLY).and_then(|r| r.parse().ok()).unwrap_or(false);
+        }
         Some(settings)
     }
 
@@ -924,6 +940,13 @@ impl Play {
                     remembered.remove(&cap_key);
                 }
             }
+        }
+        let caps = saito_match::capabilities::for_game(&settings.game);
+        if caps.ds_sun_toggle {
+            remembered.insert(REMEMBERED_SUN_ENABLED.into(), settings.sun_enabled.to_string());
+        }
+        if caps.ds_shout_toggle {
+            remembered.insert(REMEMBERED_DS_SHOUT_MAX_ONLY.into(), settings.ds_shout_max_only.to_string());
         }
         shell.save_settings();
     }
@@ -1299,6 +1322,52 @@ impl Play {
         });
     }
 
+    fn toggle_sun_enabled(&mut self, shell: &mut Shell) {
+        if !self.is_host() {
+            return;
+        }
+        let changed = if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
+            let next = !lobby.settings().sun_enabled;
+            lobby.set_sun_enabled(next).then(|| lobby.settings().clone())
+        } else if let Some(waiting) = &mut self.waiting {
+            if saito_match::capabilities::for_game(&waiting.game).ds_sun_toggle {
+                waiting.sun_enabled = !waiting.sun_enabled;
+                Some(waiting.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(settings) = changed {
+            Self::remember_settings(shell, &settings);
+        }
+        self.ended = None;
+    }
+
+    fn toggle_ds_shout_max_only(&mut self, shell: &mut Shell) {
+        if !self.is_host() {
+            return;
+        }
+        let changed = if let Some(lobby) = self.session.as_mut().and_then(Session::lobby) {
+            let next = !lobby.settings().ds_shout_max_only;
+            lobby.set_ds_shout_max_only(next).then(|| lobby.settings().clone())
+        } else if let Some(waiting) = &mut self.waiting {
+            if saito_match::capabilities::for_game(&waiting.game).ds_shout_toggle && waiting.ruleset.allow_ds {
+                waiting.ds_shout_max_only = !waiting.ds_shout_max_only;
+                Some(waiting.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(settings) = changed {
+            Self::remember_settings(shell, &settings);
+        }
+        self.ended = None;
+    }
+
     fn set_cs_prob_fix(&mut self, shell: &mut Shell, fix: saito_match::CsProbFix) {
         if !self.is_host() {
             return;
@@ -1642,6 +1711,8 @@ impl Play {
             cs_prob_fix: settings.cs_prob_fix,
             all_guard_disabled: settings.all_guard_disabled,
             dark_cut_in_fix: settings.dark_cut_in_fix,
+            sun_enabled: settings.sun_enabled,
+            ds_shout_max_only: settings.ds_shout_max_only,
             bars: if reconnecting.is_some() { 0 } else { steady.map_or(ping.map_or(0, |p| p.quality().bars() as i32), |s| s.0) },
             ping: if reconnecting.is_some() { -1 } else { steady.map_or(ping.map_or(-1, |p| p.ms.round() as i32), |s| s.1) },
             // (A build the settings can't play: the lobby's own check, typed; while the host waits, the same check
@@ -1754,6 +1825,11 @@ impl Play {
         view.set_all_guard_disabled(live.all_guard_disabled);
         view.set_dark_cut_in_supported(caps.dark_cut_in_fix);
         view.set_dark_cut_in_fix(live.dark_cut_in_fix);
+        view.set_ds_sun_supported(caps.ds_sun_toggle);
+        view.set_sun_enabled(live.sun_enabled);
+        let shout_supported = caps.ds_shout_toggle && live.ruleset.as_ref().is_some_and(|r| r.allow_ds);
+        view.set_ds_shout_supported(shout_supported);
+        view.set_ds_shout_max_only(live.ds_shout_max_only);
         let cs_prob_changed = live.cs_prob_fix != self.live.cs_prob_fix;
         if self.cs_prob_dialog && cs_prob_changed {
             view.set_cs_prob_items(cs_prob_items(shell, &settings.game, live.cs_prob_fix));
@@ -2758,7 +2834,7 @@ impl Screen for Play {
             "builds" | "build" | "new" | "edit" | "practice" | "duplicate" | "delete" | "more" | "invite" | "rooms" | "direct" => part == PlayPart::Builds,
             "wait.copy" | "wait.cancel" | "wait.train" => matches!(self.stage, Stage::Waiting),
             // (The match's settings and the player's own are the host's to set while it waits too.)
-            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.abd-cap" | "lobby.cs-prob" | "lobby.extra-rule" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
+            "lobby.first-to" | "lobby.open" | "lobby.custom-time" | "lobby.ruleset" | "lobby.ruleset-sub" | "lobby.ruleset-mixed" | "lobby.rules" | "lobby.delay" | "lobby.spectate" | "lobby.spectate-delay" | "lobby.stage" | "lobby.random-battle" | "lobby.abd-mode" | "lobby.abd-guide" | "lobby.abd-cap" | "lobby.cs-prob" | "lobby.extra-rule" | "lobby.sun" | "lobby.shout-mode" => matches!(self.stage, Stage::Lobby | Stage::Waiting),
             _ if id.starts_with("abd-guide.") => self.abd_guide_dialog,
             _ if id.starts_with("stage.") => self.stage_dialog,
             _ if id.starts_with("cs-prob.") => self.cs_prob_dialog,
@@ -2932,6 +3008,8 @@ impl Screen for Play {
             "lobby.abd-guide" => self.open_abd_guide_dialog(shell),
             "abd-guide.close" => self.close_abd_guide_dialog(shell),
             "lobby.extra-rule" => self.toggle_extra_rule(shell),
+            "lobby.sun" => self.toggle_sun_enabled(shell),
+            "lobby.shout-mode" => self.toggle_ds_shout_max_only(shell),
             "lobby.cs-prob" => self.open_cs_prob_dialog(shell),
             "cs-prob.none" => self.set_cs_prob_fix(shell, saito_match::CsProbFix::NONE),
             "cs-prob.recommended" => {
