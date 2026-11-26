@@ -5976,6 +5976,7 @@ dependencies = [
  "saito-battle",
  "saito-content",
  "saito-content-api",
+ "saito-replay",
  "serde",
  "toml 0.8.23",
  "toml_edit 0.22.27",

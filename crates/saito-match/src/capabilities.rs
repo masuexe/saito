@@ -22,6 +22,8 @@ pub struct GameCapabilities {
     pub ruleset_sub_modes: bool,
     /// Supports Random Battle mode (EXE6).
     pub random_battle: bool,
+    /// Practice dummy supports the DarkInvs AI action (EXE5).
+    pub practice_dark_invs: bool,
 }
 
 const EXE4: GameCapabilities = GameCapabilities {
@@ -32,6 +34,7 @@ const EXE4: GameCapabilities = GameCapabilities {
     dark_cut_in_fix: false,
     ruleset_sub_modes: false,
     random_battle: false,
+    practice_dark_invs: false,
 };
 
 const EXE5: GameCapabilities = GameCapabilities {
@@ -42,6 +45,7 @@ const EXE5: GameCapabilities = GameCapabilities {
     dark_cut_in_fix: true,
     ruleset_sub_modes: true,
     random_battle: false,
+    practice_dark_invs: true,
 };
 
 const EXE6: GameCapabilities = GameCapabilities {
@@ -52,6 +56,7 @@ const EXE6: GameCapabilities = GameCapabilities {
     dark_cut_in_fix: false,
     ruleset_sub_modes: false,
     random_battle: true,
+    practice_dark_invs: false,
 };
 
 const UNKNOWN: GameCapabilities = GameCapabilities {
@@ -62,7 +67,37 @@ const UNKNOWN: GameCapabilities = GameCapabilities {
     dark_cut_in_fix: false,
     ruleset_sub_modes: false,
     random_battle: false,
+    practice_dark_invs: false,
 };
+
+/// Historical simulation-compatibility epochs for replay playback across
+/// engine minor lines.
+///
+/// Kept here instead of inside `saito-replay` so the replay format crate stays
+/// game-agnostic.
+pub const SIM_EPOCHS: &[saito_replay::SimEpoch] = &[
+    // 0.1 -> 0.2 only modified EXE5 party knockout / custom switch state (S-004, S-005).
+    // 0.2 -> 0.3 only modified EXE5 navi-switch guard clearing and party mood init (S-020, S-030).
+    // 0.3 -> 0.4 only modified EXE5 party-switch hand size recomputation and barrier wind rule (S-050, S-056).
+    // 0.4 -> 0.5 added EXE5 5DS ABD cooldown behavior in auto_battle/ai.luau (S-026).
+    // 0.5 -> 0.6 modified battle simulation across EXE4, EXE5, and EXE6 (S-093, S-094, S-097, S-104).
+    saito_replay::SimEpoch { line: "0.1", game: Some("exe5"), version: 1 },
+    saito_replay::SimEpoch { line: "0.2", game: Some("exe5"), version: 2 },
+    saito_replay::SimEpoch { line: "0.3", game: Some("exe5"), version: 3 },
+    saito_replay::SimEpoch { line: "0.4", game: Some("exe5"), version: 4 },
+    saito_replay::SimEpoch { line: "0.5", game: Some("exe5"), version: 5 },
+    saito_replay::SimEpoch { line: "0.1", game: None, version: 2 },
+    saito_replay::SimEpoch { line: "0.2", game: None, version: 2 },
+    saito_replay::SimEpoch { line: "0.3", game: None, version: 2 },
+    saito_replay::SimEpoch { line: "0.4", game: None, version: 2 },
+    saito_replay::SimEpoch { line: "0.5", game: None, version: 2 },
+    saito_replay::SimEpoch { line: "0.6", game: None, version: 6 },
+];
+
+/// Whether two engine versions share identical simulation behavior for `game`.
+pub fn same_sim(a: &str, b: &str, game: &str) -> bool {
+    saito_replay::same_sim(SIM_EPOCHS, a, b, game)
+}
 
 /// Capabilities for the given game ID.
 pub fn for_game(game: &str) -> GameCapabilities {
@@ -88,6 +123,7 @@ mod tests {
         assert!(!e4.dark_cut_in_fix);
         assert!(!e4.ruleset_sub_modes);
         assert!(!e4.random_battle);
+        assert!(!e4.practice_dark_invs);
 
         let e5 = for_game("exe5");
         assert!(e5.flat_standard_copy_limit);
@@ -97,6 +133,7 @@ mod tests {
         assert!(e5.dark_cut_in_fix);
         assert!(e5.ruleset_sub_modes);
         assert!(!e5.random_battle);
+        assert!(e5.practice_dark_invs);
 
         let e6 = for_game("exe6");
         assert!(!e6.flat_standard_copy_limit);
@@ -106,7 +143,20 @@ mod tests {
         assert!(!e6.dark_cut_in_fix);
         assert!(!e6.ruleset_sub_modes);
         assert!(e6.random_battle);
+        assert!(!e6.practice_dark_invs);
 
         assert_eq!(for_game("exe3"), GameCapabilities::default());
+    }
+
+    #[test]
+    fn sim_epochs_preserve_historical_replay_compatibility() {
+        assert!(same_sim("0.1.2", "0.5.0", "exe6"));
+        assert!(!same_sim("0.5.0", "0.6.0", "exe6"));
+        assert!(same_sim("0.1.0", "0.5.0", "exe4"));
+        assert!(!same_sim("0.5.0", "0.6.0", "exe4"));
+        assert!(!same_sim("0.1.2", "0.2.0", "exe5"));
+        assert!(!same_sim("0.4.0", "0.5.0", "exe5"));
+        assert!(!same_sim("0.5.0", "0.6.0", "exe5"));
+        assert!(same_sim("0.6.0", "0.6.1", "exe5"));
     }
 }

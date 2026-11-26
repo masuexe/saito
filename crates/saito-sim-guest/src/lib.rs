@@ -218,7 +218,7 @@ fn party_snapshot(open: &mut OpenViewer, side: u8) -> Option<PartySnapshot> {
 pub fn exec_play_out(req: &PlayOutRequest, replay_bytes: &[u8]) -> Result<PlayOutResponse, String> {
     let replay = Replay::read(replay_bytes).map_err(|e| e.to_string())?;
     let content = load_content(&req.game, &req.content_dir, &req.pool)?;
-    let compat = replay.head.compat(ENGINE, content.game(), content.hash().0).map_err(|e| e.to_string())?;
+    let compat = replay.head.compat(saito_match::capabilities::SIM_EPOCHS, ENGINE, content.game(), content.hash().0).map_err(|e| e.to_string())?;
     let outcome = play_out_compat(&content, &replay, compat).map_err(|e| e.to_string())?;
     Ok(PlayOutResponse {
         ticks: outcome.ticks,
@@ -235,7 +235,7 @@ pub fn exec_still(req: &StillRequest, replay_bytes: &[u8]) -> Result<Vec<u8>, St
     let replay = Replay::read(replay_bytes).map_err(|e| e.to_string())?;
     let enhancements = Enhancements { motion: false, ..enhancements_of(req.enhancements) };
     let loaded = load_game(&req.game, &req.content_dir, &req.pool, &req.roms, &req.lang, enhancements, false)?;
-    let compat = replay.head.compat(ENGINE, loaded.game.content.game(), loaded.game.content.hash().0).map_err(|e| e.to_string())?;
+    let compat = replay.head.compat(saito_match::capabilities::SIM_EPOCHS, ENGINE, loaded.game.content.game(), loaded.game.content.hash().0).map_err(|e| e.to_string())?;
     let mut viewer = Viewer::open_compat(&loaded, &replay, Some(req.side), compat).map_err(|e| e.to_string())?;
     let mut fought = 0;
     while fought < STILL_AFTER && viewer.step_forward() {
@@ -255,7 +255,7 @@ pub fn exec_viewer_open(req: &ViewerOpenRequest, replay_bytes: &[u8]) -> Result<
     let replay = Replay::read(replay_bytes).map_err(|e| e.to_string())?;
     let enhancements = enhancements_of(req.enhancements);
     let loaded = load_game(&req.game, &req.content_dir, &req.pool, &req.roms, &req.lang, enhancements, req.want_sound)?;
-    let compat = replay.head.compat(ENGINE, loaded.game.content.game(), loaded.game.content.hash().0).map_err(|e| e.to_string())?;
+    let compat = replay.head.compat(saito_match::capabilities::SIM_EPOCHS, ENGINE, loaded.game.content.game(), loaded.game.content.hash().0).map_err(|e| e.to_string())?;
     let viewer = Viewer::open_compat(&loaded, &replay, req.view, compat).map_err(|e| e.to_string())?;
     let resp = ViewerOpenResponse {
         handle: 0,

@@ -492,7 +492,7 @@ impl Replays {
         }
         let replay_line = saito_replay::line(&head.engine);
         let same_line = replay_line == saito_replay::line(ENGINE);
-        let same_sim = saito_replay::same_sim(&head.engine, ENGINE, game);
+        let same_sim = saito_match::capabilities::same_sim(&head.engine, ENGINE, game);
         let plays = self.plays_on_line(games, game, replay_line, here, head.content);
         match plays {
             Plays::Here | Plays::Stored(_) | Plays::Listed => Some((plays, if same_sim { Compat::Exact } else { Compat::Lenient })),
@@ -579,7 +579,7 @@ impl Replays {
     /// Return a [`WasmContext`] when a legacy replay has a different simulation version AND a matching
     /// historical WASM kernel is stored locally (or provided via `$SAITO_KERNELS`).
     fn wasm_context_for(&self, game: &str, head: &saito_replay::Head, content_dir: &Path) -> Option<WasmContext> {
-        if !crate::kernels::supported() || saito_replay::same_sim(&head.engine, ENGINE, game) {
+        if !crate::kernels::supported() || saito_match::capabilities::same_sim(&head.engine, ENGINE, game) {
             return None;
         }
         let replay_line = saito_replay::line(&head.engine);
@@ -594,7 +594,7 @@ impl Replays {
 
     /// Trigger remote discovery / download of a historical WASM simulation kernel for `replay_line` if needed.
     fn ask_for_kernel(&mut self, game: &str, engine: &str) {
-        if !crate::kernels::supported() || saito_replay::same_sim(engine, ENGINE, game) {
+        if !crate::kernels::supported() || saito_match::capabilities::same_sim(engine, ENGINE, game) {
             return;
         }
         let replay_line = saito_replay::line(engine);

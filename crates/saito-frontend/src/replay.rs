@@ -226,7 +226,7 @@ pub struct ReplayPlayer {
 /// match binary so older replays can be played best-effort.
 pub fn set_of_compat(content: &Arc<Content>, replay: &Replay, compat: Compat) -> Result<Set, Refused> {
     match compat {
-        Compat::Exact => replay.head.require_sim(ENGINE, content.game(), content.hash().0)?,
+        Compat::Exact => replay.head.require_sim(saito_match::capabilities::SIM_EPOCHS, ENGINE, content.game(), content.hash().0)?,
         Compat::Lenient => {
             if replay.head.game != content.game() {
                 return Err(Refused::OtherGame { replay: replay.head.game.clone(), here: content.game().to_string() });

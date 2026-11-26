@@ -30,13 +30,11 @@ const GAME_TOKENS: &[&str] = &[
 ///
 /// Shrink or remove entries as each site is migrated to capability-driven logic.
 const ALLOWLIST: &[(&str, usize)] = &[
-    // Centralized capability registry (single source of truth for game switches)
-    ("crates/saito-match/src/capabilities.rs", 3),
+    // Centralized capability & simulation-epoch registry (single source of truth)
+    ("crates/saito-match/src/capabilities.rs", 8),
     // Extraction / HD art (DP2)
     ("crates/saito-extract/src/hd_art.rs", 5),
     ("crates/saito-extract/src/lib.rs", 1),
-    // Replay compatibility table (DP4 — Coupling B)
-    ("crates/saito-replay/src/lib.rs", 5),
     // Remaining game-specific rule/data tables (DP5 — Coupling C)
     ("crates/saito-match/src/abd_mode.rs", 5),
     ("crates/saito-match/src/cs_prob_fix.rs", 7),
@@ -45,7 +43,6 @@ const ALLOWLIST: &[(&str, usize)] = &[
     ("crates/saito/src/games.rs", 1),
     ("crates/saito/src/rulesets/mod.rs", 12),
     ("crates/saito/src/screens/play/stage.rs", 6),
-    ("crates/saito/src/screens/practice.rs", 1),
 ];
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {

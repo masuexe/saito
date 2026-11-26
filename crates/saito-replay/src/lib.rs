@@ -111,33 +111,41 @@ pub fn line(version: &str) -> &str {
     }
 }
 
-/// Simulation compatibility version of `engine` for `game`.
+/// A simulation-compatibility mapping entry from an engine minor line (and
+/// optional specific game ID) to a simulation version number.
+///
+/// Specific `game: Some(...)` entries take precedence over wildcard
+/// `game: None` entries for the same engine line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimEpoch {
+    pub line: &'static str,
+    pub game: Option<&'static str>,
+    pub version: u32,
+}
+
+/// Simulation compatibility version of `engine` for `game` according to `epochs`.
 ///
 /// Decouples replay simulation compatibility from app/netplay minor versions and
 /// isolates game-specific simulation changes: two engine versions with the same
 /// simulation version for a game produce identical battles and digests from the
 /// same content and inputs.
-pub fn sim_version(engine: &str, game: &str) -> Option<u32> {
-    match (line(engine), game) {
-        // 0.1 -> 0.2 only modified EXE5 party knockout / custom switch state (S-004, S-005).
-        // 0.2 -> 0.3 only modified EXE5 navi-switch guard clearing and party mood init (S-020, S-030).
-        // 0.3 -> 0.4 only modified EXE5 party-switch hand size recomputation and barrier wind rule (S-050, S-056).
-        // 0.4 -> 0.5 added EXE5 5DS ABD cooldown behavior in auto_battle/ai.luau (S-026).
-        // 0.5 -> 0.6 modified battle simulation across EXE4, EXE5, and EXE6 (S-093, S-094, S-097, S-104).
-        ("0.1", "exe5") => Some(1),
-        ("0.2", "exe5") => Some(2),
-        ("0.3", "exe5") => Some(3),
-        ("0.4", "exe5") => Some(4),
-        ("0.5", "exe5") => Some(5),
-        ("0.1" | "0.2" | "0.3" | "0.4" | "0.5", _) => Some(2),
-        ("0.6", _) => Some(6),
-        _ => None,
-    }
+pub fn sim_version(epochs: &[SimEpoch], engine: &str, game: &str) -> Option<u32> {
+    let minor = line(engine);
+    epochs
+        .iter()
+        .find(|e| e.line == minor && e.game == Some(game))
+        .or_else(|| epochs.iter().find(|e| e.line == minor && e.game.is_none()))
+        .map(|e| e.version)
 }
 
-/// Whether two engine versions share identical simulation behavior for `game`.
-pub fn same_sim(a: &str, b: &str, game: &str) -> bool {
-    line(a) == line(b) || matches!((sim_version(a, game), sim_version(b, game)), (Some(va), Some(vb)) if va == vb)
+/// Whether two engine versions share identical simulation behavior for `game`
+/// under `epochs`.
+pub fn same_sim(epochs: &[SimEpoch], a: &str, b: &str, game: &str) -> bool {
+    line(a) == line(b)
+        || matches!(
+            (sim_version(epochs, a, game), sim_version(epochs, b, game)),
+            (Some(va), Some(vb)) if va == vb
+        )
 }
 
 /// How a replay is played against the current engine and content.
@@ -204,14 +212,14 @@ impl Head {
     /// That a replay of this head plays strictly on `engine`'s build of `game`'s
     /// `content`, accepting any engine that shares the same simulation version
     /// for `game` ([`same_sim`]).
-    pub fn require_sim(&self, engine: &str, game: &str, content: u64) -> Result<(), Mismatch> {
+    pub fn require_sim(&self, epochs: &[SimEpoch], engine: &str, game: &str, content: u64) -> Result<(), Mismatch> {
         if self.game != game {
             return Err(Mismatch::Game { replay: self.game.clone(), here: game.to_string() });
         }
         if self.content != content {
             return Err(Mismatch::Content { replay: self.content, here: content });
         }
-        if !same_sim(&self.engine, engine, game) {
+        if !same_sim(epochs, &self.engine, engine, game) {
             return Err(Mismatch::Engine { replay: self.engine.clone(), here: engine.to_string() });
         }
         Ok(())
@@ -221,11 +229,11 @@ impl Head {
     /// `content`. Refuses another game; returns [`Compat::Exact`] when content and
     /// simulation match, or [`Compat::Lenient`] when engine/simulation or content
     /// differs.
-    pub fn compat(&self, engine: &str, game: &str, content: u64) -> Result<Compat, Mismatch> {
+    pub fn compat(&self, epochs: &[SimEpoch], engine: &str, game: &str, content: u64) -> Result<Compat, Mismatch> {
         if self.game != game {
             return Err(Mismatch::Game { replay: self.game.clone(), here: game.to_string() });
         }
-        if same_sim(&self.engine, engine, game) && self.content == content {
+        if same_sim(epochs, &self.engine, engine, game) && self.content == content {
             Ok(Compat::Exact)
         } else {
             Ok(Compat::Lenient)

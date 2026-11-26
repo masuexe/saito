@@ -619,7 +619,7 @@ const EXE5_ACTIONS: [InFight; 5] = [InFight::StandsStill, InFight::MovesAround, 
 const EXE5_ACTIONS: [InFight; 4] = [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad, InFight::DarkInvs];
 
 fn actions_for(game: &str) -> &'static [InFight] {
-    if game == "exe5" { &EXE5_ACTIONS } else { &ACTIONS }
+    if saito_match::capabilities::for_game(game).practice_dark_invs { &EXE5_ACTIONS } else { &ACTIONS }
 }
 
 /// The Level row's values (`ai::LEVELS`: Easy, Normal, Hard); Normal at first.

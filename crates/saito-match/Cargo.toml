@@ -8,6 +8,7 @@ description = "Match files: everything a round needs (the game and its rules, th
 [dependencies]
 saito-battle.workspace = true
 saito-content-api = { path = "../saito-content-api" }
+saito-replay = { path = "../saito-replay" }
 serde ={ version = "1", features = ["derive"] }
 toml = "0.8"
 # A match file's folder entries written one a line.
