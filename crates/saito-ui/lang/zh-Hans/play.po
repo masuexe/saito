@@ -524,3 +524,21 @@ msgstr "ABD 上限：关闭"
 
 msgid "ABD Chip Usage"
 msgstr "ABD 芯片使用次数"
+
+msgid "Sunlight: {}"
+msgstr "阳光：{}"
+
+msgid "Outdoor"
+msgstr "室外（阳光）"
+
+msgid "Indoor"
+msgstr "室内（无阳光）"
+
+msgid "Shout: {}"
+msgstr "呐喊音量：{}"
+
+msgid "Always Max"
+msgstr "恒定最大"
+
+msgid "3-Tier"
+msgstr "真实三档"

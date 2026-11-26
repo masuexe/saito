@@ -453,3 +453,9 @@ msgstr "该房间已关闭观战。"
 
 msgid "Spectating is disabled"
 msgstr "该房间已关闭观战"
+
+msgid "Mic"
+msgstr "麦克风"
+
+msgid "Shout!"
+msgstr "呐喊！"

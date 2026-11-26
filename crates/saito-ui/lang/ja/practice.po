@@ -164,3 +164,9 @@ msgstr "DS版"
 
 msgid "ABD Chip Cap"
 msgstr "ABDチップ上限"
+
+msgid "Sunlight"
+msgstr "太陽"
+
+msgid "Shout volume"
+msgstr "マイク音量モード"

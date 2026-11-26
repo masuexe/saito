@@ -162,6 +162,10 @@ pub struct Battle {
     link: link::LinkHistory,
     /// A party battle's party beside it: the switches asked, and what the window shows (`battle/party.rs`).
     party: party::PartyState,
+    /// Danger-gated microphone input monitor for EXE5DS Crisis Shout (idle & closed outside Danger state).
+    mic: saito_audio::MicMonitor,
+    /// Whether the Quick-Shout key/pad binding was held on the previous frame (for rising-edge detection).
+    shout_held: bool,
     /// Persistent ABD usage logging context (Online & Practice EXE4/EXE5 battles).
     pub abd_log: Option<crate::abd_stats::AbdLogContext>,
     /// Recorded ABD high-class chip rounds for the current set (shown on MatchResult).
@@ -190,6 +194,8 @@ impl Battle {
         if !self.stage.player.restart() {
             return false;
         }
+        self.mic.set_armed(false);
+        self.shout_held = false;
         self.flush_abd_rounds(false);
         self.abd_records.clear();
         self.hold.reset(&mut self.stage.player);
@@ -254,10 +260,14 @@ impl Shell {
     /// Start a battle: the two cards while it is made ready, then the battle. The battle before it, if there
     /// is one, ends unheard.
     pub fn start_battle(&mut self, start: BattleStart) {
-        self.battle = None;
+        if let Some(mut old) = self.battle.take() {
+            old.mic.set_armed(false);
+        }
         self.nav.close("menu.");
         let ui = self.ui();
         let shell = ui.global::<saito_ui::Shell>();
+        shell.set_shout_available(false);
+        shell.set_mic_listening(false);
         if let Some([left, right]) = &start.cards {
             shell.set_versus_left(left.clone());
             shell.set_versus_right(right.clone());
@@ -272,10 +282,14 @@ impl Shell {
 
     /// Open a legacy replay inside a sandboxed historical WASM simulation kernel behind the versus cards.
     pub fn start_wasm_replay(&mut self, owner: ScreenId, cards: [VersusCard; 2], req: WasmWatch) {
-        self.battle = None;
+        if let Some(mut old) = self.battle.take() {
+            old.mic.set_armed(false);
+        }
         self.nav.close("menu.");
         let ui = self.ui();
         let shell = ui.global::<saito_ui::Shell>();
+        shell.set_shout_available(false);
+        shell.set_mic_listening(false);
         let [left, right] = cards;
         shell.set_versus_left(left);
         shell.set_versus_right(right);
@@ -483,8 +497,10 @@ impl Shell {
         shell.set_battle_menu(false);
         shell.set_connection_shown(false);
         shell.set_connection_open(false);
+        shell.set_shout_available(false);
+        shell.set_mic_listening(false);
         self.keys.pressed.clear();
-        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: start.abd_log, abd_records: Vec::new() });
+        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), mic: saito_audio::MicMonitor::new(), shout_held: false, abd_log: start.abd_log, abd_records: Vec::new() });
         Some((start.owner, BattleEvent::Started))
     }
 
@@ -547,9 +563,15 @@ impl Shell {
             return;
         }
         b.menu = true;
+        b.mic.set_armed(false);
+        b.shout_held = false;
         self.keys.release();
         self.nav.open("menu.", Key::new("menu.resume", 0));
-        self.ui().global::<saito_ui::Shell>().set_battle_menu(true);
+        let ui = self.ui();
+        let shell = ui.global::<saito_ui::Shell>();
+        shell.set_battle_menu(true);
+        shell.set_shout_available(false);
+        shell.set_mic_listening(false);
     }
 
     /// Put something of the battle's owner's over it, or take it away (a match's result, its controls' names
@@ -557,10 +579,20 @@ impl Shell {
     pub fn cover_battle(&mut self, scope: &str, focus: Option<Key>) {
         let Some(b) = &mut self.battle else { return };
         b.covered = focus.is_some();
+        if b.covered {
+            b.mic.set_armed(false);
+            b.shout_held = false;
+        }
         self.keys.release();
         match focus {
             Some(focus) => self.nav.open(scope, focus),
             None => self.nav.close(scope),
+        }
+        if b.covered {
+            let ui = self.ui();
+            let shell = ui.global::<saito_ui::Shell>();
+            shell.set_shout_available(false);
+            shell.set_mic_listening(false);
         }
     }
 
@@ -580,6 +612,7 @@ impl Shell {
     /// End the battle: the owner's screen shows again.
     pub fn end_battle(&mut self) {
         let Some(mut b) = self.battle.take() else { return };
+        b.mic.set_armed(false);
         b.flush_abd_rounds(b.kind == BattleKind::Practice);
         // The loading screens' check: a battle made ready loads no runtime and reads nothing while it plays.
         let late = b.stage.player.late();
@@ -599,8 +632,20 @@ impl Shell {
         shell.set_picture_hand(false);
         shell.set_connection_shown(false);
         shell.set_connection_open(false);
+        shell.set_shout_available(false);
+        shell.set_mic_listening(false);
         shell.set_party(Default::default());
         self.keys.release();
+    }
+
+    /// Trigger an EXE5DS Quick-Shout from the on-screen HUD button (desktop click or mobile touch).
+    pub fn quick_shout(&mut self) {
+        let dialog = self.dialog.is_some();
+        let tier = self.settings.quick_shout_tier;
+        let Some(b) = self.battle.as_mut() else { return };
+        if b.kind != BattleKind::Replay && b.playing() && !b.kept && !dialog && b.stage.player.can_shout() {
+            b.stage.player.ask_shout(tier);
+        }
     }
 
     /// A frame of the battle: the ticks due with the buttons held, its picture, its samples (into `samples`).
@@ -614,9 +659,27 @@ impl Shell {
             self.keys.release_mouse();
         }
         let mouse_held = if custom_open { 0 } else { self.keys.mouse_held };
-        let held = if b.playing() && !b.kept && self.dialog.is_none() { self.keys.held | mouse_held | self.pad.held(&self.bindings) | self.touch.held() } else { 0 };
-        // (A party battle's switches are asked of the player; the battle's buttons alone go on.)
-        let buttons = b.party.take_switches(&mut b.stage.player, b.viewer, held);
+        let has_keys = b.playing() && !b.kept && self.dialog.is_none();
+        let held = if has_keys { self.keys.held | mouse_held | self.pad.held(&self.bindings) | self.touch.held() } else { 0 };
+        // EXE5DS Crisis Shout (live play / practice ONLY; NEVER during replay playback).
+        let live_play = b.kind != BattleKind::Replay && has_keys;
+        let can_shout_before = live_play && b.stage.player.can_shout();
+        let shout_down = live_play && (held & crate::input::SHOUT != 0);
+        if shout_down && !b.shout_held && can_shout_before {
+            b.stage.player.ask_shout(self.settings.quick_shout_tier);
+        }
+        b.shout_held = shout_down;
+        if can_shout_before && self.settings.mic_shout_enabled {
+            b.mic.set_armed(true);
+            let tier = b.mic.poll_tier(self.settings.mic_sensitivity);
+            if tier > 0 {
+                b.stage.player.ask_shout(tier);
+            }
+        } else {
+            b.mic.set_armed(false);
+        }
+        // (A party battle's switches and Quick-Shout are asked of the player; the battle's buttons alone go on.)
+        let buttons = b.party.take_switches(&mut b.stage.player, b.viewer, held & !crate::input::SHOUT);
         let ran = b.stage.advance(now, buttons, &mut self.keys.pressed);
         b.flush_abd_rounds(false);
         let ticks = Some(ran);
@@ -640,9 +703,20 @@ impl Shell {
         });
         let faces = |n| kit.as_ref().map(|k| k.pictures.navi(n)).unwrap_or_default();
         b.party.show(&shell, b.stage.player.battle(), &b.game, b.viewer, faces, keys);
+        // Refresh Danger mic arming & HUD state after advancing the frame so leaving Danger disarms immediately.
+        let can_shout = live_play && !b.over && b.stage.player.can_shout();
+        b.mic.set_armed(can_shout && self.settings.mic_shout_enabled);
+        shell.set_shout_available(can_shout);
+        shell.set_mic_listening(b.mic.is_active());
+        if can_shout {
+            shell.set_shout_key(saito_ui::Hint {
+                key: crate::input::bind_cap(self.bindings.key(crate::input::SHOUT)).into(),
+                pad: crate::input::pad_face(self.bindings.pad_button(crate::input::SHOUT)),
+                ..Default::default()
+            });
+        }
         // The custom screen by pointer: the picture takes it while the battle has the keys, pure keyboard mode is
         // off, and its screen has something to point at; keep the landscape touch pad active while open (S-016).
-        let has_keys = b.playing() && !b.kept && self.dialog.is_none();
         let pointer = has_keys && !self.settings.keyboard_only_custom && b.stage.player.takes_pointer();
         shell.set_screen_pointer(pointer);
         shell.set_picture_hand(pointer && b.stage.player.pointer_on_target());
@@ -671,6 +745,12 @@ impl Shell {
                 crate::errors::log("the battle stopped", &format_args!("{reason:?}: {why}"));
                 b.over = true;
                 event = Some(if reason == StopReason::Finished { BattleEvent::Finished(b.stage.player.result()) } else { BattleEvent::Stopped(reason) });
+            }
+            if b.over {
+                b.mic.set_armed(false);
+                b.shout_held = false;
+                shell.set_shout_available(false);
+                shell.set_mic_listening(false);
             }
         }
         let owner = b.owner;
@@ -858,7 +938,7 @@ mod tests {
         let m = short_set::of(&content, "exe6", 7);
         let driver = LivePlayer::new(Set::of(&content, &m, 7));
         let player = Player::with(graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None), None, None, Box::new(driver));
-        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new() };
+        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), shout_held: false };
         let play_out = |b: &mut Battle| {
             while {
                 let input = short_set::shooter(b.stage.player.battle(), 0, b.stage.player.ticks() as u32);
@@ -1121,7 +1201,7 @@ mod tests {
         saito_frontend::testing::scrolling_background(&mut graphics);
         let audio = saito_frontend::testing::audio(content);
         let player = Player::with(graphics.renderer(Enhancements::NONE, None), None, Some(audio), Box::new(driver));
-        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new() }
+        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), shout_held: false }
     }
 
     /// A practice session of Practice's own, as the editor's PRACTICE starts one: the menu open before the battle's

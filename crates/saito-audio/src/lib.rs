@@ -162,10 +162,12 @@ pub fn with_theme(mut banks: Vec<Arc<SoundBank>>, songs: &Songs, music: &[SoundI
     (banks, songs.with_music(music, to))
 }
 
+pub mod mic;
 #[cfg(feature = "playback")]
 mod output;
 pub mod wav;
 
+pub use mic::MicMonitor;
 #[cfg(feature = "playback")]
 pub use output::{AudioOut, MAX_RATE_SHIFT, Output, OutputError, OutputStats, RESUME_FILL, TARGET_FILL};
 

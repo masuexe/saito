@@ -250,6 +250,12 @@ export global PlayView {
     // EXE5 Legacy Collection Light MegaMan dimming dark chip cut-in fix (true = LC, false = Original).
     in property <bool> dark-cut-in-supported: false;
     in property <bool> dark-cut-in-fix: true;
+    // EXE5 outdoor sunlight state (true = Outdoor/Sunny default, false = Indoor/Shade).
+    in property <bool> ds-sun-supported: false;
+    in property <bool> sun-enabled: true;
+    // EXE5DS Shout volume mode (only shown for 5DS rulesets): false = Real 3-Tier, true = Always Max.
+    in property <bool> ds-shout-supported: false;
+    in property <bool> ds-shout-max-only: false;
 
     // ---- Spectator mode (host settings, browser dialog, active watch) -----------------------------------
     // Host's spectator visibility (0 = off, 1 = code-only, 2 = public) and anti-ghosting delay (seconds).
@@ -1307,6 +1313,8 @@ component LobbyBody inherits Rectangle {
             property <bool> show-abd: PlayView.abd-supported;
             property <bool> show-cs-prob: PlayView.cs-prob-supported;
             property <bool> show-extra-rule: PlayView.all-guard-supported || PlayView.dark-cut-in-supported;
+            property <bool> show-sun: PlayView.ds-sun-supported;
+            property <bool> show-shout-mode: PlayView.ds-shout-supported;
             property <length> btn-h: Theme.sideways ? 28px : 34px;
             property <length> row-step: self.btn-h + 6px;
             property <length> gap: Theme.sideways ? 6px : 10px;
@@ -1349,21 +1357,35 @@ component LobbyBody inherits Rectangle {
             property <length> x5: self.fit5 ? self.end4 + self.gap : 0px;
             property <length> end5: self.show-extra-rule ? self.x5 + extra-rule-btn.width : self.end4;
 
-            // 6: spec-vis (kept together with spec-delay on a fresh row when the pair fits in max-w)
-            property <length> spec-pair-w: spec-vis.width + self.gap + spec-delay.width;
-            property <bool> fit6: self.end5 + self.gap + (self.spec-pair-w <= self.max-w ? self.spec-pair-w : spec-vis.width) <= self.max-w;
-            property <int> r6: self.show-spec ? (self.fit6 ? self.r5 : self.r5 + 1) : self.r5;
+            // 6: sun-btn (EXE5 Outdoor / Indoor sunlight)
+            property <bool> fit6: self.end5 + self.gap + sun-btn.width <= self.max-w;
+            property <int> r6: self.show-sun ? (self.fit6 ? self.r5 : self.r5 + 1) : self.r5;
             property <length> x6: self.fit6 ? self.end5 + self.gap : 0px;
-            property <length> end6: self.show-spec ? self.x6 + spec-vis.width : self.end5;
+            property <length> end6: self.show-sun ? self.x6 + sun-btn.width : self.end5;
 
-            // 7: spec-delay
-            property <bool> fit7: self.end6 + self.gap + spec-delay.width <= self.max-w;
-            property <int> r7: self.show-spec ? (self.fit7 ? self.r6 : self.r6 + 1) : self.r6;
+            // 7: shout-mode-btn (EXE5DS 3-Tier / Always Max)
+            property <bool> fit7: self.end6 + self.gap + shout-mode-btn.width <= self.max-w;
+            property <int> r7: self.show-shout-mode ? (self.fit7 ? self.r6 : self.r6 + 1) : self.r6;
             property <length> x7: self.fit7 ? self.end6 + self.gap : 0px;
-            property <length> end7: self.show-spec ? self.x7 + spec-delay.width : self.end6;
+            property <length> end7: self.show-shout-mode ? self.x7 + shout-mode-btn.width : self.end6;
+
+            // 8: spec-vis (kept together with spec-delay on a fresh row when the pair fits in max-w)
+            property <length> spec-pair-w: spec-vis.width + self.gap + spec-delay.width;
+            property <bool> fit8: self.end7 + self.gap + (self.spec-pair-w <= self.max-w ? self.spec-pair-w : spec-vis.width) <= self.max-w;
+            property <int> r8: self.show-spec ? (self.fit8 ? self.r7 : self.r7 + 1) : self.r7;
+            property <length> x8: self.fit8 ? self.end7 + self.gap : 0px;
+            property <length> end8: self.show-spec ? self.x8 + spec-vis.width : self.end7;
+
+            // 9: spec-delay
+            property <bool> fit9: self.end8 + self.gap + spec-delay.width <= self.max-w;
+            property <int> r9: self.show-spec ? (self.fit9 ? self.r8 : self.r8 + 1) : self.r8;
+            property <length> x9: self.fit9 ? self.end8 + self.gap : 0px;
+            property <length> end9: self.show-spec ? self.x9 + spec-delay.width : self.end8;
 
             pure function row-x(r: int) -> length {
-                let rw = self.r7 == r ? self.end7
+                let rw = self.r9 == r ? self.end9
+                    : self.r8 == r ? self.end8
+                    : self.r7 == r ? self.end7
                     : self.r6 == r ? self.end6
                     : self.r5 == r ? self.end5
                     : self.r4 == r ? self.end4
@@ -1377,7 +1399,7 @@ component LobbyBody inherits Rectangle {
             x: 0px;
             y: Theme.sideways ? match-facts.y + match-facts.height + 8px : Theme.phone ? match-facts.y + match-facts.height + connection.height + 160px : match-facts.y + match-facts.height + 116px;
             width: root.width;
-            height: self.r7 * self.row-step + self.btn-h;
+            height: self.r9 * self.row-step + self.btn-h;
 
             stage-btn := Button {
                 x: parent.row-x(parent.r0) + parent.x0;
@@ -1471,9 +1493,33 @@ component LobbyBody inherits Rectangle {
                     : @tr("Dark Cut-In: {}", PlayView.dark-cut-in-fix ? @tr("Legacy Collection") : @tr("Original"));
             }
 
-            spec-vis := Button {
+            sun-btn := Button {
                 x: parent.row-x(parent.r6) + parent.x6;
                 y: parent.r6 * parent.row-step;
+                height: parent.btn-h;
+                compact: true;
+                visible: parent.show-sun;
+                enabled: parent.show-sun && PlayView.host;
+                nav: parent.show-sun && PlayView.host ? "lobby.sun" : "";
+                kind: !PlayView.sun-enabled ? ButtonKind.normal : ButtonKind.ghost;
+                text: @tr("Sunlight: {}", PlayView.sun-enabled ? @tr("Outdoor") : @tr("Indoor"));
+            }
+
+            shout-mode-btn := Button {
+                x: parent.row-x(parent.r7) + parent.x7;
+                y: parent.r7 * parent.row-step;
+                height: parent.btn-h;
+                compact: true;
+                visible: parent.show-shout-mode;
+                enabled: parent.show-shout-mode && PlayView.host;
+                nav: parent.show-shout-mode && PlayView.host ? "lobby.shout-mode" : "";
+                kind: PlayView.ds-shout-max-only ? ButtonKind.normal : ButtonKind.ghost;
+                text: @tr("Shout: {}", PlayView.ds-shout-max-only ? @tr("Always Max") : @tr("3-Tier"));
+            }
+
+            spec-vis := Button {
+                x: parent.row-x(parent.r8) + parent.x8;
+                y: parent.r8 * parent.row-step;
                 height: parent.btn-h;
                 compact: true;
                 visible: parent.show-spec;
@@ -1484,8 +1530,8 @@ component LobbyBody inherits Rectangle {
             }
 
             spec-delay := Button {
-                x: parent.row-x(parent.r7) + parent.x7;
-                y: parent.r7 * parent.row-step;
+                x: parent.row-x(parent.r9) + parent.x9;
+                y: parent.r9 * parent.row-step;
                 height: parent.btn-h;
                 compact: true;
                 visible: parent.show-spec;
@@ -1998,7 +2044,7 @@ export component PlayScreen inherits Page {
 // "the menu footer should show in-game controls"), and Tab (Select on a pad) shows both builds over it as in the
 // match.
 export component MatchMenu inherits MenuOverlay {
-    property <[string]> actions: [@tr("Up"), @tr("Down"), @tr("Left"), @tr("Right"), "A", "B", "L", "R", "START", "SELECT", @tr("Navi change left"), @tr("Navi change right")];
+    property <[string]> actions: [@tr("Up"), @tr("Down"), @tr("Left"), @tr("Right"), "A", "B", "L", "R", "START", "SELECT", @tr("Navi change left"), @tr("Navi change right"), @tr("Quick shout")];
     title: PlayView.page == MatchPage.controls ? I18n.upper(@tr("Controls")) : PlayView.page == MatchPage.settings ? I18n.upper(@tr("Settings")) : I18n.upper(@tr("Menu"));
     note: PlayView.page == MatchPage.menu ? (PlayView.watch-menu ? "" : @tr("The match keeps running")) : "";
     side: PlayView.page != MatchPage.menu;

@@ -426,6 +426,8 @@ fn wire(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     ui.global::<saito_ui::Shell>().on_pad_key(move |bit, x, y, w, h| tell(&a, NavInput::PadKey(bit, Rect { x, y, w, h })));
     let a = app.clone();
     ui.global::<saito_ui::Shell>().on_picture_pointer(move |kind, button, x, y| tell(&a, NavInput::Picture { kind, button, x, y }));
+    let a = app.clone();
+    ui.global::<saito_ui::Shell>().on_quick_shout(move || tell(&a, NavInput::QuickShout));
     let sv = ui.global::<saito_ui::SettingsView>();
     let a = app.clone();
     sv.on_touch_select(move |idx| tell(&a, NavInput::TouchLayout(shell::TouchLayoutEdit::Select(idx))));

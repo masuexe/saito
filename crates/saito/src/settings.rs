@@ -22,6 +22,10 @@ pub const SIGNAL_SERVER_LENGTH: usize = 256;
 pub const TOUCH_SCALE_MIN: f32 = 0.6;
 pub const TOUCH_SCALE_MAX: f32 = 1.6;
 
+/// Minimum and maximum sensitivity gain for EXE5DS Danger microphone input.
+pub const MIC_SENSITIVITY_MIN: f32 = saito_audio::mic::SENSITIVITY_MIN;
+pub const MIC_SENSITIVITY_MAX: f32 = saito_audio::mic::SENSITIVITY_MAX;
+
 /// Position offset (fraction of pad container) and size multiplier for one virtual touch pad control.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -178,6 +182,14 @@ pub struct Settings {
     /// The folder the player chose the Legacy Collection's install in, where Steam doesn't list it (docs/app.md
     /// §17); none: Steam's alone.
     pub legacy_collection: Option<std::path::PathBuf>,
+    /// Optional path to an EXE5DS (`.nds`) ROM for DS-authentic SolCross & Danger HUD artwork.
+    pub exe5ds_rom: Option<std::path::PathBuf>,
+    /// Opt-in privacy-first EXE5DS Danger microphone shout detection (default `false`).
+    pub mic_shout_enabled: bool,
+    /// Microphone sensitivity multiplier for EXE5DS Crisis Shout (`0.25..=4.0`, default `1.0`).
+    pub mic_sensitivity: f32,
+    /// Simulated shout volume tier sent by Quick-Shout key/button in Real 3-Tier mode (`1` = Low, `2` = Medium, `3` = High).
+    pub quick_shout_tier: u8,
     /// The keys and the pad buttons bound, by the GBA button's name; one left out is the default.
     pub keys: BTreeMap<String, String>,
     pub pad: BTreeMap<String, String>,
@@ -215,6 +227,10 @@ impl Default for Settings {
             auto_upload_replays: false,
             keys: BTreeMap::new(),
             legacy_collection: None,
+            exe5ds_rom: None,
+            mic_shout_enabled: false,
+            mic_sensitivity: 1.0,
+            quick_shout_tier: 3,
             pad: BTreeMap::new(),
             remembered: BTreeMap::new(),
             touch_pad_layout: TouchPadLayouts::default(),
@@ -289,7 +305,14 @@ impl Settings {
         s.effects = s.effects.min(100);
         s.input_delay = s.input_delay.min(MAX_INPUT_DELAY);
         s.signaling_server = clean_signaling_server(&s.signaling_server);
+        s.mic_sensitivity = if s.mic_sensitivity.is_finite() {
+            s.mic_sensitivity.clamp(MIC_SENSITIVITY_MIN, MIC_SENSITIVITY_MAX)
+        } else {
+            1.0
+        };
+        s.quick_shout_tier = s.quick_shout_tier.clamp(1, 3);
         s.touch_pad_layout = s.touch_pad_layout.sanitized();
+        // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
         s
     }
 
@@ -414,5 +437,27 @@ mod tests {
         assert_eq!(dirty, TouchControlLayout { dx: 1.0, dy: 0.0, scale: TOUCH_SCALE_MIN });
         let infinite = TouchControlLayout { dx: f32::NEG_INFINITY, dy: -2.5, scale: f32::INFINITY }.sanitized();
         assert_eq!(infinite, TouchControlLayout { dx: 0.0, dy: -1.0, scale: 1.0 });
+    }
+
+    #[test]
+    fn exe5ds_mic_and_rom_settings_roundtrip_and_default() {
+        // Older settings.toml without new EXE5DS fields deserializes cleanly to privacy-first defaults.
+        let legacy: Settings = toml::from_str("music = 55\n").unwrap();
+        assert_eq!(legacy.exe5ds_rom, None);
+        assert!(!legacy.mic_shout_enabled, "microphone shout must be opt-in by default");
+        assert_eq!(legacy.mic_sensitivity, 1.0);
+        assert_eq!(legacy.quick_shout_tier, 3);
+
+        // Full roundtrip with custom EXE5DS ROM & mic settings.
+        let s = Settings {
+            exe5ds_rom: Some("/roms/exe5ds.nds".into()),
+            mic_shout_enabled: true,
+            mic_sensitivity: 1.75,
+            quick_shout_tier: 2,
+            ..Settings::default()
+        };
+        let encoded = toml::to_string(&s).unwrap();
+        let decoded: Settings = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, s);
     }
 }

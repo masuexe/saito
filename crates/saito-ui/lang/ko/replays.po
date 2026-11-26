@@ -387,3 +387,15 @@ msgstr "선 다크 컷인: 원작"
 
 msgid "ABD Cap: {}"
 msgstr "ABD 상한: {}회"
+
+msgid "Sunlight: Outdoor"
+msgstr "태양광: 실외"
+
+msgid "Sunlight: Indoor"
+msgstr "태양광: 실내"
+
+msgid "Shout: Always Max"
+msgstr "외치기: 항상 최대"
+
+msgid "Shout: 3-Tier"
+msgstr "외치기: 3단계"

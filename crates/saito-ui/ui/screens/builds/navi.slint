@@ -15,7 +15,7 @@
 import { Theme, I18n } from "../../theme.slint";
 import { Nav, NavKind, Focusable } from "../../nav.slint";
 import { Shell, Hint, PadButton } from "../../shell.slint";
-import { Cut, PanelBack, Label, Select, Button, Field, ProblemNote, AllNone, ScrollPage, ArrowDown } from "../../widgets.slint";
+import { Cut, PanelBack, Label, Select, Seg, Button, Field, ProblemNote, AllNone, ScrollPage, ArrowDown } from "../../widgets.slint";
 import { Tween } from "../../motion.slint";
 import { VersionTag, StatLine } from "../../build.slint";
 
@@ -117,6 +117,11 @@ export global NaviView {
     in property <string> base-hp;
     in property <bool> base-hp-min;
     in property <bool> base-hp-max;
+    // EXE5DS Sol Cross boolean setup fact toggle (shown for MegaMan when content declares `sol_cross` without a Choice).
+    in property <bool> has-sol-cross;
+    in property <bool> sol-cross;
+    in property <bool> sol-cross-banned;
+    in property <bool> sol-cross-flagged;
     // The game's own navi's name: the one a NaviCust and patch cards are of; and whether the build's navi is another,
     // for whom the note says so.
     in property <string> own;
@@ -627,7 +632,53 @@ export component NaviTab inherits Rectangle {
         }
     }
 
-    property <length> forms-y: root.base-hp-y + (NaviView.has-base-hp ? base-hp-box.preferred-height + root.fact-gap : 0px);
+    property <length> sol-cross-y: root.base-hp-y + (NaviView.has-base-hp ? base-hp-box.preferred-height + root.fact-gap : 0px);
+    sol-cross-box := VerticalLayout {
+        x: root.panel-x + root.pad;
+        y: root.sol-cross-y;
+        width: root.panel-width - 2 * root.pad;
+        height: NaviView.has-sol-cross ? self.preferred-height : 0px;
+        visible: NaviView.has-sol-cross;
+        spacing: 6px;
+        alignment: start;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                height: 16px;
+                text: I18n.upper(@tr("Sol Cross"));
+                color: NaviView.sol-cross-flagged ? Theme.bad : Theme.muted;
+                font-family: Theme.body;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                vertical-alignment: center;
+            }
+
+            if NaviView.sol-cross-banned: Text {
+                height: 16px;
+                text: @tr("Not allowed");
+                color: Theme.bad;
+                font-family: Theme.body;
+                font-size: 11px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            Seg {
+                nav: NaviView.has-sol-cross ? "sol-cross" : "";
+                enabled: NaviView.has-sol-cross && (!NaviView.sol-cross-banned || NaviView.sol-cross);
+                first: I18n.upper(@tr("Off"));
+                second: I18n.upper(@tr("On"));
+                chosen: NaviView.sol-cross ? 1 : 0;
+            }
+        }
+    }
+
+    property <length> forms-y: root.sol-cross-y + (NaviView.has-sol-cross ? sol-cross-box.preferred-height + root.fact-gap : 0px);
     // (Its scroll bar in the panel's padding at its right.)
     forms := ScrollPage {
         x: root.panel-x + root.pad;

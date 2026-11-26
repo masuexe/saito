@@ -478,3 +478,9 @@ msgstr "이 방은 관전이 비활성화되어 있습니다."
 
 msgid "Spectating is disabled"
 msgstr "관전이 비활성화되었습니다"
+
+msgid "Mic"
+msgstr "마이크"
+
+msgid "Shout!"
+msgstr "외치기!"

@@ -279,6 +279,12 @@ fn room_settings(shell: &Shell, view: &ReplaysView, game: &str, ready: &Ready, i
     if caps.dark_cut_in_fix {
         parts.push(view.invoke_dark_cut_in_word(m.dark_cut_in_fix).into());
     }
+    if caps.ds_sun_toggle && !m.sun_enabled {
+        parts.push(view.invoke_sun_word(m.sun_enabled).into());
+    }
+    if caps.ds_shout_toggle && m.ds_shout_enabled {
+        parts.push(view.invoke_ds_shout_word(m.ds_shout_max_only).into());
+    }
     parts.join(" · ")
 }
 

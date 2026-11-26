@@ -165,3 +165,9 @@ msgstr "NDS 版"
 
 msgid "ABD Chip Cap"
 msgstr "ABD 芯片上限"
+
+msgid "Sunlight"
+msgstr "阳光"
+
+msgid "Shout volume"
+msgstr "呐喊音量模式"

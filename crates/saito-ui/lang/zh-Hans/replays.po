@@ -398,3 +398,15 @@ msgstr "黑暗芯片打断：原版"
 
 msgid "ABD Cap: {}"
 msgstr "ABD 上限：{} 次"
+
+msgid "Sunlight: Outdoor"
+msgstr "阳光：室外"
+
+msgid "Sunlight: Indoor"
+msgstr "阳光：室内"
+
+msgid "Shout: Always Max"
+msgstr "呐喊：恒定最大"
+
+msgid "Shout: 3-Tier"
+msgstr "呐喊：真实三档"

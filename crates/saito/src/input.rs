@@ -20,6 +20,9 @@ use i_slint_backend_winit::winit::event::{ElementState, KeyEvent, MouseButton, T
 use i_slint_backend_winit::winit::keyboard::{KeyCode, PhysicalKey};
 use web_time::Instant;
 
+/// Quick-Shout (EXE5DS Crisis Shout): a button of the app's own, past the GBA's ten bits, which triggers
+/// `Player::ask_shout(settings.quick_shout_tier)` when the local navi is in Danger without needing a microphone.
+pub const SHOUT: u16 = 1 << 13;
 /// A party battle's switch to the member the left of the party panel's two buttons names (EXE5 DS's Y, docs/design/
 /// exe5ds-map.md §4.2): a button of the app's own, past the GBA's ten bits, which the battle never sees as a button
 /// (`crate::battle`'s frame asks the switch of the player: `Player::ask_switch`).
@@ -30,8 +33,8 @@ pub const SWITCH_RIGHT: u16 = 1 << 15;
 pub const SWITCHES: u16 = SWITCH_LEFT | SWITCH_RIGHT;
 
 /// The battle's buttons, in the order the settings list them, each with its name in the settings' file: the GBA's,
-/// then the party battle's two switches (the app's own bits: [`SWITCH_LEFT`], [`SWITCH_RIGHT`]).
-pub const BUTTONS: [(u16, &str); 12] = [
+/// then the party battle's two switches ([`SWITCH_LEFT`], [`SWITCH_RIGHT`]) and EXE5DS Quick-Shout ([`SHOUT`]).
+pub const BUTTONS: [(u16, &str); 13] = [
     (keys::UP, "up"),
     (keys::DOWN, "down"),
     (keys::LEFT, "left"),
@@ -44,6 +47,7 @@ pub const BUTTONS: [(u16, &str); 12] = [
     (keys::SELECT, "select"),
     (SWITCH_LEFT, "switch-left"),
     (SWITCH_RIGHT, "switch-right"),
+    (SHOUT, "quick-shout"),
 ];
 
 /// A GBA button's place in [`BUTTONS`].
@@ -341,16 +345,15 @@ pub fn pad_cap(button: Button) -> &'static str {
 /// The battle's buttons: the key (or mouse button) and the pad button of each of [`BUTTONS`], in its order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bindings {
-    pub keys: [KeyBind; 12],
-    pub pad: [Button; 12],
+    pub keys: [KeyBind; 13],
+    pub pad: [Button; 13],
 }
 
 impl Default for Bindings {
     /// The arrows move; Z is A, X is B, A is L, S is R; Enter is START, Backspace is SELECT; C and V switch to the
-    /// party panel's left and right buttons' members (EXE5 DS's Y and X: X is B's here). On a pad, as a Nintendo
-    /// pad's face buttons lie: the D-pad, the east button A, the south button B, the shoulders, Start and Back; the
-    /// west and north buttons switch, left and right (the DS's Y and X; the user: "A should be gamepad east, B should
-    /// be gamepad south, navi change left should be gamepad west, navi change right be gamepad north").
+    /// party panel's left and right buttons' members (EXE5 DS's Y and X: X is B's here); B triggers EXE5DS Quick-Shout.
+    /// On a pad, as a Nintendo pad's face buttons lie: the D-pad, the east button A, the south button B, the shoulders,
+    /// Start and Back; the west and north buttons switch, left and right; right stick (R3) triggers Quick-Shout.
     fn default() -> Bindings {
         Bindings {
             keys: [
@@ -366,6 +369,7 @@ impl Default for Bindings {
                 KeyBind::Key(KeyCode::Backspace),
                 KeyBind::Key(KeyCode::KeyC),
                 KeyBind::Key(KeyCode::KeyV),
+                KeyBind::Key(KeyCode::KeyB),
             ],
             pad: [
                 Button::DPadUp,
@@ -380,6 +384,7 @@ impl Default for Bindings {
                 Button::Back,
                 Button::West,
                 Button::North,
+                Button::RightStick,
             ],
         }
     }
@@ -1271,6 +1276,15 @@ mod tests {
         }
         let b = Bindings::default();
         assert!(b.keys.iter().all(|k| bind_name(*k).is_some()) && b.pad.iter().all(|p| pad_name(*p).is_some()));
+        // Quick-Shout has a unique conflict-free default binding on keyboard and gamepad.
+        assert_eq!(b.key(SHOUT), KeyBind::Key(KeyCode::KeyB));
+        assert_eq!(b.pad_button(SHOUT), Button::RightStick);
+        assert_eq!(b.of_key(KeyCode::KeyB), Some(SHOUT));
+        assert_eq!(b.of_pad(Button::RightStick), SHOUT);
+        let unique_keys: std::collections::HashSet<_> = b.keys.iter().copied().collect();
+        let unique_pads: std::collections::HashSet<_> = b.pad.iter().copied().collect();
+        assert_eq!(unique_keys.len(), BUTTONS.len());
+        assert_eq!(unique_pads.len(), BUTTONS.len());
     }
 
     /// Shift with Page Up, Page Down, Home or End scrolls; without Shift they are the menus' moves. A page is the

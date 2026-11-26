@@ -76,8 +76,8 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" => 1,
-        "set.music" | "set.effects" => 2,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
+        "set.music" | "set.effects" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.abd-format" | "set.abd-export" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
@@ -138,8 +138,18 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_fill_window(s.fill_window);
     view.set_hd_chip_art(s.hd_chip_art);
     view.set_has_hd_art(shell.games.has_all_hd_art());
+    let rom_name = s
+        .exe5ds_rom
+        .as_ref()
+        .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string()))
+        .unwrap_or_default();
+    view.set_exe5ds_rom(rom_name.into());
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
+    view.set_mic_supported(saito_audio::MicMonitor::is_supported());
+    view.set_mic_shout_enabled(s.mic_shout_enabled);
+    view.set_mic_sensitivity((s.mic_sensitivity * 100.0).round().clamp(25.0, 400.0) as i32);
+    view.set_quick_shout_tier(s.quick_shout_tier.clamp(1, 3) as i32);
     view.set_input_delay(s.input_delay as i32);
     view.set_signaling_server(s.signaling_server.as_str().into());
     view.set_default_signaling_server(DEFAULT_SIGNAL_SERVER.into());
@@ -346,6 +356,10 @@ pub struct Settings {
     importing_hd_art: Option<std::sync::mpsc::Receiver<Result<usize, String>>>,
     /// Selected export format for persistent ABD usage stats (`LOG` / `CSV` / `JSONL`).
     abd_format: crate::abd_stats::AbdExportFormat,
+    /// Live microphone test monitor in Settings (always disarmed when leaving Settings).
+    test_mic: saito_audio::MicMonitor,
+    /// Last peak shout tier detected during live mic test (`0..=3`).
+    test_last_tier: u8,
 }
 
 impl Settings {
@@ -398,6 +412,65 @@ impl Settings {
         self.show(shell);
     }
 
+    fn set_mic_shout_enabled(&mut self, shell: &mut Shell, on: bool) {
+        shell.settings.mic_shout_enabled = on && saito_audio::MicMonitor::is_supported();
+        shell.save_settings();
+        self.show(shell);
+    }
+
+    fn set_mic_sensitivity_pct(&mut self, shell: &mut Shell, pct: i32) {
+        let clamped = pct.clamp(25, 400);
+        shell.settings.mic_sensitivity = (clamped as f32 / 100.0).clamp(crate::settings::MIC_SENSITIVITY_MIN, crate::settings::MIC_SENSITIVITY_MAX);
+        shell.save_settings();
+        self.show(shell);
+    }
+
+    fn set_quick_shout_tier(&mut self, shell: &mut Shell, tier: u8) {
+        shell.settings.quick_shout_tier = tier.clamp(1, 3);
+        shell.save_settings();
+        self.show(shell);
+    }
+
+    fn toggle_mic_test(&mut self, shell: &mut Shell) {
+        let next = !self.test_mic.is_armed();
+        self.test_last_tier = 0;
+        self.test_mic.set_armed(next);
+        if next && !self.test_mic.is_active() {
+            // Keep error visible, but disarm so the button returns to idle state.
+            let err = self.test_mic.error().unwrap_or_default().to_string();
+            self.test_mic.set_armed(false);
+            let ui = shell.ui();
+            let view = ui.global::<SettingsView>();
+            view.set_mic_testing(false);
+            view.set_mic_level(0.0);
+            view.set_mic_tier(0);
+            view.set_mic_last_tier(0);
+            view.set_mic_error(err.into());
+            shell.sound.play(Cue::Refused);
+            return;
+        }
+        self.sync_mic_test_ui(shell);
+    }
+
+    fn stop_mic_test(&mut self, shell: &Shell) {
+        self.test_mic.set_armed(false);
+        self.test_last_tier = 0;
+        self.sync_mic_test_ui(shell);
+    }
+
+    fn sync_mic_test_ui(&self, shell: &Shell) {
+        let ui = shell.ui();
+        let view = ui.global::<SettingsView>();
+        let active = self.test_mic.is_active();
+        let sens = shell.settings.mic_sensitivity;
+        let scaled = if active { (self.test_mic.level() * sens).clamp(0.0, 1.0) } else { 0.0 };
+        view.set_mic_testing(active);
+        view.set_mic_level(scaled);
+        view.set_mic_tier(if active { self.test_mic.current_tier(sens) as i32 } else { 0 });
+        view.set_mic_last_tier(self.test_last_tier as i32);
+        view.set_mic_error(self.test_mic.error().unwrap_or_default().into());
+    }
+
     fn show_abd_stats(&self, shell: &Shell) {
         let ui = shell.ui();
         let view = ui.global::<SettingsView>();
@@ -438,6 +511,7 @@ impl Screen for Settings {
         let view = ui.global::<SettingsView>();
         view.set_nearby_target(self.nearby_target.as_str().into());
         view.set_importing_hd_art(self.importing_hd_art.is_some());
+        self.sync_mic_test_ui(shell);
         self.show_abd_stats(shell);
         if self.about.is_open() {
             self.about.show(shell);
@@ -445,6 +519,7 @@ impl Screen for Settings {
     }
 
     fn hide(&mut self, shell: &mut Shell) {
+        self.stop_mic_test(shell);
         self.binding.stop(shell);
         self.close_touch_editor(shell);
         // (Shown again, Settings show their page, the focus on SHOW LICENSES.)
@@ -489,6 +564,22 @@ impl Screen for Settings {
                 if self.importing_hd_art.is_none() {
                     shell.choose_files("vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
                 }
+            }
+            "set.exe5ds-rom" => {
+                shell.choose_files("EXE5DS ROM (*.nds)", &["nds"], "exe5ds-rom");
+            }
+            "set.exe5ds-rom-clear" => {
+                shell.settings.exe5ds_rom = None;
+                shell.save_settings();
+                // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(None);
+                shell.games.reload("exe5");
+                self.show(shell);
+            }
+            "set.mic-shout" => self.set_mic_shout_enabled(shell, !shell.settings.mic_shout_enabled),
+            "set.mic-test" => self.toggle_mic_test(shell),
+            "set.quick-shout-tier" => {
+                let next = (shell.settings.quick_shout_tier % 3) + 1;
+                self.set_quick_shout_tier(shell, next);
             }
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
             "set.reset" => self.binding.reset(shell),
@@ -542,6 +633,15 @@ impl Screen for Settings {
                 self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32);
                 shell.sound.play(Cue::Cursor);
             }
+            "set.mic-shout" => self.set_mic_shout_enabled(shell, by > 0),
+            "set.mic-sensitivity" => {
+                let cur = (shell.settings.mic_sensitivity * 100.0).round() as i32;
+                self.set_mic_sensitivity_pct(shell, cur + 10 * by);
+            }
+            "set.quick-shout-tier" => {
+                let next = (shell.settings.quick_shout_tier as i32 + by).clamp(1, 3) as u8;
+                self.set_quick_shout_tier(shell, next);
+            }
             "set.delay" => {
                 shell.settings.input_delay = (shell.settings.input_delay as i32 + by).clamp(0, MAX_INPUT_DELAY as i32) as u32;
                 shell.save_settings();
@@ -589,6 +689,9 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
+            "set.mic-shout" => self.set_mic_shout_enabled(shell, choice == 1),
+            "set.mic-sensitivity" => self.set_mic_sensitivity_pct(shell, choice),
+            "set.quick-shout-tier" => self.set_quick_shout_tier(shell, (choice + 1).clamp(1, 3) as u8),
             "set.keyboard-only" => {
                 set_keyboard_only_custom(shell, choice == 1);
                 self.show(shell);
@@ -699,6 +802,16 @@ impl Screen for Settings {
     }
 
     fn chosen(&mut self, shell: &mut Shell, purpose: &str, paths: &[std::path::PathBuf]) {
+        if purpose == "exe5ds-rom" {
+            let Some(path) = paths.first().cloned() else { return };
+            // TODO(integrate): validate with saito_extract::nds::is_exe5ds_rom(&path) and call saito_extract::nds::set_exe5ds_rom_path(Some(path.clone()));
+            shell.settings.exe5ds_rom = Some(path);
+            shell.save_settings();
+            shell.games.reload("exe5");
+            shell.sound.play(Cue::Pick);
+            self.show(shell);
+            return;
+        }
         if purpose != "hd-art" || self.importing_hd_art.is_some() || paths.is_empty() {
             return;
         }
@@ -755,6 +868,17 @@ impl Screen for Settings {
     }
 
     fn frame(&mut self, shell: &mut Shell, _now: web_time::Instant, shown: bool) {
+        if self.test_mic.is_armed() {
+            if !shown {
+                self.stop_mic_test(shell);
+            } else {
+                let tier = self.test_mic.poll_tier(shell.settings.mic_sensitivity);
+                if tier > 0 {
+                    self.test_last_tier = tier;
+                }
+                self.sync_mic_test_ui(shell);
+            }
+        }
         let Some(rx) = &self.importing_hd_art else { return };
         match rx.try_recv() {
             Ok(Ok(count)) => {
@@ -804,10 +928,10 @@ fn show_folder(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{BUTTONS, SWITCH_LEFT, SWITCH_RIGHT, button_index};
+    use crate::input::{BUTTONS, SHOUT, SWITCH_LEFT, SWITCH_RIGHT, button_index};
     use saito_battle::input::keys;
 
-    /// Each controls' row asks for its own button: the navi changes theirs, not SELECT's.
+    /// Each controls' row asks for its own button: the navi changes and Quick-Shout theirs, not SELECT's.
     #[test]
     fn each_row_asks_for_its_own_button() {
         for (i, (bit, _)) in BUTTONS.iter().enumerate() {
@@ -815,6 +939,7 @@ mod tests {
         }
         assert_eq!(BUTTONS[asked(10)].0, SWITCH_LEFT);
         assert_eq!(BUTTONS[asked(11)].0, SWITCH_RIGHT);
+        assert_eq!(BUTTONS[asked(12)].0, SHOUT);
         assert_eq!(BUTTONS[asked(9)].0, keys::SELECT);
     }
 

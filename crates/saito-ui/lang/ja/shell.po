@@ -453,3 +453,9 @@ msgstr "このルームは観戦が無効です。"
 
 msgid "Spectating is disabled"
 msgstr "観戦が無効です"
+
+msgid "Mic"
+msgstr "マイク"
+
+msgid "Shout!"
+msgstr "叫ぶ！"

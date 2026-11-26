@@ -188,6 +188,7 @@ impl Games {
         if own_data {
             remove_packs();
         }
+        // TODO(integrate): call saito_extract::nds::set_exe5ds_rom_path(settings.exe5ds_rom.clone()) when loading games.
         let mut games = Games { chosen: chosen.map(Path::to_path_buf), ..Games::read_of(Vec::new()) };
         let ids = match crate::contents::games() {
             Ok(ids) => ids,

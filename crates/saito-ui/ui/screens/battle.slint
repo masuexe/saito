@@ -7,7 +7,7 @@
 
 import { Theme, I18n } from "../theme.slint";
 import { Nav, Focusable } from "../nav.slint";
-import { Shell, BattleKind, Picture, LinkFigures, Footer, Hint, HintView, PartyMember, PartyHud, PadLayout, PadMath } from "../shell.slint";
+import { Shell, BattleKind, Picture, LinkFigures, Footer, Hint, HintView, PadButton, PartyMember, PartyHud, PadLayout, PadMath } from "../shell.slint";
 import { Cut, Heading, Label, Note, Mono, Bars, Button } from "../widgets.slint";
 import { Tween } from "../motion.slint";
 
@@ -1071,6 +1071,72 @@ export component BattleScreen inherits Rectangle {
         y: root.height - root.picture-bottom >= self.height + 16px || Shell.picture-height <= 0 ? root.height - self.height - 16px : root.picture-bottom - root.foot + max(0px, (root.foot - self.height) / 2);
         visible: Shell.party.shown && !Theme.phone && !(root.overlay && Shell.landscape-pad);
         party: Shell.party;
+    }
+
+    // EXE5DS Crisis Shout HUD button: visible only when local navi is in Danger and can shout.
+    // Works on desktop click and mobile touch without requiring a microphone, and shows a live MIC badge when listening.
+    if Shell.shout-available && !Shell.battle-menu: shout-btn := Rectangle {
+        property <float> pulse: Theme.motion ? 0.5 + 0.5 * sin(mod(animation-tick(), 0.9s) / 0.9s * 360deg) : 1.0;
+        property <length> pad-x: 12px;
+        width: shout-row.preferred-width + 2 * self.pad-x;
+        height: Theme.handheld ? 40px : 36px;
+        x: Theme.phone ? (parent.width - self.width) / 2 : root.overlay ? (parent.width - self.width) / 2 : max(16px, Shell.picture-x + 16px);
+        y: Theme.phone ? max(8px, root.picture-height - self.height - 8px) : root.overlay ? 10px : parent.height - self.height - 16px;
+        Rectangle {
+            background: shout-touch.pressed ? Theme.bad : Theme.shade;
+            border-width: 2px;
+            border-color: Shell.mic-listening ? Theme.cursor : Theme.bad;
+            drop-shadow-blur: 10px * shout-btn.pulse;
+            drop-shadow-color: Shell.mic-listening ? Theme.glow : Theme.bad.with-alpha(0.55);
+        }
+
+        shout-row := HorizontalLayout {
+            x: shout-btn.pad-x;
+            y: 0;
+            height: shout-btn.height;
+            spacing: 8px;
+            alignment: center;
+            if Shell.mic-listening: Rectangle {
+                width: 8px;
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: Theme.bad;
+                opacity: 0.45 + 0.55 * shout-btn.pulse;
+            }
+
+            if Shell.mic-listening: Text {
+                text: I18n.upper(@tr("Mic"));
+                color: Theme.cursor;
+                font-family: Theme.display;
+                font-size: 11px;
+                font-weight: Theme.display-bold;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: I18n.upper(@tr("Shout!"));
+                color: shout-touch.pressed ? Theme.action-ink : Theme.text;
+                font-family: Theme.display;
+                font-size: 14px;
+                font-weight: Theme.display-bold;
+                letter-spacing: 0.8px;
+                vertical-alignment: center;
+            }
+
+            if !Theme.handheld && (Shell.shout-key.key != "" || Shell.shout-key.pad != PadButton.none): HintView {
+                y: (parent.height - 22px) / 2;
+                height: 22px;
+                hint: Shell.shout-key;
+            }
+        }
+
+        shout-touch := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => {
+                Shell.quick-shout();
+            }
+        }
     }
 
     if Shell.connection-shown && Shell.connection-open: LinkPanel {
