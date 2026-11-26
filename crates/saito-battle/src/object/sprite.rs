@@ -57,6 +57,9 @@ pub struct Look {
     /// sprite is drawn as it is, under every object's sprite, and all of
     /// it at the sprite's height: a mark on the floor.
     pub under_objects: bool,
+    /// EXE5DS `0x02001878` (`sprite+0x16 |= 1`): drawn in screen space,
+    /// ignoring battle camera slide and screen shakes (Sol Cross corner sun).
+    pub screen_space: bool,
     /// `sprite_forceWhitePalette`: drawn solid white (a hit flash).
     pub white: bool,
     /// `sprite_setColorShader`: a palette tint (0 = none).
@@ -111,6 +114,7 @@ impl Default for Look {
             vflip: false,
             shadow: Shadow::Hidden,
             under_objects: false,
+            screen_space: false,
             white: false,
             color_shader: 0,
             alpha: None,

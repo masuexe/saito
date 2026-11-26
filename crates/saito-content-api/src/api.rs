@@ -389,6 +389,9 @@ named_fields! {
         /// With a ground shadow, the whole sprite is drawn as the shadow
         /// is, under every object's sprite: a mark on the floor.
         UnderObjects = "under_objects", Bool, rw;
+        /// Drawn in screen space (ignores battle camera slide and shakes,
+        /// EXE5DS `0x02001878` `sprite+0x16 |= 1`: Sol Cross corner sun).
+        ScreenSpace = "screen_space", Bool, rw;
         /// Drawn solid white (a hit flash).
         White = "white", Bool, rw;
         ColorShader = "color_shader", U16, rw;

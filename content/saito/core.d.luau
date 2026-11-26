@@ -286,6 +286,9 @@ declare extern type Sprite with
     -- "ground" shadow, the whole sprite is drawn as the shadow is, under
     -- every object's sprite (a mark on the floor).
     under_objects: boolean
+    -- Drawn in screen space, ignoring battle camera slide and shakes
+    -- (EXE5DS `0x02001878`: Sol Cross corner sun).
+    screen_space: boolean
     -- Drawn solid white (a hit flash).
     white: boolean
     color_shader: number

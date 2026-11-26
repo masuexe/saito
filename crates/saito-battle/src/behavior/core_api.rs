@@ -2645,6 +2645,7 @@ impl CoreApi for Battle {
                 sprite::Shadow::WithSprite => 2,
             }),
             SpriteField::UnderObjects => Value::Bool(look.under_objects),
+            SpriteField::ScreenSpace => Value::Bool(look.screen_space),
             SpriteField::White => Value::Bool(look.white),
             SpriteField::ColorShader => Value::Int(look.color_shader as i64),
             SpriteField::Alpha => look.alpha.map_or(Value::Nil, |a| Value::Int(a as i64)),
@@ -2671,6 +2672,7 @@ impl CoreApi for Battle {
                 }
             }
             (SpriteField::UnderObjects, FieldValue::Bool(x)) => look.under_objects = x,
+            (SpriteField::ScreenSpace, FieldValue::Bool(x)) => look.screen_space = x,
             (SpriteField::White, FieldValue::Bool(x)) => look.white = x,
             (SpriteField::ColorShader, FieldValue::U16(x)) => look.set_color_shader(x),
             (SpriteField::Alpha, FieldValue::OptionalU8(x)) => look.set_alpha(x),

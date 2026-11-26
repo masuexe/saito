@@ -606,24 +606,29 @@ pub fn apply_gba_fallback(graphics: &mut Bundle) {
     // 2. `sol-sun` (`10-00`): dedicated synthesized corner solar icon.
     upsert_sprite(&mut graphics.sprites, synthesize_sol_sun_sprite());
 
-    // 3. `buster-arm` (`0c-03`): ensure animation `0x0E` exists with a solar palette.
+    // 3. `buster-arm` (`0c-03`): ensure animation `0x0E` exists and its palette set
+    //    has EXE5DS Sol Cross palette slots `0x21` (normal) and `0x22` (no_charge).
     if let Some(arm) = graphics.sprites.iter_mut().find(|s| (s.category, s.index) == BUSTER_ARM_SPRITE) {
         if arm.animations.len() <= SOLCROSS_BUSTER_ARM_ANIM {
             let src_anim_idx = arm.animations.len().saturating_sub(1);
             let template_anim = arm.animations.get(src_anim_idx).cloned().unwrap_or_default();
-            // Build solar-remapped copies of any palette sets referenced by the template anim.
             let mut remapped_sets = std::collections::HashMap::<u16, u16>::new();
             let mut sol_anim = template_anim.clone();
             for frame in &mut sol_anim {
                 let new_ps = *remapped_sets.entry(frame.palette_set).or_insert_with(|| {
-                    let cloned = arm
+                    let mut cloned: Vec<Palette> = arm
                         .palette_sets
                         .get(frame.palette_set as usize)
                         .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(remap_solar_palette)
-                        .collect();
+                        .unwrap_or_default();
+                    let base = cloned.first().copied().unwrap_or([0u16; 16]);
+                    let sol_normal = remap_solar_palette(base);
+                    let sol_dark = remap_danger_palette(base);
+                    if cloned.len() <= 0x22 {
+                        cloned.resize(0x23, sol_normal);
+                    }
+                    cloned[0x21] = sol_normal;
+                    cloned[0x22] = sol_dark;
                     arm.palette_sets.push(cloned);
                     (arm.palette_sets.len() - 1) as u16
                 });
@@ -769,7 +774,9 @@ mod tests {
         assert_eq!(arm.animations.len(), 15, "buster-arm must have anim 0x0E");
         assert!(!arm.animations[SOLCROSS_BUSTER_ARM_ANIM].is_empty());
         let sol_arm_ps = arm.animations[SOLCROSS_BUSTER_ARM_ANIM][0].palette_set as usize;
-        assert_ne!(arm.palette_sets[sol_arm_ps][0], arm.palette_sets[0][0]);
+        assert!(arm.palette_sets[sol_arm_ps].len() > 0x22, "buster-arm must have SolCross palettes 0x21/0x22");
+        assert_ne!(arm.palette_sets[sol_arm_ps][0x21], arm.palette_sets[0][0]);
+        assert_ne!(arm.palette_sets[sol_arm_ps][0x22], arm.palette_sets[sol_arm_ps][0x21]);
 
         // Mugshots `0x27..=0x2F` and boxes
         assert_eq!(bundle.hud.mugshots.len(), 0x30);

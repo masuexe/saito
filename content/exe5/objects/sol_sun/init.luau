@@ -63,13 +63,20 @@ end
 local function init(me: Object)
     local sprite = me.sprite
     sprite:load(SPRITE)
-    sprite.shadow = "hidden"
+    -- 0x02200A64 (`bl 0x2001710`): part 0 is the top-right 32x32 tile of `shl00.bin`, not a ground shadow.
+    sprite.shadow = "with_sprite"
+    -- 0x02200A68 (`bl 0x2001878`): screen-space corner sprite (fixed during Custom Screen slide & shakes).
+    sprite.screen_space = true
+    -- 0x02200A74..0x02200AA0: local side's sun sits at top-right (screen x=240, y=0, unflipped);
+    -- opponent's sun sits at top-left (screen x=0, y=0, horizontally flipped). Because the renderer
+    -- mirrors `pos.x` and XORs `hflip` by `view.mirror`, side 0 (+120, hflip=false) and side 1
+    -- (-120, hflip=true) project to each console's own top-right and opponent's top-left identically.
+    local is_right = me.alliance == 1
+    sprite.hflip = is_right
     me.anim, me.anim_loaded = 0, 0
     sprite:set_animation(0)
     me.visible = true
-    -- Screen top corner on the player's side (side 0 left: x = -92 + 120 = 28; side 1 right: x = 92 + 120 = 212; y = 36).
-    local x = if me.alliance == 0 then -92 else 92
-    me.pos = Vec3.px(x, 0, 44)
+    me.pos = Vec3.px(if is_right then -120 else 120, -80, 0)
     me.timer = 0
     local s = me.state :: State
     s.entry, s.turn, s.count = 0xFF, 0, 0
@@ -101,6 +108,8 @@ function sol_sun.spawn(side: number): Object?
     if o then
         o.alliance = side
         o.flip = 0
+        -- 0x02200B7E..0x02200B84 (`flags |= 0x14`): initialize and animate through Intro / Custom Screen pause.
+        o.run_while_paused = true
     end
     return o
 end

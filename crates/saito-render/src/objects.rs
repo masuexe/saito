@@ -551,8 +551,9 @@ pub fn queue_objects<'a>(
                 continue;
             }
             let pos = drawn_at(b, graphics, r);
-            let p = project((pos.x, pos.y, pos.z), view);
-            let fine = project_fine((pos.x, pos.y, pos.z), view);
+            let proj_view = if look.screen_space { View { camera: (0, 0, 0), ..*view } } else { *view };
+            let p = project((pos.x, pos.y, pos.z), &proj_view);
+            let fine = project_fine((pos.x, pos.y, pos.z), &proj_view);
             let hflip = look.hflip ^ view.mirror;
             let vflip = look.vflip;
 
@@ -632,7 +633,11 @@ pub fn queue_objects<'a>(
                     affine: None,
                     fade: None,
                     clip: None,
-                    anchor: crate::compose::Anchor::CENTER,
+                    anchor: if look.screen_space && p.y < 80 {
+                        if p.x >= 120 { crate::compose::Anchor::TOP_RIGHT } else { crate::compose::Anchor::TOP_LEFT }
+                    } else {
+                        crate::compose::Anchor::CENTER
+                    },
                 };
                 // Ground shadows go one layer back, in the first bucket.
                 // Where the rules count the sprite's priority into the
