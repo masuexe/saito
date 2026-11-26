@@ -907,9 +907,9 @@ pub(crate) mod tests {
         assert!(matches!(ReplayPlayer::new(&content, &cut_match, None).err().unwrap(), Refused::BadMatch(_)));
         assert_eq!(ReplayPlayer::new(&content, &replay, Some(2)).err().unwrap(), Refused::NoSide(2));
 
-        // EXE6 0.1.2..=0.5.0 are refused strictly on 0.6.0, but play in lenient mode.
+        // EXE6 0.1.2..=0.6.0 are refused strictly on 0.7.0, but play in lenient mode.
         let mut old_exe6 = replay.clone();
-        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] {
+        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] {
             old_exe6.head.engine = prev.into();
             assert!(matches!(play_out(&content, &old_exe6), Err(Refused::OtherVersion(_))));
             let out = play_out_compat(&content, &old_exe6, Compat::Lenient).unwrap();
@@ -928,9 +928,9 @@ pub(crate) mod tests {
         assert!(matches!(play_out_compat(&five, &lenient, Compat::Lenient), Err(Refused::OtherGame { .. })));
         assert!(matches!(play_out_compat(&content, &cut_match, Compat::Lenient), Err(Refused::BadMatch(_))));
 
-        // EXE5 0.1.2..=0.5.0 are refused strictly on 0.6.0, but play in lenient mode.
+        // EXE5 0.1.2..=0.6.0 are refused strictly on 0.7.0, but play in lenient mode.
         let (exe5_replay, _) = recorded(&five, "exe5");
-        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] {
+        for prev in ["0.1.2", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] {
             let mut old_exe5 = exe5_replay.clone();
             old_exe5.head.engine = prev.into();
             assert!(matches!(play_out(&five, &old_exe5), Err(Refused::OtherVersion(_))));

@@ -81,6 +81,8 @@ pub const SIM_EPOCHS: &[saito_replay::SimEpoch] = &[
     // 0.3 -> 0.4 only modified EXE5 party-switch hand size recomputation and barrier wind rule (S-050, S-056).
     // 0.4 -> 0.5 added EXE5 5DS ABD cooldown behavior in auto_battle/ai.luau (S-026).
     // 0.5 -> 0.6 modified battle simulation across EXE4, EXE5, and EXE6 (S-093, S-094, S-097, S-104).
+    // 0.6 -> 0.7 added EXE4/EXE5 ABD high-class chip cap, EXE5 Gate-Party lead PartyCust/team support,
+    // and battle/HUD state updates (S-107, S-109, S-110).
     saito_replay::SimEpoch { line: "0.1", game: Some("exe5"), version: 1 },
     saito_replay::SimEpoch { line: "0.2", game: Some("exe5"), version: 2 },
     saito_replay::SimEpoch { line: "0.3", game: Some("exe5"), version: 3 },
@@ -92,6 +94,7 @@ pub const SIM_EPOCHS: &[saito_replay::SimEpoch] = &[
     saito_replay::SimEpoch { line: "0.4", game: None, version: 2 },
     saito_replay::SimEpoch { line: "0.5", game: None, version: 2 },
     saito_replay::SimEpoch { line: "0.6", game: None, version: 6 },
+    saito_replay::SimEpoch { line: "0.7", game: None, version: 7 },
 ];
 
 /// Whether two engine versions share identical simulation behavior for `game`.
@@ -158,5 +161,9 @@ mod tests {
         assert!(!same_sim("0.4.0", "0.5.0", "exe5"));
         assert!(!same_sim("0.5.0", "0.6.0", "exe5"));
         assert!(same_sim("0.6.0", "0.6.1", "exe5"));
+        assert!(!same_sim("0.6.0", "0.7.0", "exe4"));
+        assert!(!same_sim("0.6.0", "0.7.0", "exe5"));
+        assert!(!same_sim("0.6.0", "0.7.0", "exe6"));
+        assert!(same_sim("0.7.0", "0.7.1", "exe5"));
     }
 }
