@@ -296,6 +296,16 @@ impl Games {
             || saito_files::is_file(&copies().join(saito_extract::hd_art::VOL2_FILE))
     }
 
+    /// Whether EXE6 HD Cross-selection sheets (both Gregar and Falzar) are available.
+    pub fn has_hd_cross_art(&self) -> bool {
+        saito_extract::hd_art::has_cross_sheets(self.source.as_ref(), &copies())
+    }
+
+    /// Whether all Legacy Collection Vol. 2 HD assets (`vol2.dat` + EXE6 Gregar/Falzar cross sheets) are available.
+    pub fn has_all_hd_art(&self) -> bool {
+        self.has_vol2_dat() && self.has_hd_cross_art()
+    }
+
     /// Mark every currently loaded game for reload (e.g. after importing `vol2.dat` for HD chip art).
     pub fn reload_all(&mut self) {
         for entry in &mut self.list {

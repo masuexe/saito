@@ -360,12 +360,23 @@ fn keep(files: Vec<File>, codes: Vec<String>) -> Receiver<Result<usize, String>>
     let _ = saito_threads::spawn("keeping the Legacy Collection's ROMs", move || {
         let dir = crate::games::copies();
         let mut kept = 0;
+        let mut kept_cross = 0;
         for file in files {
+            if saito_extract::hd_art::is_valid_cross_copy(&file.name, &file.bytes) {
+                match saito_files::stow(&dir.join(&file.name), file.bytes) {
+                    Ok(()) => kept_cross += 1,
+                    Err(why) => crate::errors::log("keeping an HD cross sheet received", &format_args!("{}: {why}", file.name)),
+                }
+                continue;
+            }
             let checked = saito_extract::source::check_copy(&file.name, &file.bytes, &codes).map_err(|e| e.to_string());
             match checked.and_then(|_| saito_files::stow(&dir.join(&file.name), file.bytes).map_err(|e| e.to_string())) {
                 Ok(()) => kept += 1,
                 Err(why) => crate::errors::log("keeping a ROM received", &format_args!("{}: {why}", file.name)),
             }
+        }
+        if kept_cross > 0 {
+            crate::errors::log("keeping the Legacy Collection's HD cross sheets", &format_args!("{kept_cross} kept"));
         }
         let _ = tell.send(if kept > 0 { Ok(kept) } else { Err("none of the files received is a ROM a game wants".into()) });
     });

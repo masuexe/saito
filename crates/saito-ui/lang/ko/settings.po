@@ -109,8 +109,8 @@ msgstr "사용 가능한 경우 레거시 컬렉션 고해상도 칩 일러스�
 msgid "HD art archive"
 msgstr "HD 일러스트 파일"
 
-msgid "Select launcher/data/vol2.dat from Battle Network Legacy Collection Vol. 2."
-msgstr "레거시 컬렉션 Vol.2의 launcher/data/vol2.dat 파일을 선택하세요."
+msgid "Select launcher/data/vol2.dat, exe/data/exe6.dat, or exe/data/exe6f.dat from Battle Network Legacy Collection Vol. 2."
+msgstr "레거시 컬렉션 Vol.2의 launcher/data/vol2.dat, exe/data/exe6.dat 또는 exe/data/exe6f.dat 파일을 선택하세요."
 
 msgid "Choose file"
 msgstr "파일 선택"

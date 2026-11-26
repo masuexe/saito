@@ -137,7 +137,7 @@ impl Extraction {
             self.graphics.custom.hd_chip_art = hd_art::index_from_vol2(&vol2, &self.game, &self.names.chips);
         }
         if self.game == "exe6" {
-            self.graphics.custom.hd_cross_art = hd_art::extract_cross_art(roms);
+            self.graphics.custom.hd_cross_art = hd_art::extract_cross_art_with_fallback(roms, fallback.and_then(std::path::Path::parent));
         }
     }
 }

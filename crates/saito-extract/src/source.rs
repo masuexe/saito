@@ -257,7 +257,9 @@ impl RomSource {
     /// device that has the collection sends one that hasn't (saito-nearby), which checks each ([`check_copy`]).
     pub fn copies(&self, codes: &[String]) -> Result<Vec<(String, Vec<u8>)>, Error> {
         let roms = self.find(codes).unwrap_or_else(|(_, found)| found);
-        roms.iter().map(|rom| Ok((format!("{}.zip", rom.code), copy_of(rom)?))).collect()
+        let mut copies: Vec<(String, Vec<u8>)> = roms.iter().map(|rom| Ok((format!("{}.zip", rom.code), copy_of(rom)?))).collect::<Result<_, Error>>()?;
+        copies.extend(crate::hd_art::cross_copies(self));
+        Ok(copies)
     }
 
     /// Path to Legacy Collection Vol. 2's `vol2.dat` if this source has one (either a full install's

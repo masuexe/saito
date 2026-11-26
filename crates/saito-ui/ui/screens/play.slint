@@ -1098,8 +1098,8 @@ component LobbyBody inherits Rectangle {
     property <length> their-x: Theme.phone ? 0px : self.lobby-left + self.place-width + self.vs-width;
     property <length> their-y: Theme.phone ? self.place-height + 8px : self.lobby-top;
     property <length> facts-top: Theme.phone ? 2 * self.place-height + 20px : Theme.sideways ? self.place-height + 8px : self.lobby-top + self.place-height + 24px;
-    property <length> buttons-top: Theme.phone ? connection.y + connection.height + 20px : Theme.sideways ? self.viewport-height - 52px : match-facts.y + match-facts.height + 24px;
-    out property <length> portrait-height: pills.y + pills.height + 42px;
+    property <length> buttons-top: Theme.phone ? connection.y + connection.height + 20px : Theme.sideways ? connection.y + connection.height - 52px : match-facts.y + match-facts.height + 24px;
+    out property <length> scroll-height: Theme.phone ? pills.y + pills.height + 42px : connection.y + connection.height + 16px;
 
     // The other player's card slides in as they join.
     joined := Tween {
@@ -1218,7 +1218,7 @@ component LobbyBody inherits Rectangle {
 
         Label {
             x: connection.x;
-            y: Theme.phone ? match-facts.y + match-facts.height + 12px : Theme.sideways ? match-facts.y + match-facts.height + 8px : root.facts-top;
+            y: Theme.phone ? match-facts.y + match-facts.height + 12px : Theme.sideways ? pills.y + pills.height + 10px : root.facts-top;
             width: Theme.phone ? root.width : connection.width;
             height: 14px;
             text: I18n.upper(@tr("Your connection"));
@@ -1226,7 +1226,7 @@ component LobbyBody inherits Rectangle {
 
         connection := ConnectionFacts {
             x: Theme.phone ? 0px : Theme.sideways ? 0px : match-facts.x + match-facts.width + 24px;
-            y: Theme.phone ? match-facts.y + match-facts.height + 32px : Theme.sideways ? root.viewport-height - self.height : match-facts.y;
+            y: Theme.phone ? match-facts.y + match-facts.height + 32px : Theme.sideways ? pills.y + pills.height + 28px : match-facts.y;
             width: Theme.phone ? root.width : self.natural-width;
 
             Rectangle { }  // (Copied in: docs/app.md §14.)
@@ -1241,7 +1241,7 @@ component LobbyBody inherits Rectangle {
         ready := Button {
             x: Theme.phone ? 0px : Theme.sideways ? (connection.width + 14px) : (root.width - self.width - change.width - leave.width - 24px) / 2;
             y: root.buttons-top;
-            width: Theme.phone ? root.width : Theme.sideways ? root.width - (connection.width + 14px) - change.width - leave.width - 16px : 184px;
+            width: Theme.phone ? root.width : Theme.sideways ? max(80px, root.width - (connection.width + 14px) - change.width - leave.width - 16px) : 184px;
             visible: !PlayView.waiting;
             enabled: !PlayView.waiting;
             nav: "lobby.ready";
@@ -1279,7 +1279,7 @@ component LobbyBody inherits Rectangle {
         train := Button {
             x: Theme.sideways ? (connection.width + 14px) : 0px;
             y: root.buttons-top;
-            width: Theme.sideways ? root.width - (connection.width + 14px) - cancel.width - 8px : root.width;
+            width: Theme.sideways ? max(80px, root.width - (connection.width + 14px) - cancel.width - 8px) : root.width;
             visible: PlayView.waiting && Theme.handheld;
             enabled: PlayView.waiting && Theme.handheld;
             nav: "wait.train";
@@ -1307,38 +1307,82 @@ component LobbyBody inherits Rectangle {
             property <bool> show-abd: PlayView.abd-supported;
             property <bool> show-cs-prob: PlayView.cs-prob-supported;
             property <bool> show-extra-rule: PlayView.all-guard-supported || PlayView.dark-cut-in-supported;
+            property <length> btn-h: Theme.sideways ? 28px : 34px;
+            property <length> row-step: self.btn-h + 6px;
             property <length> gap: Theme.sideways ? 6px : 10px;
-            property <length> abd-group-w: abd-btn.width + 4px + abd-guide-btn.width + 4px + abd-cap-btn.width;
-            property <length> row-w: stage-btn.width
-                + (self.show-random ? self.gap + random-btn.width : 0px)
-                + (self.show-abd ? self.gap + self.abd-group-w : 0px)
-                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
-                + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px)
-                + (self.show-spec ? self.gap + spec-vis.width + self.gap + spec-delay.width : 0px);
-            property <length> top-w: stage-btn.width
-                + (self.show-random ? self.gap + random-btn.width : 0px)
-                + (self.show-abd ? self.gap + self.abd-group-w : 0px)
-                + (self.show-cs-prob ? self.gap + cs-prob-btn.width : 0px)
-                + (self.show-extra-rule ? self.gap + extra-rule-btn.width : 0px);
-            property <bool> wrap-top: Theme.phone && (self.show-random || self.show-abd || self.show-cs-prob || self.show-extra-rule) && self.top-w > self.width;
-            property <length> extra-w: (self.show-random ? random-btn.width : 0px)
-                + (self.show-random && self.show-abd ? self.gap : 0px)
-                + (self.show-abd ? self.abd-group-w : 0px)
-                + ((self.show-random || self.show-abd) && self.show-cs-prob ? self.gap : 0px)
-                + (self.show-cs-prob ? cs-prob-btn.width : 0px)
-                + ((self.show-random || self.show-abd || self.show-cs-prob) && self.show-extra-rule ? self.gap : 0px)
-                + (self.show-extra-rule ? extra-rule-btn.width : 0px);
-            property <length> spec-row-y: self.wrap-top ? 80px : 40px;
-            property <length> spec-w: spec-vis.width + self.gap + spec-delay.width;
-            x: Theme.sideways ? (connection.width + 14px) : 0px;
-            y: Theme.sideways ? match-facts.y + match-facts.height + 4px : root.buttons-top + (Theme.phone ? 108px : 92px);
-            width: Theme.sideways ? root.width - (connection.width + 14px) : root.width;
-            height: Theme.phone ? (self.show-spec ? self.spec-row-y + 34px : self.wrap-top ? 74px : 36px) : Theme.sideways ? 30px : 36px;
+            property <length> max-w: max(1px, self.width);
+
+            // Greedy flow-wrap across rows so buttons never overflow horizontally on any screen width.
+            // 0: stage-btn (always visible)
+            property <int> r0: 0;
+            property <length> x0: 0px;
+            property <length> end0: stage-btn.width;
+
+            // 1: random-btn
+            property <bool> fit1: self.end0 + self.gap + random-btn.width <= self.max-w;
+            property <int> r1: self.show-random ? (self.fit1 ? self.r0 : self.r0 + 1) : self.r0;
+            property <length> x1: self.fit1 ? self.end0 + self.gap : 0px;
+            property <length> end1: self.show-random ? self.x1 + random-btn.width : self.end0;
+
+            // 2: abd-btn + abd-guide-btn (kept paired)
+            property <length> abd-pair-w: abd-btn.width + 4px + abd-guide-btn.width;
+            property <bool> fit2: self.end1 + self.gap + self.abd-pair-w <= self.max-w;
+            property <int> r2: self.show-abd ? (self.fit2 ? self.r1 : self.r1 + 1) : self.r1;
+            property <length> x2: self.fit2 ? self.end1 + self.gap : 0px;
+            property <length> end2: self.show-abd ? self.x2 + self.abd-pair-w : self.end1;
+
+            // 3: abd-cap-btn (4px after abd-guide-btn when on the same row)
+            property <bool> fit3: self.end2 + 4px + abd-cap-btn.width <= self.max-w;
+            property <int> r3: self.show-abd ? (self.fit3 ? self.r2 : self.r2 + 1) : self.r2;
+            property <length> x3: self.fit3 ? self.end2 + 4px : 0px;
+            property <length> end3: self.show-abd ? self.x3 + abd-cap-btn.width : self.end2;
+
+            // 4: cs-prob-btn
+            property <bool> fit4: self.end3 + self.gap + cs-prob-btn.width <= self.max-w;
+            property <int> r4: self.show-cs-prob ? (self.fit4 ? self.r3 : self.r3 + 1) : self.r3;
+            property <length> x4: self.fit4 ? self.end3 + self.gap : 0px;
+            property <length> end4: self.show-cs-prob ? self.x4 + cs-prob-btn.width : self.end3;
+
+            // 5: extra-rule-btn
+            property <bool> fit5: self.end4 + self.gap + extra-rule-btn.width <= self.max-w;
+            property <int> r5: self.show-extra-rule ? (self.fit5 ? self.r4 : self.r4 + 1) : self.r4;
+            property <length> x5: self.fit5 ? self.end4 + self.gap : 0px;
+            property <length> end5: self.show-extra-rule ? self.x5 + extra-rule-btn.width : self.end4;
+
+            // 6: spec-vis (kept together with spec-delay on a fresh row when the pair fits in max-w)
+            property <length> spec-pair-w: spec-vis.width + self.gap + spec-delay.width;
+            property <bool> fit6: self.end5 + self.gap + (self.spec-pair-w <= self.max-w ? self.spec-pair-w : spec-vis.width) <= self.max-w;
+            property <int> r6: self.show-spec ? (self.fit6 ? self.r5 : self.r5 + 1) : self.r5;
+            property <length> x6: self.fit6 ? self.end5 + self.gap : 0px;
+            property <length> end6: self.show-spec ? self.x6 + spec-vis.width : self.end5;
+
+            // 7: spec-delay
+            property <bool> fit7: self.end6 + self.gap + spec-delay.width <= self.max-w;
+            property <int> r7: self.show-spec ? (self.fit7 ? self.r6 : self.r6 + 1) : self.r6;
+            property <length> x7: self.fit7 ? self.end6 + self.gap : 0px;
+            property <length> end7: self.show-spec ? self.x7 + spec-delay.width : self.end6;
+
+            pure function row-x(r: int) -> length {
+                let rw = self.r7 == r ? self.end7
+                    : self.r6 == r ? self.end6
+                    : self.r5 == r ? self.end5
+                    : self.r4 == r ? self.end4
+                    : self.r3 == r ? self.end3
+                    : self.r2 == r ? self.end2
+                    : self.r1 == r ? self.end1
+                    : self.end0;
+                return max(0px, (self.width - rw) / 2);
+            }
+
+            x: 0px;
+            y: Theme.sideways ? match-facts.y + match-facts.height + 8px : Theme.phone ? match-facts.y + match-facts.height + connection.height + 160px : match-facts.y + match-facts.height + 116px;
+            width: root.width;
+            height: self.r7 * self.row-step + self.btn-h;
 
             stage-btn := Button {
-                x: Theme.phone ? (parent.wrap-top ? (parent.width - self.width) / 2 : (parent.width - parent.top-w) / 2) : (parent.width - parent.row-w) / 2;
-                y: 0;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r0) + parent.x0;
+                y: parent.r0 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 nav: "lobby.stage";
                 kind: ButtonKind.ghost;
@@ -1346,9 +1390,9 @@ component LobbyBody inherits Rectangle {
             }
 
             random-btn := Button {
-                x: parent.wrap-top ? (parent.width - parent.extra-w) / 2 : stage-btn.x + stage-btn.width + parent.gap;
-                y: parent.wrap-top ? 40px : 0px;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r1) + parent.x1;
+                y: parent.r1 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-random;
                 enabled: parent.show-random && PlayView.host;
@@ -1358,9 +1402,9 @@ component LobbyBody inherits Rectangle {
             }
 
             abd-btn := Button {
-                x: parent.wrap-top ? (parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2) : (parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                y: parent.wrap-top ? 40px : 0px;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r2) + parent.x2;
+                y: parent.r2 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-abd;
                 enabled: parent.show-abd && PlayView.host;
@@ -1375,6 +1419,7 @@ component LobbyBody inherits Rectangle {
                 width: Theme.sideways ? 28px : 32px;
                 height: abd-btn.height;
                 compact: true;
+                tight: true;
                 visible: parent.show-abd;
                 enabled: parent.show-abd;
                 nav: parent.show-abd ? "lobby.abd-guide" : "";
@@ -1383,9 +1428,9 @@ component LobbyBody inherits Rectangle {
             }
 
             abd-cap-btn := Button {
-                x: abd-guide-btn.x + abd-guide-btn.width + 4px;
-                y: abd-btn.y;
-                height: abd-btn.height;
+                x: parent.row-x(parent.r3) + parent.x3;
+                y: parent.r3 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-abd;
                 enabled: parent.show-abd && PlayView.host;
@@ -1395,11 +1440,9 @@ component LobbyBody inherits Rectangle {
             }
 
             cs-prob-btn := Button {
-                x: parent.wrap-top
-                    ? (parent.show-abd ? abd-cap-btn.x + abd-cap-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
-                    : (parent.show-abd ? abd-cap-btn.x + abd-cap-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                y: parent.wrap-top ? 40px : 0px;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r4) + parent.x4;
+                y: parent.r4 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-cs-prob;
                 enabled: parent.show-cs-prob;
@@ -1415,11 +1458,9 @@ component LobbyBody inherits Rectangle {
             }
 
             extra-rule-btn := Button {
-                x: parent.wrap-top
-                    ? (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width + parent.gap : parent.show-abd ? abd-cap-btn.x + abd-cap-btn.width + parent.gap : parent.show-random ? random-btn.x + random-btn.width + parent.gap : (parent.width - parent.extra-w) / 2)
-                    : (parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-cap-btn.x + abd-cap-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                y: parent.wrap-top ? 40px : 0px;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r5) + parent.x5;
+                y: parent.r5 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-extra-rule;
                 enabled: parent.show-extra-rule && PlayView.host;
@@ -1431,9 +1472,9 @@ component LobbyBody inherits Rectangle {
             }
 
             spec-vis := Button {
-                x: Theme.phone ? (parent.width - parent.spec-w) / 2 : (parent.show-extra-rule ? extra-rule-btn.x + extra-rule-btn.width : parent.show-cs-prob ? cs-prob-btn.x + cs-prob-btn.width : parent.show-abd ? abd-cap-btn.x + abd-cap-btn.width : parent.show-random ? random-btn.x + random-btn.width : stage-btn.x + stage-btn.width) + parent.gap;
-                y: Theme.phone ? parent.spec-row-y : 0px;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r6) + parent.x6;
+                y: parent.r6 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-spec;
                 enabled: parent.show-spec;
@@ -1443,9 +1484,9 @@ component LobbyBody inherits Rectangle {
             }
 
             spec-delay := Button {
-                x: spec-vis.x + spec-vis.width + parent.gap;
-                y: spec-vis.y;
-                height: Theme.sideways ? 28px : 34px;
+                x: parent.row-x(parent.r7) + parent.x7;
+                y: parent.r7 * parent.row-step;
+                height: parent.btn-h;
                 compact: true;
                 visible: parent.show-spec;
                 enabled: parent.show-spec && PlayView.spectate-visibility != 0;
@@ -1459,7 +1500,7 @@ component LobbyBody inherits Rectangle {
         // ended, or what keeps this player's build from being played.
         Message {
             x: Theme.sideways ? (connection.width + 14px) : 0px;
-            y: Theme.sideways ? root.buttons-top - 22px : Theme.phone ? pills.y + pills.height + 10px : root.buttons-top + 56px;
+            y: Theme.sideways ? connection.y + 4px : Theme.phone ? pills.y + pills.height + 10px : root.buttons-top + 56px;
             width: Theme.sideways ? root.width - (connection.width + 14px) : root.width;
             text: PlayView.note == LobbyNote.reconnecting ? @tr("Reconnecting {} s", PlayView.note-seconds) : PlayView.note == LobbyNote.unusable ? PlayView.note-problem : PlayView.note-error != "" ? PlayView.note-error : PlayView.note == LobbyNote.you ? @tr("Waiting for you to ready up.") : PlayView.note == LobbyNote.them ? @tr("Waiting for your opponent to ready up.") : "";
             tone: PlayView.note-error != "" || PlayView.note == LobbyNote.reconnecting || PlayView.note == LobbyNote.unusable ? Theme.bad : Theme.muted;
@@ -1751,7 +1792,7 @@ export component PlayScreen inherits Page {
     // invite's code (`WaitCard`), the player's own the practice battle (on a phone their card, the battle asked for
     // with PRACTICE, filling the window), and the buttons are the way out alone; the match's settings are the
     // host's to set already (the user: "the host should be able to change settings before the joiner joins").
-    if PlayView.part == PlayPart.lobby && !Theme.phone: LobbyBody {
+    if PlayView.part == PlayPart.lobby && !Theme.handheld: LobbyBody {
         x: 0;
         y: 0;
         width: root.body-width;
@@ -1759,19 +1800,19 @@ export component PlayScreen inherits Page {
         viewport-height: root.body-height;
     }
 
-    if PlayView.part == PlayPart.lobby && Theme.phone: lobby-scroll := ScrollPage {
+    if PlayView.part == PlayPart.lobby && Theme.handheld: lobby-scroll := ScrollPage {
         x: 0;
         y: 0;
         width: root.body-width;
         height: root.body-height;
         nav: "lobby.";
-        content-height: lobby-body.portrait-height;
+        content-height: lobby-body.scroll-height;
 
         lobby-body := LobbyBody {
             x: 0;
             y: 0;
             width: lobby-scroll.view-width;
-            height: self.portrait-height;
+            height: max(root.body-height, self.scroll-height);
             viewport-height: root.body-height;
         }
     }

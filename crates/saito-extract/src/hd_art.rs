@@ -68,22 +68,144 @@ fn cross_copy_name(version: &str, lang: &str) -> String {
     format!("cross_{version}_{lang}.zip")
 }
 
+fn pack_cross_entry_raw(zip: &mut zip::ZipArchive<impl Read + Seek>, entry_name: &str) -> Option<Vec<u8>> {
+    let idx = zip.index_for_name(entry_name)?;
+    let entry = zip.by_index_raw(idx).ok()?;
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    out.raw_copy_file_rename(entry, "cross.pak").ok()?;
+    out.finish().ok().map(std::io::Cursor::into_inner)
+}
+
+/// Extract and stow EXE6 `cross_*.pak` sheets from a single Legacy Collection archive
+/// (`exe6.dat` or `exe6f.dat`, regardless of file name) into `dst_dir` as `cross_*.zip`.
+/// Returns the number of sheets stowed, or an error if the archive contains none.
+pub fn stow_cross_archive(archive_path: &Path, dst_dir: &Path) -> std::io::Result<usize> {
+    let file = saito_files::File::open(archive_path)?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut stowed = 0usize;
+    for (version, _, prefix) in CROSS_VERSIONS {
+        for (lang, pak_lang) in CROSS_LANGS {
+            let entry_name = format!("{prefix}/data/ui/cross_{pak_lang}.pak");
+            let Some(bytes) = pack_cross_entry_raw(&mut zip, &entry_name) else { continue };
+            saito_files::stow(&dst_dir.join(cross_copy_name(version, lang)), bytes)?;
+            stowed += 1;
+        }
+    }
+    if stowed == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "archive contains no EXE6 cross selection sheets",
+        ));
+    }
+    Ok(stowed)
+}
+
 /// Stow compacted single-entry zips of EXE6's `cross_*.pak` sheets alongside ROM copies on mobile/web
 /// (~150 KB each, <1 MB total) using raw zip entry copy with no recompression.
 pub(crate) fn stow_cross_sheets(data_dir: &Path, dst_dir: &Path) {
-    for (version, archive_name, prefix) in CROSS_VERSIONS {
-        let archive_path = data_dir.join(archive_name);
-        let Ok(file) = saito_files::File::open(&archive_path) else { continue };
-        let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
-        for (lang, pak_lang) in CROSS_LANGS {
-            let entry_name = format!("{prefix}/data/ui/cross_{pak_lang}.pak");
-            let Some(idx) = zip.index_for_name(&entry_name) else { continue };
-            let Ok(entry) = zip.by_index_raw(idx) else { continue };
-            let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-            if out.raw_copy_file_rename(entry, "cross.pak").is_ok()
-                && let Ok(cursor) = out.finish()
+    for (_, archive_name, _) in CROSS_VERSIONS {
+        let _ = stow_cross_archive(&data_dir.join(archive_name), dst_dir);
+    }
+}
+
+/// Compacted single-entry `cross_*.zip` copies available from `roms`, for Nearby Transfer (`saito-nearby`).
+pub fn cross_copies(roms: &crate::RomSource) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    match roms {
+        crate::RomSource::Collection(install) => {
+            for (version, archive_name, prefix) in CROSS_VERSIONS {
+                let archive_path = install.data.join(archive_name);
+                let Ok(file) = saito_files::File::open(&archive_path) else { continue };
+                let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
+                for (lang, pak_lang) in CROSS_LANGS {
+                    let entry_name = format!("{prefix}/data/ui/cross_{pak_lang}.pak");
+                    if let Some(bytes) = pack_cross_entry_raw(&mut zip, &entry_name) {
+                        out.push((cross_copy_name(version, lang), bytes));
+                    }
+                }
+            }
+        }
+        crate::RomSource::Copies(dir) => {
+            for (version, _, _) in CROSS_VERSIONS {
+                for (lang, _) in CROSS_LANGS {
+                    let name = cross_copy_name(version, lang);
+                    let path = dir.join(&name);
+                    if !saito_files::is_file(&path) {
+                        continue;
+                    }
+                    if saito_files::fetch(std::slice::from_ref(&path)).is_err() {
+                        continue;
+                    }
+                    if let Ok(bytes) = saito_files::read(&path) {
+                        out.push((name, bytes));
+                    }
+                }
+            }
+        }
+        crate::RomSource::Files(_) => {}
+    }
+    out
+}
+
+/// Validate a `cross_*.zip` copy received over Nearby Transfer before stowing it.
+pub fn is_valid_cross_copy(name: &str, bytes: &[u8]) -> bool {
+    let known = CROSS_VERSIONS
+        .iter()
+        .any(|(version, _, _)| CROSS_LANGS.iter().any(|(lang, _)| name == cross_copy_name(version, lang)));
+    if !known {
+        return false;
+    }
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else { return false };
+    if zip.len() != 1 {
+        return false;
+    }
+    let Ok(mut entry) = zip.by_index(0) else { return false };
+    if entry.name() != "cross.pak" {
+        return false;
+    }
+    let mut buf = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut buf).is_ok() && parse_cross_pak(&buf).is_some()
+}
+
+fn dir_has_cross_version(dir: &Path, version: &str) -> bool {
+    CROSS_LANGS.iter().any(|(lang, _)| saito_files::is_file(&dir.join(cross_copy_name(version, lang))))
+}
+
+/// Whether EXE6 HD Cross-selection sheets for both Gregar and Falzar are available (either from
+/// a Legacy Collection install or stowed `cross_*.zip` copies in `copies_dir`).
+pub fn has_cross_sheets(roms: Option<&crate::RomSource>, copies_dir: &Path) -> bool {
+    CROSS_VERSIONS.iter().all(|(version, archive_name, _)| {
+        let in_source = match roms {
+            Some(crate::RomSource::Collection(install)) => saito_files::is_file(&install.data.join(archive_name)),
+            Some(crate::RomSource::Copies(dir)) => dir_has_cross_version(dir, version),
+            Some(crate::RomSource::Files(_)) | None => false,
+        };
+        in_source || dir_has_cross_version(copies_dir, version)
+    })
+}
+
+fn load_cross_sheets_from_dir(dir: &Path, sheets: &mut BTreeMap<(String, String), HdCrossSheet>) {
+    for (version, _, _) in CROSS_VERSIONS {
+        for (lang, _) in CROSS_LANGS {
+            let key = (version.to_string(), lang.to_string());
+            if sheets.contains_key(&key) {
+                continue;
+            }
+            let path = dir.join(cross_copy_name(version, lang));
+            if !saito_files::is_file(&path) {
+                continue;
+            }
+            if saito_files::fetch(std::slice::from_ref(&path)).is_err() {
+                continue;
+            }
+            let Ok(file) = saito_files::File::open(&path) else { continue };
+            let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
+            let Ok(mut entry) = zip.by_index(0) else { continue };
+            let mut buf = Vec::with_capacity(entry.size() as usize);
+            if entry.read_to_end(&mut buf).is_ok()
+                && let Some(sheet) = parse_cross_pak(&buf)
             {
-                let _ = saito_files::stow(&dst_dir.join(cross_copy_name(version, lang)), cursor.into_inner());
+                sheets.insert(key, sheet);
             }
         }
     }
@@ -92,6 +214,12 @@ pub(crate) fn stow_cross_sheets(data_dir: &Path, dst_dir: &Path) {
 /// Extract EXE6 Legacy Collection HD Cross-selection bars from `roms` (either `exe6.dat`/`exe6f.dat`
 /// in a Collection install, or stowed `cross_*.zip` copies alongside `RomSource::Copies`).
 pub fn extract_cross_art(roms: &crate::RomSource) -> Option<HdCrossArt> {
+    extract_cross_art_with_fallback(roms, None)
+}
+
+/// Like [`extract_cross_art`], also loading any stowed `cross_*.zip` sheets from `fallback_dir`
+/// (e.g. when ROMs were imported as standalone `.gba` files or before HD cross sheets were stowed).
+pub fn extract_cross_art_with_fallback(roms: &crate::RomSource, fallback_dir: Option<&Path>) -> Option<HdCrossArt> {
     let mut sheets = BTreeMap::new();
     match roms {
         crate::RomSource::Collection(install) => {
@@ -111,29 +239,11 @@ pub fn extract_cross_art(roms: &crate::RomSource) -> Option<HdCrossArt> {
                 }
             }
         }
-        crate::RomSource::Copies(dir) => {
-            for (version, _, _) in CROSS_VERSIONS {
-                for (lang, _) in CROSS_LANGS {
-                    let path = dir.join(cross_copy_name(version, lang));
-                    if !saito_files::is_file(&path) {
-                        continue;
-                    }
-                    if saito_files::fetch(std::slice::from_ref(&path)).is_err() {
-                        continue;
-                    }
-                    let Ok(file) = saito_files::File::open(&path) else { continue };
-                    let Ok(mut zip) = zip::ZipArchive::new(file) else { continue };
-                    let Ok(mut entry) = zip.by_index(0) else { continue };
-                    let mut buf = Vec::with_capacity(entry.size() as usize);
-                    if entry.read_to_end(&mut buf).is_ok()
-                        && let Some(sheet) = parse_cross_pak(&buf)
-                    {
-                        sheets.insert((version.to_string(), lang.to_string()), sheet);
-                    }
-                }
-            }
-        }
-        crate::RomSource::Files(_) => return None,
+        crate::RomSource::Copies(dir) => load_cross_sheets_from_dir(dir, &mut sheets),
+        crate::RomSource::Files(_) => {}
+    }
+    if let Some(dir) = fallback_dir {
+        load_cross_sheets_from_dir(dir, &mut sheets);
     }
     if sheets.is_empty() {
         return None;
@@ -406,5 +516,82 @@ mod tests {
         assert_eq!(&sheet.bars[0][..4], &[30, 20, 10, 255]);
         assert_eq!(&sheet.bars[5 + 2][..4], &[60, 50, 40, 255]);
         assert_eq!(&sheet.bars[10 + 4][..4], &[90, 80, 70, 255]);
+    }
+
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in entries {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn stow_cross_archive_handles_arbitrary_filenames_and_extract_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let copies = dir.path().join("copies");
+        let mut pak = vec![0u8; CROSS_PAK_MIN_LEN];
+        pak[CROSS_PAK_HEADER_LEN..CROSS_PAK_HEADER_LEN + 4].copy_from_slice(&[1, 2, 3, 255]);
+
+        // Opaque Android SAF filename for exe6.dat and exe6f.dat
+        let picked_g = dir.path().join("saf_0.dat");
+        write_test_zip(&picked_g, &[("exe6/data/ui/cross_en.pak", &pak), ("exe6/data/ui/cross_cs.pak", &pak)]);
+        let picked_f = dir.path().join("saf_1.dat");
+        write_test_zip(&picked_f, &[("exe6f/data/ui/cross_cs.pak", &pak)]);
+
+        assert!(!has_cross_sheets(None, &copies));
+        assert_eq!(stow_cross_archive(&picked_g, &copies).unwrap(), 2);
+        // Only Gregar stowed so far -> still incomplete until Falzar is also present.
+        assert!(!has_cross_sheets(None, &copies));
+        assert_eq!(stow_cross_archive(&picked_f, &copies).unwrap(), 1);
+        assert!(has_cross_sheets(None, &copies));
+
+        // Standalone RomSource::Files falls back to copies dir for EXE6 HD cross art.
+        let standalone = crate::RomSource::Files(vec![dir.path().to_path_buf()]);
+        assert!(extract_cross_art(&standalone).is_none());
+        let art = extract_cross_art_with_fallback(&standalone, Some(&copies)).expect("fallback loads cross art");
+        assert!(art.sheets.contains_key(&("gregar".to_string(), "en".to_string())));
+        assert!(art.sheets.contains_key(&("gregar".to_string(), "zh-Hans".to_string())));
+        assert!(art.sheets.contains_key(&("falzar".to_string(), "zh-Hans".to_string())));
+        assert_eq!(&art.sheets[&("gregar".to_string(), "zh-Hans".to_string())].bars[0][..4], &[3, 2, 1, 255]);
+
+        // Invalid zip / non-cross zip is rejected.
+        let empty = dir.path().join("other.dat");
+        write_test_zip(&empty, &[("readme.txt", b"hello")]);
+        assert!(stow_cross_archive(&empty, &copies).is_err());
+    }
+
+    #[test]
+    fn cross_copies_from_collection_and_copies_validate_for_nearby() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("exe").join("data");
+        let mut pak = vec![0u8; CROSS_PAK_MIN_LEN];
+        pak[CROSS_PAK_HEADER_LEN..CROSS_PAK_HEADER_LEN + 4].copy_from_slice(&[9, 8, 7, 255]);
+        write_test_zip(&data.join("exe6.dat"), &[("exe6/data/ui/cross_en.pak", &pak), ("exe6/data/ui/cross_cs.pak", &pak)]);
+        write_test_zip(&data.join("exe6f.dat"), &[("exe6f/data/ui/cross_jp.pak", &pak)]);
+
+        let collection = crate::RomSource::at(dir.path()).unwrap();
+        let sent = cross_copies(&collection);
+        assert_eq!(sent.len(), 3);
+        let kept_dir = dir.path().join("received");
+        for (name, bytes) in &sent {
+            assert!(is_valid_cross_copy(name, bytes), "{name} should validate");
+            saito_files::stow(&kept_dir.join(name), bytes.clone()).unwrap();
+        }
+        // Reject unknown names, wrong internal entry, or truncated pak.
+        assert!(!is_valid_cross_copy("cross_exe5_en.zip", &sent[0].1));
+        assert!(!is_valid_cross_copy("cross_gregar_en.zip", b"not a zip"));
+        let bad_pak_zip = dir.path().join("bad.zip");
+        write_test_zip(&bad_pak_zip, &[("cross.pak", &[0u8; 32])]);
+        assert!(!is_valid_cross_copy("cross_gregar_en.zip", &std::fs::read(&bad_pak_zip).unwrap()));
+
+        // Re-sending from RomSource::Copies preserves the stowed cross sheets.
+        let from_copies = cross_copies(&crate::RomSource::Copies(kept_dir));
+        assert_eq!(from_copies.len(), 3);
     }
 }

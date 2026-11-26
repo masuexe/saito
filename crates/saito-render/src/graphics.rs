@@ -394,7 +394,11 @@ impl<'a> Graphics<'a> {
         {
             return cached.clone();
         }
-        let sheet = cross.sheets.get(&(version.to_string(), cross.lang.clone()))?;
+        let sheet = cross
+            .sheets
+            .get(&(version.to_string(), cross.lang.clone()))
+            .or_else(|| cross.sheets.get(&(version.to_string(), saito_assets::BASE_LANGUAGE.to_string())))
+            .or_else(|| cross.sheets.iter().find(|((v, _), _)| v == version).map(|(_, s)| s))?;
         let rgba = sheet.bars.get(state * 5 + number)?.clone();
         let img = Some(Arc::new(crate::pictures::Image { width: 288, height: 64, rgba }));
         if let Some(cache) = self.hd_cross

@@ -137,7 +137,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_smooth_motion(s.smooth_motion);
     view.set_fill_window(s.fill_window);
     view.set_hd_chip_art(s.hd_chip_art);
-    view.set_has_hd_art(shell.games.has_vol2_dat());
+    view.set_has_hd_art(shell.games.has_all_hd_art());
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
     view.set_input_delay(s.input_delay as i32);
@@ -487,7 +487,7 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, None),
             "set.hd-chip-art-import" => {
                 if self.importing_hd_art.is_none() {
-                    shell.choose_files("vol2.dat", &["dat"], "hd-art");
+                    shell.choose_files("vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
                 }
             }
             "set.key" | "set.button" => self.binding.ask(shell, index, id == "set.button"),
@@ -699,22 +699,47 @@ impl Screen for Settings {
     }
 
     fn chosen(&mut self, shell: &mut Shell, purpose: &str, paths: &[std::path::PathBuf]) {
-        if purpose != "hd-art" || self.importing_hd_art.is_some() {
+        if purpose != "hd-art" || self.importing_hd_art.is_some() || paths.is_empty() {
             return;
         }
-        let Some(src) = paths.first().cloned() else { return };
-        let dst = crate::games::copies().join(saito_extract::hd_art::VOL2_FILE);
+        let picked: Vec<std::path::PathBuf> = paths.to_vec();
+        let copies_dir = crate::games::copies();
         let cleanup_picked = !saito_dialogs::FOLDERS_READ_AGAIN;
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = saito_threads::spawn("importing vol2.dat for HD chip art", move || {
-            let result = saito_extract::hd_art::compact_vol2(&src, &dst).map_err(|e| e.to_string());
-            if cleanup_picked {
-                if let Some(parent) = src.parent() {
-                    let _ = std::fs::remove_dir_all(parent);
+        let spawned = saito_threads::spawn("importing HD art archives", move || {
+            let mut imported = 0usize;
+            let mut last_err: Option<String> = None;
+            let mut cleanup_dirs = std::collections::BTreeSet::new();
+            for src in &picked {
+                if saito_extract::hd_art::is_valid_vol2(src) {
+                    let dst = copies_dir.join(saito_extract::hd_art::VOL2_FILE);
+                    match saito_extract::hd_art::compact_vol2(src, &dst) {
+                        Ok(n) => imported += n,
+                        Err(e) => last_err = Some(e.to_string()),
+                    }
                 } else {
-                    let _ = std::fs::remove_file(&src);
+                    match saito_extract::hd_art::stow_cross_archive(src, &copies_dir) {
+                        Ok(n) => imported += n,
+                        Err(e) => last_err = Some(e.to_string()),
+                    }
+                }
+                if cleanup_picked {
+                    let _ = std::fs::remove_file(src);
+                    if let Some(parent) = src.parent() {
+                        cleanup_dirs.insert(parent.to_path_buf());
+                    }
                 }
             }
+            if cleanup_picked {
+                for dir in cleanup_dirs {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
+            }
+            let result = if imported > 0 {
+                Ok(imported)
+            } else {
+                Err(last_err.unwrap_or_else(|| "no valid HD art archive selected".to_string()))
+            };
             let _ = tx.send(result);
         });
         match spawned {
@@ -723,7 +748,7 @@ impl Screen for Settings {
                 self.show(shell);
             }
             Err(why) => {
-                crate::errors::log("importing vol2.dat", &why);
+                crate::errors::log("importing HD art archives", &why);
                 shell.sound.play(Cue::Refused);
             }
         }
@@ -734,7 +759,7 @@ impl Screen for Settings {
         match rx.try_recv() {
             Ok(Ok(count)) => {
                 self.importing_hd_art = None;
-                crate::errors::log("importing vol2.dat", &format_args!("compacted {count} HD chip art entries"));
+                crate::errors::log("importing HD art archives", &format_args!("imported {count} HD art entries"));
                 shell.games.reload_all();
                 shell.sound.play(Cue::Pick);
                 if shown {
@@ -743,7 +768,7 @@ impl Screen for Settings {
             }
             Ok(Err(why)) => {
                 self.importing_hd_art = None;
-                crate::errors::log("importing vol2.dat", &why);
+                crate::errors::log("importing HD art archives", &why);
                 shell.sound.play(Cue::Refused);
                 if shown {
                     self.show(shell);
