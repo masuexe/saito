@@ -24,6 +24,9 @@ local navi: NaviDef = {
     -- How many of its sprite's steps its warp out (animation 4) lasts.
     animation_steps = { warp_out = 3 },
     element = "wood",
+    -- EXE5 Double Team DS StatusGuard (gated to 5DS mode via `status.navi_status_immune_effect`,
+    -- inactive in pure GBA EXE5 battles).
+    traits = { "status_immune" },
     buster_bonus = 3,
     move_lag = { 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 },
     banners = { win = asset.banner("tomahawkman-win"), lose = asset.banner("tomahawkman-deleted") },

@@ -58,13 +58,19 @@ export type State = {
 local buster: Weapon = require("./buster").weapon
 local navi_status = require("@exelib/navi_status")
 
--- Battle effect bit enabling EXE5 Double Team DS (5DS) Dark Soul ABD behavior:
--- after using any nerfed chip below, the AI must execute 8 buster runs (3-shot bursts)
--- before attempting another chip. Encoded in `s.shots` using bit 7 (`0x80..0x88`) so
--- `StateSchema` and GBA/Legacy Collection digests remain unchanged.
+-- Battle effect bit enabling EXE5 Double Team DS (5DS) Dark Soul ABD behavior
+-- (JP ARM9 0x020715EA..0x0207162A & 0x020710C2..0x02071102):
+-- - In `decide`, after picking a chip whose ROM record `+0x1E` is nonzero (all 19
+--   chips below have `+0x1E = 8`; every other chip has `0`), the AI stores `8` into
+--   AIData `+0xFD` before the dimming-reposition check.
+-- - On subsequent `decide` calls (after the `misses >= 5` shuffle check and before
+--   rolling RNG), AIData `+0xFD` decrements by 1; while `> 0`, it skips RNG and jumps
+--   directly to `to_buster` (2 three-shot buster runs per decision, i.e. 7 buster runs
+--   = 14 three-shot bursts before the 8th decision reaches `0` and resumes normal AI).
+-- Encoded in the upper nibble of `s.shots` (`0..8`, shifted << 4) so `StateSchema` and
+-- pure GBA/Legacy Collection digests remain bit-identical (`s.shots & 0xF0 == 0`).
 local ABD_DS = 0x800000
-local DS_COOLDOWN_BASE = 0x80
-local DS_COOLDOWN_SHOTS = 8
+local DS_COOLDOWN_COUNT = 8
 local DS_COOLDOWN_CHIPS: { [string]: boolean } = {
     darkcirc = true,
     drksword = true,
@@ -191,11 +197,20 @@ end
 
 -- ---- Decisions (+0xF1 = 0) ----------------------------------------------------------------------------------
 
-local function to_buster(s: State)
-    s.step, s.sub, s.shots = 8, 0, 0
+local function ds_cooldown_get(s: State): number
+    return bit32.rshift(s.shots, 4)
 end
 
--- 0x0802BA64 (0x0802B4FC)
+local function ds_cooldown_set(s: State, count: number)
+    s.shots = bit32.bor(bit32.lshift(bit32.band(count, 0x0F), 4), bit32.band(s.shots, 0x0F))
+end
+
+local function to_buster(s: State)
+    s.step, s.sub = 8, 0
+    s.shots = bit32.band(s.shots, 0xF0)
+end
+
+-- 0x0802BA64 (0x0802B4FC); 5DS JP 0x02071594 (0x0207106C)
 local function decide(navi: Object, s: State, fam: Family)
     if not navi:chips_enabled() then
         return to_buster(s)
@@ -205,6 +220,15 @@ local function decide(navi: Object, s: State, fam: Family)
     -- 0x0802BE9A); their only writer, 0x0802BF4E, nothing calls: they stay 0, and neither pick runs.)
     if s.misses >= 5 then
         shuffle(navi, fam)
+    end
+    -- 5DS ROM (0x020715EA / 0x020710C2): decrement AIData +0xFD; while > 0, force `to_buster` without rolling RNG.
+    if bit32.btest(battle.effects(), ABD_DS) then
+        local cd = ds_cooldown_get(s) - 1
+        if cd > 0 then
+            ds_cooldown_set(s, cd)
+            return to_buster(s)
+        end
+        ds_cooldown_set(s, 0)
     end
     if bit32.band(battle.rng_positive(), 15) >= 12 then
         return to_buster(s)
@@ -225,6 +249,11 @@ local function decide(navi: Object, s: State, fam: Family)
     end
     local chip = e :: Chip
     s.entry_chip, s.entry_pattern = chip, 0
+    -- 5DS ROM (0x02071628 / 0x02071100): store chip record +0x1E (8 for nerfed chips, 0 otherwise) into AIData +0xFD
+    -- before the dimming reposition check.
+    if bit32.btest(battle.effects(), ABD_DS) then
+        ds_cooldown_set(s, if DS_COOLDOWN_CHIPS[chip.id :: string] then DS_COOLDOWN_COUNT else 0)
+    end
     -- (The record's byte 9 bit 0, 0x0802BAEA: its `dimming` flag.)
     if table.find(chip.flags or {}, "dimming") ~= nil and s.misses == 0 then
         s.step = 0x18
@@ -254,15 +283,9 @@ local function buster_run(navi: Object, s: State, fam: Family)
         -- one, or every console's where the chip-use rules say), until its next idle shows it again.
         battle.set_hud("chip_window", false, if chip_use.window_hides_every_console then nil else navi.alliance)
         navi:start_weapon(buster, 1)
-        s.shots += 1
-        if s.shots >= DS_COOLDOWN_BASE then
-            if s.shots < DS_COOLDOWN_BASE + DS_COOLDOWN_SHOTS then
-                s.sub = 0
-            else
-                s.shots = 0
-                s.step = 0
-            end
-        elseif s.shots < 2 then
+        local shots = bit32.band(s.shots, 0x0F) + 1
+        s.shots = bit32.bor(bit32.band(s.shots, 0xF0), shots)
+        if shots < 2 then
             s.sub = 0
         else
             s.step = 0
@@ -422,6 +445,9 @@ local function playing(navi: Object, s: State, fam: Family)
         local owner = auto_battle_side(navi, fam)
         if cap > 0 and battle.abd_chip_uses(owner, chip) >= cap then
             block.remove_chip(owner, chip)
+            if bit32.btest(battle.effects(), ABD_DS) then
+                ds_cooldown_set(s, 0)
+            end
             s.mode = 0
             return
         end
@@ -431,9 +457,6 @@ local function playing(navi: Object, s: State, fam: Family)
             block.remove_chip(owner, chip)
         end
         s.mode = 0
-        if bit32.btest(battle.effects(), ABD_DS) and DS_COOLDOWN_CHIPS[chip.id :: string] then
-            s.step, s.sub, s.shots = 8, 0, DS_COOLDOWN_BASE
-        end
     end
 end
 

@@ -443,6 +443,10 @@ local status = {
         -- chip. (EXE5's leaves the navi's chip requests, and one pending uses chip 0xFFFF's record, past the chip table:
         -- the engine ends it instead, docs/design/exe5-map.md §15.6.)
         chip_destruction = "hand",
+        -- EXE5 Double Team DS: TomahawkMan (`traits = { "status_immune" }`) gains StatusGuard only when 5DS battle
+        -- rules (`effects::DS_SHOUT = 0x0400_0000`) are active; TomahawkSoul and StatusGuard patch cards remain
+        -- status-immune in both GBA and 5DS, while plain WoodBody patch cards without StatusGuard do not gain it.
+        navi_status_immune_effect = 0x04000000,
         -- EXE5's emotions (0x0801270C): in battle mode 1 Full Synchro or normal (0x080127C0); else (0x08012740) a navi
         -- in a soul reads as normal (the soul's own face), then anger is read before a mood of 0 (a dark MegaMan's,
         -- evil), then Full Synchro, and a mood under 65 is worried; no held tired or exhausted state is read.

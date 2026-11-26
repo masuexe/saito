@@ -169,5 +169,8 @@ msgstr "ABD 芯片上限"
 msgid "Sunlight"
 msgstr "阳光"
 
+msgid "Battle rules"
+msgstr "战斗规则"
+
 msgid "Shout volume"
 msgstr "呐喊音量模式"

@@ -543,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn exe5_ds_cooldown_forces_eight_buster_runs_after_dark_chip() {
+    fn exe5_ds_cooldown_forces_seven_buster_runs_after_dark_chip() {
         use saito_battle::Battle;
         use saito_battle::custom::{FolderChip, SavedFolder};
         use saito_battle::input::{PlayerTick, keys};
@@ -567,7 +567,7 @@ mod tests {
         }
         write_places(&content, &mut base.sides[0], &places);
 
-        let run_mode = |mode: AbdMode| -> (u8, usize) {
+        let run_mode = |mode: AbdMode| -> (u8, std::collections::BTreeSet<u8>) {
             let mut m = base.clone();
             m.abd_mode = mode;
             let mut b = Battle::new(m.round(&content, 0x5EED), content.clone());
@@ -587,26 +587,28 @@ mod tests {
             // Press A on side 0 to activate DarkInvs (hands side 0 to auto battle AI for 600 ticks).
             b.tick(&[PlayerTick::buttons(keys::A), PlayerTick::buttons(0)], Default::default());
 
-            let mut max_shots = 0u8;
-            let mut cooldown_steps = std::collections::BTreeSet::new();
+            let mut max_cd = 0u8;
+            let mut cooldown_levels = std::collections::BTreeSet::new();
             for _ in 0..560 {
                 b.tick(&[PlayerTick::buttons(0), PlayerTick::buttons(0)], Default::default());
                 let (schema, state) = b.rules_state(0).unwrap();
                 let shots_place = schema.place(schema.index_of("drive").unwrap()).field("shots").unwrap();
                 if let FieldValue::U8(s) = state.get_at(shots_place) {
-                    max_shots = max_shots.max(s);
-                    if s >= 0x80 {
-                        cooldown_steps.insert(s);
+                    let cd = s >> 4;
+                    max_cd = max_cd.max(cd);
+                    if cd > 0 {
+                        cooldown_levels.insert(cd);
                     }
                 }
             }
-            (max_shots, cooldown_steps.len())
+            (max_cd, cooldown_levels)
         };
 
         let (orig_max, orig_cd) = run_mode(AbdMode::Original);
         let (ds_max, ds_cd) = run_mode(AbdMode::DoubleTeamDs);
-        assert!(orig_max < 0x80 && orig_cd == 0, "Original must never enter 5DS cooldown: max={orig_max:#x}");
-        assert!(ds_max >= 0x87 && ds_cd >= 8, "5DS must run 8 buster bursts after darkthnd: max={ds_max:#x}, steps={ds_cd}");
+        assert!(orig_max == 0 && orig_cd.is_empty(), "Original must never enter 5DS cooldown: max={orig_max}");
+        assert_eq!(ds_max, 8, "5DS ROM sets chip[+0x1E] = 8 on picking DarkThnd: levels={ds_cd:?}");
+        assert!(ds_cd.contains(&8) && ds_cd.contains(&7) && ds_cd.len() >= 5, "5DS must decrement cooldown across buster runs: levels={ds_cd:?}");
     }
 
     #[test]

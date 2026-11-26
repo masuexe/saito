@@ -1203,6 +1203,11 @@ pub struct IntakeRules {
     pub anti_traps: AntiTraps,
     /// What a chip-destroying hit takes from a player (`sub_801A2CC`).
     pub chip_destruction: ChipDestruction,
+    /// Optional battle-effect bit required for `NaviTraits::STATUS_IMMUNE` to
+    /// take effect (`None` = always active, as in EXE6; EXE5 sets `DS_SHOUT`
+    /// so TomahawkMan's StatusGuard applies only in 5DS mode while pure GBA
+    /// stays unchanged).
+    pub navi_status_immune_effect: Option<u32>,
 }
 
 /// What a chip-destroying hit (hit flag 0x10) takes from a player's hand

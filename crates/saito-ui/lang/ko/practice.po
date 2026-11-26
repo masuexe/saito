@@ -165,5 +165,8 @@ msgstr "ABD 칩 상한"
 msgid "Sunlight"
 msgstr "태양광"
 
+msgid "Battle rules"
+msgstr "배틀 규칙"
+
 msgid "Shout volume"
 msgstr "외치기 음량 모드"

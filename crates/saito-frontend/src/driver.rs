@@ -2350,7 +2350,7 @@ mod tests {
                 let (schema, state) = b.rules_state(1).unwrap();
                 let shots_place = schema.place(schema.index_of("drive").unwrap()).field("shots").unwrap();
                 if let FieldValue::U8(s) = state.get_at(shots_place)
-                    && s >= 0x80
+                    && (s >> 4) > 0
                 {
                     saw_ds_cooldown = true;
                 }

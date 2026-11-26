@@ -244,6 +244,8 @@ struct MenuChoices {
     cs_prob_fix: saito_match::CsProbFix,
     /// EXE5 indoor/shade mode (`false` = Outdoor/Sunny default, `true` = Indoor/Shade).
     indoor: bool,
+    /// EXE5 battle rules override (`None` = inherit build's GBA/5DS ruleset, `Some(false)` = GBA, `Some(true)` = 5DS).
+    ds_rules: Option<bool>,
     /// EXE5DS Shout volume mode (`false` = Real 3-Tier default, `true` = Always Max).
     ds_shout_max_only: bool,
     inputs: bool,
@@ -372,7 +374,7 @@ struct Session {
 /// does in [`values`], [`value`] and `Practice::change_option`. The dummy's Level is shown under its Action while
 /// that is Fights alone, and its build and EDIT in a session of Practice's own ([`shown_rows`]). A row of two
 /// columns ([`paired`]) is under the Columns row, its headings.
-pub(crate) const ROWS: [PracticeOption; 23] = [
+pub(crate) const ROWS: [PracticeOption; 24] = [
     PracticeOption::Dummy,
     // (Who the dummy is, then what it does: the user, "add Dummy's build to its DUMMY group".)
     PracticeOption::DummysBuild,
@@ -399,6 +401,7 @@ pub(crate) const ROWS: [PracticeOption; 23] = [
     PracticeOption::AbdCap,
     PracticeOption::CsProbFix,
     PracticeOption::Sunlight,
+    PracticeOption::DsRules,
     PracticeOption::DsShoutMode,
     PracticeOption::InputDisplay,
     // (Netplay's input delay, the one setting: the user, "practice mode should have the same input delay as netplay
@@ -452,7 +455,7 @@ fn values(option: PracticeOption, places: &Places, emotions: usize, abd_modes: u
         PracticeOption::Music | PracticeOption::DummysBuild => 1,
         PracticeOption::Action => actions,
         PracticeOption::Level => LEVEL_COUNT,
-        PracticeOption::Hp | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::Sunlight | PracticeOption::DsShoutMode | PracticeOption::InputDisplay => 2,
+        PracticeOption::Hp | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::Sunlight | PracticeOption::DsRules | PracticeOption::DsShoutMode | PracticeOption::InputDisplay => 2,
         PracticeOption::RandomBattle => 4,
         PracticeOption::AbdMode => abd_modes,
         PracticeOption::AbdCap => 10,
@@ -472,6 +475,7 @@ fn value(
     abd_mode: saito_match::AbdMode,
     abd_chip_cap: Option<u8>,
     sun_enabled: bool,
+    ds_shout_enabled: bool,
     ds_shout_max_only: bool,
     inputs: bool,
     place: [usize; 2],
@@ -493,6 +497,7 @@ fn value(
         PracticeOption::AbdMode => abd_mode.as_u8() as usize,
         PracticeOption::AbdCap => abd_chip_cap.map_or(0, usize::from),
         PracticeOption::Sunlight => (!sun_enabled) as usize,
+        PracticeOption::DsRules => ds_shout_enabled as usize,
         PracticeOption::DsShoutMode => ds_shout_max_only as usize,
         PracticeOption::InputDisplay => inputs as usize,
         // (The setting's, not the session's: `row`.)
@@ -523,7 +528,7 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
         let total = saito_match::cs_prob_fix::effects(&session.game).len() as i32;
         return PracticeRow { option, value: count, dummys_value: total, ..Default::default() };
     }
-    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.sun_enabled, session.ds_shout_max_only, session.inputs, session.place, &session.emotions, actions_for(&session.game));
+    let [value, dummys] = value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.sun_enabled, session.ds_shout_enabled, session.ds_shout_max_only, session.inputs, session.place, &session.emotions, actions_for(&session.game));
     let part = match option {
         PracticeOption::Arena => Some(ARENA),
         PracticeOption::Background => Some(BACKGROUND),
@@ -546,7 +551,7 @@ fn row(option: PracticeOption, session: &Session, thumbs: &thumbs::Thumbs, delay
 /// (`beside`, the user: "practice menu in the matchmaking waiting screen should be the same as the usual
 /// practice menu") for EDIT alone, whose editor would leave the screen that holds the invite (Play leaves its link
 /// as it is hidden).
-fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: bool, abd_supported: bool, cs_prob_supported: bool, sun_supported: bool, ds_shout_enabled: bool) -> Vec<PracticeOption> {
+fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: bool, abd_supported: bool, cs_prob_supported: bool, sun_supported: bool, ds_supported: bool, ds_shout_enabled: bool) -> Vec<PracticeOption> {
     ROWS.into_iter()
         .filter(|o| match o {
             PracticeOption::Level => in_fight == InFight::Ai,
@@ -556,7 +561,8 @@ fn shown_rows(in_fight: InFight, beside: bool, builds: bool, random_supported: b
             PracticeOption::AbdMode | PracticeOption::AbdCap => abd_supported,
             PracticeOption::CsProbFix => cs_prob_supported,
             PracticeOption::Sunlight => sun_supported,
-            PracticeOption::DsShoutMode => ds_shout_enabled,
+            PracticeOption::DsRules => ds_supported,
+            PracticeOption::DsShoutMode => ds_supported && ds_shout_enabled,
             _ => true,
         })
         .collect()
@@ -585,6 +591,7 @@ fn lay_out_rows(shell: &Shell, session: &mut Session) {
         saito_match::abd_mode::supported(&session.game),
         saito_match::cs_prob_fix::supported(&session.game),
         caps.ds_sun_toggle,
+        caps.ds_shout_toggle,
         caps.ds_shout_toggle && session.ds_shout_enabled,
     );
     if wanted == session.rows {
@@ -826,6 +833,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
             saito_match::abd_mode::supported(&start.game),
             saito_match::cs_prob_fix::supported(&start.game),
             caps.ds_sun_toggle,
+            caps.ds_shout_toggle,
             ds_shout_enabled,
         ),
         opponent: start.opponent,
@@ -1449,7 +1457,7 @@ impl Practice {
         let (you_build, dummy_build) = (picks[you].build.clone(), picks[dummys].build.clone());
         let caps = saito_match::capabilities::for_game(&game);
         let allow_ds = entry.made_for().is_some_and(|m| m.pick.ruleset.allow_ds);
-        let ds_shout_enabled = caps.ds_shout_toggle && allow_ds;
+        let ds_shout_enabled = caps.ds_shout_toggle && shell.practice.visit.menu.ds_rules.unwrap_or(allow_ds);
         let sun_enabled = !shell.practice.visit.menu.indoor;
         let ds_shout_max_only = ds_shout_enabled && shell.practice.visit.menu.ds_shout_max_only;
         let start = Start {
@@ -1573,7 +1581,7 @@ impl Practice {
         };
         if let Some(option) = option.filter(|o| count(*o, &session) > 0) {
             let next = match change {
-                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.sun_enabled, session.ds_shout_max_only, session.inputs, session.place, &session.emotions, actions_for(&session.game))[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
+                Change::By(by) => (value(option, session.opponent, session.level, session.options, session.random_battle, session.abd_mode, session.abd_chip_cap, session.sun_enabled, session.ds_shout_enabled, session.ds_shout_max_only, session.inputs, session.place, &session.emotions, actions_for(&session.game))[side] as i32 + by).rem_euclid(count(option, &session) as i32) as usize,
                 Change::To(at) => at.min(count(option, &session) - 1),
             };
             // (A session another screen started keeps its choices for its wait alone, not for the visit.)
@@ -1667,6 +1675,15 @@ impl Practice {
                     if keep {
                         shell.practice.visit.menu.indoor = !sun;
                     }
+                    restart_set(shell, &mut session);
+                }
+                PracticeOption::DsRules => {
+                    let enabled = next == 1;
+                    session.ds_shout_enabled = enabled;
+                    if keep {
+                        shell.practice.visit.menu.ds_rules = Some(enabled);
+                    }
+                    lay_out_rows(shell, &mut session);
                     restart_set(shell, &mut session);
                 }
                 PracticeOption::DsShoutMode => {
@@ -1971,46 +1988,47 @@ mod tests {
         let content = saito_match::testing::exe6_content();
         let (opponent, options, places, mut seen) = (Opponent::default(), Options::default(), Places::of(&content, "exe6"), 0);
         let emotions = emotions_of(&content, &Names { content: &content, strings: None });
-        let value = |option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, sun_enabled, ds_shout_max_only, inputs, place| {
-            value(option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, sun_enabled, ds_shout_max_only, inputs, place, &emotions, &ACTIONS)
+        let value = |option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, sun_enabled, ds_shout_enabled, ds_shout_max_only, inputs, place| {
+            value(option, opponent, level, options, random_battle, abd_mode, abd_chip_cap, sun_enabled, ds_shout_enabled, ds_shout_max_only, inputs, place, &emotions, &ACTIONS)
         };
         let values = |option, places: &Places| values(option, places, emotions.len(), 3, ACTIONS.len());
         for option in ROWS {
             if values(option, &places) > 0 {
                 let sides = 1 + paired(option) as usize;
                 seen += sides;
-                let had = value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]);
+                let had = value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]);
                 assert!(had[..sides].iter().all(|v| *v < values(option, &places)), "{option:?}");
             }
             // (A session another screen starts has the battle's options at their normal values and the places
             // Random: the first.)
-            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::RandomBattle | PracticeOption::AbdMode | PracticeOption::AbdCap | PracticeOption::Sunlight | PracticeOption::DsShoutMode) {
-                assert_eq!(value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [0, 0], "{option:?}");
+            if matches!(option, PracticeOption::Arena | PracticeOption::Background | PracticeOption::Hp | PracticeOption::Emotion | PracticeOption::CustomGauge | PracticeOption::ChipDraw | PracticeOption::RandomBattle | PracticeOption::AbdMode | PracticeOption::AbdCap | PracticeOption::Sunlight | PracticeOption::DsRules | PracticeOption::DsShoutMode) {
+                assert_eq!(value(option, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [0, 0], "{option:?}");
             }
         }
-        assert_eq!(seen, 19, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Random Battle, Dark Soul AI, ABD Chip Cap, Sunlight, Shout Volume, Input display, Input delay");
+        assert_eq!(seen, 20, "Dummy's build, Action, Level, Arena, Background, Music, HP and Emotion each side's, Custom gauge, Chip draw, Random Battle, Dark Soul AI, ABD Chip Cap, Sunlight, Battle rules, Shout Volume, Input display, Input delay");
         // (Normal, then the game's emotions; a held one is its place after Normal, on its side.)
         assert_eq!(values(PracticeOption::Emotion, &places), 1 + emotions.len());
         let angry = Options { emotions: [None, Some(emotions[1].0)], ..options };
-        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [0, 2]);
+        assert_eq!(value(PracticeOption::Emotion, opponent, NORMAL, angry, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [0, 2]);
         assert_eq!(values(PracticeOption::InputDelay, &places), MAX_INPUT_DELAY as usize + 1, "0 to netplay's most");
         #[cfg(feature = "ai")]
         {
             assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::Ai, InFight::SecondPad]);
-            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [2, 0]);
+            assert_eq!(value(PracticeOption::Action, dummy(InFight::Ai), NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [2, 0]);
         }
         #[cfg(not(feature = "ai"))]
         assert_eq!(ACTIONS, [InFight::StandsStill, InFight::MovesAround, InFight::SecondPad], "no Fights without the AI");
-        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [ACTIONS.len() - 1, 0]);
-        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [1, 0], "Normal at first");
-        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, None, saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [0, 1]);
-        assert_eq!(value(PracticeOption::RandomBattle, opponent, NORMAL, options, Some(saito_match::RandomRank::Rank3), saito_match::AbdMode::Original, None, true, false, false, [0; 2]), [3, 0]);
-        assert_eq!(value(PracticeOption::AbdMode, opponent, NORMAL, options, None, saito_match::AbdMode::DoubleTeamDs, None, true, false, false, [0; 2]), [2, 0]);
-        assert_eq!(value(PracticeOption::AbdCap, opponent, NORMAL, options, None, saito_match::AbdMode::Original, Some(5), true, false, false, [0; 2]), [5, 0]);
-        assert_eq!(value(PracticeOption::Sunlight, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, false, false, [0; 2]), [1, 0]);
-        assert_eq!(value(PracticeOption::DsShoutMode, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, true, false, [0; 2]), [1, 0]);
-        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, true, [0; 2]), [1, 0]);
-        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, [3, 2]), [2, 0]);
+        assert_eq!(value(PracticeOption::Action, dummy(InFight::SecondPad), NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [ACTIONS.len() - 1, 0]);
+        assert_eq!(value(PracticeOption::Level, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [1, 0], "Normal at first");
+        assert_eq!(value(PracticeOption::Hp, opponent, NORMAL, Options { refills: [false, true], ..options }, None, saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [0, 1]);
+        assert_eq!(value(PracticeOption::RandomBattle, opponent, NORMAL, options, Some(saito_match::RandomRank::Rank3), saito_match::AbdMode::Original, None, true, false, false, false, [0; 2]), [3, 0]);
+        assert_eq!(value(PracticeOption::AbdMode, opponent, NORMAL, options, None, saito_match::AbdMode::DoubleTeamDs, None, true, false, false, false, [0; 2]), [2, 0]);
+        assert_eq!(value(PracticeOption::AbdCap, opponent, NORMAL, options, None, saito_match::AbdMode::Original, Some(5), true, false, false, false, [0; 2]), [5, 0]);
+        assert_eq!(value(PracticeOption::Sunlight, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, false, false, false, false, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::DsRules, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, true, false, false, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::DsShoutMode, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, true, true, false, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::InputDisplay, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, true, [0; 2]), [1, 0]);
+        assert_eq!(value(PracticeOption::Background, opponent, NORMAL, options, None, saito_match::AbdMode::Original, None, true, false, false, false, [3, 2]), [2, 0]);
         // (The arenas and the backgrounds after Random.)
         assert_eq!(values(PracticeOption::Arena, &places), 1 + places.arenas.len());
         assert_eq!(values(PracticeOption::Background, &places), 1 + saito_match::ids::pool_backgrounds(&content).len(), "every game's");
@@ -2056,30 +2074,32 @@ mod tests {
     fn the_dummys_action_brings_its_own_row() {
         // (How many rows it shows, and the one under the Action.)
         let under = |in_fight| {
-            let rows = shown_rows(in_fight, false, true, true, true, true, true, true);
+            let rows = shown_rows(in_fight, false, true, true, true, true, true, true, true);
             let at = rows.iter().position(|o| *o == PracticeOption::Action).unwrap();
             (rows.len(), rows.get(at + 1).copied())
         };
         let (none, one) = (ROWS.len() - 1, ROWS.len());
         assert_eq!(under(InFight::StandsStill), (none, Some(PracticeOption::Stage)));
-        assert_eq!(shown_rows(InFight::StandsStill, false, true, true, true, true, true, true)[..4], [PracticeOption::Dummy, PracticeOption::DummysBuild, PracticeOption::EditDummy, PracticeOption::Action]);
-        assert!(!shown_rows(InFight::StandsStill, false, true, false, false, false, false, false).contains(&PracticeOption::RandomBattle), "non-EXE6 hides Random Battle");
-        assert!(shown_rows(InFight::StandsStill, false, true, true, false, true, false, false).contains(&PracticeOption::RandomBattle), "EXE6 shows Random Battle");
-        assert!(!shown_rows(InFight::StandsStill, false, true, true, false, true, false, false).contains(&PracticeOption::AbdMode), "EXE6 hides Dark Soul AI");
-        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, false).contains(&PracticeOption::AbdMode), "EXE4/EXE5 show Dark Soul AI");
-        assert!(!shown_rows(InFight::StandsStill, false, true, false, true, false, false, false).contains(&PracticeOption::CsProbFix), "EXE4 hides CS Prob Fix");
-        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, false).contains(&PracticeOption::CsProbFix), "EXE5/EXE6 show CS Prob Fix");
-        assert!(!shown_rows(InFight::StandsStill, false, true, true, false, true, false, false).contains(&PracticeOption::Sunlight), "non-EXE5 hides Sunlight");
-        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, false).contains(&PracticeOption::Sunlight), "EXE5 shows Sunlight");
-        assert!(!shown_rows(InFight::StandsStill, false, true, false, true, true, true, false).contains(&PracticeOption::DsShoutMode), "pure GBA EXE5 hides Shout Volume");
-        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true).contains(&PracticeOption::DsShoutMode), "EXE5DS shows Shout Volume");
+        assert_eq!(shown_rows(InFight::StandsStill, false, true, true, true, true, true, true, true)[..4], [PracticeOption::Dummy, PracticeOption::DummysBuild, PracticeOption::EditDummy, PracticeOption::Action]);
+        assert!(!shown_rows(InFight::StandsStill, false, true, false, false, false, false, false, false).contains(&PracticeOption::RandomBattle), "non-EXE6 hides Random Battle");
+        assert!(shown_rows(InFight::StandsStill, false, true, true, false, true, false, false, false).contains(&PracticeOption::RandomBattle), "EXE6 shows Random Battle");
+        assert!(!shown_rows(InFight::StandsStill, false, true, true, false, true, false, false, false).contains(&PracticeOption::AbdMode), "EXE6 hides Dark Soul AI");
+        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, false).contains(&PracticeOption::AbdMode), "EXE4/EXE5 show Dark Soul AI");
+        assert!(!shown_rows(InFight::StandsStill, false, true, false, true, false, false, false, false).contains(&PracticeOption::CsProbFix), "EXE4 hides CS Prob Fix");
+        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, false).contains(&PracticeOption::CsProbFix), "EXE5/EXE6 show CS Prob Fix");
+        assert!(!shown_rows(InFight::StandsStill, false, true, true, false, true, false, false, false).contains(&PracticeOption::Sunlight), "non-EXE5 hides Sunlight");
+        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, false).contains(&PracticeOption::Sunlight), "EXE5 shows Sunlight");
+        assert!(!shown_rows(InFight::StandsStill, false, true, true, false, true, false, false, false).contains(&PracticeOption::DsRules), "non-EXE5 hides Battle rules");
+        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, false).contains(&PracticeOption::DsRules), "EXE5 shows Battle rules");
+        assert!(!shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, false).contains(&PracticeOption::DsShoutMode), "pure GBA EXE5 hides Shout Volume");
+        assert!(shown_rows(InFight::StandsStill, false, true, false, true, true, true, true, true).contains(&PracticeOption::DsShoutMode), "EXE5DS shows Shout Volume");
         // Beside a waiting invite the usual menu, including Music, but for EDIT (which would leave the waiting room).
-        let beside = shown_rows(InFight::StandsStill, true, true, true, true, true, true, true);
-        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true, true, true, true, true, true).into_iter().filter(|o| !matches!(o, PracticeOption::EditDummy)).collect();
+        let beside = shown_rows(InFight::StandsStill, true, true, true, true, true, true, true, true);
+        let usual: Vec<PracticeOption> = shown_rows(InFight::StandsStill, false, true, true, true, true, true, true, true).into_iter().filter(|o| !matches!(o, PracticeOption::EditDummy)).collect();
         assert_eq!(beside, usual, "beside a waiting invite");
         assert!(beside.contains(&PracticeOption::Music));
         assert!(beside.contains(&PracticeOption::DummysBuild));
-        assert_eq!(shown_rows(InFight::StandsStill, false, false, true, true, true, true, true).len(), none - 2, "no builds offered: no Dummy's build, no EDIT");
+        assert_eq!(shown_rows(InFight::StandsStill, false, false, true, true, true, true, true, true).len(), none - 2, "no builds offered: no Dummy's build, no EDIT");
         assert_eq!(under(InFight::MovesAround), (none, Some(PracticeOption::Stage)));
         assert_eq!(under(InFight::Ai), (one, Some(PracticeOption::Level)));
         assert_eq!(under(InFight::SecondPad), (none, Some(PracticeOption::Stage)));
@@ -2224,7 +2244,7 @@ mod tests {
         visit.leave();
         assert!(visit.arrive(), "from elsewhere, a visit starts");
         assert_eq!(visit.build("exe6", 0), None, "Play's remembered build");
-        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, random_battle: Some(saito_match::RandomRank::Rank2), abd_mode: saito_match::AbdMode::LegacyCollection, abd_chip_cap: Some(5), cs_prob_fix: saito_match::CsProbFix::NONE, indoor: true, ds_shout_max_only: true, inputs: true };
+        let menu = MenuChoices { action: Some(InFight::Ai), level: Some(2), refills: [true, false], emotions: [None, Some("angry".into())], full_gauge: true, folder_order: true, random_battle: Some(saito_match::RandomRank::Rank2), abd_mode: saito_match::AbdMode::LegacyCollection, abd_chip_cap: Some(5), cs_prob_fix: saito_match::CsProbFix::NONE, indoor: true, ds_rules: Some(true), ds_shout_max_only: true, inputs: true };
         visit.set_place("exe6", [3, 5]);
         visit.music = theme.clone();
         visit.menu = menu.clone();

@@ -61,7 +61,9 @@ export enum PracticeOption {
     cs-prob-fix,
     // EXE5 outdoor sunlight state (Outdoor / Indoor).
     sunlight,
-    // EXE5DS Shout volume mode (Real 3-Tier / Always Max), shown for 5DS builds.
+    // EXE5 battle rules version (GBA / 5DS: Danger+Shout, Wood StatusGuard, Team Navi dark-chip block).
+    ds-rules,
+    // EXE5DS Shout volume mode (Real 3-Tier / Always Max), shown when 5DS rules are active.
     ds-shout-mode,
     input-display,
     // Netplay's input delay, in frames (the one setting: changed here, it is changed for netplay too).
@@ -185,6 +187,9 @@ export global PracticeView {
         if option == PracticeOption.sunlight {
             return @tr("Sunlight");
         }
+        if option == PracticeOption.ds-rules {
+            return @tr("Battle rules");
+        }
         if option == PracticeOption.ds-shout-mode {
             return @tr("Shout volume");
         }
@@ -234,6 +239,9 @@ export global PracticeView {
         }
         if option == PracticeOption.sunlight {
             return value == 0 ? @tr("Outdoor") : @tr("Indoor");
+        }
+        if option == PracticeOption.ds-rules {
+            return value == 0 ? "GBA" : "5DS";
         }
         if option == PracticeOption.ds-shout-mode {
             return value == 0 ? @tr("3-Tier") : @tr("Always Max");

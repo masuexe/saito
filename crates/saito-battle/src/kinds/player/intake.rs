@@ -50,10 +50,11 @@ pub(super) fn collect_hits(b: &mut Battle, r: ObjectRef) {
     counter_paralysis(b, r);
     navicust_hit_bug(b, r);
     let s = stats(b, r);
-    // (TomahawkMan and TomahawkCross: the navi's and the form's
-    // `status_immune`.)
-    let immune = navi_of(b, r).traits.has(crate::content::NaviTraits::STATUS_IMMUNE)
-        || form_of(b, r).traits.has(crate::content::FormTraits::STATUS_IMMUNE);
+    // (TomahawkMan and TomahawkCross / TomahawkSoul: the navi's and the form's
+    // `status_immune`; EXE5 gates the navi trait to 5DS via `navi_status_immune_effect`.)
+    let navi_immune = navi_of(b, r).traits.has(crate::content::NaviTraits::STATUS_IMMUNE)
+        && b.game_rules().intake.navi_status_immune_effect.is_none_or(|bit| b.setup.settings.effects & bit != 0);
+    let immune = navi_immune || form_of(b, r).traits.has(crate::content::FormTraits::STATUS_IMMUNE);
     if !(immune || s.bugs.status_immunity) {
         apply_status(b, r);
     }

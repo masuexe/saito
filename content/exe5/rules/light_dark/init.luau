@@ -60,6 +60,8 @@ local LIGHT_CHIPS = 470
 -- The battle effect of dark chips that fizzle (0x0801003C). (The one that holds the light/dark value at 500,
 -- 0x08010EDC, ../party reads.)
 local DARK_CHIPS_FIZZLE = 0x100000
+-- Saito's 5DS battle rule bit (`setup::effects::DS_SHOUT`).
+local DS_SHOUT = 0x04000000
 
 local function effect(bit: number): boolean
     return bit32.band(battle.effects(), bit) ~= 0
@@ -296,14 +298,16 @@ function light_dark.chip_cost(side: number, navi: Object, chip: Chip?): Chip?
     return nil
 end
 
--- 0x08010118: a chip for the other kind of MegaMan becomes the invalid chip. A side with partners checks by the DS's
--- rule (0x020070FC): the value of the navi on the field, and a dark-only chip for MegaMan alone.
+-- 0x08010118: a chip for the other kind of MegaMan becomes the invalid chip. Under EXE5 Double Team DS rules
+-- (JP 0x020070AC / US 0x020070FC: party battle, lead PartyCust, or `effects::DS_SHOUT`), the GBA's "any navi
+-- but MegaMan passes" shortcut is dropped: light-only chips check the active navi's value, and dark-only chips
+-- work for dark MegaMan alone (blocking solo Team Navis too).
 function light_dark.chip_check(side: number, _navi: Object, chip: Chip?): Chip?
     if chip == nil then
         return nil
     end
     local wants = (chip :: any).megaman
-    if party.has_partners(side) then
+    if party.uses_ds_stats(side) or effect(DS_SHOUT) then
         if wants == nil then
             return nil
         end

@@ -2005,3 +2005,86 @@ fn exe5_ds_danger_hud_and_shout_gating() {
     assert_eq!(mood_max, 0xFF, "ds_shout_max_only must upgrade Tier 1 shout to Full Synchro");
     assert_eq!((healed1, healed2, healed3, healed_max), (100, 200, 300, 300), "Tier 1/2/3/MaxOnly heal amounts must be 100/200/300/300");
 }
+
+/// EXE5DS StatusGuard scoping & pure GBA isolation:
+/// - TomahawkMan: takes hit statuses in pure GBA (`ds_shout_enabled = false`), immune in 5DS (`true`).
+/// - TomahawkSoul & MegaMan with a StatusGuard patch card (`woodman`): immune in both GBA and 5DS.
+/// - MegaMan with a plain WoodBody patch card without StatusGuard (`popper`) and base MegaMan:
+///   take hit statuses in both GBA and 5DS.
+#[test]
+fn exe5_ds_status_guard_scoped_and_isolated_from_gba() {
+    use saito_battle::collision::timer;
+    use saito_battle::content::StatusRole;
+
+    let content = exe5_content();
+    let paralyze = content.defs.roles().status(StatusRole::CounterParalysis);
+    let tomahawksoul = crate::ids::form(&content, "exe5", "tomahawksoul").unwrap();
+
+    let test_paralyzed = |side_toml: &str, ds_rules: bool, force_form: Option<saito_content_api::FormHandle>| -> bool {
+        let mut m = parse(&content, side_toml, &exe5(&TANGO_EXE5, "")).unwrap();
+        m.ds_shout_enabled = ds_rules;
+        let mut setup = m.round(&content, 0x5EED);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+        if let Some(form) = force_form {
+            b.stats[0].form = form;
+        }
+        let p0 = b.player(0).unwrap();
+        let cid = b.objects.get(p0).collision.unwrap();
+        b.collision.get_mut(cid).status_final = Some(paralyze);
+        b.tick(&Default::default(), Default::default());
+        b.collision.get(cid).status_timers[timer::PARALYZE] > 0
+    };
+
+    let tomahawkman = side("tomahawkman", &TANGO_EXE5, "");
+    let status_guard_megaman = exe5(&TANGO_EXE5, "patch_cards = [{ card = \"woodman\" }]");
+    let woodbody_only_megaman = exe5(&TANGO_EXE5, "patch_cards = [{ card = \"popper\" }]");
+    let base_megaman = exe5(&TANGO_EXE5, "");
+
+    assert!(test_paralyzed(&tomahawkman, false, None), "GBA TomahawkMan is not status-immune");
+    assert!(!test_paralyzed(&tomahawkman, true, None), "5DS TomahawkMan has StatusGuard");
+    assert!(!test_paralyzed(&base_megaman, false, Some(tomahawksoul)), "GBA TomahawkSoul has StatusGuard");
+    assert!(!test_paralyzed(&base_megaman, true, Some(tomahawksoul)), "5DS TomahawkSoul has StatusGuard");
+    assert!(!test_paralyzed(&status_guard_megaman, false, None), "GBA StatusGuard patch card grants immunity");
+    assert!(!test_paralyzed(&status_guard_megaman, true, None), "5DS StatusGuard patch card grants immunity");
+    assert!(test_paralyzed(&woodbody_only_megaman, false, None), "GBA plain WoodBody card has no StatusGuard");
+    assert!(test_paralyzed(&woodbody_only_megaman, true, None), "5DS plain WoodBody card without StatusGuard does not gain immunity");
+    assert!(test_paralyzed(&base_megaman, false, None), "GBA base MegaMan takes status");
+    assert!(test_paralyzed(&base_megaman, true, None), "5DS base MegaMan takes status");
+}
+
+/// EXE5DS solo Team Navi dark-only chip restriction (JP `0x020070AC` / US `0x020070FC`) vs pure GBA:
+/// - In pure GBA (`ds_shout_enabled = false`), a solo Team Navi (ProtoMan, no partners) may use dark-only
+///   chips such as Anubis (`megaman = "dark"`).
+/// - In 5DS (`ds_shout_enabled = true`), solo Team Navis are blocked from dark-only chips (become `invalid`).
+#[test]
+fn exe5_ds_solo_team_navi_dark_chip_restriction_isolated_from_gba() {
+    use saito_battle::input::{PlayerTick, keys};
+
+    let content = exe5_content();
+    let anubis = crate::ids::chip(&content, "exe5", "anubis").unwrap();
+    let protoman = side("protoman", &TANGO_EXE5, "");
+
+    let spawns_anubis = |ds_rules: bool| -> bool {
+        let mut m = parse(&content, &protoman, &exe5(&TANGO_EXE5, "")).unwrap();
+        m.ds_shout_enabled = ds_rules;
+        let mut setup = m.round(&content, 0x5EED);
+        setup.custom_screen_limit = Some(1);
+        let mut b = saito_battle::Battle::new(setup, content.clone());
+        fight(&mut b);
+        b.hands[0].ids = [Some(anubis), None, None, None, None, None];
+        b.hands[0].cursor = 0;
+        b.tick(&[PlayerTick::buttons(keys::A), PlayerTick::buttons(0)], Default::default());
+        for _ in 0..80 {
+            b.tick(&Default::default(), Default::default());
+            if b.objects.in_order().any(|r| b.local_kind_key(r).contains("anubis")) {
+                return true;
+            }
+        }
+        false
+    };
+
+    assert!(spawns_anubis(false), "GBA solo Team Navi may use dark-only chips (Anubis)");
+    assert!(!spawns_anubis(true), "5DS solo Team Navi is blocked from dark-only chips");
+}
