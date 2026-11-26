@@ -111,6 +111,18 @@ impl<'a> DisplayText<'a> {
         self.pick(given, own, || format!("navis.{key}.variant_name")).map(|s| s.text)
     }
 
+    /// A navi's Sol Cross variant name (`SCMegaMn`, EXE5DS 0x02009C08), if it
+    /// has one.
+    pub fn navi_variant_name_sol<'b>(&self, content: &'b Content, navi: NaviHandle) -> Option<&'b str>
+    where
+        'a: 'b,
+    {
+        let key = &content.defs.navi(navi).key;
+        let given = self.language.and_then(|s| s.navi(key)).and_then(|n| n.variant_name_sol.as_deref());
+        let own = content.strings.navi(key).and_then(|n| n.variant_name_sol.as_deref());
+        self.pick(given, own, || format!("navis.{key}.variant_name_sol")).map(|s| s.text)
+    }
+
     /// A navi's no-running message, if it has one.
     pub fn run_message<'b>(&self, content: &'b Content, navi: NaviHandle) -> Option<Said<'b>>
     where

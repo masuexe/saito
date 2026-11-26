@@ -917,12 +917,22 @@ named_fields! {
         /// The side's emotion window shows its base form's alternate variant
         /// set of faces (EXE5's Team Colonel Hub Style / silver Bass-Cross).
         FaceVariantAlt = "face_variant_alt", Bool, rw;
+        /// The side's emotion window shows its base form's Sol Cross variant
+        /// set of faces (EXE5DS's Sol Cross MegaMan, `NaviStats +0x4C == 3`).
+        FaceVariantSol = "face_variant_sol", Bool, rw;
         /// And whatever its form (EXE5's Chaos Unison look while its charge
         /// is armed, 0x080125F6, which its rules set and clear).
         FaceVariantAnyForm = "face_variant_any_form", Bool, rw;
         /// The custom screen's enemy names show the side's navi by its
         /// variant name (EXE5's Hub Style in a link battle, 0x0801AE3A).
         NameVariant = "name_variant", Bool, rw;
+        /// The custom screen's enemy names show the side's navi by its Sol
+        /// Cross variant name (`SCMegaMn`, EXE5DS 0x02009C08).
+        NameVariantSol = "name_variant_sol", Bool, rw;
+        /// The side's active navi is in EXE5DS Danger (Critical) state and
+        /// eligible for a microphone shout (`0x0221EC78`): drives both the
+        /// Danger emotion window HUD and automatic microphone arming.
+        Danger = "danger", Bool, rw;
         /// The side's emotion window shows its count (its navi's stat of
         /// the role `window_count`: EXE6's Beast Out turns), else its empty
         /// box.

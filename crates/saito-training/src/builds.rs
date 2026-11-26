@@ -615,6 +615,9 @@ impl Maker {
             cs_prob_fix: saito_match::CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,
+            sun_enabled: true,
+            ds_shout_enabled: false,
+            ds_shout_max_only: false,
         };
         let hp_fact = content.defs.fact_name(PlayerFact::BaseHp).zip(hp);
         if let Some((name, hp)) = hp_fact {

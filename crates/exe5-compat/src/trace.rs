@@ -799,7 +799,12 @@ impl Round {
             let mut t = PlayerTick::buttons(self.fed(i, frames, p) | self.ds_early_direction(i, frames, p));
             if let Some(sw) = f.switch {
                 t.switch_to = sw[p][0].checked_sub(1);
-                t.mic_loud = sw[p][2] != 0;
+                t.mic_tier = match sw[p][2] {
+                    0 => 0,
+                    1..=0x28 => 1,
+                    0x29..=0x4B => 2,
+                    _ => 3,
+                };
             }
             t
         });

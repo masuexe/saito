@@ -562,14 +562,17 @@ pub fn shows_face_variant(b: &Battle, side: u8) -> bool {
 
 /// Presentation: the variant set index for the side's base form when its rules
 /// ask (`SideLooks::face_variant` -> 1 for ProtoMan Hub Style gold;
-/// `SideLooks::face_variant_alt` -> 2 for Colonel Hub Style silver).
+/// `SideLooks::face_variant_alt` -> 2 for Colonel Hub Style silver;
+/// `SideLooks::face_variant_sol` -> 3 for EXE5DS Sol Cross).
 pub fn base_face_variant_index(b: &Battle, side: u8) -> u8 {
     let Some(p) = b.player(side) else { return 0 };
     if !form_of(b, p).base {
         return 0;
     }
     let looks = b.looks[side as usize & 1];
-    if looks.face_variant_alt {
+    if looks.face_variant_sol {
+        3
+    } else if looks.face_variant_alt {
         2
     } else if looks.face_variant {
         1

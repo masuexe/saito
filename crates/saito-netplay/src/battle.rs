@@ -77,10 +77,10 @@ impl Game for Battle {
         self
     }
 
-    /// Buttons (and the microphone) carry on; events, a switch
-    /// request and a custom screen's choice happen once.
+    /// Buttons carry on; events, a switch request, a microphone trigger and a
+    /// custom screen's choice happen once.
     fn predict(last: &PlayerInput) -> PlayerInput {
-        PlayerInput { tick: PlayerTick { switch_to: None, choice: None, ..last.tick }, events: TickEvents::default() }
+        PlayerInput { tick: last.tick.carried_on(), events: TickEvents::default() }
     }
 }
 
@@ -188,17 +188,17 @@ mod tests {
     }
 
     /// A predicted input carries the buttons on, and nothing that happens
-    /// once: no event, switch request or choice.
+    /// once: no event, switch request, microphone trigger, or choice.
     #[test]
     fn a_prediction_carries_the_buttons_alone() {
         let tick = PlayerTick {
             held: keys::B,
             switch_to: Some(2),
-            mic_loud: true,
+            mic_tier: 3,
             choice: Some(saito_battle::ScreenChoice::Ok),
         };
         let last = PlayerInput { tick, events: TickEvents { link_closed: true } };
         let p = <Battle as Game>::predict(&last);
-        assert_eq!(p, PlayerInput { tick: PlayerTick { mic_loud: true, ..PlayerTick::buttons(keys::B) }, events: TickEvents::default() });
+        assert_eq!(p, PlayerInput { tick: PlayerTick::buttons(keys::B), events: TickEvents::default() });
     }
 }

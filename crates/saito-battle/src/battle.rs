@@ -663,6 +663,9 @@ pub struct SideLooks {
     /// Alternate variant set of the base form's faces (EXE5's Team Colonel
     /// Hub Style / silver Bass-Cross; `battle.set_hud("face_variant_alt", ..)`).
     pub face_variant_alt: bool,
+    /// Sol Cross variant set of the base form's faces (EXE5DS's Sol Cross
+    /// MegaMan, `NaviStats +0x4C == 3`; `battle.set_hud("face_variant_sol", ..)`).
+    pub face_variant_sol: bool,
     /// And whatever its form (EXE5's Chaos Unison look while its charge is
     /// armed, 0x080125F6, which its rules set and clear).
     pub face_variant_any_form: bool,
@@ -675,6 +678,13 @@ pub struct SideLooks {
     /// name (EXE5's Hub Style in a link battle: 0x0801AE3A's NameID 0xEA;
     /// `battle.set_hud("name_variant", ..)`).
     pub name_variant: bool,
+    /// The custom screen's enemy names show the side's navi by its Sol Cross
+    /// variant name (`SCMegaMn`, EXE5DS 0x02009C08;
+    /// `battle.set_hud("name_variant_sol", ..)`).
+    pub name_variant_sol: bool,
+    /// The side's active navi is in EXE5DS Danger (Critical) state and
+    /// eligible for a microphone shout (`0x0221EC78`; `battle.set_hud("danger", ..)`).
+    pub danger: bool,
 }
 
 /// A side's defensive-chip record (0x10 bytes per side at 0x02036720):
@@ -695,6 +705,12 @@ pub struct LinkedRecord {
 }
 
 impl Battle {
+    /// Whether `side`'s active navi is currently in EXE5DS Danger (Critical)
+    /// state and eligible for a microphone shout (`SideLooks::danger`).
+    pub fn is_danger(&self, side: u8) -> bool {
+        self.looks[side as usize & 1].danger
+    }
+
     /// `sub_800AB46`: bump a statistics counter (saturating at 0xFF).
     pub fn bump_side_stat(&mut self, side: u8, index: usize, n: u8) {
         let v = &mut self.side_stats[side as usize][index];
@@ -1193,7 +1209,7 @@ impl Battle {
             self.round.remote_status[p] = (if side.in_custom { 4 } else { 0 }) | side.selecting as u8;
         }
         self.read_switch_requests(input);
-        self.mic_levels = input.each_ref().map(|t| if t.mic_loud { u8::MAX } else { 0 });
+        self.mic_levels = input.each_ref().map(|t| PlayerTick::mic_level(t.mic_tier));
 
         self.run_mode_handler();
         self.run_objects();
@@ -2736,7 +2752,7 @@ mod tests {
     fn a_sides_looks_outlast_the_players_init() {
         let c = testing::content();
         let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c)), c);
-        let looks = SideLooks { face_variant: true, face_variant_alt: false, face_variant_any_form: false, window_count: false, name_variant: true };
+        let looks = SideLooks { face_variant: true, face_variant_alt: false, face_variant_sol: false, face_variant_any_form: false, window_count: false, name_variant: true, name_variant_sol: false, danger: false };
         b.looks = [looks; 2];
         b.sides[1].takeover_ticks = 3;
         b.spawn_actors();

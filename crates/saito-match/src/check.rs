@@ -241,7 +241,7 @@ pub fn side_problems(content: &Arc<Content>, game: &str, rounds: &[RoundSettings
     if !alone.is_empty() {
         return alone;
     }
-    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [s.clone(), s.clone()], backgrounds: crate::BackgroundPick::Game, custom_screen_time: None, random_battle: None, abd_mode: crate::AbdMode::Original, abd_chip_cap: None, cs_prob_fix: crate::CsProbFix::NONE, all_guard_disabled: false, dark_cut_in_fix: false };
+    let m = Match { game: game.to_string(), seed: None, rounds: rounds.to_vec(), sides: [s.clone(), s.clone()], backgrounds: crate::BackgroundPick::Game, custom_screen_time: None, random_battle: None, abd_mode: crate::AbdMode::Original, abd_chip_cap: None, cs_prob_fix: crate::CsProbFix::NONE, all_guard_disabled: false, dark_cut_in_fix: false, sun_enabled: true, ds_shout_enabled: false, ds_shout_max_only: false };
     match set_up(content, &m) {
         Ok(mut b) => validated(&mut b, 0),
         Err(e) => vec![Problem::of(Some(0), Wrong::Internal, e)],

@@ -171,6 +171,9 @@ pub struct Player {
     /// The member of the local side's party the player asked to switch to ([`Player::ask_switch`]), until a tick
     /// carries it.
     switch: Option<u8>,
+    /// The microphone shout tier the player asked to send ([`Player::ask_shout`]), `0` = none, `1..=3` = low/med/high,
+    /// until a tick carries it.
+    shout: u8,
     /// The custom screen choice the player made of their own ([`Player::choose`]), until a tick carries it.
     choice: Option<saito_battle::ScreenChoice>,
     /// The pointer on the local player's custom screen ([`Player::point`]).
@@ -232,6 +235,7 @@ impl Player {
             paused: false,
             held: false,
             switch: None,
+            shout: 0,
             choice: None,
             pointer: crate::pointer::ScreenPointer::default(),
             drag_enabled: true,
@@ -355,6 +359,23 @@ impl Player {
     /// (EXE5 DS's X and Y, its panel's two buttons: [`crate::party::Panel`]).
     pub fn ask_switch(&mut self, member: u8) {
         self.switch = Some(member);
+    }
+
+    /// Ask to send an EXE5DS microphone shout at `tier` (`1` = low, `2` = medium,
+    /// `3` = high) on the next tick that runs. If multiple asks arrive before a
+    /// tick runs, the highest tier wins.
+    pub fn ask_shout(&mut self, tier: u8) {
+        let clamped = tier.min(3);
+        if clamped > self.shout {
+            self.shout = clamped;
+        }
+    }
+
+    /// Whether the local side's active navi is currently in EXE5DS Danger
+    /// (Critical) state and eligible to trigger a microphone shout.
+    pub fn can_shout(&self) -> bool {
+        let side = self.session.battle.setup.local_side;
+        self.session.battle.is_danger(side)
     }
 
     /// Choose on the local player's custom screen (`saito_battle::ScreenChoice`: a chip picked, a button pressed,
@@ -667,12 +688,13 @@ impl Player {
         }
         // (The tick's input: the buttons, and the switch asked for and the choice made until a tick that ran
         // carried them. A driver that runs the battle itself may wait this frame: they wait with it.)
-        let input = saito_battle::PlayerTick { held: buttons & 0x3FF, switch_to: self.switch, choice: self.choice, ..Default::default() };
+        let input = saito_battle::PlayerTick { held: buttons & 0x3FF, switch_to: self.switch, mic_tier: self.shout, choice: self.choice };
         if !self.session.step(input) {
             return false;
         }
         if self.session.fresh {
             self.switch = None;
+            self.shout = 0;
             self.choice = None;
             // (A finger held long on the custom screen describes what it is on, and a stationary hovering
             // mouse picks up newly opened targets like EXE6's Cross list.)
@@ -928,6 +950,7 @@ impl Player {
         self.renderer.reset();
         self.clock.rest();
         self.switch = None;
+        self.shout = 0;
         self.choice = None;
         self.presentation_key = None;
         self.apply_round_presentation();

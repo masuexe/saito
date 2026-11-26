@@ -290,13 +290,14 @@ mod tests {
         assert_eq!(bytes(Element::Tick { word: (keys::L) as u32, flags: 0 }).len(), 2);
         assert_eq!(bytes(Element::Tick { word: BUTTONS as u32, flags: 1 }).len(), 5);
         assert_eq!(bytes(Element::Tick { word: BUTTONS as u32, flags: 0xFF }).len(), 6);
-        assert_eq!(bytes(Element::Tick { word: PlayerTick { mic_loud: true, ..PlayerTick::buttons(0) }.word(), flags: 0 }).len(), 2);
+        assert_eq!(bytes(Element::Tick { word: PlayerTick { mic_tier: 1, ..PlayerTick::buttons(0) }.word(), flags: 0 }).len(), 2);
+        assert_eq!(bytes(Element::Tick { word: PlayerTick { mic_tier: 3, ..PlayerTick::buttons(0) }.word(), flags: 0 }).len(), 3);
         assert_eq!(bytes(Element::Tick { word: 1 << 10, flags: 0 }).len(), 2);
         let choice = |c: ScreenChoice| PlayerTick { choice: Some(c), ..PlayerTick::buttons(0) }.word();
         assert_eq!(bytes(Element::Tick { word: choice(ScreenChoice::Ok), flags: 0 }).len(), 3);
         assert_eq!(bytes(Element::Tick { word: keys::A as u32 | choice(ScreenChoice::Release(11)), flags: 0 }).len(), 3);
         assert_eq!(bytes(Element::Tick { word: choice(ScreenChoice::Unpick(4)), flags: 0 }).len(), 3);
-        let most = PlayerTick { held: BUTTONS, switch_to: Some(2), mic_loud: true, choice: Some(ScreenChoice::Release(11)) };
+        let most = PlayerTick { held: BUTTONS, switch_to: Some(2), mic_tier: 3, choice: Some(ScreenChoice::Release(11)) };
         assert_eq!(bytes(Element::Tick { word: most.word(), flags: 0 }).len(), 3);
         assert_eq!(bytes(Element::Tick { word: u32::MAX, flags: 0 }).len(), 5);
         assert_eq!(bytes(Element::Tick { word: u32::MAX, flags: 0xFF }).len(), 6);
@@ -326,7 +327,7 @@ mod tests {
         }
         // A tick's word through the wire is the player's tick: its choice
         // too.
-        let t = PlayerTick { held: keys::A | keys::UP, switch_to: Some(1), mic_loud: true, choice: Some(ScreenChoice::Release(11)) };
+        let t = PlayerTick { held: keys::A | keys::UP, switch_to: Some(1), mic_tier: 3, choice: Some(ScreenChoice::Release(11)) };
         let b = bytes(Element::Tick { word: t.word(), flags: 0 });
         let Some(Element::Tick { word, .. }) = Element::decode(&mut &b[..]).unwrap() else { panic!() };
         assert_eq!(PlayerTick::from_word(word), t);

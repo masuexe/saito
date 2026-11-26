@@ -205,6 +205,14 @@ pub fn match_bytes(content: &Content, m: &Match) -> Result<Vec<u8>, String> {
         out.push(b'D');
         out.push(1);
     }
+    if !m.sun_enabled {
+        out.push(b'S');
+        out.push(0);
+    }
+    if m.ds_shout_enabled || m.ds_shout_max_only {
+        out.push(b'M');
+        out.push((m.ds_shout_enabled as u8) | ((m.ds_shout_max_only as u8) << 1));
+    }
     Ok(out)
 }
 
@@ -241,12 +249,17 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
     let mut cs_prob_fix = crate::CsProbFix::NONE;
     let mut all_guard_disabled = false;
     let mut dark_cut_in_fix = false;
+    let mut sun_enabled = true;
+    let mut ds_shout_enabled = false;
+    let mut ds_shout_max_only = false;
     let mut seen_random = false;
     let mut seen_abd = false;
     let mut seen_abd_cap = false;
     let mut seen_cs_prob_fix = false;
     let mut seen_all_guard = false;
     let mut seen_dark_cut_in = false;
+    let mut seen_sun = false;
+    let mut seen_ds_shout = false;
     while bytes.len() - at >= 2 {
         match bytes[at] {
             b'R' if !seen_random => {
@@ -300,11 +313,29 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 seen_dark_cut_in = true;
                 at += 2;
             }
+            b'S' if !seen_sun => {
+                if !crate::capabilities::for_game(content.game()).ds_sun_toggle {
+                    return Err(format!("sun option is not supported for {}", content.game()));
+                }
+                sun_enabled = bytes[at + 1] != 0;
+                seen_sun = true;
+                at += 2;
+            }
+            b'M' if !seen_ds_shout => {
+                if !crate::capabilities::for_game(content.game()).ds_shout_toggle {
+                    return Err(format!("ds shout option is not supported for {}", content.game()));
+                }
+                let bits = bytes[at + 1];
+                ds_shout_enabled = (bits & 1) != 0;
+                ds_shout_max_only = (bits & 2) != 0;
+                seen_ds_shout = true;
+                at += 2;
+            }
             _ => break,
         }
     }
     finished(bytes, at)?;
-    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
+    Ok(Match { game: content.game().to_string(), seed: Some(seed), rounds, sides, backgrounds: crate::BackgroundPick::Game, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix, sun_enabled, ds_shout_enabled, ds_shout_max_only })
 }
 
 

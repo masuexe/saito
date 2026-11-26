@@ -60,6 +60,10 @@ pub struct NaviStrings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant_long_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant_name_sol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant_long_name_sol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_message: Option<String>,
 }
 

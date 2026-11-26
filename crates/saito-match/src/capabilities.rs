@@ -24,6 +24,10 @@ pub struct GameCapabilities {
     pub random_battle: bool,
     /// Practice dummy supports the DarkInvs AI action (EXE5).
     pub practice_dark_invs: bool,
+    /// Supports the EXE5DS indoor/outdoor sunlight toggle (`sun_enabled`).
+    pub ds_sun_toggle: bool,
+    /// Supports EXE5DS Danger HUD and microphone Shout (`ds_shout_enabled` / `ds_shout_max_only`).
+    pub ds_shout_toggle: bool,
 }
 
 const EXE4: GameCapabilities = GameCapabilities {
@@ -35,6 +39,8 @@ const EXE4: GameCapabilities = GameCapabilities {
     ruleset_sub_modes: false,
     random_battle: false,
     practice_dark_invs: false,
+    ds_sun_toggle: false,
+    ds_shout_toggle: false,
 };
 
 const EXE5: GameCapabilities = GameCapabilities {
@@ -46,6 +52,8 @@ const EXE5: GameCapabilities = GameCapabilities {
     ruleset_sub_modes: true,
     random_battle: false,
     practice_dark_invs: true,
+    ds_sun_toggle: true,
+    ds_shout_toggle: true,
 };
 
 const EXE6: GameCapabilities = GameCapabilities {
@@ -57,6 +65,8 @@ const EXE6: GameCapabilities = GameCapabilities {
     ruleset_sub_modes: false,
     random_battle: true,
     practice_dark_invs: false,
+    ds_sun_toggle: false,
+    ds_shout_toggle: false,
 };
 
 const UNKNOWN: GameCapabilities = GameCapabilities {
@@ -68,6 +78,8 @@ const UNKNOWN: GameCapabilities = GameCapabilities {
     ruleset_sub_modes: false,
     random_battle: false,
     practice_dark_invs: false,
+    ds_sun_toggle: false,
+    ds_shout_toggle: false,
 };
 
 /// Historical simulation-compatibility epochs for replay playback across

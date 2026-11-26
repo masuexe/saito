@@ -2610,7 +2610,13 @@ fn draw_names(v: &View, w: &Window, hud_layer: &mut Layer, names_layer: &mut Lay
     let other = v.b.stats[side].navi;
     // (Its variant name when its side's rules ask: EXE5's Hub Style in a link
     // battle, 0x0801AE3A's NameID 0xEA.)
-    let variant = if v.b.looks[side].name_variant { text.strings.navi_variant_name(&v.b.content, other) } else { None };
+    let variant = if v.b.looks[side].name_variant_sol {
+        text.strings.navi_variant_name_sol(&v.b.content, other)
+    } else if v.b.looks[side].name_variant {
+        text.strings.navi_variant_name(&v.b.content, other)
+    } else {
+        None
+    };
     let name = variant.unwrap_or_else(|| text.strings.navi_name(&v.b.content, other));
     let glyphs = crate::lookups::navi_name(v.hud, other, variant.is_some(), name, problems);
     // (On the text layer as wide as the name is, which still ends at column

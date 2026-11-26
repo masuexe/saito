@@ -468,6 +468,10 @@ pub struct Settings {
     pub all_guard_disabled: bool,
     /// EXE5 Legacy Collection rule: consume a refused dimming dark chip cut-in after one trigger.
     pub dark_cut_in_fix: bool,
+    /// EXE5 outdoor sunlight state (`true` = Outdoor/Sunny default, `false` = Indoor/Shade).
+    pub sun_enabled: bool,
+    /// EXE5DS rule: force any Shout trigger (mic or quick-shout) to Tier 3 / Full Synchro.
+    pub ds_shout_max_only: bool,
 }
 
 /// A part of a round as the lobby names it: its name, or none (from the
@@ -497,6 +501,8 @@ impl Settings {
             cs_prob_fix: saito_match::CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,
+            sun_enabled: true,
+            ds_shout_max_only: false,
         }
     }
 
@@ -528,6 +534,8 @@ impl Settings {
             cs_prob_fix: m.cs_prob_fix,
             all_guard_disabled: m.all_guard_disabled,
             dark_cut_in_fix: m.dark_cut_in_fix,
+            sun_enabled: m.sun_enabled,
+            ds_shout_max_only: m.ds_shout_max_only,
         }
     }
 
@@ -605,6 +613,12 @@ impl Settings {
         }
         if self.dark_cut_in_fix && caps.dark_cut_in_fix {
             w.put(&0x41u8);
+        }
+        if !self.sun_enabled && caps.ds_sun_toggle {
+            w.put(&0x43u8);
+        }
+        if self.ds_shout_max_only && caps.ds_shout_toggle {
+            w.put(&0x44u8);
         }
         if !self.ruleset.limits.is_empty() {
             w.put(&0x30u8);
@@ -712,6 +726,8 @@ impl Settings {
         let mut cs_prob_fix = saito_match::CsProbFix::NONE;
         let mut all_guard_disabled = false;
         let mut dark_cut_in_fix = false;
+        let mut sun_enabled = true;
+        let mut ds_shout_max_only = false;
         let mut allow_ds = false;
         let mut custom_limits = saito_match::ruleset::Limits::default();
         while !r.is_empty() {
@@ -772,6 +788,16 @@ impl Settings {
                     return Err(format!("5DS option is not supported for {game}"));
                 }
                 allow_ds = true;
+            } else if v == 0x43 {
+                if !saito_match::capabilities::for_game(&game).ds_sun_toggle {
+                    return Err(format!("sun option is not supported for {game}"));
+                }
+                sun_enabled = false;
+            } else if v == 0x44 {
+                if !saito_match::capabilities::for_game(&game).ds_shout_toggle {
+                    return Err(format!("ds shout max option is not supported for {game}"));
+                }
+                ds_shout_max_only = true;
             } else {
                 let rank = saito_match::RandomRank::from_u8(v)
                     .ok_or_else(|| format!("random battle: unknown rank ({v})"))?;
@@ -795,7 +821,7 @@ impl Settings {
         if let Some(problem) = saito_match::check::check_rounds(content, &game, &rounds).into_iter().next() {
             return Err(problem);
         }
-        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix })
+        Ok(Settings { game, rounds, backgrounds, ruleset, open_setups, custom_screen_time, random_battle, abd_mode, abd_chip_cap, cs_prob_fix, all_guard_disabled, dark_cut_in_fix, sun_enabled, ds_shout_max_only })
     }
 
     /// The settings' hash, of their bytes.
@@ -1442,6 +1468,22 @@ impl Lobby {
             return false;
         }
         self.propose(Settings { dark_cut_in_fix, ..self.mine.clone() })
+    }
+
+    /// Change whether EXE5 outdoor sunlight is active (`true` = Sunny, `false` = Indoor), the host alone.
+    pub fn set_sun_enabled(&mut self, sun_enabled: bool) -> bool {
+        if !saito_match::capabilities::for_game(&self.mine.game).ds_sun_toggle {
+            return false;
+        }
+        self.propose(Settings { sun_enabled, ..self.mine.clone() })
+    }
+
+    /// Change whether EXE5DS Shout forces Tier 3 / Full Synchro (`true`) or uses real 3-tier volume (`false`), the host alone.
+    pub fn set_ds_shout_max_only(&mut self, ds_shout_max_only: bool) -> bool {
+        if !saito_match::capabilities::for_game(&self.mine.game).ds_shout_toggle {
+            return false;
+        }
+        self.propose(Settings { ds_shout_max_only, ..self.mine.clone() })
     }
 
     /// Ready (or not) to play the settings as they stand. A player whose

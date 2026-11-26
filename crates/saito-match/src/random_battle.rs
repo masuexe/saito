@@ -504,6 +504,9 @@ mod tests {
                 cs_prob_fix: crate::CsProbFix::NONE,
                 all_guard_disabled: false,
                 dark_cut_in_fix: false,
+                sun_enabled: true,
+                ds_shout_enabled: false,
+                ds_shout_max_only: false,
             };
             let round = m.round(&content, 42);
             assert_ne!(round.settings.effects & saito_battle::setup::effects::RANDOM, 0);

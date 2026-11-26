@@ -406,6 +406,8 @@ impl Face {
         let looks = b.looks[side as usize & 1];
         let base_variant = if !f.base {
             0
+        } else if looks.face_variant_sol {
+            3
         } else if looks.face_variant_alt {
             2
         } else if looks.face_variant {
@@ -3441,9 +3443,11 @@ mod tests {
             own: FaceSet {
                 by_emotion: vec![("normal".into(), MugshotId(0)), ("worn_out".into(), MugshotId(1))],
                 every: None,
+                danger: None,
             },
             variant: None,
             variant2: None,
+            variant3: None,
         });
         c.defs.navis[partner.index()].record.mugshot = Some(MugshotId(2));
 

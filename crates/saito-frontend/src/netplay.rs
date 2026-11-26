@@ -100,6 +100,8 @@ pub fn netplay_setup(content: &Arc<Content>, seed: u32, settings: &crate::lobby:
 /// [`netplay_setup`] using already-constructed `sides` (used by Random Battle prep where each player
 /// has chosen their own Regular/Tag marks on the shared random folder).
 pub fn netplay_setup_sides(content: &Arc<Content>, seed: u32, settings: &crate::lobby::Settings, sides: [Side; 2]) -> Result<(Set, Match), String> {
+    let caps = saito_match::capabilities::for_game(&settings.game);
+    let ds_shout_enabled = settings.ruleset.allow_ds && caps.ds_shout_toggle;
     let m = Match {
         game: settings.game.clone(),
         seed: Some(seed),
@@ -113,6 +115,9 @@ pub fn netplay_setup_sides(content: &Arc<Content>, seed: u32, settings: &crate::
         cs_prob_fix: settings.cs_prob_fix,
         all_guard_disabled: settings.all_guard_disabled,
         dark_cut_in_fix: settings.dark_cut_in_fix,
+        sun_enabled: settings.sun_enabled,
+        ds_shout_enabled,
+        ds_shout_max_only: ds_shout_enabled && settings.ds_shout_max_only,
     };
     let m = m.stated(content, seed)?;
     Ok((Set::of(content, &m, seed), m))

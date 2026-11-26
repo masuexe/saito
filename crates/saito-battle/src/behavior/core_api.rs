@@ -539,8 +539,11 @@ impl CoreApi for Battle {
         Value::Bool(match f {
             F::FaceVariant => looks.face_variant,
             F::FaceVariantAlt => looks.face_variant_alt,
+            F::FaceVariantSol => looks.face_variant_sol,
             F::FaceVariantAnyForm => looks.face_variant_any_form,
             F::NameVariant => looks.name_variant,
+            F::NameVariantSol => looks.name_variant_sol,
+            F::Danger => looks.danger,
             F::WindowCount => looks.window_count,
             F::EmotionWindowGlitch => console.emotion_window_glitch,
             F::EmotionWindowGlitching => console.emotion_window.glitch,
@@ -580,8 +583,11 @@ impl CoreApi for Battle {
             match f {
                 F::FaceVariant => looks.face_variant = on,
                 F::FaceVariantAlt => looks.face_variant_alt = on,
+                F::FaceVariantSol => looks.face_variant_sol = on,
                 F::FaceVariantAnyForm => looks.face_variant_any_form = on,
                 F::NameVariant => looks.name_variant = on,
+                F::NameVariantSol => looks.name_variant_sol = on,
+                F::Danger => looks.danger = on,
                 F::WindowCount => looks.window_count = on,
                 F::EmotionWindowGlitch => console.emotion_window_glitch = on,
                 F::EmotionWindowGlitching => console.emotion_window.glitch = on,

@@ -225,14 +225,11 @@ pub struct PlayerTick {
     /// without partners has nothing to switch to, and a request of it does
     /// nothing.
     pub switch_to: Option<u8>,
-    /// The player's microphone heard them at full volume on this tick; else
-    /// it heard nothing. The DS's battle packet carries a level, 0 to 255
-    /// (its +5: the average of its sampler's last loud burst, 0x0215F208
-    /// +0x3E, which its input record keeps at +9): saito's input is one
-    /// bit of it, silent or 255 (the user: "microphone input can be 1 bit:
-    /// max volume or silent"). A game's rules may hear it (`mic_heard`).
-    /// Nothing in saito sets it: every match and replay is silent.
-    pub mic_loud: bool,
+    /// The player's microphone tier on this tick: `0` = silent, `1` = low
+    /// (`0x1E`), `2` = medium (`0x29`), `3` = high (`0xFF`, Full Synchro).
+    /// Encoded in 2 bits (bits 12..=13) of [`PlayerTick::word`]. A game's
+    /// rules may hear it (`mic_heard`).
+    pub mic_tier: u8,
     /// What the player chose on their custom screen this tick, if anything
     /// ([`ScreenChoice`]): taken if the screen chooses as it comes in,
     /// else nothing.
@@ -242,7 +239,23 @@ pub struct PlayerTick {
 impl PlayerTick {
     /// A tick of these buttons alone.
     pub const fn buttons(held: u16) -> PlayerTick {
-        PlayerTick { held, switch_to: None, mic_loud: false, choice: None }
+        PlayerTick { held, switch_to: None, mic_tier: 0, choice: None }
+    }
+
+    /// Map a 2-bit microphone tier (`0..=3`) to the DS microphone input level.
+    ///
+    /// Thresholds in EXE5DS (`rules/shout.luau`):
+    /// - `0` -> `0x00` (silent)
+    /// - `1` -> `0x1E` (low volume: `0x1E..=0x28`, strength 0)
+    /// - `2` -> `0x29` (medium volume: `0x29..=0x4B`, strength 1)
+    /// - `3` -> `0xFF` (high volume: `> 0x4B`, strength 2 + Full Synchro)
+    pub const fn mic_level(tier: u8) -> u8 {
+        match tier & 3 {
+            0 => 0,
+            1 => 0x1E,
+            2 => 0x29,
+            _ => u8::MAX,
+        }
     }
 
     /// The tick with this choice besides.
@@ -253,9 +266,9 @@ impl PlayerTick {
     /// The tick as one word, for the hosts that carry a tick as a number
     /// (netplay's wire, replays, a frontend's input): the buttons in the
     /// low ten bits, the switch request in bits 10 and 11 (the member plus
-    /// one, 0 none), the microphone heard loud in bit 12, and the screen's
-    /// choice's number ([`ScreenChoice::code`], 0 none) in bits 13 to 18:
-    /// 19 bits ([`PlayerTick::WORD_BITS`]).
+    /// one, 0 none), the microphone tier (`0..=3`) in bits 12 and 13, and the
+    /// screen's choice's number ([`ScreenChoice::code`], 0 none) in bits 14
+    /// to 19: 20 bits ([`PlayerTick::WORD_BITS`]).
     pub const fn word(self) -> u32 {
         let switch = match self.switch_to {
             Some(m) => (m as u32 & 3) + 1,
@@ -265,30 +278,34 @@ impl PlayerTick {
             Some(c) => c.code(),
             None => 0,
         };
-        (self.held as u32 & 0x3FF) | (switch & 3) << 10 | (self.mic_loud as u32) << 12 | (choice & 0x3F) << 13
+        (self.held as u32 & 0x3FF)
+            | (switch & 3) << 10
+            | ((self.mic_tier as u32) & 3) << 12
+            | (choice & 0x3F) << 14
     }
 
     /// The bits a word ([`PlayerTick::word`]) uses, from its lowest.
-    pub const WORD_BITS: u32 = 19;
+    pub const WORD_BITS: u32 = 20;
 
     /// The tick a word ([`PlayerTick::word`]) holds; a choice's number
-    /// none has, and the bits past its 19, are ignored. (A word's switch
+    /// none has, and the bits past its 20, are ignored. (A word's switch
     /// field of 3 names member 2.)
     pub const fn from_word(word: u32) -> PlayerTick {
         let switch = (word >> 10) & 3;
         PlayerTick {
             held: (word & 0x3FF) as u16,
             switch_to: if switch == 0 { None } else { Some(switch as u8 - 1) },
-            mic_loud: (word >> 12) & 1 != 0,
-            choice: ScreenChoice::from_code((word >> 13) & 0x3F),
+            mic_tier: ((word >> 12) & 3) as u8,
+            choice: ScreenChoice::from_code((word >> 14) & 0x3F),
         }
     }
 
     /// The tick as a missing word of the player's is guessed from their
-    /// last (netplay's prediction): its buttons and microphone carry on; a
-    /// switch request and a choice are a tick's own, and happen once.
+    /// last (netplay's prediction): its buttons carry on; a switch request,
+    /// microphone trigger and custom-screen choice are a tick's own and
+    /// happen once.
     pub const fn carried_on(self) -> PlayerTick {
-        PlayerTick { switch_to: None, choice: None, ..self }
+        PlayerTick { switch_to: None, mic_tier: 0, choice: None, ..self }
     }
 }
 
@@ -321,36 +338,40 @@ mod tests {
 
     #[test]
     fn a_tick_word_holds_the_buttons_the_switch_the_microphone_and_the_choice() {
-        let t = |held, switch_to, mic_loud, choice| PlayerTick { held, switch_to, mic_loud, choice };
+        let t = |held, switch_to, mic_tier, choice| PlayerTick { held, switch_to, mic_tier, choice };
         for t in [
             PlayerTick::buttons(0),
             PlayerTick::buttons(0x3FF),
-            t(keys::A, Some(0), false, None),
-            t(keys::L, Some(2), true, Some(ScreenChoice::Ok)),
-            t(0, None, true, Some(ScreenChoice::ChooseForm(4))),
-            t(keys::A, None, false, Some(ScreenChoice::Pick(11))),
-            t(0, Some(1), false, Some(ScreenChoice::Press(8))),
-            t(0, None, false, Some(ScreenChoice::TakeBack)),
-            t(0, None, false, Some(ScreenChoice::Unpick(4))),
-            t(keys::B, None, false, Some(ScreenChoice::Unchoose)),
-            t(0x3FF, Some(2), true, Some(ScreenChoice::Release(11))),
-            t(0x3FF, Some(2), true, None),
+            t(keys::A, Some(0), 0, None),
+            t(keys::L, Some(2), 1, Some(ScreenChoice::Ok)),
+            t(0, None, 2, Some(ScreenChoice::ChooseForm(4))),
+            t(keys::A, None, 0, Some(ScreenChoice::Pick(11))),
+            t(0, Some(1), 0, Some(ScreenChoice::Press(8))),
+            t(0, None, 0, Some(ScreenChoice::TakeBack)),
+            t(0, None, 0, Some(ScreenChoice::Unpick(4))),
+            t(keys::B, None, 0, Some(ScreenChoice::Unchoose)),
+            t(0x3FF, Some(2), 3, Some(ScreenChoice::Release(11))),
+            t(0x3FF, Some(2), 3, None),
         ] {
             assert_eq!(PlayerTick::from_word(t.word()), t);
         }
         // A tick of buttons alone is its buttons: what every match and
         // replay before the party battle held.
         assert_eq!(PlayerTick::buttons(keys::A | keys::B).word(), (keys::A | keys::B) as u32);
-        // Every field at its most fills the word's 19 bits.
-        let most = t(0x3FF, Some(2), true, ScreenChoice::from_code(ScreenChoice::CODES - 1));
+        // Every field at its most fills the word's 20 bits.
+        let most = t(0x3FF, Some(2), 3, ScreenChoice::from_code(ScreenChoice::CODES - 1));
         assert_eq!(most.word() >> PlayerTick::WORD_BITS, 0);
         assert!(most.word() >= 1 << (PlayerTick::WORD_BITS - 1));
+        assert_eq!(PlayerTick::mic_level(0), 0);
+        assert_eq!(PlayerTick::mic_level(1), 0x1E);
+        assert_eq!(PlayerTick::mic_level(2), 0x29);
+        assert_eq!(PlayerTick::mic_level(3), u8::MAX);
     }
 
     #[test]
     fn a_word_holds_every_choice() {
         for choice in (0..ScreenChoice::CODES).map(ScreenChoice::from_code) {
-            let t = PlayerTick { held: 0x3FF, switch_to: Some(2), mic_loud: true, choice };
+            let t = PlayerTick { held: 0x3FF, switch_to: Some(2), mic_tier: 3, choice };
             assert_eq!(PlayerTick::from_word(t.word()), t);
         }
     }

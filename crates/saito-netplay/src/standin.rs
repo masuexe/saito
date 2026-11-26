@@ -251,13 +251,13 @@ mod tests {
     use super::*;
     use saito_battle::content::testing;
 
-    /// A tick word predicted is its buttons and microphone carried on, without
-    /// its switch request or its choice.
+    /// A tick word predicted is its buttons carried on, without its switch
+    /// request, microphone trigger, or choice.
     #[test]
     fn a_choice_and_a_switch_are_not_predicted() {
-        let t = PlayerTick { held: keys::A | keys::UP, switch_to: Some(1), mic_loud: true, choice: Some(ScreenChoice::Pick(3)) };
+        let t = PlayerTick { held: keys::A | keys::UP, switch_to: Some(1), mic_tier: 3, choice: Some(ScreenChoice::Pick(3)) };
         let predicted = PlayerTick::from_word(<StandInBattle as Game>::predict(&t.word()));
-        assert_eq!(predicted, PlayerTick { switch_to: None, choice: None, ..t });
+        assert_eq!(predicted, PlayerTick { switch_to: None, mic_tier: 0, choice: None, ..t });
     }
 
     /// Two mashers get a stand-in netbattle through its first custom

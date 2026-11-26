@@ -266,6 +266,13 @@ pub struct Match {
     pub all_guard_disabled: bool,
     /// EXE5 Legacy Collection rule: consume a refused dimming dark chip cut-in after one trigger (`false` = Original GBA).
     pub dark_cut_in_fix: bool,
+    /// EXE5 outdoor sunlight state (`true` = Outdoor/Sunny default, `false` = Indoor/Shade -> `effects::NO_SUN`).
+    pub sun_enabled: bool,
+    /// EXE5DS rule: enables Danger emotion window & once-per-battle microphone Shout (`effects::DS_SHOUT`).
+    /// Never enabled under pure GBA rulesets.
+    pub ds_shout_enabled: bool,
+    /// EXE5DS rule: forces any Shout trigger to resolve at Tier 3 / Full Synchro (`effects::DS_SHOUT_MAX_ONLY`).
+    pub ds_shout_max_only: bool,
 }
 
 /// The custom screen's time limits a match may set, in seconds, besides
@@ -367,6 +374,9 @@ impl Match {
             cs_prob_fix: CsProbFix::NONE,
             all_guard_disabled: false,
             dark_cut_in_fix: false,
+            sun_enabled: true,
+            ds_shout_enabled: false,
+            ds_shout_max_only: false,
         })
     }
 
@@ -457,6 +467,16 @@ impl Match {
         }
         if self.dark_cut_in_fix && self.game == "exe5" {
             effects |= saito_battle::setup::effects::CONSUME_REFUSED_CUT_IN;
+        }
+        let caps = capabilities::for_game(&self.game);
+        if !self.sun_enabled && caps.ds_sun_toggle {
+            effects |= saito_battle::setup::effects::NO_SUN;
+        }
+        if self.ds_shout_enabled && caps.ds_shout_toggle {
+            effects |= saito_battle::setup::effects::DS_SHOUT;
+            if self.ds_shout_max_only {
+                effects |= saito_battle::setup::effects::DS_SHOUT_MAX_ONLY;
+            }
         }
         let settings = BattleSettings { stage: first.stage, background: first.background, effects };
         let transformed_sides: Option<[Side; 2]> = if self.abd_mode != AbdMode::Original && AbdMode::supported(&self.game) {

@@ -476,6 +476,9 @@ pub struct Faces {
     /// An alternate variant set (`SideLooks::face_variant_alt`: EXE5 Team
     /// Colonel Hub Style / silver Bass-Cross).
     pub variant2: Option<FaceSet>,
+    /// A third variant set (`SideLooks::face_variant_sol`: EXE5DS Sol Cross
+    /// MegaMan, `NaviStats +0x4C == 3`).
+    pub variant3: Option<FaceSet>,
 }
 
 /// One set of faces, keyed by its game's emotions' names (the rules'
@@ -488,6 +491,8 @@ pub struct FaceSet {
     pub by_emotion: Vec<(String, super::MugshotId)>,
     /// The face of every emotion (a definition's one face, `mugshot = ...`).
     pub every: Option<super::MugshotId>,
+    /// Optional EXE5DS Danger (Critical) emotion window face for this set.
+    pub danger: Option<super::MugshotId>,
 }
 
 impl FaceSet {
@@ -517,15 +522,25 @@ impl FaceSet {
 }
 
 impl Faces {
-    /// The face for `emotion` in the set the side shows: `variant == 1` uses
-    /// `variant`, `variant == 2` uses `variant2` (falling back to `variant`
-    /// then `own`), `0` uses `own`.
-    pub fn shown(&self, emotions: &super::EmotionRules, emotion: super::Emotion, variant: u8) -> super::MugshotId {
+    /// The face set selected by `variant`: `3` -> `variant3`, `2` -> `variant2`
+    /// (falling back to `variant`), `1` -> `variant`, `0` -> `own`.
+    pub fn set_for(&self, variant: u8) -> &FaceSet {
         match variant {
-            2 => self.variant2.as_ref().or(self.variant.as_ref()).unwrap_or(&self.own).of(emotions, emotion),
-            1 => self.variant.as_ref().unwrap_or(&self.own).of(emotions, emotion),
-            _ => self.own.of(emotions, emotion),
+            3 => self.variant3.as_ref().unwrap_or(&self.own),
+            2 => self.variant2.as_ref().or(self.variant.as_ref()).unwrap_or(&self.own),
+            1 => self.variant.as_ref().unwrap_or(&self.own),
+            _ => &self.own,
         }
+    }
+
+    /// The face for `emotion` in the set the side shows.
+    pub fn shown(&self, emotions: &super::EmotionRules, emotion: super::Emotion, variant: u8) -> super::MugshotId {
+        self.set_for(variant).of(emotions, emotion)
+    }
+
+    /// The EXE5DS Danger (Critical) face for `variant`, if declared.
+    pub fn shown_danger(&self, variant: u8) -> Option<super::MugshotId> {
+        self.set_for(variant).danger
     }
 }
 
@@ -540,6 +555,7 @@ pub(crate) fn check_faces(content: &super::Content) -> Result<(), saito_content_
             (Some(&faces.own), "mugshot"),
             (faces.variant.as_ref(), "mugshot.variant"),
             (faces.variant2.as_ref(), "mugshot.variant2"),
+            (faces.variant3.as_ref(), "mugshot.variant3"),
         ] {
             if let Some(Err(m)) = set.map(|s| s.check(&rules.emotion)) {
                 return Err(saito_content_api::ContentError::new(format!("form {}: {at}: {m}", d.key)));
@@ -550,7 +566,8 @@ pub(crate) fn check_faces(content: &super::Content) -> Result<(), saito_content_
 }
 
 /// A form definition's `mugshot`: one face, or faces by emotion name (and
-/// optional variant sets `variant`, `variant2`).
+/// optional variant sets `variant`, `variant2`, `variant3`, plus optional
+/// `danger` face in any set).
 fn faces<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Faces>, D::Error> {
     use serde::de::Error;
     #[derive(Deserialize)]
@@ -565,20 +582,35 @@ fn faces<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Faces>, D::Err
         One(super::MugshotId),
         ByEmotion(std::collections::BTreeMap<String, Entry>),
     }
+    let parse_set = |mut set: std::collections::BTreeMap<String, super::MugshotId>| -> FaceSet {
+        let danger = set.remove("danger");
+        FaceSet { by_emotion: set.into_iter().collect(), every: None, danger }
+    };
     let Some(spec) = Option::<Spec>::deserialize(d)? else { return Ok(None) };
     let entries = match spec {
-        Spec::One(face) => return Ok(Some(Faces { own: FaceSet { every: Some(face), ..FaceSet::default() }, variant: None, variant2: None })),
+        Spec::One(face) => {
+            return Ok(Some(Faces {
+                own: FaceSet { every: Some(face), ..FaceSet::default() },
+                variant: None,
+                variant2: None,
+                variant3: None,
+            }));
+        }
         Spec::ByEmotion(entries) => entries,
     };
     let mut faces = Faces::default();
     for (name, entry) in entries {
         match (name.as_str(), entry) {
-            ("variant", Entry::Set(set)) => faces.variant = Some(FaceSet { by_emotion: set.into_iter().collect(), every: None }),
+            ("variant", Entry::Set(set)) => faces.variant = Some(parse_set(set)),
             ("variant", Entry::Face(_)) => return Err(D::Error::custom("`variant` is a set of faces by emotion")),
-            ("variant2", Entry::Set(set)) => faces.variant2 = Some(FaceSet { by_emotion: set.into_iter().collect(), every: None }),
+            ("variant2", Entry::Set(set)) => faces.variant2 = Some(parse_set(set)),
             ("variant2", Entry::Face(_)) => return Err(D::Error::custom("`variant2` is a set of faces by emotion")),
+            ("variant3", Entry::Set(set)) => faces.variant3 = Some(parse_set(set)),
+            ("variant3", Entry::Face(_)) => return Err(D::Error::custom("`variant3` is a set of faces by emotion")),
+            ("danger", Entry::Face(face)) => faces.own.danger = Some(face),
+            ("danger", Entry::Set(_)) => return Err(D::Error::custom("`danger` is a face, not a set")),
             (_, Entry::Face(face)) => faces.own.by_emotion.push((name, face)),
-            (_, Entry::Set(_)) => return Err(D::Error::custom(format!("`{name}` is a face, not a set (only `variant` and `variant2` are)"))),
+            (_, Entry::Set(_)) => return Err(D::Error::custom(format!("`{name}` is a face, not a set (only `variant`, `variant2` and `variant3` are)"))),
         }
     }
     Ok(Some(faces))

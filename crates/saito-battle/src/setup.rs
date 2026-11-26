@@ -46,6 +46,9 @@ pub mod effects {
     pub const LINK: u32 = 0x8;
     /// Multi-round set.
     pub const SET: u32 = 0x400;
+    /// Indoor battle (no sunlight): overrides EXE5's default `sun = true` so
+    /// GunDelSol / Django / Sol Cross run in shade/indoor mode.
+    pub const NO_SUN: u32 = 0x0010_0000;
     /// Random battle.
     pub const RANDOM: u32 = 0x20_0000;
     /// The DS's party battle plays no switch voice (0x02098ED0), and no
@@ -65,6 +68,12 @@ pub mod effects {
     /// play its fizzle sparkle and consume the chip from hand instead of leaving
     /// it in hand for repeated `heal_on_use` triggers.
     pub const CONSUME_REFUSED_CUT_IN: u32 = 0x0200_0000;
+    /// EXE5 Double Team DS (5DS) rule: enables the Danger (Critical) emotion
+    /// window and once-per-battle microphone Shout. Never set in pure GBA rulesets.
+    pub const DS_SHOUT: u32 = 0x0400_0000;
+    /// EXE5 Double Team DS (5DS) rule: forces any Shout trigger (microphone or
+    /// quick-shout) to resolve at maximum strength (Tier 3 / Full Synchro).
+    pub const DS_SHOUT_MAX_ONLY: u32 = 0x0800_0000;
     /// EXE4 / EXE5 per-round hard cap on repeated uses of the same Mega / Giga /
     /// Dark / Program Advance chip by Auto Battle Data (ABD). Encoded in bits
     /// 28..=31 (`0` = unlimited, `1..=15` = max uses per round) so unlimited
