@@ -167,35 +167,29 @@ impl Page {
     }
 
     fn limit_kinds(&self) -> Vec<LimitKind> {
-        match self.rulesets.game() {
-            "exe4" => vec![
-                LimitKind::StandardCopies,
-                LimitKind::MegaCopies,
-                LimitKind::MegaTotal,
-                LimitKind::GigaCopies,
-                LimitKind::GigaTotal,
-            ],
-            "exe5" => vec![
-                LimitKind::StandardCopies,
-                LimitKind::MegaCopies,
-                LimitKind::MegaTotal,
-                LimitKind::GigaCopies,
-                LimitKind::GigaTotal,
-                LimitKind::PatchCardMb,
-            ],
-            _ => vec![
+        let caps = saito_match::capabilities::for_game(self.rulesets.game());
+        let mut kinds = Vec::new();
+        if caps.mb_tier_copy_limits {
+            kinds.extend([
                 LimitKind::MbTier(0),
                 LimitKind::MbTier(1),
                 LimitKind::MbTier(2),
                 LimitKind::MbTier(3),
                 LimitKind::MbTier(4),
-                LimitKind::MegaCopies,
-                LimitKind::MegaTotal,
-                LimitKind::GigaCopies,
-                LimitKind::GigaTotal,
-                LimitKind::PatchCardMb,
-            ],
+            ]);
+        } else if caps.flat_standard_copy_limit {
+            kinds.push(LimitKind::StandardCopies);
         }
+        kinds.extend([
+            LimitKind::MegaCopies,
+            LimitKind::MegaTotal,
+            LimitKind::GigaCopies,
+            LimitKind::GigaTotal,
+        ]);
+        if caps.patch_card_mb_limit {
+            kinds.push(LimitKind::PatchCardMb);
+        }
+        kinds
     }
 
     fn show_limits(&mut self, shell: &Shell) {
@@ -203,6 +197,7 @@ impl Page {
         let view = ui.global::<RulesetView>();
         let say = ui.global::<saito_ui::BuildWords>();
         let game = self.rulesets.game();
+        let mb_tiered = saito_match::capabilities::for_game(game).mb_tier_copy_limits;
         let limits = &self.shown.ruleset.limits;
         let rows: Vec<RulesetLimitRow> = self
             .limit_kinds()
@@ -226,7 +221,7 @@ impl Page {
                 LimitKind::MegaCopies => {
                     let (value, custom) = match limits.mega_copies {
                         Some(v) => (v.to_string().into(), true),
-                        None if game == "exe6" => (view.get_default_word(), false),
+                        None if mb_tiered => (view.get_default_word(), false),
                         None => (Limits::DEFAULT_MEGA_COPIES.to_string().into(), false),
                     };
                     RulesetLimitRow { label: view.get_limit_mega_copies(), value, custom }
@@ -241,7 +236,7 @@ impl Page {
                 LimitKind::GigaCopies => {
                     let (value, custom) = match limits.giga_copies {
                         Some(v) => (v.to_string().into(), true),
-                        None if game == "exe6" => (view.get_default_word(), false),
+                        None if mb_tiered => (view.get_default_word(), false),
                         None => (Limits::DEFAULT_GIGA_COPIES.to_string().into(), false),
                     };
                     RulesetLimitRow { label: view.get_limit_giga_copies(), value, custom }
@@ -271,7 +266,7 @@ impl Page {
 
     fn step_limit(&mut self, shell: &mut Shell, index: i32, by: i32) -> Outcome {
         let Some(&kind) = self.limit_kinds().get(index.max(0) as usize) else { return Outcome::Nothing };
-        let game = self.rulesets.game().to_string();
+        let mb_tiered = saito_match::capabilities::for_game(self.rulesets.game()).mb_tier_copy_limits;
         let step_fixed = |slot: &mut Option<u32>, default: u32, step: i32, max: i32| {
             let cur = slot.unwrap_or(default) as i32;
             let next = (cur + by * step).clamp(0, max) as u32;
@@ -288,10 +283,10 @@ impl Page {
         self.change(shell, |r, _| match kind {
             LimitKind::StandardCopies => step_fixed(&mut r.limits.standard_copies, Limits::DEFAULT_STANDARD_COPIES, 1, 30),
             LimitKind::MbTier(t) => step_fixed(&mut r.limits.mb_tier_copies[t], Limits::EXE6_MB_DEFAULTS[t], 1, 30),
-            LimitKind::MegaCopies if game == "exe6" => step_opt(&mut r.limits.mega_copies, 1, 30),
+            LimitKind::MegaCopies if mb_tiered => step_opt(&mut r.limits.mega_copies, 1, 30),
             LimitKind::MegaCopies => step_fixed(&mut r.limits.mega_copies, Limits::DEFAULT_MEGA_COPIES, 1, 30),
             LimitKind::MegaTotal => step_opt(&mut r.limits.mega_total, 5, 30),
-            LimitKind::GigaCopies if game == "exe6" => step_opt(&mut r.limits.giga_copies, 1, 30),
+            LimitKind::GigaCopies if mb_tiered => step_opt(&mut r.limits.giga_copies, 1, 30),
             LimitKind::GigaCopies => step_fixed(&mut r.limits.giga_copies, Limits::DEFAULT_GIGA_COPIES, 1, 30),
             LimitKind::GigaTotal => step_opt(&mut r.limits.giga_total, 1, 30),
             LimitKind::PatchCardMb => step_fixed(&mut r.limits.patch_card_mb, Limits::DEFAULT_PATCH_CARD_MB, 5, 500),

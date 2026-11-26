@@ -152,7 +152,7 @@ fn sheet_random(words: &Words, label: &str, name: &str, side: &Side, rank: saito
     };
     let abilities: Vec<String> = ability_keys
         .iter()
-        .filter_map(|key| saito_match::ids::entry(content, "exe6", "navicust", key))
+        .filter_map(|key| saito_match::ids::entry(content, content.game(), "navicust", key))
         .map(|entry| names.entry(entry))
         .collect();
     let chips: Vec<ChipCell> = (0..folder.chips.len()).map(|i| chip_cell(kit, names, &folder, i, false, hd)).collect();

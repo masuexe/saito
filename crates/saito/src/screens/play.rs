@@ -592,7 +592,7 @@ impl Play {
             };
             let abilities: Vec<String> = ability_keys
                 .iter()
-                .filter_map(|key| saito_match::ids::entry(content, "exe6", "navicust", key))
+                .filter_map(|key| saito_match::ids::entry(content, content.game(), "navicust", key))
                 .map(|entry| names.entry(entry))
                 .collect();
             let b = rank.buster_level();
@@ -892,10 +892,11 @@ impl Play {
         if saito_match::cs_prob_fix::supported(game) {
             settings.cs_prob_fix = saito_match::CsProbFix::recommended(game);
         }
-        if game == "exe4" {
+        let caps = saito_match::capabilities::for_game(game);
+        if caps.all_guard_toggle {
             settings.all_guard_disabled = true;
         }
-        if game == "exe5" {
+        if caps.dark_cut_in_fix {
             settings.dark_cut_in_fix = true;
         }
         Some(settings)
@@ -1289,9 +1290,10 @@ impl Play {
             return;
         }
         self.change_settings(shell, |s| {
-            if s.game == "exe4" {
+            let caps = saito_match::capabilities::for_game(&s.game);
+            if caps.all_guard_toggle {
                 s.all_guard_disabled = !s.all_guard_disabled;
-            } else if s.game == "exe5" {
+            } else if caps.dark_cut_in_fix {
                 s.dark_cut_in_fix = !s.dark_cut_in_fix;
             }
         });
@@ -1453,7 +1455,7 @@ impl Play {
             return;
         }
         let Some(kit) = builds::kit(shell) else { return };
-        if kit.game != "exe5" {
+        if !saito_match::capabilities::for_game(&kit.game).ruleset_sub_modes {
             return;
         }
         let Some(settings) = self.match_settings() else { return };
@@ -1685,7 +1687,7 @@ impl Play {
                 let class_name = saito_match::ruleset::Name::Preset(tier.class.base_id().to_string());
                 view.set_ruleset(rulesets::shown_name(&names, &class_name).into());
                 view.set_ruleset_tiered(true);
-                view.set_ruleset_sub_kind(if settings.game == "exe5" {
+                view.set_ruleset_sub_kind(if saito_match::capabilities::for_game(&settings.game).ruleset_sub_modes {
                     if tier.class == rulesets::PresetClass::Gate { 2 } else { 1 }
                 } else {
                     0
@@ -1747,9 +1749,10 @@ impl Play {
         view.set_cs_prob_count(live.cs_prob_fix.count(&settings.game) as i32);
         view.set_cs_prob_total(cs_total);
         view.set_cs_prob_recommended(live.cs_prob_fix.is_recommended(&settings.game));
-        view.set_all_guard_supported(settings.game == "exe4");
+        let caps = saito_match::capabilities::for_game(&settings.game);
+        view.set_all_guard_supported(caps.all_guard_toggle);
         view.set_all_guard_disabled(live.all_guard_disabled);
-        view.set_dark_cut_in_supported(settings.game == "exe5");
+        view.set_dark_cut_in_supported(caps.dark_cut_in_fix);
         view.set_dark_cut_in_fix(live.dark_cut_in_fix);
         let cs_prob_changed = live.cs_prob_fix != self.live.cs_prob_fix;
         if self.cs_prob_dialog && cs_prob_changed {

@@ -908,7 +908,7 @@ impl Checked {
             }
         }
         if let Some(limit) = limits.patch_card_mb
-            && matches!(game.as_str(), "exe5" | "exe6")
+            && crate::capabilities::for_game(&game).patch_card_mb_limit
             && let Some(overview) = self.overview(content, side)
             && let Some(list) = overview.lists.iter().find(|l| l.field == crate::facts::PATCH_CARDS)
             && list.count.used > limit

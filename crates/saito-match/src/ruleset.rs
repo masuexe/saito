@@ -242,11 +242,12 @@ impl Limits {
 
     /// Number of overridden limits relevant to `game`.
     pub fn count_for(&self, game: &str) -> usize {
+        let caps = crate::capabilities::for_game(game);
         let mut n = 0;
-        if matches!(game, "exe4" | "exe5") && self.standard_copies.is_some() {
+        if caps.flat_standard_copy_limit && self.standard_copies.is_some() {
             n += 1;
         }
-        if game == "exe6" {
+        if caps.mb_tier_copy_limits {
             n += self.mb_tier_copies.iter().filter(|v| v.is_some()).count();
         }
         if self.mega_copies.is_some() {
@@ -261,7 +262,7 @@ impl Limits {
         if self.giga_total.is_some() {
             n += 1;
         }
-        if matches!(game, "exe5" | "exe6") && self.patch_card_mb.is_some() {
+        if caps.patch_card_mb_limit && self.patch_card_mb.is_some() {
             n += 1;
         }
         n
@@ -282,19 +283,20 @@ impl Limits {
         if record.flags.has(ChipFlags::DARK) {
             return None;
         }
+        let mb_tiered = crate::capabilities::for_game(game).mb_tier_copy_limits;
         match record.class {
             ChipClass::Standard => {
-                if game == "exe6" {
+                if mb_tiered {
                     self.mb_tier_copies[Self::mb_tier(record.mb)]
                 } else {
                     self.standard_copies
                 }
             }
             ChipClass::Mega => {
-                self.mega_copies.or_else(|| (game == "exe6").then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
+                self.mega_copies.or_else(|| mb_tiered.then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
             }
             ChipClass::Giga => {
-                self.giga_copies.or_else(|| (game == "exe6").then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
+                self.giga_copies.or_else(|| mb_tiered.then(|| self.mb_tier_copies[Self::mb_tier(record.mb)]).flatten())
             }
             _ => None,
         }
@@ -302,7 +304,7 @@ impl Limits {
 
     /// Whether any per-chip copy limit override applies in `game`.
     pub fn has_copy_overrides(&self, game: &str) -> bool {
-        if game == "exe6" {
+        if crate::capabilities::for_game(game).mb_tier_copy_limits {
             self.mb_tier_copies.iter().any(Option::is_some) || self.mega_copies.is_some() || self.giga_copies.is_some()
         } else {
             self.standard_copies.is_some() || self.mega_copies.is_some() || self.giga_copies.is_some()

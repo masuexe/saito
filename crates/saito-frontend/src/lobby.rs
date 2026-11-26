@@ -599,10 +599,11 @@ impl Settings {
             w.put(&0x20u8);
             w.put(&self.cs_prob_fix.bits());
         }
-        if self.all_guard_disabled && self.game == "exe4" {
+        let caps = saito_match::capabilities::for_game(&self.game);
+        if self.all_guard_disabled && caps.all_guard_toggle {
             w.put(&0x40u8);
         }
-        if self.dark_cut_in_fix && self.game == "exe5" {
+        if self.dark_cut_in_fix && caps.dark_cut_in_fix {
             w.put(&0x41u8);
         }
         if !self.ruleset.limits.is_empty() {
@@ -751,12 +752,12 @@ impl Settings {
                     patch_card_mb: read_opt(10)?,
                 };
             } else if v == 0x40 {
-                if game != "exe4" {
+                if !saito_match::capabilities::for_game(&game).all_guard_toggle {
                     return Err(format!("all guard option is not supported for {game}"));
                 }
                 all_guard_disabled = true;
             } else if v == 0x41 {
-                if game != "exe5" {
+                if !saito_match::capabilities::for_game(&game).dark_cut_in_fix {
                     return Err(format!("dark cut-in option is not supported for {game}"));
                 }
                 dark_cut_in_fix = true;
@@ -1429,7 +1430,7 @@ impl Lobby {
 
     /// Change whether EXE4 All Guard patch card effect is disabled (Legacy Collection), the host alone.
     pub fn set_all_guard_disabled(&mut self, all_guard_disabled: bool) -> bool {
-        if self.mine.game != "exe4" {
+        if !saito_match::capabilities::for_game(&self.mine.game).all_guard_toggle {
             return false;
         }
         self.propose(Settings { all_guard_disabled, ..self.mine.clone() })
@@ -1437,7 +1438,7 @@ impl Lobby {
 
     /// Change whether EXE5 refused dimming dark chip cut-in is consumed after one trigger (Legacy Collection), the host alone.
     pub fn set_dark_cut_in_fix(&mut self, dark_cut_in_fix: bool) -> bool {
-        if self.mine.game != "exe5" {
+        if !saito_match::capabilities::for_game(&self.mine.game).dark_cut_in_fix {
             return false;
         }
         self.propose(Settings { dark_cut_in_fix, ..self.mine.clone() })

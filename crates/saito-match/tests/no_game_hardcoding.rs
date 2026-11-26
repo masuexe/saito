@@ -30,28 +30,22 @@ const GAME_TOKENS: &[&str] = &[
 ///
 /// Shrink or remove entries as each site is migrated to capability-driven logic.
 const ALLOWLIST: &[(&str, usize)] = &[
+    // Centralized capability registry (single source of truth for game switches)
+    ("crates/saito-match/src/capabilities.rs", 3),
     // Extraction / HD art (DP2)
     ("crates/saito-extract/src/hd_art.rs", 5),
     ("crates/saito-extract/src/lib.rs", 1),
     // Replay compatibility table (DP4 — Coupling B)
     ("crates/saito-replay/src/lib.rs", 5),
-    // Rules / match / lobby (DP5 — Coupling C)
-    ("crates/saito-frontend/src/lobby.rs", 6),
+    // Remaining game-specific rule/data tables (DP5 — Coupling C)
     ("crates/saito-match/src/abd_mode.rs", 5),
-    ("crates/saito-match/src/binary.rs", 2),
-    ("crates/saito-match/src/build.rs", 1),
     ("crates/saito-match/src/cs_prob_fix.rs", 7),
-    ("crates/saito-match/src/random_battle.rs", 7),
-    ("crates/saito-match/src/ruleset.rs", 7),
-    // App UI shell (DP7 — Coupling C)
-    ("crates/saito/src/builds/overview.rs", 1),
+    ("crates/saito-match/src/random_battle.rs", 6),
+    // Remaining UI shell entries (DP7 — Coupling C)
     ("crates/saito/src/games.rs", 1),
     ("crates/saito/src/rulesets/mod.rs", 12),
-    ("crates/saito/src/rulesets/page.rs", 6),
-    ("crates/saito/src/screens/play.rs", 9),
     ("crates/saito/src/screens/play/stage.rs", 6),
     ("crates/saito/src/screens/practice.rs", 1),
-    ("crates/saito/src/screens/replays.rs", 2),
 ];
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -285,7 +285,7 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 at += 3;
             }
             b'G' if !seen_all_guard => {
-                if content.game() != "exe4" {
+                if !crate::capabilities::for_game(content.game()).all_guard_toggle {
                     return Err(format!("all guard option is not supported for {}", content.game()));
                 }
                 all_guard_disabled = bytes[at + 1] != 0;
@@ -293,7 +293,7 @@ pub fn read_match(content: &Content, bytes: &[u8]) -> Result<Match, String> {
                 at += 2;
             }
             b'D' if !seen_dark_cut_in => {
-                if content.game() != "exe5" {
+                if !crate::capabilities::for_game(content.game()).dark_cut_in_fix {
                     return Err(format!("dark cut-in option is not supported for {}", content.game()));
                 }
                 dark_cut_in_fix = bytes[at + 1] != 0;

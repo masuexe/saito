@@ -19,6 +19,7 @@
 pub mod abd_mode;
 pub mod binary;
 pub mod build;
+pub mod capabilities;
 pub mod check;
 pub mod cs_prob_fix;
 pub mod pick;
@@ -55,6 +56,7 @@ use saito_battle::Rng;
 use saito_content_api::{NaviHandle, StageHandle};
 
 pub use abd_mode::AbdMode;
+pub use capabilities::GameCapabilities;
 pub use check::{check_match, check_side};
 pub use cs_prob_fix::CsProbFix;
 pub use facts::Facts;

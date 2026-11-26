@@ -130,9 +130,9 @@ pub fn apply_marks(folder: &Folder, marks: RandomMarks) -> Folder {
     out
 }
 
-/// Whether `game` supports official Random Battle mode (EXE6 only).
+/// Whether `game` supports official Random Battle mode.
 pub fn supported(game: &str) -> bool {
-    game == "exe6"
+    crate::capabilities::for_game(game).random_battle
 }
 
 const SP_CHIPS: [&str; 18] = [
