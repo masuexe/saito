@@ -249,7 +249,7 @@ fn music_of(a: &BattleAudio, p: u8) -> Option<SongId> {
 /// stay the battle's bank's, and the result's music stops the theme.
 #[test]
 fn a_theme_plays_in_place_of_the_battles_music() {
-    let theme = Theme { bank: other_bank(), song: 0x16 };
+    let theme = Theme::m4a(other_bank(), 0x16);
     let (banks, songs) = with_theme(vec![bank()], &Songs::numbers(0x200), &[VIRUS_BATTLE], &theme);
     assert_eq!(banks.len(), 2, "the theme's bank is one more");
     let mut a = BattleAudio::with_banks(banks, songs);
@@ -277,7 +277,7 @@ fn a_theme_of_the_games_own_is_no_bank_more() {
     let mut b = (*own).clone();
     b.songs[0x16] = b.songs[0x15].clone();
     let own = Arc::new(b);
-    let theme = Theme { bank: own.clone(), song: 0x16 };
+    let theme = Theme::m4a(own.clone(), 0x16);
     let (banks, songs) = with_theme(vec![own], &Songs::numbers(0x200), &[VIRUS_BATTLE], &theme);
     assert_eq!(banks.len(), 1);
     assert_eq!(songs.song(VIRUS_BATTLE), SoundId(0x16));
@@ -290,7 +290,7 @@ fn a_theme_of_the_games_own_is_no_bank_more() {
 /// sounding there goes on).
 #[test]
 fn a_canceled_change_moves_the_music_back_to_the_theme() {
-    let theme = Theme { bank: other_bank(), song: 0x16 };
+    let theme = Theme::m4a(other_bank(), 0x16);
     let (banks, songs) = with_theme(vec![bank()], &Songs::numbers(0x200), &[VIRUS_BATTLE], &theme);
     let mut a = BattleAudio::with_banks(banks, songs);
     let mut out = Vec::new();
@@ -320,7 +320,7 @@ fn a_canceled_change_moves_the_music_back_to_the_theme() {
 /// the battle's.
 #[test]
 fn a_volume_is_every_banks() {
-    let theme = Theme { bank: other_bank(), song: 0x16 };
+    let theme = Theme::m4a(other_bank(), 0x16);
     let (banks, songs) = with_theme(vec![bank()], &Songs::numbers(0x200), &[VIRUS_BATTLE], &theme);
     let mut a = BattleAudio::with_banks(banks, songs);
     a.handle(&[SoundCue::Music(VIRUS_BATTLE), SoundCue::Volume { player: 31, volume: 0x80 }, SoundCue::Volume { player: 22, volume: 0xA0 }]);
@@ -335,8 +335,8 @@ fn a_volume_is_every_banks() {
 /// and the next round's start plays the new song.
 #[test]
 fn a_change_of_songs_restarts_the_music() {
-    let own = (vec![bank()], Songs::numbers(0x200));
-    let theme = Theme { bank: other_bank(), song: 0x16 };
+    let own = (vec![AudioBank::from(bank())], Songs::numbers(0x200));
+    let theme = Theme::m4a(other_bank(), 0x16);
     let mut a = BattleAudio::with_banks(own.0.clone(), own.1.clone());
     a.set_levels(0.5, 1.0);
     let mut out = Vec::new();
@@ -381,8 +381,8 @@ fn a_change_of_songs_restarts_the_music() {
 #[test]
 fn each_round_plays_its_backgrounds_music() {
     use saito_battle::content::BackgroundId;
-    let own = (vec![bank()], Songs::numbers(0x200));
-    let theirs = Theme { bank: other_bank(), song: 0x16 };
+    let own = (vec![AudioBank::from(bank())], Songs::numbers(0x200));
+    let theirs = Theme::m4a(other_bank(), 0x16);
     let music = RoundMusic {
         own: own.clone(),
         by_background: [(BackgroundId(3), with_theme(own.0.clone(), &own.1, &[VIRUS_BATTLE], &theirs))].into_iter().collect(),
@@ -418,4 +418,62 @@ fn each_round_plays_its_backgrounds_music() {
     a.round(BackgroundId(3));
     assert!(a.banks.iter().all(|p| p.queue.is_empty()));
     assert_eq!(a.songs.song(VIRUS_BATTLE), VIRUS_BATTLE);
+}
+
+#[test]
+fn sdat_theme_mixes_with_m4a_effects_and_handles_pinch_and_rollback() {
+    let samples: Vec<i16> = (0..64)
+        .map(|i| (((i as f64 / 64.0) * std::f64::consts::TAU).sin() * 20000.0) as i16)
+        .collect();
+    let wave = sdat::Wave { samples, sample_rate: 16384, looped: true, loop_start: 0, loop_end: 64 };
+    let inst = sdat::Instrument::Single(sdat::NoteDef {
+        kind: sdat::NoteKind::Pcm { swav_id: 0, swar_slot: 0 },
+        base_note: 60,
+        attack: 127,
+        decay: 127,
+        sustain: 127,
+        release: 80,
+        pan: 64,
+    });
+    let sseq = vec![0xE1, 144, 0, 0x81, 0, 0xD4, 0, 60, 100, 24, 0xFC];
+    let mut ds_songs = vec![None; 22];
+    ds_songs[21] = Some(sdat::Song {
+        data: sseq,
+        bank: 0,
+        volume: 100,
+        channel_priority: 64,
+        player_priority: 64,
+        player: 31,
+    });
+    let ds_bank = Arc::new(sdat::SoundBank {
+        songs: ds_songs,
+        banks: vec![Some(sdat::InstrumentBank {
+            wave_arcs: [Some(0), None, None, None],
+            instruments: vec![inst],
+        })],
+        wave_arcs: vec![Some(sdat::WaveArchive { waves: vec![wave] })],
+    });
+
+    let theme = Theme::sdat(ds_bank, 21);
+    let (banks, songs) = with_theme(vec![bank()], &Songs::numbers(0x200), &[VIRUS_BATTLE], &theme);
+    let mut a = BattleAudio::with_banks(banks, songs);
+    let mut out = Vec::new();
+    a.handle_actions([CueAction::Play(SoundCue::Music(VIRUS_BATTLE)), CueAction::Play(SoundCue::Effect(SoundId(0x94)))]);
+    for _ in 0..10 {
+        a.tick(&mut out);
+    }
+    assert_eq!((a.playing_music_of(BankId(0)), a.playing_music_of(BankId(1))), (None, Some(21)));
+    assert!(a.driver().player(PlayerId(16)).unwrap().is_playing(), "M4A SFX plays alongside SDAT BGM");
+    let peak = out.iter().flat_map(|s| *s).map(f32::abs).fold(0.0_f32, f32::max);
+    assert!(peak > 0.05 && peak <= 1.0, "audible mixed audio, peak={peak}");
+
+    // Pinch + rollback Winner transition
+    a.handle_actions([CueAction::Play(SoundCue::Pinch(true)), CueAction::Play(SoundCue::Music(WINNER))]);
+    a.tick(&mut out);
+    a.tick(&mut out);
+    assert_eq!((a.playing_music_of(BankId(0)), a.playing_music_of(BankId(1))), (Some(0x1F), None));
+    a.handle_actions([CueAction::Cancel(SoundCue::Music(WINNER))]);
+    a.tick(&mut out);
+    a.tick(&mut out);
+    assert_eq!((a.playing_music_of(BankId(0)), a.playing_music_of(BankId(1))), (None, Some(21)));
 }

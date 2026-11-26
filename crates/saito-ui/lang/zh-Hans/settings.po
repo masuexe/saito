@@ -306,6 +306,12 @@ msgstr "EXE5DS ROM"
 msgid "Not set (using GBA fallback)"
 msgstr "未设置（使用 GBA 替代素材）"
 
+msgid "EXE5DS battle music"
+msgstr "EXE5DS 战斗音乐"
+
+msgid "Use arranged DS battle themes by default in EXE5 (requires EXE5DS ROM)."
+msgstr "在 EXE5 默认对战中优先播放 5DS 重编战斗音乐（需配置 EXE5DS ROM）。"
+
 msgid "EXE5DS Crisis Microphone"
 msgstr "EXE5DS 危机麦克风"
 

@@ -24,6 +24,19 @@ use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether EXE5 default / background / escalating battle music should prefer
+/// the arranged EXE5DS `SDAT` counterparts when an EXE5DS ROM is loaded.
+static PREFER_DS_MUSIC: AtomicBool = AtomicBool::new(true);
+
+pub fn prefer_ds_music() -> bool {
+    PREFER_DS_MUSIC.load(Ordering::Relaxed)
+}
+
+pub fn set_prefer_ds_music(enabled: bool) {
+    PREFER_DS_MUSIC.store(enabled, Ordering::Relaxed);
+}
 
 /// A battle's music.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,6 +69,8 @@ pub fn place(offered: &[Music], music: &Music) -> usize {
 thread_local! {
     /// The themes' names in the language shown, by game and song: [`name_themes`]'.
     static NAMES: RefCell<HashMap<(String, String), String>> = RefCell::new(HashMap::new());
+    /// Active UI language code last loaded by [`name_themes`].
+    static NAMES_LANG: RefCell<String> = RefCell::new(String::from("en"));
 }
 
 /// Read the battle themes' names of `games` in `lang`, for [`name`]: from the content's locales alone, at
@@ -69,6 +84,65 @@ pub fn name_themes<'a>(games: impl IntoIterator<Item = &'a str>, lang: &str) {
         }
     }
     NAMES.with(|n| *n.borrow_mut() = names);
+    NAMES_LANG.with(|l| *l.borrow_mut() = lang.to_string());
+}
+
+/// Localized display label for optional EXE5DS `SDAT` battle themes.
+fn ds_theme_name(song: &str, lang: &str) -> Option<&'static str> {
+    match lang {
+        "zh-Hans" => match song {
+            "ds-virus-battle" => Some("EXE5DS 病毒战"),
+            "ds-boss-battle" => Some("EXE5DS 头目战"),
+            "ds-final-battle" => Some("EXE5DS VS 星云灰暗"),
+            "ds-you-are-not-alone" => Some("EXE5DS 你并不孤单"),
+            "ds-liberate" => Some("EXE5DS 解放任务"),
+            "ds-exe1-battle" => Some("EXE5DS EXE1 战斗重编"),
+            "ds-exe2-battle" => Some("EXE5DS EXE2 战斗重编"),
+            "ds-exe3-battle" => Some("EXE5DS EXE3 战斗重编"),
+            "ds-exe4-battle" => Some("EXE5DS EXE4 战斗重编"),
+            "ds-exe45-battle" => Some("EXE5DS EXE4.5 战斗重编"),
+            _ => None,
+        },
+        "ja" => match song {
+            "ds-virus-battle" => Some("EXE5DS ウイルスバトル"),
+            "ds-boss-battle" => Some("EXE5DS ボスバトル"),
+            "ds-final-battle" => Some("EXE5DS VS ネビュラグレイ"),
+            "ds-you-are-not-alone" => Some("EXE5DS キミはひとりじゃない"),
+            "ds-liberate" => Some("EXE5DS リベレートミッション"),
+            "ds-exe1-battle" => Some("EXE5DS EXE1 バトルアレンジ"),
+            "ds-exe2-battle" => Some("EXE5DS EXE2 バトルアレンジ"),
+            "ds-exe3-battle" => Some("EXE5DS EXE3 バトルアレンジ"),
+            "ds-exe4-battle" => Some("EXE5DS EXE4 バトルアレンジ"),
+            "ds-exe45-battle" => Some("EXE5DS EXE4.5 バトルアレンジ"),
+            _ => None,
+        },
+        "ko" => match song {
+            "ds-virus-battle" => Some("EXE5DS 바이러스 배틀"),
+            "ds-boss-battle" => Some("EXE5DS 보스 배틀"),
+            "ds-final-battle" => Some("EXE5DS VS 네뷸라 그레이"),
+            "ds-you-are-not-alone" => Some("EXE5DS 너는 혼자가 아니야"),
+            "ds-liberate" => Some("EXE5DS 리버레이트 미션"),
+            "ds-exe1-battle" => Some("EXE5DS EXE1 배틀 어레인지"),
+            "ds-exe2-battle" => Some("EXE5DS EXE2 배틀 어레인지"),
+            "ds-exe3-battle" => Some("EXE5DS EXE3 배틀 어레인지"),
+            "ds-exe4-battle" => Some("EXE5DS EXE4 배틀 어레인지"),
+            "ds-exe45-battle" => Some("EXE5DS EXE4.5 배틀 어레인지"),
+            _ => None,
+        },
+        _ => match song {
+            "ds-virus-battle" => Some("BN5DS Virus Battle"),
+            "ds-boss-battle" => Some("BN5DS Boss Battle"),
+            "ds-final-battle" => Some("BN5DS VS Nebula Gray"),
+            "ds-you-are-not-alone" => Some("BN5DS You're Not Alone"),
+            "ds-liberate" => Some("BN5DS Liberation Mission"),
+            "ds-exe1-battle" => Some("BN5DS BN1 Battle Remix"),
+            "ds-exe2-battle" => Some("BN5DS BN2 Battle Remix"),
+            "ds-exe3-battle" => Some("BN5DS BN3 Battle Remix"),
+            "ds-exe4-battle" => Some("BN5DS BN4 Battle Remix"),
+            "ds-exe45-battle" => Some("BN5DS BN4.5 Battle Remix"),
+            _ => None,
+        },
+    }
 }
 
 /// A theme's name as a list shows it, in the language shown: its game's name, then the theme's ("BN4 Tournament
@@ -78,6 +152,9 @@ pub fn name(music: &Music, own: &str) -> String {
     match music {
         Music::Background => own.to_string(),
         Music::Theme { game, song } => {
+            if let Some(ds_label) = NAMES_LANG.with(|l| ds_theme_name(song, &l.borrow())) {
+                return ds_label.to_string();
+            }
             let theme = NAMES.with(|n| n.borrow().get(&(game.clone(), song.clone())).cloned()).unwrap_or_else(|| song.clone());
             format!("{} {theme}", Shell::game_name(game))
         }
@@ -152,7 +229,10 @@ pub fn retheme(shell: &mut Shell) {
 pub fn sound(games: &Games, ready: &Ready, music: &Music) -> Option<SoundParts> {
     let sound = ready.loaded.sound.as_ref()?;
     let theme = match music {
-        Music::Background => None,
+        Music::Background => prefer_ds_music()
+            .then(|| ready.loaded.ds_counterpart("virus-battle"))
+            .flatten()
+            .and_then(|ds| ready.loaded.theme(ds)),
         Music::Theme { game, song } => games.read(game).and_then(|of| of.loaded.theme(song)),
     };
     Some(sound.parts(ready.content(), theme.as_ref()))
@@ -169,7 +249,12 @@ pub fn round_music(games: &Games, ready: &Ready, music: &Music) -> Option<Arc<Ro
     }
     let sound = ready.loaded.sound.as_ref()?;
     let content = ready.content();
-    let own = sound.parts(content, None);
+    let use_ds = prefer_ds_music();
+    let own_theme = use_ds
+        .then(|| ready.loaded.ds_counterpart("virus-battle"))
+        .flatten()
+        .and_then(|ds| ready.loaded.theme(ds));
+    let own = sound.parts(content, own_theme.as_ref());
     // (Each theme's parts once, by its game and song.)
     let mut made: HashMap<(String, String), SoundParts> = HashMap::new();
     let mut by_background = HashMap::new();
@@ -182,7 +267,8 @@ pub fn round_music(games: &Games, ready: &Ready, music: &Music) -> Option<Arc<Ro
             None if game == content.game() => &ready.loaded,
             None => continue,
         };
-        let Some(song) = of.game.content.music_of_background(name) else { continue };
+        let Some(raw_song) = of.game.content.music_of_background(name) else { continue };
+        let song = if use_ds { of.ds_counterpart(raw_song).unwrap_or(raw_song) } else { raw_song };
         let key = (game.to_string(), song.to_string());
         if !made.contains_key(&key) {
             let Some(theme) = of.theme(song) else { continue };
@@ -243,6 +329,7 @@ mod tests {
                 dir: saito_content::index::content(),
                 graphics: Default::default(),
                 sound: bank.clone(),
+                ds_sound: None,
                 numbers: Arc::new(assets),
                 index: Arc::new(index),
                 others: Default::default(),
@@ -251,7 +338,7 @@ mod tests {
             graphics: saito_frontend::testing::graphics(&content, 0x7FFF),
             enhancements: Enhancements::NONE,
             font: None,
-            sound: Some(Sound { bank, songs, report: Default::default() }),
+            sound: Some(Sound { bank, ds_bank: None, songs, report: Default::default() }),
         }
     }
 
@@ -498,5 +585,92 @@ mod tests {
         }
         assert_eq!(playing(&player), Some(number("crossover-battle")), "the Graveyard's Crossover Battle, held");
         assert_eq!(player.ticks(), ticks, "held: the battle didn't step");
+    }
+
+    /// When an EXE5DS SDAT bank is attached to EXE5, all 10 DS battle themes
+    /// appear in `offered()`, localize cleanly, play via SDAT alongside GBA SFX,
+    /// and `set_prefer_ds_music` controls whether `By background` defaults to DS
+    /// or GBA tracks.
+    #[test]
+    fn exe5ds_themes_offer_localize_and_play_via_sdat() {
+        use saito_audio::{BankId, sdat};
+
+        let samples: Vec<i16> = (0..64)
+            .map(|i| (((i as f64 / 64.0) * std::f64::consts::TAU).sin() * 20000.0) as i16)
+            .collect();
+        let wave = sdat::Wave { samples, sample_rate: 16384, looped: true, loop_start: 0, loop_end: 64 };
+        let inst = sdat::Instrument::Single(sdat::NoteDef {
+            kind: sdat::NoteKind::Pcm { swav_id: 0, swar_slot: 0 },
+            base_note: 60,
+            attack: 127,
+            decay: 127,
+            sustain: 127,
+            release: 80,
+            pan: 64,
+        });
+        let sseq = vec![0xE1, 144, 0, 0x81, 0, 0xD4, 0, 60, 100, 24, 0xFC];
+        let mut ds_songs = vec![None; 42];
+        for &(_, seq_id, _) in saito_extract::EXE5DS_BATTLE_THEMES {
+            ds_songs[seq_id as usize] = Some(sdat::Song {
+                data: sseq.clone(),
+                bank: 0,
+                volume: 100,
+                channel_priority: 64,
+                player_priority: 64,
+                player: 31,
+            });
+        }
+        let ds_bank = Arc::new(sdat::SoundBank {
+            songs: ds_songs,
+            banks: vec![Some(sdat::InstrumentBank {
+                wave_arcs: [Some(0), None, None, None],
+                instruments: vec![inst],
+            })],
+            wave_arcs: vec![Some(sdat::WaveArchive { waves: vec![wave] })],
+        });
+
+        let mut exe5 = loaded(saito_match::testing::exe5_content());
+        exe5.game.ds_sound = Some(ds_bank.clone());
+        exe5.sound.as_mut().unwrap().ds_bank = Some(ds_bank);
+
+        let all = Games::read_of(vec![("exe5", exe5)]);
+        let five = all.read("exe5").unwrap();
+
+        let list = offered(&all);
+        assert_eq!(list.len(), 1 + 3 + saito_extract::EXE5DS_BATTLE_THEMES.len());
+
+        crate::shell::Shell::read_game_names(&["exe5"], "zh-Hans");
+        assert_eq!(name(&Music::Theme { game: "exe5".into(), song: "ds-virus-battle".into() }, ""), "EXE5DS 病毒战");
+        assert_eq!(name(&Music::Theme { game: "exe5".into(), song: "ds-you-are-not-alone".into() }, ""), "EXE5DS 你并不孤单");
+        assert_eq!(name(&Music::Theme { game: "exe5".into(), song: "ds-exe45-battle".into() }, ""), "EXE5DS EXE4.5 战斗重编");
+        crate::shell::Shell::read_game_names(&["exe5"], "ja");
+        assert_eq!(name(&Music::Theme { game: "exe5".into(), song: "ds-virus-battle".into() }, ""), "EXE5DS ウイルスバトル");
+        assert_eq!(name(&Music::Theme { game: "exe5".into(), song: "ds-you-are-not-alone".into() }, ""), "EXE5DS キミはひとりじゃない");
+
+        let content = five.content().clone();
+        let m = saito_match::pick::live(&content, "exe5", 11, None).unwrap();
+        let play_once = |music: &Music| {
+            let (banks, songs) = sound(&all, &five, music).unwrap();
+            let folders = [0, 1].map(|side| m.sides[side].folder(&content).saved().unwrap());
+            let set = saito_match::Set::new(content.clone(), m.round(&content, 11), folders);
+            let driver = saito_frontend::driver::LivePlayer::against(set, Default::default(), 11);
+            let renderer = saito_frontend::testing::graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None);
+            let mut player = saito_frontend::Player::with(renderer, None, Some(saito_audio::BattleAudio::with_banks(banks, songs)), Box::new(driver));
+            for _ in 0..30 {
+                player.tick(0);
+            }
+            let audio = player.audio().unwrap();
+            (audio.playing_music_of(BankId(0)), audio.playing_music_of(BankId(1)))
+        };
+
+        assert_eq!(play_once(&Music::Theme { game: "exe5".into(), song: "ds-you-are-not-alone".into() }), (None, Some(14)));
+
+        let prev = prefer_ds_music();
+        set_prefer_ds_music(true);
+        assert_eq!(play_once(&Music::Background), (None, Some(21)), "DS Virus Battle (SEQ 21) when prefer_ds_music=true");
+        set_prefer_ds_music(false);
+        let own_gba = five.loaded.game.index.number(saito_content_api::AssetKind::Sound, "virus-battle").unwrap();
+        assert_eq!(play_once(&Music::Background), (Some(own_gba), None), "GBA Virus Battle when prefer_ds_music=false");
+        set_prefer_ds_music(prev);
     }
 }

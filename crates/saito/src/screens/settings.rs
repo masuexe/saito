@@ -77,7 +77,7 @@ fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
-        "set.music" | "set.effects" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
+        "set.music" | "set.effects" | "set.exe5ds-music" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.abd-format" | "set.abd-export" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
@@ -144,6 +144,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
         .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string()))
         .unwrap_or_default();
     view.set_exe5ds_rom(rom_name.into());
+    view.set_exe5ds_music(s.exe5ds_music);
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
     view.set_mic_supported(saito_audio::MicMonitor::is_supported());
@@ -575,6 +576,12 @@ impl Screen for Settings {
                 shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
                 self.show(shell);
             }
+            "set.exe5ds-music" => {
+                shell.settings.exe5ds_music = !shell.settings.exe5ds_music;
+                crate::music::set_prefer_ds_music(shell.settings.exe5ds_music);
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, !shell.settings.mic_shout_enabled),
             "set.mic-test" => self.toggle_mic_test(shell),
             "set.quick-shout-tier" => {
@@ -633,6 +640,12 @@ impl Screen for Settings {
                 self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32);
                 shell.sound.play(Cue::Cursor);
             }
+            "set.exe5ds-music" => {
+                shell.settings.exe5ds_music = by > 0;
+                crate::music::set_prefer_ds_music(shell.settings.exe5ds_music);
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, by > 0),
             "set.mic-sensitivity" => {
                 let cur = (shell.settings.mic_sensitivity * 100.0).round() as i32;
@@ -689,6 +702,12 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
+            "set.exe5ds-music" => {
+                shell.settings.exe5ds_music = choice == 1;
+                crate::music::set_prefer_ds_music(shell.settings.exe5ds_music);
+                shell.save_settings();
+                self.show(shell);
+            }
             "set.mic-shout" => self.set_mic_shout_enabled(shell, choice == 1),
             "set.mic-sensitivity" => self.set_mic_sensitivity_pct(shell, choice),
             "set.quick-shout-tier" => self.set_quick_shout_tier(shell, (choice + 1).clamp(1, 3) as u8),

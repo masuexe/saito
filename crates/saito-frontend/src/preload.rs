@@ -131,7 +131,7 @@ struct Step {
 
 /// The sound a player is made with: the battle's banks and the content's
 /// songs, as `BattleAudio::with_banks` takes them.
-pub type SoundParts = (Vec<Arc<m4a::SoundBank>>, saito_audio::Songs);
+pub type SoundParts = saito_audio::Parts;
 
 /// A match being made ready: see the module's docs. It must be stepped on
 /// the thread that will run the player it becomes ([`Preload::player`]):
@@ -167,7 +167,7 @@ impl Preload {
     /// peer's own) in a picture of `size` (the host's pixels: the text is
     /// drawn at that size).
     pub fn new(game: &Loaded, set: &Set, viewer: u8, size: (usize, usize)) -> Preload {
-        let sound = game.sound.as_ref().map(|s| (vec![s.bank.clone()], s.songs.clone()));
+        let sound = game.sound.as_ref().map(|s| (vec![s.bank.clone().into()], s.songs.clone()));
         Preload::with(game.renderer(), game.font.clone().map(TextRenderer::new), sound, set, viewer, size)
     }
 

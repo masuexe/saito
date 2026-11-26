@@ -44,8 +44,10 @@ export global SettingsView {
     in property <bool> hd-chip-art;
     in property <bool> has-hd-art;
     in property <bool> importing-hd-art;
-    // Optional EXE5DS (.nds) ROM filename for DS-authentic SolCross & Danger HUD art (empty = GBA fallback).
+    // Optional EXE5DS (.nds) ROM filename for DS-authentic SolCross, Danger HUD art & arranged battle music (empty = GBA fallback).
     in property <string> exe5ds-rom;
+    // Whether EXE5 default / background / escalating battles use arranged EXE5DS battle music when a DS ROM is loaded.
+    in property <bool> exe5ds-music: true;
     in property <int> music;
     in property <int> effects;
     // EXE5DS Crisis Microphone settings & live test meter.
@@ -651,6 +653,26 @@ component SettingsPage inherits Page {
                         width: root.control-width;
                         nav: "set.effects";
                         value: SettingsView.effects;
+                    }
+                }
+
+                Rectangle {
+                    height: exe5ds-music-row.height;
+                    exe5ds-music-row := SettingLabel {
+                        label: @tr("EXE5DS battle music");
+                        note: @tr("Use arranged DS battle themes by default in EXE5 (requires EXE5DS ROM).");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.exe5ds-music";
+                        enabled: SettingsView.exe5ds-rom != "";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.exe5ds-music ? 1 : 0;
                     }
                 }
 

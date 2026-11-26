@@ -297,9 +297,17 @@ impl StageConfig {
                 let normal_bgs = escalating_backgrounds(&content, EscalationTier::Normal);
                 let single_mp_bgs = escalating_backgrounds(&content, EscalationTier::SingleMatchPoint);
                 let double_mp_bgs = escalating_backgrounds(&content, EscalationTier::DoubleMatchPoint);
-                let normal_bgm = theme_for_game(games, ready, "virus-battle").or_else(|| own_sound.clone());
-                let single_mp_bgm = theme_for_game(games, ready, "boss-battle").or_else(|| own_sound.clone());
-                let double_mp_bgm = theme_for_game(games, ready, "final-battle").or_else(|| own_sound.clone());
+                let pick_tier_bgm = |gba_song: &str| {
+                    let song = if music::prefer_ds_music() {
+                        ready.loaded.ds_counterpart(gba_song).unwrap_or(gba_song)
+                    } else {
+                        gba_song
+                    };
+                    theme_for_game(games, ready, song).or_else(|| own_sound.clone())
+                };
+                let normal_bgm = pick_tier_bgm("virus-battle");
+                let single_mp_bgm = pick_tier_bgm("boss-battle");
+                let double_mp_bgm = pick_tier_bgm("final-battle");
 
                 let pick_from = |round: u8, list: &[BackgroundId]| -> Option<BackgroundId> {
                     if list.is_empty() {
@@ -663,6 +671,7 @@ mod tests {
                 dir: saito_content::index::content(),
                 graphics: Default::default(),
                 sound: bank.clone(),
+                ds_sound: None,
                 numbers: Arc::new(assets),
                 index: Arc::new(index),
                 others: Default::default(),
@@ -671,7 +680,7 @@ mod tests {
             graphics: saito_frontend::testing::graphics(&content, 0x7FFF),
             enhancements: Enhancements::NONE,
             font: None,
-            sound: Some(Sound { bank, songs, report: Default::default() }),
+            sound: Some(Sound { bank, ds_bank: None, songs, report: Default::default() }),
         }
     }
 

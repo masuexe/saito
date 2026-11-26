@@ -5804,6 +5804,7 @@ dependencies = [
  "saito-battle",
  "saito-content",
  "saito-extract",
+ "sdat",
 ]
 
 [[package]]
@@ -5893,6 +5894,7 @@ dependencies = [
  "saito-frontend",
  "saito-luau",
  "saito-tools",
+ "sdat",
  "steamlocate",
  "tempfile",
  "toml 0.8.23",
@@ -5934,6 +5936,7 @@ dependencies = [
  "saito-rtc",
  "saito-signaling",
  "saito-threads",
+ "sdat",
  "sha2 0.10.9",
  "tempfile",
  "web-time",
@@ -6291,6 +6294,10 @@ dependencies = [
  "slab",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "sdat"
+version = "0.1.0"
 
 [[package]]
 name = "sdl3"

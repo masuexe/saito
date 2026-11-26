@@ -408,6 +408,7 @@ fn build_fixture(game: &str, content: Arc<Content>) -> GameFixture {
         dir: content_dir(),
         graphics: bundle,
         sound: Arc::new(empty_sound_bank()),
+        ds_sound: None,
         numbers,
         index: Default::default(),
         others: Default::default(),

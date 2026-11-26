@@ -11,6 +11,7 @@ license = "MPL-2.0"
 
 [workspace.dependencies]
 m4a = { path = "crates/m4a" }
+sdat = { path = "crates/sdat" }
 saito-battle = { path = "crates/saito-battle" }
 cpal = "0.18"
 # Rollback netcode core (vendored in crates/getgud).

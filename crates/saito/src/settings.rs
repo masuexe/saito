@@ -182,8 +182,10 @@ pub struct Settings {
     /// The folder the player chose the Legacy Collection's install in, where Steam doesn't list it (docs/app.md
     /// §17); none: Steam's alone.
     pub legacy_collection: Option<std::path::PathBuf>,
-    /// Optional path to an EXE5DS (`.nds`) ROM for DS-authentic SolCross & Danger HUD artwork.
+    /// Optional path to an EXE5DS (`.nds`) ROM for DS-authentic SolCross, Danger HUD artwork & battle music.
     pub exe5ds_rom: Option<std::path::PathBuf>,
+    /// Whether EXE5 default / background / escalating battles use arranged EXE5DS battle music when a DS ROM is loaded.
+    pub exe5ds_music: bool,
     /// Opt-in privacy-first EXE5DS Danger microphone shout detection (default `false`).
     pub mic_shout_enabled: bool,
     /// Microphone sensitivity multiplier for EXE5DS Crisis Shout (`0.25..=4.0`, default `1.0`).
@@ -228,6 +230,7 @@ impl Default for Settings {
             keys: BTreeMap::new(),
             legacy_collection: None,
             exe5ds_rom: None,
+            exe5ds_music: true,
             mic_shout_enabled: false,
             mic_sensitivity: 1.0,
             quick_shout_tier: 3,
@@ -313,6 +316,7 @@ impl Settings {
         s.quick_shout_tier = s.quick_shout_tier.clamp(1, 3);
         s.touch_pad_layout = s.touch_pad_layout.sanitized();
         saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
+        crate::music::set_prefer_ds_music(s.exe5ds_music);
         s
     }
 
@@ -444,6 +448,7 @@ mod tests {
         // Older settings.toml without new EXE5DS fields deserializes cleanly to privacy-first defaults.
         let legacy: Settings = toml::from_str("music = 55\n").unwrap();
         assert_eq!(legacy.exe5ds_rom, None);
+        assert!(legacy.exe5ds_music);
         assert!(!legacy.mic_shout_enabled, "microphone shout must be opt-in by default");
         assert_eq!(legacy.mic_sensitivity, 1.0);
         assert_eq!(legacy.quick_shout_tier, 3);
@@ -451,6 +456,7 @@ mod tests {
         // Full roundtrip with custom EXE5DS ROM & mic settings.
         let s = Settings {
             exe5ds_rom: Some("/roms/exe5ds.nds".into()),
+            exe5ds_music: false,
             mic_shout_enabled: true,
             mic_sensitivity: 1.75,
             quick_shout_tier: 2,

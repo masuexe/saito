@@ -111,10 +111,42 @@ impl Songs {
     }
 }
 pub use m4a;
+pub use sdat;
+
+/// A sound bank playable by [`BattleAudio`]: either a GBA M4A sound bank or an
+/// NDS NitroComposer (`SDAT`) sound bank.
+#[derive(Clone)]
+pub enum AudioBank {
+    M4a(Arc<SoundBank>),
+    Sdat(Arc<sdat::SoundBank>),
+}
+
+impl AudioBank {
+    /// Whether two handles refer to the exact same underlying sound bank.
+    pub fn ptr_eq(&self, other: &AudioBank) -> bool {
+        match (self, other) {
+            (AudioBank::M4a(a), AudioBank::M4a(b)) => Arc::ptr_eq(a, b),
+            (AudioBank::Sdat(a), AudioBank::Sdat(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl From<Arc<SoundBank>> for AudioBank {
+    fn from(bank: Arc<SoundBank>) -> Self {
+        AudioBank::M4a(bank)
+    }
+}
+
+impl From<Arc<sdat::SoundBank>> for AudioBank {
+    fn from(bank: Arc<sdat::SoundBank>) -> Self {
+        AudioBank::Sdat(bank)
+    }
+}
 
 /// A battle's banks and its songs, as [`BattleAudio::with_banks`] and
 /// [`BattleAudio::set_songs`] take them.
-pub type Parts = (Vec<Arc<SoundBank>>, Songs);
+pub type Parts = (Vec<AudioBank>, Songs);
 
 /// A battle's music by its round's background (docs/app.md §1, "The
 /// battle's music"): the parts a round plays (each the game's own with its
@@ -140,9 +172,19 @@ impl RoundMusic {
 /// effects and its result's music are its game's bank's, as before.
 #[derive(Clone)]
 pub struct Theme {
-    pub bank: Arc<SoundBank>,
+    pub bank: AudioBank,
     /// Its number in the bank's song table.
     pub song: u16,
+}
+
+impl Theme {
+    pub fn m4a(bank: Arc<SoundBank>, song: u16) -> Theme {
+        Theme { bank: AudioBank::M4a(bank), song }
+    }
+
+    pub fn sdat(bank: Arc<sdat::SoundBank>, song: u16) -> Theme {
+        Theme { bank: AudioBank::Sdat(bank), song }
+    }
 }
 
 /// A battle's sound, its `banks` (by [`BankId`]) and its `songs`, with
@@ -150,8 +192,9 @@ pub struct Theme {
 /// that are its own music, `Content::battle_music`): the theme's bank one
 /// more, unless it is one of `banks` already (a theme of the battle's
 /// own game, which plays on its game's driver as the game's own music does).
-pub fn with_theme(mut banks: Vec<Arc<SoundBank>>, songs: &Songs, music: &[SoundId], theme: &Theme) -> (Vec<Arc<SoundBank>>, Songs) {
-    let at = match banks.iter().position(|b| Arc::ptr_eq(b, &theme.bank)) {
+pub fn with_theme(banks: impl IntoIterator<Item = impl Into<AudioBank>>, songs: &Songs, music: &[SoundId], theme: &Theme) -> Parts {
+    let mut banks: Vec<AudioBank> = banks.into_iter().map(Into::into).collect();
+    let at = match banks.iter().position(|b| b.ptr_eq(&theme.bank)) {
         Some(p) => p,
         None => {
             banks.push(theme.bank.clone());
@@ -356,20 +399,67 @@ pub struct BattleAudio {
     round: Option<saito_battle::content::BackgroundId>,
 }
 
-/// `driver` at the host's levels, the music's and the effects'
-/// ([`BattleAudio::set_levels`]).
-fn leveled(driver: &mut Driver, (music, effects): (f32, f32)) {
-    let level = |l: f32| (l.clamp(0.0, 1.0) * 256.0).round() as u16;
-    for player in 0..driver.players().len() {
-        let id = PlayerId(player as u8);
-        driver.set_level(id, level(if id == MUSIC_PLAYER { music } else { effects }));
+fn apply_sdat(d: &mut sdat::Driver, r: Request) {
+    match r {
+        Request::Start(id) => d.start(sdat::SongId(id.0)),
+        Request::Stop(id) => d.stop_song(sdat::SongId(id.0)),
+        Request::StopAll => d.stop_all(),
+        Request::Tempo { player, tempo } if player == MUSIC_PLAYER => d.set_tempo(tempo),
+        Request::Pitch { player, pitch, .. } if player == MUSIC_PLAYER => d.set_pitch(pitch),
+        Request::Volume { player, volume, .. } if player == MUSIC_PLAYER => d.set_volume(volume),
+        Request::Tempo { .. } | Request::Pitch { .. } | Request::Volume { .. } => {}
+    }
+}
+
+/// One bank's sound driver (GBA M4A or NDS NitroComposer SDAT).
+#[derive(Clone)]
+enum BankDriver {
+    M4a(Driver),
+    Sdat(sdat::Driver),
+}
+
+impl BankDriver {
+    fn new(bank: AudioBank) -> Self {
+        match bank {
+            AudioBank::M4a(b) => BankDriver::M4a(Driver::new(b)),
+            AudioBank::Sdat(b) => BankDriver::Sdat(sdat::Driver::new(b)),
+        }
+    }
+
+    fn matches(&self, bank: &AudioBank) -> bool {
+        match (self, bank) {
+            (BankDriver::M4a(d), AudioBank::M4a(b)) => Arc::ptr_eq(d.bank(), b),
+            (BankDriver::Sdat(d), AudioBank::Sdat(b)) => Arc::ptr_eq(d.bank(), b),
+            _ => false,
+        }
+    }
+
+    fn set_levels(&mut self, (music, effects): (f32, f32)) {
+        let level = |l: f32| (l.clamp(0.0, 1.0) * 256.0).round() as u16;
+        match self {
+            BankDriver::M4a(driver) => {
+                for player in 0..driver.players().len() {
+                    let id = PlayerId(player as u8);
+                    driver.set_level(id, level(if id == MUSIC_PLAYER { music } else { effects }));
+                }
+            }
+            BankDriver::Sdat(driver) => {
+                driver.set_level(level(music));
+            }
+        }
+    }
+
+    fn set_mixer(&mut self, mixer: Mixer) {
+        if let BankDriver::M4a(driver) = self {
+            driver.set_mixer(mixer);
+        }
     }
 }
 
 /// One bank's driver and the calls queued for it.
 #[derive(Clone)]
 struct BankSound {
-    driver: Driver,
+    driver: BankDriver,
     calls: SoundCalls,
     queue: Vec<Request>,
 }
@@ -377,14 +467,17 @@ struct BankSound {
 impl BattleAudio {
     /// The sound of `bank`, playing the engine's sounds as `songs` says
     /// (one bank's).
-    pub fn new(bank: Arc<SoundBank>, songs: Songs) -> BattleAudio {
-        BattleAudio::with_banks(vec![bank], songs)
+    pub fn new(bank: impl Into<AudioBank>, songs: Songs) -> BattleAudio {
+        BattleAudio::with_banks([bank.into()], songs)
     }
 
     /// The sound of several banks, `banks` by `BankId`.
-    pub fn with_banks(banks: Vec<Arc<SoundBank>>, songs: Songs) -> BattleAudio {
+    pub fn with_banks(banks: impl IntoIterator<Item = impl Into<AudioBank>>, songs: Songs) -> BattleAudio {
+        let banks: Vec<BankSound> = banks
+            .into_iter()
+            .map(|b| BankSound { driver: BankDriver::new(b.into()), calls: SoundCalls::new(), queue: Vec::new() })
+            .collect();
         assert!(!banks.is_empty(), "a bank");
-        let banks = banks.into_iter().map(|b| BankSound { driver: Driver::new(b), calls: SoundCalls::new(), queue: Vec::new() }).collect();
         let (music, moved_from, heard, heard_before) = (None, None, None, None);
         BattleAudio {
             banks,
@@ -531,7 +624,7 @@ impl BattleAudio {
     pub fn set_levels(&mut self, music: f32, effects: f32) {
         self.levels = (music, effects);
         for p in &mut self.banks {
-            leveled(&mut p.driver, self.levels);
+            p.driver.set_levels(self.levels);
         }
     }
 
@@ -555,7 +648,8 @@ impl BattleAudio {
     /// own bank's player (the song before stopped, and the low-HP switch kept
     /// on where it is); the result's music, or music stopped, stays as it is,
     /// and the next round's start plays the new song.
-    pub fn set_songs(&mut self, banks: Vec<Arc<SoundBank>>, songs: Songs) {
+    pub fn set_songs(&mut self, banks: impl IntoIterator<Item = impl Into<AudioBank>>, songs: Songs) {
+        let banks: Vec<AudioBank> = banks.into_iter().map(Into::into).collect();
         let places: Vec<usize> = banks.iter().map(|bank| self.place_of(bank)).collect();
         let place = |s: BankSong| BankSong { bank: BankId(places.get(s.bank.index()).copied().unwrap_or(0) as u8), song: s.song };
         let songs = Songs(songs.0.into_iter().map(place).collect());
@@ -597,13 +691,13 @@ impl BattleAudio {
 
     /// The place of `bank` among the battle's: one playing already, else one
     /// more, at the host's levels.
-    fn place_of(&mut self, bank: &Arc<SoundBank>) -> usize {
-        if let Some(p) = self.banks.iter().position(|p| Arc::ptr_eq(p.driver.bank(), bank)) {
+    fn place_of(&mut self, bank: &AudioBank) -> usize {
+        if let Some(p) = self.banks.iter().position(|p| p.driver.matches(bank)) {
             return p;
         }
-        let mut driver = Driver::new(bank.clone());
+        let mut driver = BankDriver::new(bank.clone());
         driver.set_mixer(self.mixer);
-        leveled(&mut driver, self.levels);
+        driver.set_levels(self.levels);
         self.banks.push(BankSound { driver, calls: SoundCalls::new(), queue: Vec::new() });
         self.banks.len() - 1
     }
@@ -614,36 +708,89 @@ impl BattleAudio {
     /// bank's added) to `out`.
     pub fn tick(&mut self, out: &mut Vec<[f32; 2]>) {
         let start = out.len();
+        let mut frame_len = 0usize;
         for (i, p) in self.banks.iter_mut().enumerate() {
-            p.driver.step_frame();
-            for r in std::mem::take(&mut p.queue) {
-                r.apply(&mut p.driver);
-            }
             if i == 0 {
-                p.driver.take_output(out);
+                match &mut p.driver {
+                    BankDriver::M4a(d) => {
+                        d.step_frame();
+                        for r in std::mem::take(&mut p.queue) {
+                            r.apply(d);
+                        }
+                        d.take_output(out);
+                    }
+                    BankDriver::Sdat(d) => {
+                        d.step_frame();
+                        for r in std::mem::take(&mut p.queue) {
+                            apply_sdat(d, r);
+                        }
+                        d.take_output(out);
+                    }
+                }
+                frame_len = out.len() - start;
             } else {
                 self.mix.clear();
-                p.driver.take_output(&mut self.mix);
+                match &mut p.driver {
+                    BankDriver::M4a(d) => {
+                        d.step_frame();
+                        for r in std::mem::take(&mut p.queue) {
+                            r.apply(d);
+                        }
+                        d.take_output(&mut self.mix);
+                    }
+                    BankDriver::Sdat(d) => {
+                        d.render_samples(frame_len, &mut self.mix);
+                        for r in std::mem::take(&mut p.queue) {
+                            apply_sdat(d, r);
+                        }
+                    }
+                }
                 for (o, m) in out[start..].iter_mut().zip(&self.mix) {
-                    o[0] += m[0];
-                    o[1] += m[1];
+                    o[0] = (o[0] + m[0]).clamp(-1.0, 1.0);
+                    o[1] = (o[1] + m[1]).clamp(-1.0, 1.0);
                 }
             }
         }
     }
 
-    /// The first bank's driver.
+    /// The first bank's GBA M4A driver.
     pub fn driver(&self) -> &Driver {
-        &self.banks[0].driver
+        match &self.banks[0].driver {
+            BankDriver::M4a(d) => d,
+            BankDriver::Sdat(_) => panic!("bank 0 is an SDAT bank, not M4A"),
+        }
     }
 
     pub fn driver_mut(&mut self) -> &mut Driver {
-        &mut self.banks[0].driver
+        match &mut self.banks[0].driver {
+            BankDriver::M4a(d) => d,
+            BankDriver::Sdat(_) => panic!("bank 0 is an SDAT bank, not M4A"),
+        }
     }
 
-    /// Bank `bank`'s driver.
+    /// Bank `bank`'s GBA M4A driver (`None` if out of bounds or an SDAT bank).
     pub fn driver_of(&self, bank: BankId) -> Option<&Driver> {
-        self.banks.get(bank.index()).map(|p| &p.driver)
+        match &self.banks.get(bank.index())?.driver {
+            BankDriver::M4a(d) => Some(d),
+            BankDriver::Sdat(_) => None,
+        }
+    }
+
+    /// Bank `bank`'s NDS SDAT driver (`None` if out of bounds or an M4A bank).
+    pub fn sdat_driver_of(&self, bank: BankId) -> Option<&sdat::Driver> {
+        match &self.banks.get(bank.index())?.driver {
+            BankDriver::Sdat(d) => Some(d),
+            BankDriver::M4a(_) => None,
+        }
+    }
+
+    /// The song currently playing on `bank`'s music player (works uniformly for
+    /// both M4A and SDAT banks).
+    pub fn playing_music_of(&self, bank: BankId) -> Option<u16> {
+        match &self.banks.get(bank.index())?.driver {
+            BankDriver::M4a(d) => d.player(MUSIC_PLAYER).filter(|m| m.is_playing()).and_then(|m| m.song()).map(|s| s.0),
+            BankDriver::Sdat(d) => d.song().map(|s| s.0),
+        }
     }
 }
 

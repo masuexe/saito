@@ -10,6 +10,7 @@ description = "A game's assets extracted from its ROMs in memory by the game's r
 # Files: the desktop's and a phone's, or the browser's tree.
 saito-files = { path = "../saito-files" }
 m4a.workspace = true
+sdat.workspace = true
 saito-assets = { path = "../saito-assets" }
 saito-content-api = { path = "../saito-content-api" }
 # The recipes' VM (`saito_luau::tool`) and its binding.

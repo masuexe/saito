@@ -637,6 +637,7 @@ impl WatchSession {
             font: ready.loaded.font_in(lang).filter(|_| enhancements.wants_font()),
             sound: ready.loaded.sound.as_ref().map(|s| Sound {
                 bank: s.bank.clone(),
+                ds_bank: s.ds_bank.clone(),
                 songs: s.songs.clone(),
                 report: Default::default(),
             }),

@@ -215,8 +215,11 @@ impl Recipe {
         drop((value, extract));
         drop(vm);
         let mut warnings = Vec::new();
+        let mut ds_sound = None;
         if names.sprites.get(&(0x00, 0x0D)).is_some_and(|n| n == "solcross-megaman") {
-            warnings.extend(crate::nds::apply_exe5_ds_assets(&mut graphics));
+            let (extracted_ds_sound, ds_warnings) = crate::nds::apply_exe5_ds_assets(&mut graphics);
+            ds_sound = extracted_ds_sound;
+            warnings.extend(ds_warnings);
         }
         complete(&mut graphics, &names).map_err(|e| Error(format!("{game}: {e}")))?;
         progress(GRAPHICS_SHARE);
@@ -248,6 +251,7 @@ impl Recipe {
             game: game.clone(),
             graphics,
             sound: sound_bank,
+            ds_sound,
             sound_versions,
             index,
             warnings,

@@ -7,6 +7,7 @@ description = "Plays the battle engine's sound cues through the M4A sound driver
 
 [dependencies]
 m4a.workspace = true
+sdat.workspace = true
 saito-battle.workspace = true
 cpal = { workspace = true, optional = true }
 

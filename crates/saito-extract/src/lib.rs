@@ -30,7 +30,7 @@ mod sound;
 pub mod source;
 mod sprite;
 
-pub use nds::{exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
+pub use nds::{EXE5DS_BATTLE_THEMES, exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
 pub use recipe::Recipe;
 pub use sound::SongVersions;
 pub use source::{Install, RomSource};
@@ -115,6 +115,9 @@ pub struct Extraction {
     pub game: String,
     pub graphics: saito_assets::Bundle,
     pub sound: m4a::SoundBank,
+    /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank extracted when
+    /// an EXE5DS `.nds` ROM is configured alongside GBA EXE5.
+    pub ds_sound: Option<sdat::SoundBank>,
     /// The songs each version of the game has its own of (EXE5's Team Colonel's).
     pub sound_versions: SongVersions,
     /// Every asset by its name, with its number in `graphics` and `sound`: what content names its assets by

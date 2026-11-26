@@ -187,7 +187,12 @@ pub fn game_for_thread(shell: &Shell, ready: &crate::games::Ready, sound: bool) 
         // (With the game's own songs, the backgrounds' music played in their place round by round, as the replay
         // plays in the viewer: the pick is Practice's alone.)
         sound: if sound {
-            ready.loaded.sound.as_ref().map(|s| Sound { bank: s.bank.clone(), songs: s.songs.clone(), report: Default::default() })
+            ready.loaded.sound.as_ref().map(|s| Sound {
+                bank: s.bank.clone(),
+                ds_bank: s.ds_bank.clone(),
+                songs: s.songs.clone(),
+                report: Default::default(),
+            })
         } else {
             None
         },

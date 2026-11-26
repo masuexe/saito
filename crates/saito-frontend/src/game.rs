@@ -85,6 +85,9 @@ pub struct Game {
     pub graphics: Arc<Bundle>,
     /// Its sound, extracted from its ROMs.
     pub sound: Arc<m4a::SoundBank>,
+    /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank extracted when
+    /// an EXE5DS `.nds` ROM is configured.
+    pub ds_sound: Option<Arc<sdat::SoundBank>>,
     /// What its assets hold of the content's: each handle's number there
     /// (checked against the content as it loaded:
     /// `saito_content::load::asset_numbers`).
@@ -251,13 +254,14 @@ impl ContentLoaded {
                 others.insert(game, self::others(game, from, roms));
             }
         }
-        let Extraction { graphics, sound, index, .. } = own;
+        let Extraction { graphics, sound, ds_sound, index, .. } = own;
         Ok(Game {
             name,
             content: Arc::new(content),
             dir,
             graphics: Arc::new(graphics),
             sound: Arc::new(sound),
+            ds_sound: ds_sound.map(Arc::new),
             numbers: Arc::new(numbers),
             index: Arc::new(index),
             others: Arc::new(others),
@@ -309,7 +313,12 @@ impl Game {
 
     /// The game's sound: its bank, and the content's songs.
     pub fn sound(&self) -> Result<Sound, LoadError> {
-        Ok(Sound { bank: self.sound.clone(), songs: saito_audio::Songs::of(&self.numbers), report: Report::default() })
+        Ok(Sound {
+            bank: self.sound.clone(),
+            ds_bank: self.ds_sound.clone(),
+            songs: saito_audio::Songs::of(&self.numbers),
+            report: Report::default(),
+        })
     }
 }
 
@@ -347,6 +356,8 @@ impl Graphics {
 /// A game's sound: its bank, and the content's songs in it.
 pub struct Sound {
     pub bank: Arc<m4a::SoundBank>,
+    /// Optional EXE5DS NitroComposer (`SDAT`) battle music bank.
+    pub ds_bank: Option<Arc<sdat::SoundBank>>,
     pub songs: saito_audio::Songs,
     pub report: Report,
 }
@@ -360,8 +371,8 @@ impl Sound {
     /// whatever plays. Its rollback is the cues', as the game's own music's.
     pub fn parts(&self, content: &Content, theme: Option<&saito_audio::Theme>) -> crate::preload::SoundParts {
         match theme {
-            Some(theme) => saito_audio::with_theme(vec![self.bank.clone()], &self.songs, &content.battle_music(), theme),
-            None => (vec![self.bank.clone()], self.songs.clone()),
+            Some(theme) => saito_audio::with_theme([self.bank.clone()], &self.songs, &content.battle_music(), theme),
+            None => (vec![self.bank.clone().into()], self.songs.clone()),
         }
     }
 }
@@ -447,11 +458,35 @@ impl Loaded {
         self.graphics.renderer(self.enhancements, self.font.clone())
     }
 
-    /// The game's battle themes (its `music.toml`'s `themes`), by their
-    /// songs' asset names, in its order: what a player may pick as a battle's
+    /// The game's battle themes (its `music.toml`'s `themes`, plus optional
+    /// EXE5DS `SDAT` battle tracks when an EXE5DS ROM is loaded), by their
+    /// songs' asset names, in order: what a player may pick as a battle's
     /// music, in this game's battles or another's ([`Loaded::theme`]).
     pub fn battle_themes(&self) -> Vec<&str> {
-        self.game.content.battle_themes().iter().map(String::as_str).collect()
+        let mut out: Vec<&str> = self.game.content.battle_themes().iter().map(String::as_str).collect();
+        if let Some(ds_bank) = self.sound.as_ref().and_then(|s| s.ds_bank.as_ref()) {
+            for &(key, seq_id, _) in saito_extract::EXE5DS_BATTLE_THEMES {
+                if ds_bank.song(sdat::SongId(seq_id)).is_some() {
+                    out.push(key);
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether this loaded game has optional EXE5DS `SDAT` battle music available.
+    pub fn has_ds_music(&self) -> bool {
+        self.sound.as_ref().is_some_and(|s| s.ds_bank.is_some())
+    }
+
+    /// Map a GBA EXE5 battle theme name (e.g. `"virus-battle"`) to its EXE5DS
+    /// arranged counterpart (e.g. `"ds-virus-battle"`) when DS music is loaded.
+    pub fn ds_counterpart(&self, gba_song: &str) -> Option<&'static str> {
+        let ds_bank = self.sound.as_ref()?.ds_bank.as_ref()?;
+        saito_extract::EXE5DS_BATTLE_THEMES
+            .iter()
+            .find(|&&(_, seq_id, gba)| gba == Some(gba_song) && ds_bank.song(sdat::SongId(seq_id)).is_some())
+            .map(|&(key, _, _)| key)
     }
 
     /// Battle theme `song` (a song asset's name, one of
@@ -459,13 +494,17 @@ impl Loaded {
     /// a battle's music in place of its own ([`Sound::parts`]). None where
     /// the game has no such theme, or no sound loaded.
     pub fn theme(&self, song: &str) -> Option<saito_audio::Theme> {
+        if let Some(&(_, seq_id, _)) = saito_extract::EXE5DS_BATTLE_THEMES.iter().find(|&&(key, _, _)| key == song) {
+            let ds_bank = self.sound.as_ref()?.ds_bank.as_ref()?.clone();
+            return ds_bank.song(sdat::SongId(seq_id)).is_some().then(|| saito_audio::Theme::sdat(ds_bank, seq_id));
+        }
         if !self.game.content.battle_themes().iter().any(|t| t == song) {
             return None;
         }
         // (By its name in the game's assets: a theme is presentation, which no module need name.)
         let song = self.game.index.number(saito_content_api::AssetKind::Sound, song)?;
         let bank = self.sound.as_ref()?.bank.clone();
-        Some(saito_audio::Theme { bank, song })
+        Some(saito_audio::Theme::m4a(bank, song))
     }
 
     /// Everything the loaders reported, in the order they loaded.

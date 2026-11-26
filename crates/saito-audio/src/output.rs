@@ -19,7 +19,6 @@
 
 use crate::{BattleAudio, SAMPLE_RATE, SoundCue};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use m4a::SoundBank;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -530,13 +529,13 @@ pub struct AudioOut {
 }
 
 impl AudioOut {
-    pub fn new(bank: Arc<SoundBank>, songs: crate::Songs) -> Result<AudioOut, OutputError> {
-        AudioOut::with_banks(vec![bank], songs)
+    pub fn new(bank: impl Into<crate::AudioBank>, songs: crate::Songs) -> Result<AudioOut, OutputError> {
+        AudioOut::with_banks([bank.into()], songs)
     }
 
     /// The sound of several banks (`banks` by `BankId`) on the default
     /// output device.
-    pub fn with_banks(banks: Vec<Arc<SoundBank>>, songs: crate::Songs) -> Result<AudioOut, OutputError> {
+    pub fn with_banks(banks: impl IntoIterator<Item = impl Into<crate::AudioBank>>, songs: crate::Songs) -> Result<AudioOut, OutputError> {
         Ok(AudioOut { out: Output::open()?, audio: BattleAudio::with_banks(banks, songs), frame: Vec::new() })
     }
 
