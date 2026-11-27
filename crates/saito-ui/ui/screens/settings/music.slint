@@ -240,15 +240,17 @@ export component MusicPage inherits Page {
             row-height: 44px;
             chosen: MusicView.chosen;
 
-            for i in self.shown: TrackRowView {
-                property <int> row-index: list.first + i;
+            for slot in list.shown: TrackRowView {
+                property <int> at: list.first + slot;
                 x: 0;
-                y: i * list.pitch;
+                y: self.at * list.pitch;
                 width: list.row-width;
-                height: 44px;
-                nav: "music.list";
-                nav-index: self.row-index;
-                track: MusicView.rows[self.row-index];
+                height: list.row-height;
+                nav: list.nav;
+                nav-index: self.at;
+                track: MusicView.rows[self.at];
+
+                Rectangle { }  // (Copied in: docs/app.md §14.)
             }
         }
 
@@ -339,7 +341,7 @@ export component MusicPage inherits Page {
                             nav: "music.next";
                             compact: true;
                             enabled: MusicView.rows.length > 1;
-                            text: I18n.upper(@tr("Next"));
+                            text: I18n.upper(@tr("music" => "Next"));
                         }
                     }
 

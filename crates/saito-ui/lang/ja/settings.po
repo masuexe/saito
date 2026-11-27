@@ -495,3 +495,7 @@ msgstr "メニューBGMに設定"
 
 msgid "Favorite battle themes"
 msgstr "バトル曲を一括登録"
+
+msgctxt "music"
+msgid "Next"
+msgstr "次へ"

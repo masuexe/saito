@@ -494,3 +494,7 @@ msgstr "设为主菜单 BGM"
 
 msgid "Favorite battle themes"
 msgstr "收藏全部战斗曲"
+
+msgctxt "music"
+msgid "Next"
+msgstr "下一首"
