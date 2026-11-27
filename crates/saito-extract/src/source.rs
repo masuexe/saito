@@ -56,6 +56,10 @@ pub const ARCHIVES: [&str; 9] = [
 #[cfg(not(target_arch = "wasm32"))]
 const STEAM_APP_IDS: [u32; 2] = [1798020, 1798010];
 
+/// Canonical Steam install folder names for Legacy Collection Vol. 2 and Vol. 1.
+const VOL2_DIR_NAME: &str = "MegaMan_BattleNetwork_LegacyCollection_Vol2";
+const VOL1_DIR_NAME: &str = "MegaMan_BattleNetwork_LegacyCollection_Vol1";
+
 /// An install of the collection: the primary folder its archives are in, and all per-game archives
 /// discovered across Vol. 2 and/or Vol. 1.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,19 +70,8 @@ pub struct Install {
 }
 
 impl Install {
-    /// The install: in `chosen` (a folder the player chose) if it holds one, else where Steam has
-    /// Legacy Collection Vol. 2 and/or Vol. 1 installed. When multiple Steam volumes are installed,
-    /// their archives are merged into one [`Install`] so games from both volumes are available together.
-    pub fn find(chosen: Option<&Path>) -> Option<Install> {
-        let mut installs: Vec<Install> = Vec::new();
-        if let Some(chosen) = chosen.and_then(Install::at) {
-            installs.push(chosen);
-        }
-        for dir in steam_all() {
-            if let Some(inst) = Install::at(&dir) {
-                installs.push(inst);
-            }
-        }
+    /// Merge multiple installs into one, preserving primary `data` and deduplicating archives.
+    pub fn merge(installs: impl IntoIterator<Item = Install>) -> Option<Install> {
         let mut iter = installs.into_iter();
         let mut merged = iter.next()?;
         for other in iter {
@@ -91,13 +84,69 @@ impl Install {
         Some(merged)
     }
 
-    /// The install in `folder`: the collection's own folder (the one with `exe/` in it), or its `exe` or
-    /// `exe/data` folder, whichever was chosen. None: no per-game archive is there.
-    pub fn at(folder: &Path) -> Option<Install> {
+    /// The install: in `chosen` (a folder the player chose) if it holds one, else where Steam has
+    /// Legacy Collection Vol. 2 and/or Vol. 1 installed. When multiple Steam volumes are installed,
+    /// their archives are merged into one [`Install`] so games from both volumes are available together.
+    pub fn find(chosen: Option<&Path>) -> Option<Install> {
+        let mut installs: Vec<Install> = Vec::new();
+        if let Some(chosen) = chosen.and_then(Install::at) {
+            installs.push(chosen);
+        }
+        for dir in steam_all() {
+            if let Some(inst) = Install::at_single(&dir) {
+                installs.push(inst);
+            }
+        }
+        Install::merge(installs)
+    }
+
+    /// Check a single volume folder (its root, `exe/`, or `exe/data/`) without sibling expansion.
+    fn at_single(folder: &Path) -> Option<Install> {
         [folder.join("exe").join("data"), folder.join("data"), folder.to_path_buf()].into_iter().find_map(|data| {
             let archives = archives(&data);
             (!archives.is_empty()).then_some(Install { data, archives })
         })
+    }
+
+    /// Given a found `<root>/exe/data`, locate the sibling Steam volume directory (`Vol1` ↔ `Vol2`) if present.
+    fn sibling_root(data: &Path) -> Option<PathBuf> {
+        // Walk up from `data` to find a directory named `..._Vol1` or `..._Vol2` (handles `<root>`, `<root>/exe`, `<root>/exe/data`).
+        let mut cur = Some(data);
+        for _ in 0..3 {
+            let path = cur?;
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                let sibling_name = if name.eq_ignore_ascii_case(VOL2_DIR_NAME) {
+                    Some(VOL1_DIR_NAME)
+                } else if name.eq_ignore_ascii_case(VOL1_DIR_NAME) {
+                    Some(VOL2_DIR_NAME)
+                } else {
+                    None
+                };
+                if let Some(sib) = sibling_name
+                    && let Some(parent) = path.parent()
+                {
+                    return Some(parent.join(sib));
+                }
+            }
+            cur = path.parent();
+        }
+        None
+    }
+
+    /// The install in `folder`: the collection's own folder (the one with `exe/` in it), its `exe` or
+    /// `exe/data` folder, or a Steam `common/` folder containing `Vol2` and/or `Vol1`. When a Steam
+    /// `Vol1` or `Vol2` folder is given and its sibling volume sits beside it, both are merged automatically.
+    pub fn at(folder: &Path) -> Option<Install> {
+        if let Some(primary) = Install::at_single(folder) {
+            let sibling = Install::sibling_root(&primary.data).and_then(|s| Install::at_single(&s));
+            return Install::merge(std::iter::once(primary).chain(sibling));
+        }
+        // Parent folder (e.g. `.../steamapps/common`) holding Vol. 2 and/or Vol. 1.
+        let installs: Vec<Install> = [VOL2_DIR_NAME, VOL1_DIR_NAME]
+            .into_iter()
+            .filter_map(|name| Install::at_single(&folder.join(name)))
+            .collect();
+        Install::merge(installs)
     }
 
     /// Locate a launcher art archive (`vol1.dat` or `vol2.dat`) beside any volume directory represented
@@ -221,11 +270,49 @@ impl RomSource {
         Ok(RomSource::Files(files))
     }
 
-    /// The ROMs the tools and development read: `$SAITO_ROMS` ([`ROMS`]), a folder as [`RomSource::at`] takes
-    /// it; unset, the Legacy Collection (Vol. 2 and/or Vol. 1) where Steam installed it. An error says how to name them.
+    /// The ROMs across one or more folders (e.g. `$SAITO_ROMS` separated by `:` on Unix / `;` on Windows).
+    /// Multiple Legacy Collection installs (such as Vol. 2 and Vol. 1) are merged into one [`RomSource::Collection`];
+    /// multiple ROM-file folders are merged into one [`RomSource::Files`].
+    pub fn from_paths(paths: &[PathBuf]) -> Result<RomSource, Error> {
+        let non_empty: Vec<&Path> = paths.iter().map(PathBuf::as_path).filter(|p| !p.as_os_str().is_empty()).collect();
+        if non_empty.len() == 1 {
+            return RomSource::at(non_empty[0]);
+        }
+        let mut installs = Vec::new();
+        let mut files = Vec::new();
+        let mut errors = Vec::new();
+        for path in &non_empty {
+            match RomSource::at(path) {
+                Ok(RomSource::Collection(inst)) => installs.push(inst),
+                Ok(RomSource::Files(mut fs)) => files.append(&mut fs),
+                Ok(RomSource::Copies(dir)) => return Ok(RomSource::Copies(dir)),
+                Err(e) => errors.push(e.0),
+            }
+        }
+        if let Some(merged) = Install::merge(installs) {
+            return Ok(RomSource::Collection(merged));
+        }
+        if !files.is_empty() {
+            files.sort();
+            files.dedup();
+            return Ok(RomSource::Files(files));
+        }
+        Err(Error(if errors.is_empty() {
+            "empty path list".to_string()
+        } else {
+            errors.join("; ")
+        }))
+    }
+
+    /// The ROMs the tools and development read: `$SAITO_ROMS` ([`ROMS`]), one or more folders (separated by
+    /// `:` on Unix or `;` on Windows) as [`RomSource::at`] takes them; unset, the Legacy Collection
+    /// (Vol. 2 and/or Vol. 1) where Steam installed it. An error says how to name them.
     pub fn from_env() -> Result<RomSource, Error> {
         match std::env::var_os(ROMS) {
-            Some(dir) => RomSource::at(Path::new(&dir)).map_err(|e| Error(format!("${ROMS}: {e}"))),
+            Some(raw) => {
+                let paths: Vec<PathBuf> = std::env::split_paths(&raw).collect();
+                RomSource::from_paths(&paths).map_err(|e| Error(format!("${ROMS}: {e}")))
+            }
             None => Install::find(None).map(RomSource::Collection).ok_or_else(|| {
                 Error(format!(
                     "no ROMs: ${ROMS} isn't set, and Steam has no Battle Network Legacy Collection installed; set ${ROMS} to the collection's folder, or to a folder of its ROMs"
@@ -709,6 +796,36 @@ mod tests {
         assert_eq!(source.vol_dat_for_game("exe3"), Some(v1_art));
         assert_eq!(source.vol_dat_for_game("exe6"), Some(v2_art));
         assert_eq!(source.vol_dat_for_game("unknown"), None);
+    }
+
+    /// Pointing at Steam's Vol. 2 (or Vol. 1) folder automatically merges the sibling volume sitting beside it;
+    /// `RomSource::from_paths` also merges arbitrary separate Vol. 2 + Vol. 1 folders.
+    #[test]
+    fn sibling_and_multi_path_discovery_merges_vol1_and_vol2() {
+        let common = tempfile::tempdir().unwrap();
+        let v1_root = common.path().join(VOL1_DIR_NAME);
+        let v2_root = common.path().join(VOL2_DIR_NAME);
+        let exe3_w = fake_rom("A6BE", 0x1000);
+        let exe6_f = fake_rom("BR6E", 0x1000);
+        archive(&v1_root.join("exe").join("data").join("exe3.dat"), &[("exe3/rom_e.srl", &exe3_w)]);
+        archive(&v2_root.join("exe").join("data").join("exe6f.dat"), &[("exe6f/rom_e.srl", &exe6_f)]);
+
+        // Passing ONLY Vol. 2 discovers sibling Vol. 1 too.
+        let from_v2 = RomSource::at(&v2_root).unwrap();
+        assert_eq!(from_v2.find(&codes(&["A6BE", "BR6E"])).unwrap().len(), 2);
+
+        // Passing the parent `steamapps/common` discovers both.
+        let from_parent = RomSource::at(common.path()).unwrap();
+        assert_eq!(from_parent.find(&codes(&["A6BE", "BR6E"])).unwrap().len(), 2);
+
+        // Passing two unrelated custom directories via `from_paths` merges both.
+        let sep = tempfile::tempdir().unwrap();
+        let a = sep.path().join("custom_a");
+        let b = sep.path().join("custom_b");
+        archive(&a.join("exe").join("data").join("exe6f.dat"), &[("exe6f/rom_e.srl", &exe6_f)]);
+        archive(&b.join("exe").join("data").join("exe3.dat"), &[("exe3/rom_e.srl", &exe3_w)]);
+        let merged = RomSource::from_paths(&[a, b]).unwrap();
+        assert_eq!(merged.find(&codes(&["A6BE", "BR6E"])).unwrap().len(), 2);
     }
 
     /// Smoke test against a real Legacy Collection Vol. 1 install pointed to by `$SAITO_ROMS`:
