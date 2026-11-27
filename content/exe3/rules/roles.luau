@@ -3,7 +3,7 @@
 -- music, and banners.
 
 local barriers = require("../lib/barriers")
-local charge_glow = require("../objects/charge_glow")
+local charge_glow = require("./charge_glow")
 local collision = require("./collision")
 local deletion = require("./deletion")
 local invalid = require("../chips/invalid").invalid
@@ -12,13 +12,18 @@ local sparks = require("../lib/sparks")
 local statuses = require("./status")
 local zeroed = require("../chips/zeroed").zeroed
 local blindness_sprite = asset.sprite("blindness")
+local bubble_sprite = asset.sprite("bubble")
 local burst_sprite = asset.sprite("burst")
 local charge_glow_sprite = asset.sprite("charge-glow")
+local charge_glow_a_sprite = asset.sprite("charge-glow-a")
 local confusion_sprite = asset.sprite("confusion")
 local deletion_sprite = asset.sprite("deletion")
 local heal_sprite = asset.sprite("heal")
 local hit_marker_sprite = asset.sprite("hit-marker")
 local hit_sparks_sprite = asset.sprite("hit-sparks")
+local ice_sprite = asset.sprite("ice")
+local immobilized_sprite = asset.sprite("immobilized")
+local target_marker_sprite = asset.sprite("target-marker")
 
 local roles: RolesSpec = {
     chips = {
@@ -27,6 +32,8 @@ local roles: RolesSpec = {
     },
     statuses = {
         damage_word_paralysis = statuses.paralyze,
+        damage_word_confusion = statuses.confuse,
+        damage_word_blindness = statuses.blind,
         counter_paralysis = statuses.paralyze,
     },
     sparks = {
@@ -52,11 +59,18 @@ local roles: RolesSpec = {
     },
     sounds = {
         appear = asset.sound("appear"),
+        arrive = asset.sound("arrive"),
+        auto_battle_hit = asset.sound("own-hit"),
+        bubble = asset.sound("bubble"),
+        bubble_pop = asset.sound("bubble-pop"),
+        burst = asset.sound("burst"),
         buster_charge = asset.sound("buster-charge"),
         buster_charged = asset.sound("buster-charged"),
         confusion = asset.sound("confusion"),
         damage = asset.sound("damage"),
         deleted = asset.sound("deleted"),
+        fade = asset.sound("fade"),
+        freeze = asset.sound("freeze"),
         gauge_full = asset.sound("gauge-full"),
         invisible = asset.sound("invisible"),
         low_hp = asset.sound("low-hp"),
@@ -69,13 +83,13 @@ local roles: RolesSpec = {
         custom_pick = asset.sound("custom-pick"),
         custom_ok = asset.sound("custom-ok"),
         custom_back = asset.sound("custom-back"),
-        custom_cancel = asset.sound("sfx-cancel"),
+        custom_cancel = asset.sound("custom-back"),
         custom_description = asset.sound("description-open"),
         program_advance_part = asset.sound("program-advance-part"),
         program_advance = asset.sound("program-advance"),
         encounter = asset.sound("encounter"),
         hit = asset.sound("hit"),
-        own_hit = asset.sound("hit"),
+        own_hit = asset.sound("own-hit"),
         guard = asset.sound("guard"),
         recovery = asset.sound("sfx-recover"),
         trap_mark = asset.sound("trap-mark"),
@@ -100,9 +114,14 @@ local roles: RolesSpec = {
     },
     sprites = {
         charge_glow = charge_glow_sprite,
+        charge_glow_a = charge_glow_a_sprite,
         confusion = confusion_sprite,
         blindness = blindness_sprite,
+        immobilized = immobilized_sprite,
+        ice = ice_sprite,
+        bubble = bubble_sprite,
         hit_marker = hit_marker_sprite,
+        target_marker = target_marker_sprite,
     },
     music = {
         link_battle = asset.sound("battle-boss"),

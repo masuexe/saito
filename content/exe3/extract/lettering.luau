@@ -43,12 +43,11 @@ function lettering.hud(set: Set, base: Hud, names: AssetNames): HudLettering
 end
 
 function lettering.custom(set: Set, _base: CustomScreen): CustomLettering
+    -- EXE3's Custom Screen OK / OK_PICKED pictures are full-color MegaMan/transmission artwork (no localized text;
+    -- identical 8x7 tiles between A6BE and A6BJ), so only the ADD button picture needs a JP override if palettes vary.
     local rom = set.A6BJ
-    local ok = custom.picture(rom, custom.OK)
-    local ok_picked = custom.picture(rom, custom.OK_PICKED)
     local add_pic = custom.picture(rom, custom.ADD_PICTURE)
     return {
-        pictures = { ok = ok, ok_picked = ok_picked },
         buttons = {
             { name = custom.ADD_BUTTON, value = { picture = add_pic } },
         },

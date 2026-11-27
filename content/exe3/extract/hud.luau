@@ -133,9 +133,24 @@ local function chip_icons(
 end
 
 local function drawn(rom: Rom, h: Hud)
-    h.tiles = gba.tiles(rom, at(rom, HUD_TILES), HUD_BYTES)
+    -- EXE3's HUD DMA[5] (`HUD_TILES`, 0x300 B) holds the 12 HP-box glyphs (0..9, blank, edge); its battle damage
+    -- digits (0..9, '+', '?', ':') sit right after the Custom Gauge tiles at `GAUGE_TILES + 0x380` (0x08010F12 uses
+    -- tile 0x4C = 0x30 + 28). Assemble them in the canonical `Hud` glyph order (HP 0..9, blank, edge, damage 0..9,
+    -- '?', '+', ':', '×', '2') so `Hud::DAMAGE_DIGIT`, `HIDDEN_GLYPH`, `PLUS_GLYPH`, and `TIMES_GLYPH` line up.
+    local gauge_at = at(rom, GAUGE_TILES)
+    local dmg_at = gauge_at + 0x380
+    local font_at = at(rom, FONT)
+    h.tiles = gba.join({
+        gba.tiles(rom, at(rom, HUD_TILES), HUD_BYTES),
+        gba.tiles(rom, dmg_at, 0x40 * 10), -- 0..9 (DAMAGE_DIGIT = 12)
+        gba.tiles(rom, dmg_at + 0x40 * 11, 0x40), -- '?' (HIDDEN_GLYPH = 22)
+        gba.tiles(rom, dmg_at + 0x40 * 10, 0x40), -- '+' (PLUS_GLYPH = 23)
+        gba.tiles(rom, dmg_at + 0x40 * 12, 0x40), -- ':' (24)
+        gba.tiles(rom, font_at + 0x40 * 0x40, 0x40), -- '×' (TIMES_GLYPH = 25)
+        gba.tiles(rom, font_at + 0x40 * 0x03, 0x40), -- '2' (26)
+    })
     h.first_tile = HUD_FIRST_TILE
-    h.gauge_tiles = gba.tiles(rom, at(rom, GAUGE_TILES), GAUGE_BYTES)
+    h.gauge_tiles = gba.tiles(rom, gauge_at, GAUGE_BYTES)
     h.gauge_first_tile = GAUGE_FIRST_TILE
     local hp_pals: { Palette } = {}
     for i = 0, 2 do

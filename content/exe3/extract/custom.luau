@@ -187,6 +187,11 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         },
         codes = gba.tiles(rom, at(rom, CODES), 0x40 * CODE_GLYPHS),
         elements = gba.tiles(rom, at(rom, ELEMENTS), 0x80 * ELEMENT_COUNT),
+        -- Custom screen chip-power digits (0..9 at AUX_TILES + 0x20, '?' at AUX_TILES + 0x2E0; 0x0800EE58 tile 0x81).
+        digits = gba.join({
+            gba.tiles(rom, at(rom, AUX_TILES.place) + 0x20, 0x40 * 10),
+            gba.tiles(rom, at(rom, AUX_TILES.place) + 0x2E0, 0x40),
+        }),
         slot_codes = gba.tiles(rom, at(rom, SLOT_CODES), 0x40 * SLOT_CODE_GLYPHS),
         empty_icon = gba.tiles(rom, at(rom, EMPTY_ICON), 0x80),
         versioned = { base_version = versions.WHITE, base = {} },

@@ -47,9 +47,19 @@ const COLOR: &str = "color";
 const COMPRESSED: &str = "compressed";
 
 /// The colors a piece comes in, by name, as the app draws them (docs/design/app-ui.md's palette: the text's white,
-/// a Giga chip's pink, a yellow, player one's red, player two's blue, the good green).
-pub const PALETTE: [(&str, u32); 6] =
-    [("white", 0xEAF3FF), ("pink", 0xFF7EB6), ("yellow", 0xF2CF4A), ("red", 0xFF5D50), ("blue", 0x4A93FF), ("green", 0x45E0A0)];
+/// a Giga chip's pink, a yellow, player one's red, player two's blue, the good green, plus EXE3's orange, purple,
+/// and dark).
+pub const PALETTE: [(&str, u32); 9] = [
+    ("white", 0xEAF3FF),
+    ("pink", 0xFF7EB6),
+    ("yellow", 0xF2CF4A),
+    ("red", 0xFF5D50),
+    ("blue", 0x4A93FF),
+    ("green", 0x45E0A0),
+    ("orange", 0xFF9B42),
+    ("purple", 0xB07CFF),
+    ("dark", 0x6E6485),
+];
 
 /// A color by name: the palette's, else gray.
 pub fn rgb(name: Option<&str>) -> u32 {

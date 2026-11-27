@@ -9,14 +9,15 @@
 --      `first_tile` parameter `(0x10000 - add) % 0x10000`.
 --   2. Backgrounds live in the Area 0xF0 table `[[BgAreaF0Table]]` (30 x 12-byte entries): 3-layer tiles header at +0,
 --      palette (+4 header) at +4, and map archive at +8 whose LZ77 stream starts at `+0x10` (not `+0x0C`).
---   3. Primitive Gap #1 (`gfx.anims`): EXE3 dispatches per-BG animation handlers via Thumb jump table `[0x08006070]`
---      calling `0x08001FA0` with single `GfxAnim` structs, and its `cmd=0` palette anim counts words (`8`) instead of
---      bytes (`32`). `anims` is left empty here until `saito-extract` adds single-anim / word-count support.
+--   3. Each BG (0..=29) has a Thumb handler in `BgAnimJumpTable` (`[0x08006070]` US / `[0x08006004]` JP) that installs
+--      one or more single `GfxAnim` structs via `0x08001FA0` (US) / `0x08001F68` (JP) — with `cmd=0` palette counts in
+--      32-bit words (`8` words = 1 palette, passed as `word_units = true` to `gfx.anim`) — and optionally installs a
+--      BG1 scroll callback from `ScrollCBs` via `0x08001E5C` (US) / `0x08001E24` (JP).
 
 local place = require("@exelib/extract/place")
 local colors = require("@exelib/extract/colors")
 
-local band = bit32.band
+local band, bor, lshift = bit32.band, bit32.bor, bit32.lshift
 local at = place.at
 local pointer, pointer_in_each, stated = place.pointer, place.pointer_in_each, place.stated
 
@@ -141,6 +142,11 @@ end
 local BG_AREA_F0 = pointer_in_each({ 0x0802_2FA8, 0x0802_2F90, 0x0802_3108, 0x0802_30F0 })
 local BACKGROUND_COUNT = 30
 
+-- Per-BG Thumb handler jump table (`BgAnimJumpTable`: 30 entries) and installer routines, verified across all 4 ROMs.
+local BG_ANIM_TABLE = pointer(0x0800_6070, 0x0800_6004)
+local BG_ANIM_INSTALLER = stated({ 0x0800_1FA0, 0x0800_1FA0, 0x0800_1F68, 0x0800_1F68 })
+local BG_SCROLL_INSTALLER = stated({ 0x0800_1E5C, 0x0800_1E5C, 0x0800_1E24, 0x0800_1E24 })
+
 -- Scroll callback code base (`ScrollCBs`), verified across all 4 ROMs.
 stage.SCROLLERS = stated({ 0x0800_1E9C, 0x0800_1E9C, 0x0800_1E64, 0x0800_1E64 })
 stage.SCROLLER_STEPS = {
@@ -154,18 +160,88 @@ stage.SCROLLER_STEPS = {
     [0x88] = { 0, 0 },
 }
 
+-- Walk one EXE3 per-BG Thumb handler (`BgAnimJumpTable[id]`) to collect every `GfxAnim` pointer passed to
+-- `BG_ANIM_INSTALLER` (`r0`) and the BG1 scroll callback passed to `BG_SCROLL_INSTALLER` (`r1`).
+local function parse_bg_handler(
+    rom: Rom,
+    handler: number,
+    anim_fn: number,
+    scroll_fn: number,
+    scrollers: number
+): ({ GfxAnim }, { number })
+    local pc = band(handler, 0xFFFF_FFFE)
+    local r0: number? = nil
+    local r1: number? = nil
+    local anims: { GfxAnim } = {}
+    local scroll: { number } = { 0, 0 }
+
+    for _ = 1, 64 do
+        local h = rom:u16(pc)
+        if band(h, 0xFF00) == 0x4800 then
+            -- ldr r0, [pc, #imm*4]
+            local pool = band(pc + 4, 0xFFFF_FFFC) + band(h, 0xFF) * 4
+            r0 = rom:u32(pool)
+            pc += 2
+        elseif band(h, 0xFF00) == 0x4900 then
+            -- ldr r1, [pc, #imm*4]
+            local pool = band(pc + 4, 0xFFFF_FFFC) + band(h, 0xFF) * 4
+            r1 = rom:u32(pool)
+            pc += 2
+        elseif band(h, 0xF800) == 0xF000 then
+            -- Thumb BL (two halfwords: 0xF000..0xF7FF followed by 0xF800..0xFFFF)
+            local h2 = rom:u16(pc + 2)
+            if band(h2, 0xF800) == 0xF800 then
+                local imm = bor(lshift(band(h, 0x7FF), 12), lshift(band(h2, 0x7FF), 1))
+                if imm >= 0x400000 then
+                    imm -= 0x800000
+                end
+                local target = pc + 4 + imm
+                if target == anim_fn and r0 ~= nil then
+                    local a = gfx.anim(rom, r0, FIELD_PALETTE_BUFFER, true)
+                    if a ~= nil then
+                        table.insert(anims, a)
+                    end
+                elseif target == scroll_fn and r1 ~= nil then
+                    local cb = band(r1, 0xFFFF_FFFE)
+                    local step = stage.SCROLLER_STEPS[cb - scrollers]
+                    if step ~= nil then
+                        scroll = step
+                    end
+                end
+                pc += 4
+            else
+                pc += 2
+            end
+        elseif band(h, 0xFF00) == 0xBD00 or h == 0x4770 or h == 0x46F7 then
+            -- pop {..., pc} / bx lr / mov pc, lr
+            break
+        else
+            pc += 2
+        end
+    end
+
+    return anims, scroll
+end
+
 -- Decode one EXE3 Area 0xF0 background record at `entry` (+0 tiles hdr, +4 pal, +8 map archive with LZ77 at +0x10).
-local function decode_background(rom: Rom, entry: number): Background?
-    local gfx = rom:u32(entry)
+local function decode_background(
+    rom: Rom,
+    entry: number,
+    handler: number,
+    anim_fn: number,
+    scroll_fn: number,
+    scrollers: number
+): Background?
+    local gfx_ptr = rom:u32(entry)
     local pal_src = rom:u32(entry + 4)
     local map_src = rom:u32(entry + 8)
-    if not rom:holds(gfx) or not rom:holds(map_src) then
+    if not rom:holds(gfx_ptr) or not rom:holds(map_src) then
         return nil
     end
-    local size_bytes = rom:u32(gfx) * 4
-    local lz_off = rom:u32(gfx + 4)
-    local vram_off = rom:u32(gfx + 8)
-    local raw_tiles = rom:lz77(gfx + lz_off)
+    local size_bytes = rom:u32(gfx_ptr) * 4
+    local lz_off = rom:u32(gfx_ptr + 4)
+    local vram_off = rom:u32(gfx_ptr + 8)
+    local raw_tiles = rom:lz77(gfx_ptr + lz_off)
     if raw_tiles == nil then
         return nil
     end
@@ -179,6 +255,7 @@ local function decode_background(rom: Rom, entry: number): Background?
     end
     local map = gba.map(raw_map, 0, w * h)
     local palette = if rom:holds(pal_src) then colors.masked(gba.palette(rom, pal_src + 4)) else nil
+    local anims, scroll = parse_bg_handler(rom, handler, anim_fn, scroll_fn, scrollers)
 
     return {
         tiles = tiles,
@@ -187,18 +264,22 @@ local function decode_background(rom: Rom, entry: number): Background?
         map_width = w,
         map_height = h,
         palette = palette,
-        scroll = { 0, 0 },
-        -- See docs/design/exe3-extract-map.md §3 Gap #1 (`gfx.anims` single-anim & word-count cmd=0).
-        anims = {},
+        scroll = scroll,
+        anims = anims,
     }
 end
 
 -- All 30 battle backgrounds by ID (0..=29).
 function stage.backgrounds(rom: Rom): { [number]: Background, n: number }
     local table_ptr = rom:u32(at(rom, BG_AREA_F0))
+    local jump_table = at(rom, BG_ANIM_TABLE)
+    local anim_fn = at(rom, BG_ANIM_INSTALLER)
+    local scroll_fn = at(rom, BG_SCROLL_INSTALLER)
+    local scrollers = at(rom, stage.SCROLLERS)
     local out: { [number]: Background, n: number } = { n = BACKGROUND_COUNT }
     for id = 0, BACKGROUND_COUNT - 1 do
-        local b = decode_background(rom, table_ptr + 12 * id)
+        local handler = rom:u32(jump_table + 4 * id)
+        local b = decode_background(rom, table_ptr + 12 * id, handler, anim_fn, scroll_fn, scrollers)
         if b ~= nil then
             out[id] = b
         end

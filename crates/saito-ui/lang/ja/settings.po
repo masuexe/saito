@@ -114,8 +114,8 @@ msgstr "利用可能な場合、アドバンスドコレクションの高解像
 msgid "HD art archive"
 msgstr "高解像度イラストファイル"
 
-msgid "Select launcher/data/vol2.dat, exe/data/exe6.dat, or exe/data/exe6f.dat from Battle Network Legacy Collection Vol. 2."
-msgstr "アドバンスドコレクション Vol.2 の launcher/data/vol2.dat、exe/data/exe6.dat、または exe/data/exe6f.dat を選択してください。"
+msgid "Select launcher/data/vol1.dat (Vol. 1) or launcher/data/vol2.dat, exe/data/exe6.dat, or exe/data/exe6f.dat (Vol. 2) from Battle Network Legacy Collection."
+msgstr "アドバンスドコレクションの launcher/data/vol1.dat（Vol.1）、または launcher/data/vol2.dat、exe/data/exe6.dat、exe/data/exe6f.dat（Vol.2）を選択してください。"
 
 msgid "Choose file"
 msgstr "ファイルを選択"
