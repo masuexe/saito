@@ -933,11 +933,21 @@ mod tests {
             }
         }
         crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], "zh-Hans");
-        assert_eq!(track_title("exe4", "title-screen"), "Theme of ROCKMAN EXE4");
+        assert_eq!(track_title("exe4", "title-screen"), "Theme of ROCKMAN EXE 4");
+        assert_eq!(track_title("exe4", "acdc-town"), "Hometown");
         assert_eq!(track_title("exe4", "elec-tower-comp"), "Invisible Wing");
+        assert_eq!(track_title("exe4", "undernet"), "Heel's Parade");
+        assert_eq!(track_title("exe4", "final-battle"), "对决迪欧");
+        assert_eq!(track_title("exe5", "title-screen"), "Theme of ROCKMAN EXE 5");
         assert_eq!(track_title("exe5", "main-comp"), "Seek a Cord");
+        assert_eq!(track_title("exe5", "castle-comp"), "Castle of Ninja!");
+        assert_eq!(track_title("exe5", "virus-battle"), "来对战吧!");
+        assert_eq!(track_title("exe5", "final-battle"), "对决星云灰暗");
+        assert_eq!(track_title("exe6", "title-screen"), "Theme of ROCKMAN EXE 6");
         assert_eq!(track_title("exe6", "virus-battle"), "Battle Field");
+        assert_eq!(track_title("exe6", "pavilion"), "秘密总部");
         assert_eq!(track_title("exe6", "pavilion-comp"), "Two of Braves");
+        assert_eq!(track_title("exe6", "final-battle"), "决战、电脑兽!");
         assert_eq!(track_title("exe6", "school"), "才叶学园");
 
         // Sequential rotation advances round-by-round wrapping cleanly.
