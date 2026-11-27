@@ -40,10 +40,10 @@ local EMPTY_ICON = pointer(0x0800_F058, 0x0800_EFD4)
 local SLOT_CODES = pointer(0x0800_F294, 0x0800_F210)
 local SLOT_CODE_GLYPHS = 28
 
--- Element icons (5 elements: null, elec, heat, aqua, wood; 2x2 tiles = 0x80 bytes each):
-local ELEMENTS = pointer_in_each({ 0x0803_3128, 0x0803_3110, 0x0803_35E0, 0x0803_35C8 })
-local ELEMENT_PALETTE = pointer_in_each({ 0x0803_3134, 0x0803_311C, 0x0803_35EC, 0x0803_35D4 })
-local ELEMENT_COUNT = 5
+-- Element icons on BG3 (`0x0800EDB4`: 5 icons in AUX_TILES at 0x99..0xAC, 2x2 = 0x80 bytes each:
+-- 0=null, 1=elec, 2=heat/fire, 3=aqua, 4=wood), mapped to rules/elements.luau's 16 families:
+-- 0=fire, 1=aqua, 2=elec, 3=wood, 4..15=null.
+local FAMILY_TO_ROM_ELEMENT: { number } = { 2, 3, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
 -- Window emblem over picked column (4 frame maps of 2x3 + 16-byte step sequence):
 local EMBLEM_FRAMES = pointer(0x0800_F348, 0x0800_F2C4)
@@ -160,28 +160,126 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         table.insert(frame_palettes, palette(rom, at(rom, FRAME_PALETTES) + 0x20 * i))
     end
 
+    local window_tiles = custom.tiles(rom, WINDOW_TILES)
+    local aux_addr = at(rom, AUX_TILES.place)
+    -- Picked column border cells (0x0800F108: tiles 0xC2..0xC5 in AUX_TILES, 4 tiles = 0x80 B: empty then filled).
+    local column_cells = gba.tiles(rom, aux_addr + 0x840, 0x80)
+
+    -- ADD button (0x0800EF78 / 0x0800EF94: 3x2 at col 11, row 17, palette 9):
+    -- selectable (0xB6..0xBB, 6 tiles), unavailable/pressed (0xBC..0xC1, 6 tiles), hidden (fill tile 0x80 x 6).
+    local add_fill_tile = gba.tiles(rom, aux_addr, 0x20)
+    local add_tiles = gba.join({
+        gba.tiles(rom, aux_addr + 0x6C0, 0x180),
+        add_fill_tile,
+        add_fill_tile,
+        add_fill_tile,
+        add_fill_tile,
+        add_fill_tile,
+        add_fill_tile,
+    })
     local add_picture = custom.picture(rom, custom.ADD_PICTURE)
     local add_button: ButtonPictures = {
         width = 3,
         height = 2,
+        tiles = add_tiles,
         sets = "other",
+        hidden = 2,
         cursor = { x = 11 * 8, y = 17 * 8, corners = add_corners },
         palettes = { add_picture.palette :: Palette },
         picture = add_picture,
+        place = { x = 11, y = 17, first_tile = 0xB6, palette = 9 },
     }
+
+    -- EXE3 custom screen map patches laid over WINDOW_MAP (`0x0800EB96..0x0800EBAE`, `0x0800EDE6`, `0x0800EE0E`,
+    -- `0x0800F054`, `0x0800F1EC`): contiguous BG3 tile allocation 0x15C..0x1FF matching GBA EXE3's exact VRAM tile bases.
+    local window_patches: PatchList = {
+        first_tile = 0x15C,
+        patches = {
+            -- Element icon (0x0800EDE6): 2x2 at col 3, row 10, tiles 0x15C..0x15F
+            { x = 3, y = 10, width = 2, height = 2, palette = 11, by_column = false },
+            -- Power digits: 3x2 right-aligned in cols 6..8, rows 10..11 (tiles 0x160..0x165)
+            { x = 6, y = 10, width = 3, height = 2, palette = 11, by_column = true },
+            -- 10 dealt chip slots (0x0800F230): 2x3 each (2x2 icon + 2x1 code), tiles 0x166..0x1A1
+            { x = 1, y = 13, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 3, y = 13, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 5, y = 13, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 7, y = 13, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 9, y = 13, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 1, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 3, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 5, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 7, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            { x = 9, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            -- 5 picked column chip icons (0x0800F054): 2x2 each at col 12, rows 3..12, tiles 0x1A2..0x1B5
+            { x = 12, y = 3, width = 2, height = 2, palette = 11, by_column = false },
+            { x = 12, y = 5, width = 2, height = 2, palette = 11, by_column = false },
+            { x = 12, y = 7, width = 2, height = 2, palette = 11, by_column = false },
+            { x = 12, y = 9, width = 2, height = 2, palette = 11, by_column = false },
+            { x = 12, y = 11, width = 2, height = 2, palette = 11, by_column = false },
+            -- Chip code (0x0800EBA4): 1x2 at col 1, row 10, tiles 0x1B6..0x1B7
+            { x = 1, y = 10, width = 1, height = 2, palette = 11, by_column = true },
+            -- Chip name (0x0800EB96): 8x2 at col 1, row 1, tiles 0x1B8..0x1C7
+            { x = 1, y = 1, width = 8, height = 2, palette = 9, by_column = true },
+            -- Chip art (0x0800EB96): 8x7 (56 tiles) at col 1, row 3, tiles 0x1C8..0x1FF
+            { x = 1, y = 3, width = 8, height = 7, palette = 10, by_column = false },
+        },
+    }
+
+    -- Fill the 4th power-digit spacer column (col 5, rows 10..11) on WINDOW_MAP with tile 0x900C (solid details-bar
+    -- charcoal matching col 2) so no battlefield pixels peek between the element icon and the 3 power digits.
+    local map_addr = at(rom, WINDOW_MAP)
+    local map_hex: { string } = {}
+    for cell = 0, MAP_CELLS - 1 do
+        local v = if cell == 10 * 15 + 5 or cell == 11 * 15 + 5 then 0x900C else rom:u16(map_addr + 2 * cell)
+        table.insert(map_hex, string.format("%02x%02x", band(v, 0xFF), rshift(v, 8)))
+    end
+    local window_map = gba.map(bytes.hex(table.concat(map_hex)), 0, MAP_CELLS)
+
+    -- 16-family BG3 element icon strip from AUX_TILES + 0x320 (tiles 0x99..0xAC, opaque charcoal background)
+    -- plus matching 6-color slices (palette 11 indices 10..15) so saito-render draws all 16 chip families.
+    local icon_pal = palette(rom, at(rom, ICON_PALETTE))
+    local elem_six: { number } = { icon_pal[11], icon_pal[12], icon_pal[13], icon_pal[14], icon_pal[15], icon_pal[16] }
+    local element_icons: { Tiles } = {}
+    local element_colors: { { number } } = {}
+    for _, rom_el in FAMILY_TO_ROM_ELEMENT do
+        table.insert(element_icons, gba.tiles(rom, aux_addr + 0x320 + 0x80 * rom_el, 0x80))
+        table.insert(element_colors, elem_six)
+    end
+    local elements_strip = gba.join(element_icons)
 
     -- Pad each 4x3 Regular chip frame (0x180 B = 12 tiles) with 4 blank tiles to canonical 4x4 (32x32) layout.
     local blank4 = gba.tiles(bytes.hex(string.rep("00", 0x80)), 0, 0x80)
 
     return {
         layout = {
+            column_cells = 0xC2,
+            turn_limit = 0,
+            turn_limit_palette = 9,
+            name = 0x1B8,
+            art = 0x1C8,
+            code = 0x1B6,
+            element = 0x15C,
+            digits = 0x160,
+            slots = 0x166,
+            column_icons = 0x1A2,
+            name_bar = 0,
+            form_names = 0,
+            slot_blank = 1,
+            detail_blank = 7,
+            empty_palette = 9,
             ok_cursor = { x = 0x58, y = 0x70, corners = ok_corners },
+            regular = { 1, 100 },
+            column_columns = { 11, 14 },
+            column_row = 3,
+            form_names_at = { 1, 1 },
         },
         -- The window's label: CHIP SELECT over the slots (tiles 0x0F to 0x15, color 4 on 1).
         labels = { { name = "chip-select", first = 0x0F, last = 0x15, top = 3, bottom = 6, letters = { 4 } } },
         buttons = { { name = custom.ADD_BUTTON, value = add_button } },
-        window_tiles = custom.tiles(rom, WINDOW_TILES),
-        window_maps = { gba.map(rom, at(rom, WINDOW_MAP), MAP_CELLS) },
+        window_tiles = window_tiles,
+        window_maps = { window_map },
+        window_patches = window_patches,
+        column_cells = column_cells,
         frame_palettes = frame_palettes,
         icon_palette = palette(rom, at(rom, ICON_PALETTE)),
         gray_palette = palette(rom, at(rom, ICON_PALETTE) + 0x20),
@@ -191,12 +289,12 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
             ok_picked = custom.picture(rom, custom.OK_PICKED),
         },
         codes = gba.tiles(rom, at(rom, CODES), 0x40 * CODE_GLYPHS),
-        -- The 5 transparent sprite element icons (null, elec, heat, aqua, wood) start 0x1E0 B past the menu-icon base.
-        elements = gba.tiles(rom, at(rom, ELEMENTS) + 0x1E0, 0x80 * ELEMENT_COUNT),
+        elements = elements_strip,
+        element_colors = element_colors,
         -- Custom screen chip-power digits (0..9 at AUX_TILES + 0x20, '?' at AUX_TILES + 0x2E0; 0x0800EE58 tile 0x81).
         digits = gba.join({
-            gba.tiles(rom, at(rom, AUX_TILES.place) + 0x20, 0x40 * 10),
-            gba.tiles(rom, at(rom, AUX_TILES.place) + 0x2E0, 0x40),
+            gba.tiles(rom, aux_addr + 0x20, 0x40 * 10),
+            gba.tiles(rom, aux_addr + 0x2E0, 0x40),
         }),
         slot_codes = gba.tiles(rom, at(rom, SLOT_CODES), 0x40 * SLOT_CODE_GLYPHS),
         empty_icon = gba.tiles(rom, at(rom, EMPTY_ICON), 0x80),
@@ -204,11 +302,6 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         cursor = custom.tiles(rom, CURSOR),
         cursor_palette = palette(rom, at(rom, CURSOR_PALETTE)),
         regular = gba.join({ custom.tiles(rom, REGULAR_0), blank4, custom.tiles(rom, REGULAR_1), blank4 }),
-        element_sprite = {
-            x = 24,
-            y = 80,
-            palette = palette(rom, at(rom, ELEMENT_PALETTE)),
-        },
         window_emblem = window_emblem(rom),
     }
 end

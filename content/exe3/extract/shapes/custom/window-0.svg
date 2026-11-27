@@ -7,8 +7,8 @@
 <!-- Bottom right white ground around OK button and bottom edge -->
 <path d="M88 111 H118 V153 H5 V152 H113 V135 L117 131 V111 Z" fill="#f0f8f8" data-color="1" data-palette="9"/>
 <rect x="88" y="111" width="30" height="25" fill="#f0f8f8" data-color="1" data-palette="9"/>
-<!-- Chip preview frame (dark outline 9, gray border 8, transparent art hole x=8..71 y=8..79 and element hole x=8..15 y=80..95) -->
-<path fill-rule="evenodd" d="M8 7 H78 V98 H2 V80 H8 Z M8 8 H72 V80 H8 Z M8 80 H16 V96 H8 Z M24 80 H72 V96 H24 Z" fill="#282828" data-color="9" data-palette="9"/>
+<!-- Chip preview frame (dark outline 9, gray border 8, transparent art hole x=8..71 y=8..79, code x=8..15, element x=24..39, digits x=48..71) -->
+<path fill-rule="evenodd" d="M8 7 H78 V98 H2 V80 H8 Z M8 8 H72 V80 H8 Z M8 80 H16 V96 H8 Z M24 80 H40 V96 H24 Z M48 80 H72 V96 H48 Z" fill="#282828" data-color="9" data-palette="9"/>
 <path fill-rule="evenodd" d="M3 80 H8 V96 H72 V8 H77 V97 H3 Z" fill="#d8d8e0" data-color="8" data-palette="9"/>
 <!-- Main panel right drop shadow (4) and lit rim (3) -->
 <path d="M81 0 H82.414 L87 4.586 V98 H86 V5.586 L81 0.586 Z" fill="#6070c0" data-color="4" data-palette="9"/>
