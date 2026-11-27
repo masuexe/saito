@@ -216,7 +216,7 @@ pub fn format_result_summary(records: &[AbdRoundRecord], name_for: impl Fn(&str,
             parts.push(format!("{p2_name}: {}", fmt_side(&r.sides[1])));
         }
         if !parts.is_empty() {
-            lines.push(format!("R{}  {}", r.round, parts.join("  |  ")));
+            lines.push(format!("R{}  {}", r.round, parts.join("\n      ")));
         }
     }
     (header, lines)
@@ -521,11 +521,18 @@ mod tests {
         let (hdr0, lines0) = format_result_summary(&recs[..1], |_, fallback| fallback.to_string());
         assert_eq!(hdr0, "[合集]");
         assert_eq!(lines0.len(), 1);
-        assert!(lines0[0].contains("R1") && lines0[0].contains("Alice: ダークサンダー(D)×6, サーチマンSP(M)×2") && lines0[0].contains("Bob: ビッグノイズ(PA)×3"));
+        assert!(lines0[0].contains("R1") && lines0[0].contains("Alice: ダークサンダー(D)×6, サーチマンSP(M)×2") && lines0[0].contains("\n      Bob: ビッグノイズ(PA)×3"));
 
         let (hdr1, lines1) = format_result_summary(&recs[1..2], |_, fallback| fallback.to_string());
         assert_eq!(hdr1, "[NDS] 【在使用上限为5次的限制下】");
         assert_eq!(lines1.len(), 1);
         assert!(lines1[0].contains("ダークサンダー(D) 5/5"));
+
+        let (hdr_all, lines_all) = format_result_summary(&recs, |_, fallback| fallback.to_string());
+        assert_eq!(hdr_all, "[合集]");
+        assert_eq!(lines_all.len(), 3);
+        assert!(lines_all[0].starts_with("R1  "));
+        assert!(lines_all[1].starts_with("R1  "));
+        assert!(lines_all[2].starts_with("R2  "));
     }
 }

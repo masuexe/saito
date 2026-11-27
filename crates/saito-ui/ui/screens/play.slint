@@ -2749,9 +2749,19 @@ export component MatchResult inherits Rectangle {
         }
     }
 
-    if PlayView.result-abd-lines.length > 0: Rectangle {
-        property <length> card-w: Theme.phone ? root.width - 2 * Theme.margin : min(440px, root.half-width - 2 * Theme.margin);
-        property <length> card-h: min(Theme.phone ? root.height - root.half-height - Theme.margin - 64px : root.height - 96px, abd-col.preferred-height + 24px);
+    if PlayView.result-abd-lines.length > 0: abd-card := Rectangle {
+        property <length> pad-x: Theme.sideways ? 16px : Theme.margin;
+        property <length> card-w: Theme.phone ? root.width - 2 * Theme.margin : min(440px, root.half-width - 2 * self.pad-x);
+        property <length> inner-w: max(80px, self.card-w - 28px);
+        property <length> max-card-h: Theme.phone
+            ? max(120px, root.height - root.half-height - Theme.margin - 64px)
+            : Theme.sideways ? max(120px, root.height - 32px) : max(120px, root.height - 96px);
+        property <length> hdr-y: 32px;
+        property <length> body-y: self.hdr-y + abd-hdr.preferred-height + 8px;
+        property <length> content-h: abd-lines.preferred-height;
+        property <length> card-h: min(self.max-card-h, self.body-y + self.content-h + 12px);
+        property <length> body-h: max(0px, self.card-h - self.body-y - 12px);
+        property <bool> scrollable: self.content-h > self.body-h + 0.5px;
         x: Theme.phone ? Theme.margin : root.half-width + (root.half-width - self.card-w) / 2;
         y: Theme.phone ? root.half-height + 8px : (root.height - self.card-h) / 2;
         width: self.card-w;
@@ -2762,33 +2772,66 @@ export component MatchResult inherits Rectangle {
         border-radius: 6px;
         clip: true;
 
-        abd-col := VerticalLayout {
+        Label {
             x: 14px;
             y: 12px;
-            width: parent.width - 28px;
-            spacing: 6px;
+            width: parent.inner-w;
+            height: 14px;
+            text: I18n.upper(@tr("ABD Chip Usage"));
+            color: Theme.muted;
+        }
 
-            Label {
-                text: I18n.upper(@tr("ABD Chip Usage"));
-                color: Theme.muted;
-            }
+        abd-hdr := Text {
+            x: 14px;
+            y: parent.hdr-y;
+            width: parent.inner-w;
+            height: self.preferred-height;
+            text: PlayView.result-abd-header;
+            color: Theme.cursor;
+            font-family: Theme.body;
+            font-size: 13px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
 
-            Text {
-                text: PlayView.result-abd-header;
-                color: Theme.cursor;
-                font-family: Theme.body;
-                font-size: 13px;
-                font-weight: 700;
-                wrap: word-wrap;
-            }
+        abd-flick := Flickable {
+            x: 14px;
+            y: parent.body-y;
+            width: parent.inner-w;
+            height: parent.body-h;
+            content-width: parent.inner-w;
+            content-height: max(self.height, parent.content-h);
+            interactive: parent.scrollable;
+            mouse-drag-pan-enabled: true;
 
-            for line in PlayView.result-abd-lines: Text {
-                text: line;
-                color: Theme.text;
-                font-family: Theme.body;
-                font-size: Theme.handheld ? 11px : 12px;
-                wrap: word-wrap;
+            abd-lines := VerticalLayout {
+                x: 0;
+                y: 0;
+                width: abd-card.inner-w;
+                height: self.preferred-height;
+                alignment: start;
+                spacing: 6px;
+
+                for line in PlayView.result-abd-lines: Text {
+                    width: abd-card.inner-w;
+                    text: line;
+                    color: Theme.text;
+                    font-family: Theme.body;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
             }
+        }
+
+        if self.scrollable: Rectangle {
+            property <length> thumb-h: max(20px, parent.content-h > 0px ? (parent.body-h / parent.content-h) * parent.body-h : parent.body-h);
+            property <length> max-scroll: max(1px, parent.content-h - parent.body-h);
+            x: parent.width - 7px;
+            y: parent.body-y + clamp(-abd-flick.content-y / self.max-scroll, 0, 1) * max(0px, parent.body-h - self.thumb-h);
+            width: 3px;
+            height: self.thumb-h;
+            border-radius: 1.5px;
+            background: Theme.line.brighter(0.5);
         }
     }
 
