@@ -127,9 +127,11 @@ impl<'a> SpriteList<'a> {
     }
 
     /// A part kept to the columns the list keeps its parts to, and its own,
-    /// and to where the list's parts keep to.
+    /// and to where the list's parts keep to (preserving an explicit non-center
+    /// anchor such as screen-space corner sprites).
     fn clipped(&self, part: SpritePart<'a>) -> SpritePart<'a> {
-        let part = SpritePart { anchor: self.anchor, ..part };
+        let anchor = if part.anchor != crate::compose::Anchor::CENTER { part.anchor } else { self.anchor };
+        let part = SpritePart { anchor, ..part };
         let Some([a, b]) = self.clip else { return part };
         let clip = match part.clip {
             Some([c, d]) => [a.max(c), b.min(d)],
@@ -836,6 +838,50 @@ mod tests {
         list.insert_at(2, 120, vec![part(10)]);
         let order: Vec<i32> = list.into_parts().iter().map(|p| p.x).collect();
         assert_eq!(order, vec![8, 9, 3, 10, 5, 2, 1, 4]);
+    }
+
+    #[test]
+    fn sprite_list_preserves_explicit_part_anchor_and_stamps_list_anchor_on_center() {
+        use crate::compose::Anchor;
+        let tiles = Tiles { pixels: vec![0; Tiles::TILE] };
+        let make = |x: i32, anchor: Anchor| SpritePart {
+            x,
+            y: 0,
+            width: 8,
+            height: 8,
+            tiles: &tiles,
+            first_tile: 0,
+            hflip: false,
+            vflip: false,
+            palette: [0; 16],
+            priority: 2,
+            alpha: None,
+            mosaic: None,
+            vscale: None,
+            affine: None,
+            fade: None,
+            clip: None,
+            anchor,
+        };
+        let mut list = SpriteList::default();
+        list.insert_placed_group(vec![
+            (2, 0x40, make(240, Anchor::TOP_RIGHT), (0, 0)),
+            (2, 0x40, make(0, Anchor::TOP_LEFT), (0, 0)),
+            (2, 0x40, make(120, Anchor::CENTER), (0, 0)),
+        ]);
+        list.anchor = Anchor::TOP;
+        list.insert_at(0, 0, vec![make(80, Anchor::CENTER)]);
+        let parts = list.into_parts();
+        let anchors: Vec<(i32, Anchor)> = parts.iter().map(|p| (p.x, p.anchor)).collect();
+        assert_eq!(
+            anchors,
+            vec![
+                (80, Anchor::TOP),
+                (120, Anchor::CENTER),
+                (0, Anchor::TOP_LEFT),
+                (240, Anchor::TOP_RIGHT),
+            ]
+        );
     }
 
     /// A frame's sprite draw (`SpriteDraw`): a battle's caps, 0x2FF tiles

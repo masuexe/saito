@@ -488,6 +488,9 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
     let mut sol_sun = sprite::sheet(shl00, SOL_SUN_SPRITE.0, SOL_SUN_SPRITE.1)
         .ok_or_else(|| Error(format!("failed to decode {PATH_SHL00}")))?;
     mask_sheet_palettes(&mut sol_sun);
+    // EXE5DS `shl00.bin` is sized for the 256x192 DS top screen (112x72); scale uniformly to 70%
+    // (78x50, anchored to the top-right corner) so GBA 240x160 battle clearance matches NDS.
+    scale_sol_sun_sprite(&mut sol_sun, 7, 10);
 
     let pix = fs
         .read_file_or_find(PATH_KOKORO_PIX, "kokoro_pix.bin")
@@ -713,6 +716,172 @@ fn remap_danger_palette(pal: Palette) -> Palette {
         out[i] = nr | (ng << 5) | (nb << 10);
     }
     out
+}
+
+/// Uniformly downscale a top-right corner `sol-sun` sprite sheet by `num / den`
+/// (nearest-neighbor in indexed 4bpp color space, preserving the original palette
+/// and pinning the scaled pixels flush against the sprite's top-right edge).
+fn scale_sol_sun_sprite(sheet: &mut SpriteSheet, num: usize, den: usize) {
+    if num == 0 || den == 0 || num == den {
+        return;
+    }
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+    for list in &sheet.part_lists {
+        for p in list {
+            min_x = min_x.min(p.x as i32);
+            min_y = min_y.min(p.y as i32);
+            max_x = max_x.max(p.x as i32 + p.width as i32);
+            max_y = max_y.max(p.y as i32 + p.height as i32);
+        }
+    }
+    if min_x >= max_x || min_y >= max_y {
+        return;
+    }
+    let src_w = (max_x - min_x) as usize;
+    let src_h = (max_y - min_y) as usize;
+    let dst_w = ((src_w * num + den / 2) / den).max(1);
+    let dst_h = ((src_h * num + den / 2) / den).max(1);
+    let grid_w = dst_w.div_ceil(8) * 8;
+    let grid_h = dst_h.div_ceil(8) * 8;
+    let pad_x = grid_w - dst_w;
+
+    // Decompose a multiple-of-8 span into valid GBA OAM dimensions (32, 16, 8).
+    fn chunk_oam(mut total: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        for sz in [32usize, 16, 8] {
+            while total >= sz {
+                out.push(sz);
+                total -= sz;
+            }
+        }
+        out
+    }
+    let col_chunks = chunk_oam(grid_w);
+    let row_chunks = chunk_oam(grid_h);
+
+    let mut new_tilesets: Vec<Tiles> = Vec::new();
+    let mut new_part_lists: Vec<Vec<SpritePart>> = Vec::new();
+    let mut cache: std::collections::HashMap<(u16, u16), (u16, u16)> = std::collections::HashMap::new();
+
+    for anim in &mut sheet.animations {
+        for frame in anim.iter_mut() {
+            let key = (frame.tileset, frame.parts);
+            if let Some(&(t_idx, p_idx)) = cache.get(&key) {
+                frame.tileset = t_idx;
+                frame.parts = p_idx;
+                continue;
+            }
+            let mut src = vec![0u8; src_w * src_h];
+            if let (Some(tiles), Some(parts)) = (
+                sheet.tilesets.get(frame.tileset as usize),
+                sheet.part_lists.get(frame.parts as usize),
+            ) {
+                // Draw back-to-front so earlier OAM parts take priority on overlap.
+                for part in parts.iter().rev() {
+                    let pw = part.width as usize;
+                    let ph = part.height as usize;
+                    let tw = pw / 8;
+                    for py in 0..ph {
+                        let sy = if part.vflip { ph - 1 - py } else { py };
+                        for px in 0..pw {
+                            let sx = if part.hflip { pw - 1 - px } else { px };
+                            let ti = part.tile as usize + (sy / 8) * tw + (sx / 8);
+                            let ci = tiles.get(ti).map_or(0, |t| t[(sy % 8) * 8 + (sx % 8)]);
+                            if ci == 0 {
+                                continue;
+                            }
+                            let gx = part.x as i32 + px as i32 - min_x;
+                            let gy = part.y as i32 + py as i32 - min_y;
+                            if gx >= 0 && gy >= 0 && (gx as usize) < src_w && (gy as usize) < src_h {
+                                src[gy as usize * src_w + gx as usize] = ci;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut dst = vec![0u8; grid_w * grid_h];
+            for dy in 0..dst_h {
+                let sy = (((2 * dy + 1) * src_h) / (2 * dst_h)).min(src_h - 1);
+                for dx in 0..dst_w {
+                    let sx = (((2 * dx + 1) * src_w) / (2 * dst_w)).min(src_w - 1);
+                    dst[dy * grid_w + (pad_x + dx)] = src[sy * src_w + sx];
+                }
+            }
+
+            let mut pixels: Vec<u8> = Vec::new();
+            let mut parts_out: Vec<SpritePart> = Vec::new();
+            let mut y_off = 0usize;
+            for &ch in &row_chunks {
+                let mut right_off = 0usize;
+                for &cw in &col_chunks {
+                    let x_start = grid_w - right_off - cw;
+                    let mut has_ink = false;
+                    'scan: for py in 0..ch {
+                        for px in 0..cw {
+                            if dst[(y_off + py) * grid_w + (x_start + px)] != 0 {
+                                has_ink = true;
+                                break 'scan;
+                            }
+                        }
+                    }
+                    if has_ink {
+                        let first_tile = (pixels.len() / Tiles::TILE) as u16;
+                        for ty in 0..(ch / 8) {
+                            for tx in 0..(cw / 8) {
+                                for py in 0..8 {
+                                    for px in 0..8 {
+                                        let gy = y_off + ty * 8 + py;
+                                        let gx = x_start + tx * 8 + px;
+                                        pixels.push(dst[gy * grid_w + gx]);
+                                    }
+                                }
+                            }
+                        }
+                        parts_out.push(SpritePart {
+                            tile: first_tile,
+                            x: (max_x - (right_off + cw) as i32) as i8,
+                            y: (min_y + y_off as i32) as i8,
+                            width: cw as u8,
+                            height: ch as u8,
+                            hflip: false,
+                            vflip: false,
+                            palette: 0,
+                        });
+                    }
+                    right_off += cw;
+                }
+                y_off += ch;
+            }
+            if parts_out.is_empty() {
+                pixels.resize(Tiles::TILE, 0);
+                parts_out.push(SpritePart {
+                    tile: 0,
+                    x: (max_x - 8) as i8,
+                    y: min_y as i8,
+                    width: 8,
+                    height: 8,
+                    hflip: false,
+                    vflip: false,
+                    palette: 0,
+                });
+            }
+
+            let t_idx = new_tilesets.len() as u16;
+            let p_idx = new_part_lists.len() as u16;
+            new_tilesets.push(Tiles { pixels });
+            new_part_lists.push(parts_out);
+            cache.insert(key, (t_idx, p_idx));
+            frame.tileset = t_idx;
+            frame.parts = p_idx;
+        }
+    }
+
+    sheet.tilesets = new_tilesets;
+    sheet.part_lists = new_part_lists;
 }
 
 /// Synthesize a clean 64x32 golden corner sun sprite sheet (`10-00`) anchored
@@ -1106,10 +1275,17 @@ mod tests {
         assert_eq!(arm.animations.len(), 15);
         assert!(!arm.animations[SOLCROSS_BUSTER_ARM_ANIM].is_empty());
 
-        // shl00.bin -> 10-00 (1 anim, 30 frames)
+        // shl00.bin -> 10-00 (1 anim, 30 frames, scaled to 70% = 78x50 inside [-80..0, 0..56])
         let sun = bundle.sprite(0x10, 0x00).expect("DS sol-sun");
         assert_eq!(sun.animations.len(), 1);
         assert_eq!(sun.animations[0].len(), 30);
+        for parts in &sun.part_lists {
+            assert!(!parts.is_empty());
+            for p in parts {
+                assert!(p.x >= -80 && p.x as i32 + p.width as i32 <= 0, "scaled sun x out of [-80, 0]: {p:?}");
+                assert!(p.y >= 0 && p.y as i32 + p.height as i32 <= 56, "scaled sun y out of [0, 56]: {p:?}");
+            }
+        }
 
         // Mugshots 0x27..=0x2F (including Colonel BassCross Danger 0x2e using non-zero pal 23!)
         assert_eq!(bundle.hud.mugshots.len(), 0x30);
@@ -1146,5 +1322,60 @@ mod tests {
                 set_exe5ds_rom_path(Some(p));
             }
         }
+    }
+
+    #[test]
+    fn scale_sol_sun_sprite_downscales_to_70_percent_flush_top_right() {
+        // Synthetic 112x72 top-right sun sprite: solid fill in [-112, 0) x [0, 72)
+        let mut tiles = Tiles { pixels: vec![3u8; 16 * Tiles::TILE] };
+        // Mark the very top-right pixel with color 5 so we can verify top-right alignment.
+        tiles.pixels[7] = 5;
+        let parts = vec![
+            SpritePart { tile: 0, x: -32, y: 0, width: 32, height: 32, hflip: false, vflip: false, palette: 0 },
+            SpritePart { tile: 0, x: -112, y: 0, width: 32, height: 32, hflip: false, vflip: false, palette: 0 },
+            SpritePart { tile: 0, x: -32, y: 40, width: 32, height: 32, hflip: false, vflip: false, palette: 0 },
+        ];
+        let mut sheet = SpriteSheet {
+            category: SOL_SUN_SPRITE.0,
+            index: SOL_SUN_SPRITE.1,
+            tilesets: vec![tiles],
+            palette_sets: vec![vec![[0x7FFF; 16]]],
+            part_lists: vec![parts],
+            animations: vec![vec![SpriteFrame {
+                tileset: 0,
+                palette_set: 0,
+                parts: 0,
+                duration: 10,
+                flags: FRAME_LAST | FRAME_LOOP,
+            }]],
+        };
+        scale_sol_sun_sprite(&mut sheet, 7, 10);
+        assert_eq!(sheet.animations[0].len(), 1);
+        assert_eq!(sheet.animations[0][0].duration, 10);
+        let scaled_parts = &sheet.part_lists[sheet.animations[0][0].parts as usize];
+        let scaled_tiles = &sheet.tilesets[sheet.animations[0][0].tileset as usize];
+        // Reconstruct pixel bounding box of non-zero ink
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+        for p in scaled_parts {
+            assert!(p.x >= -80 && p.x as i32 + p.width as i32 <= 0);
+            assert!(p.y >= 0 && p.y as i32 + p.height as i32 <= 56);
+            let tw = (p.width / 8) as usize;
+            for py in 0..p.height as usize {
+                for px in 0..p.width as usize {
+                    let ti = p.tile as usize + (py / 8) * tw + (px / 8);
+                    let ci = scaled_tiles.get(ti).unwrap()[(py % 8) * 8 + (px % 8)];
+                    if ci != 0 {
+                        let gx = p.x as i32 + px as i32;
+                        let gy = p.y as i32 + py as i32;
+                        min_x = min_x.min(gx);
+                        max_x = max_x.max(gx + 1);
+                        min_y = min_y.min(gy);
+                        max_y = max_y.max(gy + 1);
+                    }
+                }
+            }
+        }
+        assert_eq!((min_x, max_x), (-78, 0), "70% of 112px wide must sit flush in [-78, 0)");
+        assert_eq!((min_y, max_y), (0, 50), "70% of 72px tall must sit flush in [0, 50)");
     }
 }
