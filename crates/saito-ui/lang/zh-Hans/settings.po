@@ -502,3 +502,21 @@ msgstr "下一首"
 msgctxt "music"
 msgid "Open"
 msgstr "打开"
+
+msgid "UI theme"
+msgstr "界面主题"
+
+msgid "Switch built-in styles or installed .saitotheme plugins."
+msgstr "切换内置风格或已安装的 .saitotheme 主题插件。"
+
+msgid "HD PET"
+msgstr "高清 PET"
+
+msgid "Modern terminal"
+msgstr "现代终端"
+
+msgid "Import theme"
+msgstr "导入主题"
+
+msgid "Import a .saitotheme file."
+msgstr "导入 .saitotheme 主题包文件。"

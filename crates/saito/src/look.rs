@@ -1,27 +1,16 @@
-//! The selected game's look (docs/app.md §10): the theme's colors and the ground behind the menus, as each game's
-//! content states them (its look.toml: `saito_content::look`). Every game's look is read at start-up from the
-//! content alone, as the games' names are, so the menus are in the selected game's look before it is loaded, and
-//! read again when the game's content changes (a game whose content was downloaded after start-up, or a newer
-//! revision of it); a game whose content states none, or one that can't be read (the log says why), has the app's
-//! own look, the theme's as the UI starts.
+//! The selected game's look (docs/app.md §10; docs/design/ui-themes.md): the theme's colors, PET/terminal
+//! style flag, optional custom backdrop/fonts, and the ground behind the menus.
 //!
-//! A change of game is two motions over the theme's `settle`. The new game's ground sweeps across the window from
-//! the side its arrow was pressed on, over the one before (`Shell.grounds`, the last on top: each ground runs its
-//! own sweep from its creation, at the frame after the press, and those under it are dropped once it is done), and
-//! the theme's colors cross-fade from the ones shown to the new game's (`Theme.fade`, moved here a frame at a time,
-//! eased as the sweep is). A
-//! second change while one runs starts at once from what is shown: a third ground sweeps over the two, and the
-//! colors fade on from where they were. Nothing waits on either, and neither changes a size. With motion off, the
-//! new look is there at once.
-//!
-//! The patterns' paths ([`patterns`]) are drawn here for the window's size, on the tiles `GroundLayer` moves them
-//! by: once for a size, never a frame at a time.
+//! Driven by the active theme (`crate::themes::ResolvedTheme`: built-in `pet-hd`, built-in `terminal` which
+//! reads each game's `content/<game>/look.toml`, or any user `.saitotheme` plugin). Switching themes updates
+//! `Theme` immediately without restarting; switching games sweeps the new game's ground across the window and
+//! cross-fades the colors over `Theme.settle`.
 
-use saito_ui::{AppWindow, Ground, Look, PatternKind, PatternPaths, Theme};
-use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
+use saito_ui::{AppWindow, Ground, Look, PatternPaths, Theme};
+use slint::{Color, ComponentHandle, Image, Model, ModelRc, VecModel};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 use web_time::Instant;
@@ -33,13 +22,12 @@ const MOST_GROUNDS: usize = 4;
 /// frame its clock starts in.
 const SWEPT: Duration = Duration::from_millis(60);
 
-/// The looks, and the change under way.
+/// The looks, active UI theme, and any game-change transition under way.
 pub struct Looks {
-    /// Each game's look, by its id, with the content directory it was read from (none: the content states none, or
-    /// it couldn't be read).
-    by_game: HashMap<String, (PathBuf, Option<Look>)>,
-    /// The app's own look: the theme's as the UI starts.
-    plain: Look,
+    /// Content `look.toml` reads per game (for the built-in `terminal` theme and plugins extending it).
+    content_by_game: HashMap<String, (PathBuf, Option<Look>)>,
+    /// The active resolved theme.
+    active: crate::themes::ResolvedTheme,
     /// The look shown, or being changed to.
     target: Look,
     /// The colors' cross-fade under way: since when.
@@ -52,37 +40,59 @@ pub struct Looks {
 }
 
 impl Looks {
-    /// Every game's look in `games`, read from each one's content (`crate::contents`); the window shows the app's
-    /// own until a game is shown ([`Looks::show`]).
-    pub fn new<'g>(ui: &AppWindow, games: impl IntoIterator<Item = &'g str>) -> Looks {
-        let mut by_game = HashMap::new();
+    /// Load every game's content look and activate `theme_id` (defaulting to `pet-hd` if unknown).
+    pub fn new<'g>(ui: &AppWindow, games: impl IntoIterator<Item = &'g str>, theme_id: &str) -> Looks {
+        let mut content_by_game = HashMap::new();
         for game in games {
             if let Some(dir) = crate::contents::dir(game) {
-                let look = read(&dir, game);
-                by_game.insert(game.to_string(), (dir, look));
+                let look = read_content(&dir, game);
+                content_by_game.insert(game.to_string(), (dir, look));
             }
         }
-        let plain = ui.global::<Theme>().get_look();
+        let terminal_games = terminal_map(&content_by_game);
+        let active = crate::themes::resolve_in(&crate::paths::themes(), theme_id, &terminal_games);
+        apply_theme_globals(ui, &active);
+        let plain = active.default_look.clone();
+        let theme = ui.global::<Theme>();
+        theme.set_was(plain.clone());
+        theme.set_look(plain.clone());
+        theme.set_fade(1.0);
         let grounds = Rc::new(VecModel::from(vec![Ground { look: plain.clone(), from: 0 }]));
         ui.global::<saito_ui::Shell>().set_grounds(ModelRc::from(grounds.clone()));
-        Looks { by_game, target: plain.clone(), plain, fading: None, coming: None, grounds, came: vec![Instant::now()] }
+        Looks { content_by_game, active, target: plain, fading: None, coming: None, grounds, came: vec![Instant::now()] }
+    }
+
+    /// Hot-switch the active UI theme and immediately re-apply `current_game`'s look.
+    pub fn set_theme(&mut self, ui: &AppWindow, theme_id: &str, current_game: Option<&str>) {
+        let terminal_games = terminal_map(&self.content_by_game);
+        self.active = crate::themes::resolve_in(&crate::paths::themes(), theme_id, &terminal_games);
+        apply_theme_globals(ui, &self.active);
+        let look = self.look_of_opt(current_game);
+        let theme = ui.global::<Theme>();
+        theme.set_was(look.clone());
+        theme.set_look(look.clone());
+        theme.set_fade(1.0);
+        self.target = look.clone();
+        self.fading = None;
+        self.coming = None;
+        self.grounds.set_vec(vec![Ground { look, from: 0 }]);
+        self.came = vec![Instant::now()];
+    }
+
+    /// The active theme's resolved ID.
+    pub fn theme_id(&self) -> &str {
+        &self.active.id
     }
 
     /// Show game `game`'s look, its ground sweeping in from side `from` (-1 the left, 1 the right); `from` 0, or
     /// motion turned off, and it is there at once.
-    ///
-    /// The sweep and the colors' fade start at the next frame ([`Looks::frame`]), not here: what the change of game
-    /// does besides (the screen shown again for the new game, the menu's reel starting its demo) holds the window
-    /// for a tenth of a second or so after the press, and a clock started now would have run most of its way before
-    /// a frame of it was drawn. Until that frame the colors are the ones shown.
     pub fn show(&mut self, ui: &AppWindow, game: Option<&str>, from: i32) {
-        let look = game.and_then(|g| self.look_of(g)).unwrap_or_else(|| self.plain.clone());
+        let look = self.look_of_opt(game);
         if look == self.target {
             return;
         }
         let theme = ui.global::<Theme>();
         let at_once = from == 0 || theme.get_settle() <= 0;
-        // (From the colors as they are shown now: the last change's, part of the way.)
         let shown = blend(&theme.get_look(), &theme.get_was(), theme.get_fade());
         theme.set_was(shown);
         theme.set_look(look.clone());
@@ -98,8 +108,7 @@ impl Looks {
         }
     }
 
-    /// A frame at `now`, before it is drawn: a change's ground comes in (its sweep's clock starting at this frame)
-    /// and its colors start to fade, the colors a step further, and the grounds the last has covered dropped.
+    /// A frame at `now`, before it is drawn: a change's ground comes in and its colors fade.
     pub fn frame(&mut self, ui: &AppWindow, now: Instant) {
         let theme = ui.global::<Theme>();
         let settle = Duration::from_millis(theme.get_settle().max(0) as u64);
@@ -114,7 +123,6 @@ impl Looks {
         }
         if let Some(at) = self.fading {
             let linear = if settle.is_zero() { 1.0 } else { (now.saturating_duration_since(at).as_secs_f32() / settle.as_secs_f32()).min(1.0) };
-            // (Eased out, as the sweep's clock is: `Tween`'s `t`.)
             theme.set_fade(1.0 - (1.0 - linear).powi(3));
             if linear >= 1.0 {
                 self.fading = None;
@@ -133,60 +141,47 @@ impl Looks {
     pub fn grounds(&self) -> usize {
         self.grounds.row_count()
     }
-}
 
-/// A look of the content's, as the theme takes it.
-impl Looks {
-    /// Game `game`'s look, from the content it has now: read again when that isn't what it was read from.
-    fn look_of(&mut self, game: &str) -> Option<Look> {
-        let dir = crate::contents::dir(game)?;
-        if self.by_game.get(game).is_none_or(|(read_from, _)| *read_from != dir) {
-            let look = read(&dir, game);
-            self.by_game.insert(game.to_string(), (dir, look));
+    fn look_of_opt(&mut self, game: Option<&str>) -> Look {
+        let Some(game) = game else {
+            return self.active.default_look.clone();
+        };
+        // Refresh content `look.toml` if a game's content folder changed on disk.
+        if let Some(dir) = crate::contents::dir(game)
+            && self.content_by_game.get(game).is_none_or(|(read_from, _)| *read_from != dir)
+        {
+            let look = read_content(&dir, game);
+            self.content_by_game.insert(game.to_string(), (dir, look));
+            if self.active.id == crate::themes::TERMINAL_THEME {
+                let terminal_games = terminal_map(&self.content_by_game);
+                self.active = crate::themes::resolve_in(&crate::paths::themes(), &self.active.id, &terminal_games);
+            }
         }
-        self.by_game.get(game)?.1.clone()
+        self.active.games.get(game).cloned().unwrap_or_else(|| self.active.default_look.clone())
     }
 }
 
-/// Game `game`'s look in content directory `dir`: none where it states none, or can't be read (said in the log).
-fn read(dir: &Path, game: &str) -> Option<Look> {
+fn apply_theme_globals(ui: &AppWindow, active: &crate::themes::ResolvedTheme) {
+    let theme = ui.global::<Theme>();
+    theme.set_pet(active.pet);
+    theme.set_backdrop_image(active.assets.backdrop_image.clone().unwrap_or_else(Image::default));
+    theme.set_backdrop_image_opacity(if active.assets.backdrop_image.is_some() { active.assets.backdrop_image_opacity } else { 0.0 });
+    theme.set_custom_display_font(active.assets.display_font.as_deref().unwrap_or("").into());
+    theme.set_custom_body_font(active.assets.body_font.as_deref().unwrap_or("").into());
+    theme.set_custom_mono_font(active.assets.mono_font.as_deref().unwrap_or("").into());
+}
+
+fn terminal_map(by_game: &HashMap<String, (PathBuf, Option<Look>)>) -> HashMap<String, Look> {
+    by_game.iter().filter_map(|(g, (_, l))| l.as_ref().map(|look| (g.clone(), look.clone()))).collect()
+}
+
+fn read_content(dir: &Path, game: &str) -> Option<Look> {
     match saito_content::look::of(dir, game) {
-        Ok(look) => look.as_ref().map(of),
+        Ok(look) => look.as_ref().map(crate::themes::terminal_look_from_content),
         Err(why) => {
             crate::errors::log(&format!("reading {game}'s look"), &why);
             None
         }
-    }
-}
-
-fn of(look: &saito_content::look::Look) -> Look {
-    use saito_content::look::{PatternKind as Kind, Rgb, Strength};
-    let rgb = |c: Rgb| {
-        let [r, g, b] = c.channels();
-        Color::from_rgb_u8(r, g, b)
-    };
-    let with = |c: Rgb, s: Strength| rgb(c).with_alpha(s.0);
-    Look {
-        ground_top: rgb(look.ground_top),
-        ground_bottom: rgb(look.ground_bottom),
-        ground_glow: with(look.glow, look.glow_strength),
-        panel: rgb(look.panel),
-        raised: rgb(look.raised),
-        line: rgb(look.line),
-        inset: rgb(look.inset),
-        text: rgb(look.text),
-        muted: rgb(look.muted),
-        dim: rgb(look.dim),
-        cursor: rgb(look.cursor),
-        action: rgb(look.action),
-        action_ink: rgb(look.action_ink),
-        pattern: match look.pattern.kind {
-            Kind::Hexagons => PatternKind::Hexagons,
-            Kind::IsometricGrid => PatternKind::IsometricGrid,
-            Kind::Starfield => PatternKind::Starfield,
-        },
-        pattern_color: rgb(look.pattern.color),
-        pattern_strength: look.pattern.strength.0,
     }
 }
 
@@ -209,18 +204,27 @@ fn blend(new: &Look, old: &Look, fade: f32) -> Look {
         cursor: mix(new.cursor, old.cursor),
         action: mix(new.action, old.action),
         action_ink: mix(new.action_ink, old.action_ink),
+        frame_stroke: mix(new.frame_stroke, old.frame_stroke),
+        btn_shadow: mix(new.btn_shadow, old.btn_shadow),
+        active_top: mix(new.active_top, old.active_top),
+        active_bot: mix(new.active_bot, old.active_bot),
+        active_border: mix(new.active_border, old.active_border),
+        active_shadow: mix(new.active_shadow, old.active_shadow),
+        slot_bg: mix(new.slot_bg, old.slot_bg),
+        slot_border: mix(new.slot_border, old.slot_border),
+        bar_start: mix(new.bar_start, old.bar_start),
+        bar_end: mix(new.bar_end, old.bar_end),
         ..new.clone()
     }
 }
 
 // ---- The patterns' paths ------------------------------------------------------------------------------------
 
-/// The tiles the patterns repeat in, in units (as `GroundLayer` has them): a hexagon and the stem to the one
-/// under it; the grid's lines, 46 apart at 30 degrees each way, which repeat every 46 / sin 30° across and
-/// 46 / cos 30° down; the starfield's three lattices of dots, four, three and two to a tile each way.
 const HEXAGON_TILE: (f32, f32) = (42.0, 72.75);
 const GRID_TILE: (f32, f32) = (92.0, 53.116);
 const STAR_TILE: (f32, f32) = (292.0, 244.0);
+/// Clean 45-degree PET diagonal grid tile (44×44 logical units).
+const PET_GRID_TILE: (f32, f32) = (44.0, 44.0);
 
 /// Every pattern's paths over a window of `width` by `height` units and a tile more each way.
 pub fn patterns(width: i32, height: i32) -> PatternPaths {
@@ -228,10 +232,25 @@ pub fn patterns(width: i32, height: i32) -> PatternPaths {
     PatternPaths {
         hexagons: hexagons(width, height).into(),
         isometric_grid: isometric_grid(width, height).into(),
+        pet_grid: pet_grid(width, height).into(),
         stars: stars.into(),
         far_stars: far_stars.into(),
         bright_stars: bright_stars.into(),
     }
+}
+
+/// Crisp 45-degree diagonal PET grid: repeats seamlessly on `PET_GRID_TILE` (44×44).
+fn pet_grid(width: i32, height: i32) -> String {
+    let (w, h) = (width as f32 + PET_GRID_TILE.0, height as f32 + PET_GRID_TILE.1);
+    let step = PET_GRID_TILE.0;
+    let lines = ((w + h) / step).ceil() as i32;
+    let mut path = String::new();
+    for k in 0..=lines {
+        let d = k as f32 * step;
+        // Falling 45° (x - y = const) and rising 45° (x + y = const) across the bounding box.
+        let _ = write!(path, "M0 {:.1}L{w:.1} {:.1}M0 {:.1}L{w:.1} {:.1}", d - w, d, d, d - w);
+    }
+    path
 }
 
 /// The field of hexagons: each tile holds one hexagon and the stem to the one under it, and draws the edges its
@@ -242,7 +261,6 @@ fn hexagons(width: i32, height: i32) -> String {
     for row in 0..rows {
         for column in 0..columns {
             let (x, y) = (column as f32 * HEXAGON_TILE.0, row as f32 * HEXAGON_TILE.1);
-            // The left edge up to the top and down the right shoulder; the two lower edges; the stem.
             let _ = write!(
                 path,
                 "M{:.2} {:.2}V{:.2}L{:.2} {:.2}L{:.2} {:.2}M{:.2} {:.2}L{:.2} {:.2}L{:.2} {:.2}M{:.2} {:.2}V{:.2}",
@@ -268,24 +286,20 @@ fn hexagons(width: i32, height: i32) -> String {
     path
 }
 
-/// The isometric grid: lines falling and rising at 30 degrees, from the left edge to the right of the area (the
-/// path clips what is past its bottom and top).
+/// The isometric grid: lines falling and rising at 30 degrees.
 fn isometric_grid(width: i32, height: i32) -> String {
     let (w, h) = (width as f32 + GRID_TILE.0, height as f32 + GRID_TILE.1);
-    // (Across the area a line at 30 degrees falls or rises this far.)
     let drop = w * 30f32.to_radians().tan();
     let lines = ((h + drop) / GRID_TILE.1).ceil() as i32;
     let mut path = String::new();
     for k in 0..=lines {
         let at = k as f32 * GRID_TILE.1;
-        // Falling, from the left edge at `at - drop` to the right edge at `at`; rising, from `at` to `at - drop`.
         let _ = write!(path, "M0 {:.2}L{w:.2} {:.2}M0 {:.2}L{w:.2} {:.2}", at - drop, at, at, at - drop);
     }
     path
 }
 
-/// The starfield's three layers, each a lattice of dots: the white ones (four to a tile each way), the fainter
-/// white ones (three, offset), and the brighter ones in the pattern's color, a little larger (two, offset).
+/// The starfield's three layers, each a lattice of dots.
 fn starfield(width: i32, height: i32) -> [String; 3] {
     let (w, h) = (width as f32 + STAR_TILE.0, height as f32 + STAR_TILE.1);
     let layer = |per_tile: f32, offset: (f32, f32), radius: f32| {
@@ -295,7 +309,6 @@ fn starfield(width: i32, height: i32) -> [String; 3] {
         while y < h {
             let mut x = offset.0;
             while x < w {
-                // A circle: two half arcs.
                 let _ = write!(path, "M{:.2} {y:.2}a{radius} {radius} 0 1 0 {d} 0a{radius} {radius} 0 1 0 -{d} 0Z", x - radius, d = radius * 2.0);
                 x += step.0;
             }
@@ -309,18 +322,17 @@ fn starfield(width: i32, height: i32) -> [String; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use saito_ui::PatternKind;
 
-    /// Each pattern's path covers the window and a tile more each way, and repeats on its tile: shifted by one, a
-    /// mark lands on another (so the ground can move by less than a tile and never shows its edge).
     #[test]
     fn the_patterns_cover_the_window_and_repeat_on_their_tiles() {
-        // The isometric grid: each line falls (or rises) one tile's height across one tile's width.
         assert!((GRID_TILE.0 * 30f32.to_radians().tan() - GRID_TILE.1).abs() < 0.01);
         assert!((GRID_TILE.1 * 30f32.to_radians().cos() - 46.0).abs() < 0.01, "the lines are 46 apart");
         let grid = isometric_grid(1280, 800);
         let moves = grid.matches('M').count();
         assert!(moves >= 2 * ((800.0 + 53.116 + 1372.0 * 0.5774) / 53.116) as usize, "{moves} lines");
-        // The starfield: each lattice's step divides the tile, and the dots reach past the window by a tile.
+        let pet = pet_grid(1280, 800);
+        assert!(pet.matches('M').count() >= 80);
         let [stars, far, bright] = starfield(1280, 800);
         for (layer, per_tile) in [(&stars, 4.0), (&far, 3.0), (&bright, 2.0)] {
             let step = STAR_TILE.0 / per_tile;
@@ -329,18 +341,14 @@ mod tests {
             let across = ((1280.0 + STAR_TILE.0) / step).floor() as usize;
             assert!(dots >= across * ((800.0 + STAR_TILE.1) / (STAR_TILE.1 / per_tile)).floor() as usize, "{dots} dots");
         }
-        // The hexagons as they were.
         assert!(hexagons(1280, 800).starts_with("M0.00 36.38V12.12L21.00 0.00L42.00 12.12"));
     }
 
-    /// A blend all the way is the new look; part of the way, its colors are between the two, and the rest is the
-    /// new look's.
-    /// Every game's content states its look, and it reads: the menus show each game's own.
     #[test]
     fn each_game_reads_its_look_from_its_content() {
         for game in ["exe4", "exe5", "exe6"] {
             let dir = crate::contents::dir(game).unwrap_or_else(|| panic!("{game} has no content"));
-            assert!(read(&dir, game).is_some(), "{game}'s look");
+            assert!(read_content(&dir, game).is_some(), "{game}'s look");
         }
     }
 
@@ -348,11 +356,14 @@ mod tests {
     fn a_look_blends_from_the_one_before() {
         let mut old = Look { pattern: PatternKind::Hexagons, ..Default::default() };
         old.panel = Color::from_rgb_u8(0, 0, 0);
+        old.frame_stroke = Color::from_rgb_u8(0, 0, 0);
         let mut new = Look { pattern: PatternKind::Starfield, pattern_strength: 0.22, ..Default::default() };
         new.panel = Color::from_rgb_u8(200, 100, 0);
+        new.frame_stroke = Color::from_rgb_u8(100, 200, 50);
         assert_eq!(blend(&new, &old, 1.0), new);
         let half = blend(&new, &old, 0.5);
         assert_eq!((half.panel.red(), half.panel.green(), half.panel.blue()), (100, 50, 0));
+        assert_eq!((half.frame_stroke.red(), half.frame_stroke.green(), half.frame_stroke.blue()), (50, 100, 25));
         assert_eq!((half.pattern, half.pattern_strength), (PatternKind::Starfield, 0.22));
     }
 }

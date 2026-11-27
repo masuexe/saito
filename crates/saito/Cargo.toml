@@ -59,8 +59,10 @@ icu_locale_core = "2"
 icu_list = "2"
 # The log's and a replay's times in the local time.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-# The screenshot pass's pictures (the `tour` feature's).
-png = { version = "0.17", optional = true }
+# PNG decoding/encoding for `.saitotheme` custom backdrop images and the screenshot pass (`tour`).
+png = "0.17"
+# `.saitotheme` ZIP archive support (same crate/features as `saito-extract`).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # A replay's video: its errors are worded here (`errors.rs`); the Replays screen runs the export.
 saito-video = { path = "../saito-video" }
 # A replay's file: what its head names (the Replays screen's list) and its writer (the screenshot pass's replays).
@@ -165,7 +167,7 @@ libc = "0.2"
 # encoder, and saito-signaling's signaling server in the process, which Play's second player meets the first
 # through (`screens/play/tour.rs`). A player's build has none of it: `cargo run -p saito --features tour`. The tests
 # compile the pass whatever the features (the same two dependencies are the tests' below).
-tour = ["dep:png", "saito-signaling/testing"]
+tour = ["saito-signaling/testing"]
 # The practice dummy that fights: its Action "Fights" and its Level, played by the trained network
 # (docs/design/training-ai.md §10), downloaded from the saito-ai repository when Fights is first picked (or
 # `SAITO_AI_WEIGHTS`'s file). Off by default: a build without it offers the dummy's other Actions alone.

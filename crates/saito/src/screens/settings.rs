@@ -9,6 +9,7 @@
 mod about;
 mod music;
 
+use crate::errors::UserError;
 use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
 use crate::settings::{DEFAULT_SIGNAL_SERVER, FavoriteBgmMode, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
@@ -77,7 +78,7 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
+        "set.picture" | "set.ui-theme" | "set.ui-theme-import" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
         "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.music-library" | "set.favorite-bgm" | "set.menu-bgm" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
@@ -116,6 +117,49 @@ fn size_label(size: u32) -> String {
     format!("{size}× ({} × {})", 240 * size, 160 * size)
 }
 
+fn available_themes(shell: &Shell) -> Vec<crate::themes::ThemeSummary> {
+    let ui = shell.ui();
+    let view = ui.global::<SettingsView>();
+    let pet_name: String = view.get_theme_pet_hd().into();
+    let term_name: String = view.get_theme_terminal().into();
+    crate::themes::discover_in(&crate::paths::themes(), &pet_name, &term_name)
+}
+
+fn theme_label(shell: &Shell) -> String {
+    let active = shell.looks.theme_id();
+    available_themes(shell)
+        .into_iter()
+        .find(|t| t.id == active)
+        .map(|t| t.name)
+        .unwrap_or_else(|| active.to_string())
+}
+
+fn pick_ui_theme(shell: &mut Shell, id: &str) {
+    let list = available_themes(shell);
+    let active = shell.looks.theme_id();
+    let chosen = list.iter().position(|t| t.id == active).unwrap_or(0);
+    let options: Vec<String> = list.into_iter().map(|t| t.name).collect();
+    shell.pick(id, 0, options, chosen);
+}
+
+fn step_ui_theme(shell: &mut Shell, by: i32) {
+    let list = available_themes(shell);
+    if list.is_empty() {
+        return;
+    }
+    let active = shell.looks.theme_id();
+    let at = list.iter().position(|t| t.id == active).unwrap_or(0) as i32;
+    let next = (at + by).rem_euclid(list.len() as i32) as usize;
+    shell.set_ui_theme(&list[next].id);
+}
+
+fn choose_ui_theme(shell: &mut Shell, choice: i32) {
+    let list = available_themes(shell);
+    if let Some(theme) = list.get(choice.max(0) as usize) {
+        shell.set_ui_theme(&theme.id);
+    }
+}
+
 /// What the settings' controls show of the settings (`SettingsView`), and the bindings as `binding` asks.
 pub fn show_values(shell: &Shell, binding: &Binding) {
     let ui = shell.ui();
@@ -123,6 +167,8 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     let s = &shell.settings;
     view.set_name(s.name.as_str().into());
     view.set_language(crate::lang::name(shell.i18n.code).into());
+    view.set_custom_themes_allowed(shell.custom_themes_allowed);
+    view.set_ui_theme(if shell.custom_themes_allowed { theme_label(shell).into() } else { Default::default() });
     view.set_picture_size(if s.picture_size == 0 { Default::default() } else { size_label(s.picture_size).into() });
     view.set_full_screen(s.full_screen);
     view.set_is_android(cfg!(target_os = "android"));
@@ -676,6 +722,10 @@ impl Screen for Settings {
         match id {
             "group" => shell.nav.focus(GROUPS[index.clamp(0, GROUPS.len() as i32 - 1) as usize].0, 0),
             "set.language" => pick_language(shell, id),
+            "set.ui-theme" if shell.custom_themes_allowed => pick_ui_theme(shell, id),
+            "set.ui-theme-import" if shell.custom_themes_allowed => {
+                shell.choose_files("saito theme (*.saitotheme)", &[crate::themes::EXTENSION], "ui-theme");
+            }
             "set.picture" => pick_picture_size(shell, id),
             "set.fullscreen" => {
                 set_full_screen(shell, !shell.settings.full_screen);
@@ -771,6 +821,10 @@ impl Screen for Settings {
         mark_group(shell, id);
         match id {
             "set.language" => set_language(shell, crate::lang::step(shell.i18n.code, by)),
+            "set.ui-theme" if shell.custom_themes_allowed => {
+                step_ui_theme(shell, by);
+                self.show(shell);
+            }
             "set.picture" => {
                 step_picture_size(shell, by);
                 self.show(shell);
@@ -854,6 +908,10 @@ impl Screen for Settings {
         mark_group(shell, id);
         match id {
             "set.language" => choose_language(shell, choice),
+            "set.ui-theme" if shell.custom_themes_allowed => {
+                choose_ui_theme(shell, choice);
+                self.show(shell);
+            }
             "set.picture" => {
                 set_picture_size(shell, choice.max(0) as u32);
                 self.show(shell);
@@ -1061,6 +1119,26 @@ impl Screen for Settings {
             shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
             shell.sound.play(Cue::Pick);
             self.show(shell);
+            return;
+        }
+        if purpose == "ui-theme" {
+            if !shell.custom_themes_allowed {
+                return;
+            }
+            let Some(path) = paths.first() else {
+                return;
+            };
+            match crate::themes::import_archive_into(path, &crate::paths::themes()) {
+                Ok(id) => {
+                    shell.set_ui_theme(&id);
+                    shell.sound.play(Cue::Pick);
+                    self.show(shell);
+                }
+                Err(why) => {
+                    crate::errors::log("importing UI theme", &why);
+                    shell.fail(UserError::NotATheme);
+                }
+            }
             return;
         }
         if purpose != "hd-art" || self.importing_hd_art.is_some() || paths.is_empty() {

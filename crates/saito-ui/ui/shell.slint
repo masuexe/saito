@@ -188,6 +188,7 @@ export struct PatternPaths {
     stars: string,
     far-stars: string,
     bright-stars: string,
+    pet-grid: string,
 }
 
 // A device without the Legacy Collection looks for a computer nearby that has it, which sends it (src/nearby.rs;
@@ -451,6 +452,7 @@ export enum ErrorKind {
     // No game's content is published for this version of saito yet (the loading screen's note).
     content-unpublished,
     update-failed,
+    not-a-theme,
     other,
 }
 
@@ -641,6 +643,9 @@ export global Errors {
         if kind == ErrorKind.update-failed {
             return @tr("The update couldn't be installed. It's tried again next start.");
         }
+        if kind == ErrorKind.not-a-theme {
+            return @tr("That file isn't a valid theme. Details are in the log file.");
+        }
         return @tr("Something went wrong. Details are in the log file.");
     }
     // A dialog's title for it, and its message under the title.
@@ -740,6 +745,9 @@ export global Errors {
         }
         if kind == ErrorKind.update-failed {
             return @tr("Update failed");
+        }
+        if kind == ErrorKind.not-a-theme {
+            return @tr("Invalid theme");
         }
         return @tr("Something went wrong");
     }
@@ -881,8 +889,8 @@ component GroundLayer inherits Rectangle {
     property <Look> look: root.ground.look;
     property <PatternKind> kind: root.look.pattern;
     property <bool> stars: root.kind == PatternKind.starfield;
-    property <float> tile-width: root.kind == PatternKind.hexagons ? 42 : root.kind == PatternKind.isometric-grid ? 92 : 292;
-    property <float> tile-height: root.kind == PatternKind.hexagons ? 72.75 : root.kind == PatternKind.isometric-grid ? 53.116 : 244;
+    property <float> tile-width: root.kind == PatternKind.hexagons ? 42 : root.kind == PatternKind.isometric-grid ? 92 : root.kind == PatternKind.pet-grid ? 44 : 292;
+    property <float> tile-height: root.kind == PatternKind.hexagons ? 72.75 : root.kind == PatternKind.isometric-grid ? 53.116 : root.kind == PatternKind.pet-grid ? 44 : 244;
     property <float> shown: root.ground.from == 0 ? 1 : sweep.t;
     // Where the edge is: past it, on the side the ground came from, is this ground.
     property <length> edge: root.ground.from < 0 ? root.shown * root.width : (1 - root.shown) * root.width;
@@ -920,15 +928,25 @@ component GroundLayer inherits Rectangle {
                 background: @linear-gradient(180deg, root.look.pattern-color.with-alpha(0) 70%, root.look.pattern-color.with-alpha(root.look.pattern-strength * 0.73) 100%);
             }
 
+            // Optional custom backdrop image supplied by a `.saitotheme` plugin.
+            Image {
+                visible: Theme.backdrop-image-opacity > 0;
+                width: parent.width;
+                height: parent.height;
+                source: Theme.backdrop-image;
+                image-fit: cover;
+                opacity: Theme.backdrop-image-opacity;
+            }
+
             Rectangle {
                 x: -1px * mod(root.drift * 5 + root.rush * 42 * 9, root.tile-width);
                 y: -1px * mod(root.drift * 2.2, root.tile-height);
                 width: parent.width + root.tile-width * 1px;
                 height: parent.height + root.tile-height * 1px;
                 cache-rendering-hint: true;
-                // The hexagons or the grid, stroked; or the starfield's white dots.
+                // The hexagons, isometric grid, PET diagonal grid, or the starfield's white dots.
                 Path {
-                    commands: root.kind == PatternKind.hexagons ? Shell.patterns.hexagons : root.kind == PatternKind.isometric-grid ? Shell.patterns.isometric-grid : Shell.patterns.stars;
+                    commands: root.kind == PatternKind.hexagons ? Shell.patterns.hexagons : root.kind == PatternKind.isometric-grid ? Shell.patterns.isometric-grid : root.kind == PatternKind.pet-grid ? Shell.patterns.pet-grid : Shell.patterns.stars;
                     stroke: root.stars ? transparent : root.look.pattern-color.with-alpha(root.look.pattern-strength);
                     stroke-width: 1px;
                     fill: root.stars ? #ffffff.with-alpha(root.look.pattern-strength) : transparent;
@@ -1205,9 +1223,9 @@ export component Header inherits Rectangle {
 
     Rectangle {
         x: root.bar-x;
-        y: parent.height - 1px;
+        y: parent.height - (Theme.pet ? 3px : 1px);
         width: root.bar-width;
-        height: 1px;
+        height: Theme.pet ? 3px : 1px;
         background: Theme.line;
     }
 
@@ -1371,6 +1389,7 @@ component KeyCap inherits Rectangle {
     height: 22px;
     width: root.text == "" ? 0px : max(22px, cap.preferred-width + 12px);
     Rectangle {
+        background: Theme.pet && root.text != "" ? Theme.raised : transparent;
         border-width: root.text == "" ? 0px : 1px;
         border-color: Theme.line;
         border-radius: 2px;
@@ -1520,7 +1539,7 @@ export component Footer inherits Rectangle {
         background: Theme.bar;
         Rectangle {
             y: 0;
-            height: 1px;
+            height: Theme.pet ? 2px : 1px;
             background: Theme.line;
         }
 
@@ -1726,9 +1745,18 @@ export component DialogFrame inherits Rectangle {
         Rectangle {
             x: 0;
             y: 0;
-            width: 72px * arrive.t;
-            height: 2px;
-            background: @linear-gradient(90deg, Theme.cursor 0%, Theme.clear 100%);
+            width: (Theme.pet ? 84px : 72px) * arrive.t;
+            height: Theme.pet ? 3px : 2px;
+            background: Theme.pet ? Theme.line : @linear-gradient(90deg, Theme.cursor 0%, Theme.clear 100%);
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 3px;
+            width: min(64px, parent.width * 0.25) * arrive.t;
+            height: 3px;
+            visible: Theme.pet;
+            background: Theme.line;
         }
 
         heading := Text {
@@ -1990,7 +2018,7 @@ export component PickerLayer inherits Rectangle {
         height: root.list-height;
         opacity: arrive.t;
         background: Theme.panel;
-        border-width: 1px;
+        border-width: Theme.pet ? 2px : 1px;
         border-color: Theme.line;
         drop-shadow-blur: 16px;
         drop-shadow-color: #000000a0;

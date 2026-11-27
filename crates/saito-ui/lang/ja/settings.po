@@ -503,3 +503,21 @@ msgstr "次へ"
 msgctxt "music"
 msgid "Open"
 msgstr "開く"
+
+msgid "UI theme"
+msgstr "UIテーマ"
+
+msgid "Switch built-in styles or installed .saitotheme plugins."
+msgstr "内蔵スタイルや導入済みの .saitotheme プラグインを切り替えます。"
+
+msgid "HD PET"
+msgstr "HD PET"
+
+msgid "Modern terminal"
+msgstr "モダン端末"
+
+msgid "Import theme"
+msgstr "テーマを読み込む"
+
+msgid "Import a .saitotheme file."
+msgstr ".saitotheme ファイルを読み込みます。"

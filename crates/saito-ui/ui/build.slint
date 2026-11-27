@@ -516,8 +516,9 @@ export component ChipRow inherits Rectangle {
         y: (parent.height - 16px) / 2;
         width: 16px;
         height: 16px;
+        background: !root.chip.there && Theme.pet ? Theme.slot-bg : transparent;
         border-width: root.chip.there ? 0px : 1px;
-        border-color: root.chip.flagged ? Theme.bad : Theme.line;
+        border-color: root.chip.flagged ? Theme.bad : (Theme.pet ? Theme.slot-border : Theme.line);
         Image {
             source: root.chip.icon;
             image-rendering: pixelated;

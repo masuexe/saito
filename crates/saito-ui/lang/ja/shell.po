@@ -459,3 +459,9 @@ msgstr "マイク"
 
 msgid "Shout!"
 msgstr "叫ぶ！"
+
+msgid "That file isn't a valid theme. Details are in the log file."
+msgstr "有効なテーマファイルではありません。詳細はログファイルにあります。"
+
+msgid "Invalid theme"
+msgstr "無効なテーマ"

@@ -257,6 +257,8 @@ pub struct Shell {
     game: Option<String>,
     /// Each game's look, and the change of game's sweep and cross-fade under way (docs/app.md §10).
     pub(crate) looks: crate::look::Looks,
+    /// Whether UI theme switching & `.saitotheme` plugins are unlocked (mainland China IP only).
+    pub custom_themes_allowed: bool,
     /// The game the screens were last shown with, once it was ready.
     announced: Option<String>,
     /// The frames the bar has shown the selected game's parts as read, before its runtime is loaded (which
@@ -607,6 +609,45 @@ impl Shell {
             })
         });
         self.show_language();
+    }
+
+    /// Switch the active UI theme (`pet-hd`, `terminal`, or a user `.saitotheme` ID) live.
+    pub fn set_ui_theme(&mut self, id: &str) {
+        if !self.custom_themes_allowed {
+            return;
+        }
+        let ui = self.ui();
+        let current = self.game.clone();
+        self.looks.set_theme(&ui, id, current.as_deref());
+        self.settings.ui_theme = self.looks.theme_id().to_string();
+        self.save_settings();
+    }
+
+    /// Apply a mainland China region verdict for custom UI themes.
+    ///
+    /// Uses a soft override: when disallowed, forces `pet-hd` at runtime and hides theme UI without
+    /// overwriting `settings.ui_theme` on disk, so mainland users recover their saved theme once
+    /// verified again.
+    pub fn apply_custom_themes_allowed(&mut self, allowed: bool) {
+        self.custom_themes_allowed = allowed;
+        let ui = self.ui();
+        ui.global::<saito_ui::SettingsView>().set_custom_themes_allowed(allowed);
+        let target = if allowed { self.settings.ui_theme.as_str() } else { crate::themes::DEFAULT_THEME };
+        if self.looks.theme_id() != target {
+            let current = self.game.clone();
+            self.looks.set_theme(&ui, target, current.as_deref());
+        }
+        if !allowed {
+            if self.picking.as_ref().is_some_and(|p| p.key.id == "set.ui-theme") {
+                self.close_picker();
+            }
+            if self.nav.focused().is_some_and(|k| k.id == "set.ui-theme" || k.id == "set.ui-theme-import") {
+                self.nav.focus("set.picture", 0);
+            }
+        }
+        if self.screen == ScreenId::Settings {
+            self.refresh();
+        }
     }
 
     /// The graphics enhancements, kept in the settings: a battle being played is drawn with them from its next
@@ -1334,7 +1375,9 @@ impl App {
         let bindings = settings.bindings();
         // (The screenshot pass leaves the player's data folder as it is.)
         let games = Games::find(settings.legacy_collection.as_deref(), !still);
-        let looks = crate::look::Looks::new(ui, games.list.iter().map(|g| g.id.as_str()));
+        let custom_themes_allowed = if still { false } else { crate::geo::initial_allowed() };
+        let initial_theme = if custom_themes_allowed { settings.ui_theme.as_str() } else { crate::themes::DEFAULT_THEME };
+        let looks = crate::look::Looks::new(ui, games.list.iter().map(|g| g.id.as_str()), initial_theme);
         let shell = Shell {
             ui: ui.as_weak(),
             games,
@@ -1356,6 +1399,7 @@ impl App {
             own_ticks: None,
             game: None,
             looks,
+            custom_themes_allowed,
             announced: None,
             runtime_due: 0,
             screen: ScreenId::Menu,
@@ -1430,6 +1474,19 @@ impl App {
         // the screenshot pass never does.)
         if self.shell.settings.check_updates && !self.shell.still {
             self.shell.updates.check();
+        }
+        ui.global::<saito_ui::SettingsView>().set_custom_themes_allowed(self.shell.custom_themes_allowed);
+        if !self.shell.still {
+            let persist = !self.shell.keep_nothing;
+            let _ = slint::spawn_local(async move {
+                match crate::geo::check(persist).await {
+                    Ok(allowed) => crate::with_app(|app| {
+                        app.shell.apply_custom_themes_allowed(allowed);
+                        app.settle();
+                    }),
+                    Err(why) => crate::errors::log("checking region for UI themes", &why),
+                }
+            });
         }
         if ui.window().is_fullscreen() != self.shell.settings.full_screen {
             ui.window().set_fullscreen(self.shell.settings.full_screen);

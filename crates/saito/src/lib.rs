@@ -20,6 +20,7 @@ mod builds;
 mod contents;
 mod errors;
 mod games;
+mod geo;
 mod guard;
 mod haptics;
 mod http;
@@ -44,6 +45,7 @@ mod settings;
 mod shell;
 mod sound;
 mod stage;
+mod themes;
 // (The screenshot pass is the `tour` feature's: a player's build has none of it. The tests compile it all the
 // same, so that it keeps compiling.)
 #[cfg(any(test, feature = "tour"))]

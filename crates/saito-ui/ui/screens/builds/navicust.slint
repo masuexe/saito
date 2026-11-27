@@ -383,9 +383,9 @@ component CellView inherits Rectangle {
     property <length> rim: Theme.handheld ? 1.5px : 2px;
     Rectangle {
         visible: root.cell.kind == CellKind.board && root.empty;
-        background: root.command ? Theme.command-line : Theme.inset;
+        background: root.command ? Theme.command-line : (Theme.pet ? Theme.slot-bg.darker(0.35) : Theme.inset);
         border-width: 1px;
-        border-color: root.command ? Theme.cursor : Theme.line;
+        border-color: root.command ? Theme.cursor : (Theme.pet ? Theme.slot-border.with-alpha(0.55) : Theme.line);
     }
 
     Hatch {
@@ -397,6 +397,25 @@ component CellView inherits Rectangle {
     Rectangle {
         visible: root.cell.filled;
         background: root.cell.tone;
+    }
+
+    // Subtle top/left glossy bevel on placed NaviCust blocks in PET mode.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 2px;
+        visible: Theme.pet && root.cell.filled;
+        background: #ffffff44;
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 2px;
+        height: parent.height;
+        visible: Theme.pet && root.cell.filled;
+        background: #ffffff33;
     }
 
     Cross {

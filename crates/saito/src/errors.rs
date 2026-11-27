@@ -73,6 +73,8 @@ pub enum UserError {
     WrongGameSave { game: String },
     /// A file isn't a ruleset of the game: `game` is the game, as shown. Why is in the log.
     NotARuleset { game: String },
+    /// A file isn't a valid `.saitotheme` archive. Why is in the log.
+    NotATheme,
     /// A game couldn't be loaded (its content, or its assets extracted from its ROMs: the archives didn't read, the
     /// extraction failed, or what it extracted hasn't what the content names): `game` is the game, as shown. The other
     /// games play.
@@ -123,6 +125,7 @@ impl UserError {
             UserError::ExportFailed => (ErrorKind::ExportFailed, ""),
             UserError::WrongGameSave { game } => (ErrorKind::WrongGameSave, game),
             UserError::NotARuleset { game } => (ErrorKind::NotARuleset, game),
+            UserError::NotATheme => (ErrorKind::NotATheme, ""),
             UserError::LoadFailed { game } => (ErrorKind::LoadFailed, game),
             UserError::NoLegacyCollection => (ErrorKind::NoLegacyCollection, ""),
             UserError::IncompleteCollection { game } => (ErrorKind::IncompleteLegacyCollection, game),

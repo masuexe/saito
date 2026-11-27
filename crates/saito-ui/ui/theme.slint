@@ -20,11 +20,13 @@ export enum PatternKind {
     // Three layers of dots, white and the pattern's color, with a streak across them from the pattern's color
     // into the main action's.
     starfield,
+    // Clean 45-degree diagonal PET cyber grid (default for `pet-hd`).
+    pet-grid,
 }
 
 // A look: the colors everything is drawn in and the backdrop's pattern. Each game states its own (its content's
-// look.toml), and the app sets the selected game's (`look.rs`). This one's values are the app's own look, which a
-// game whose content states none is drawn in.
+// look.toml for `terminal`, or the active UI theme's palette in `themes.rs`), and the app sets the selected game's
+// (`look.rs`). Default values are the `pet-hd` EXE6 cyber-blue PET palette.
 export struct Look {
     // The ground, top to bottom, and the glow at its top right (its color and its opacity).
     ground-top: color,
@@ -47,28 +49,59 @@ export struct Look {
     pattern: PatternKind,
     pattern-color: color,
     pattern-strength: float,
+    // HD Vector PET structural tokens (blend across games; in `terminal` mode these derive from line/inset/action).
+    frame-stroke: color,
+    btn-shadow: color,
+    active-top: color,
+    active-bot: color,
+    active-border: color,
+    active-shadow: color,
+    slot-bg: color,
+    slot-border: color,
+    bar-start: color,
+    bar-end: color,
 }
 
 export global Theme {
+    // Active visual style: `true` for HD Vector PET (`pet-hd` or PET-style `.saitotheme`), `false` for `terminal`.
+    in property <bool> pet: true;
+    // Optional custom backdrop image provided by a `.saitotheme` plugin.
+    in property <image> backdrop-image;
+    in property <float> backdrop-image-opacity: 0;
+    // Optional custom font family names registered by a `.saitotheme` plugin (empty = use built-in defaults).
+    in property <string> custom-display-font;
+    in property <string> custom-body-font;
+    in property <string> custom-mono-font;
+
     // The selected game's look, and the one before it: as the game changes the colors cross-fade from `was` to
     // `look` while `fade` goes from 0 to 1 (the app moves it, over `settle`, as the new ground sweeps in).
     in property <Look> look: {
-        ground-top: #0a1330,
-        ground-bottom: #050916,
-        ground-glow: #286eff47,
-        panel: #0c1836,
-        raised: #13254d,
-        line: #27508f,
-        inset: #040813,
-        text: #eaf3ff,
-        muted: #8ea8d4,
-        dim: #55698f,
-        cursor: #66e0ff,
-        action: #ffcc1a,
-        action-ink: #000000,
-        pattern: PatternKind.hexagons,
-        pattern-color: #62b4ff,
-        pattern-strength: 0.078,
+        ground-top: #0b3c91,
+        ground-bottom: #061b47,
+        ground-glow: #5af4ff2e,
+        panel: #09244a,
+        raised: #092e59,
+        line: #5af4ff,
+        inset: #051630,
+        text: #f2f9ff,
+        muted: #9bc4ee,
+        dim: #5c83b0,
+        cursor: #5af4ff,
+        action: #ff9400,
+        action-ink: #ffffff,
+        pattern: PatternKind.pet-grid,
+        pattern-color: #60faff,
+        pattern-strength: 0.11,
+        frame-stroke: #0a44b8,
+        btn-shadow: #051b38,
+        active-top: #ffa408,
+        active-bot: #ff7800,
+        active-border: #fff4d6,
+        active-shadow: #d98200,
+        slot-bg: #15458a,
+        slot-border: #7ae9ff,
+        bar-start: #1a9bff,
+        bar-end: #5af4ff,
     };
     in property <Look> was: root.look;
     in property <float> fade: 1;
@@ -103,6 +136,17 @@ export global Theme {
     // The main action.
     out property <color> action: root.blend(root.look.action, root.was.action);
     out property <color> action-ink: root.blend(root.look.action-ink, root.was.action-ink);
+    // HD Vector PET structural tokens.
+    out property <color> frame-stroke: root.blend(root.look.frame-stroke, root.was.frame-stroke);
+    out property <color> btn-shadow: root.blend(root.look.btn-shadow, root.was.btn-shadow);
+    out property <color> active-top: root.blend(root.look.active-top, root.was.active-top);
+    out property <color> active-bot: root.blend(root.look.active-bot, root.was.active-bot);
+    out property <color> active-border: root.blend(root.look.active-border, root.was.active-border);
+    out property <color> active-shadow: root.blend(root.look.active-shadow, root.was.active-shadow);
+    out property <color> slot-bg: root.blend(root.look.slot-bg, root.was.slot-bg);
+    out property <color> slot-border: root.blend(root.look.slot-border, root.was.slot-border);
+    out property <color> bar-start: root.blend(root.look.bar-start, root.was.bar-start);
+    out property <color> bar-end: root.blend(root.look.bar-end, root.was.bar-end);
     // The two sides.
     out property <color> p1: #f2334d;
     out property <color> p2: #4a93ff;
@@ -138,13 +182,13 @@ export global Theme {
     in property <bool> cjk;
     in property <string> cjk-display: "Corporate Logo ver3";
     in property <string> body-face: "Noto Sans JP";
-    out property <string> display: cjk ? root.cjk-display : "Chakra Petch";
+    out property <string> display: root.custom-display-font != "" ? root.custom-display-font : (cjk ? root.cjk-display : "Chakra Petch");
     // The display face's weights: its bold (a title, the main action) and its semibold (a label, a button). Corporate
     // Logo is bundled at 700 alone.
     out property <int> display-bold: 700;
     out property <int> display-semibold: cjk ? 700 : 600;
-    out property <string> body: root.body-face;
-    out property <string> mono: "M PLUS 1 Code";
+    out property <string> body: root.custom-body-font != "" ? root.custom-body-font : root.body-face;
+    out property <string> mono: root.custom-mono-font != "" ? root.custom-mono-font : "M PLUS 1 Code";
     // A label's capitals are tracked 0.18em; a script set solid nearly not.
     out property <length> label-tracking: cjk ? 0.4px : 2px;
     out property <length> button-tracking: cjk ? 0.3px : 1.3px;

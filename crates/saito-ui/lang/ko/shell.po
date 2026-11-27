@@ -484,3 +484,9 @@ msgstr "마이크"
 
 msgid "Shout!"
 msgstr "외치기!"
+
+msgid "That file isn't a valid theme. Details are in the log file."
+msgstr "올바른 테마 파일이 아닙니다. 자세한 내용은 로그 파일을 확인하세요."
+
+msgid "Invalid theme"
+msgstr "잘못된 테마"

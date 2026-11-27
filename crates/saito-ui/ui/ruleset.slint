@@ -259,14 +259,14 @@ component Check inherits Rectangle {
     in property <bool> inherited;
     width: 16px;
     height: 16px;
-    background: root.on ? Theme.cursor : root.inherited ? transparent : Theme.inset;
+    background: root.on ? Theme.cursor : root.inherited ? transparent : (Theme.pet ? Theme.slot-bg : Theme.inset);
     border-width: root.inherited ? 0px : 1px;
-    border-color: root.on ? Theme.cursor : Theme.line;
+    border-color: root.on ? (Theme.pet ? Theme.slot-border : Theme.cursor) : (Theme.pet ? Theme.slot-border : Theme.line);
     Path {
         width: 10px;
         height: 8px;
         visible: root.on;
-        stroke: Theme.action-ink;
+        stroke: Theme.pet ? Theme.inset : Theme.action-ink;
         stroke-width: 2px;
         commands: "M 1 4 L 3.75 6.75 L 9 1.25";
     }

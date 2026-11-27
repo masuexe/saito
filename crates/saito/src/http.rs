@@ -24,6 +24,15 @@ pub async fn get(url: &str, limit: u64) -> Result<Vec<u8>, String> {
     get_reporting(url, limit, |_| {}).await
 }
 
+/// Fast direct GET with short timeouts, bypassing ordinary HTTP system proxies on native targets.
+pub async fn get_direct_fast(url: &str, limit: u64) -> Result<Vec<u8>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let client = direct_client(Duration::from_secs(3), Duration::from_secs(5))?;
+    #[cfg(target_arch = "wasm32")]
+    let client = client()?;
+    get_with(&client, url, limit, |_| {}).await
+}
+
 /// POST a JSON `body` to `url`, reading at most `limit` bytes of the response body.
 pub async fn post_json(url: &str, body: Vec<u8>, limit: u64) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -99,11 +108,23 @@ async fn get_with(client: &reqwest::Client, url: &str, limit: u64, mut progress:
 /// own here: the tree's rustls is ring's, saito-rtc's too).
 #[cfg(not(target_arch = "wasm32"))]
 fn client(connect: Duration, read: Duration) -> Result<reqwest::Client, String> {
+    install_tls_provider();
+    let builder = reqwest::Client::builder().connect_timeout(connect).read_timeout(read);
+    builder.build().map_err(|e| format!("an HTTP client: {e}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn direct_client(connect: Duration, read: Duration) -> Result<reqwest::Client, String> {
+    install_tls_provider();
+    let builder = reqwest::Client::builder().no_proxy().connect_timeout(connect).read_timeout(read);
+    builder.build().map_err(|e| format!("an HTTP client: {e}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_tls_provider() {
     static PROVIDER: std::sync::Once = std::sync::Once::new();
     // (Err: one is installed already, which serves as well.)
     PROVIDER.call_once(|| drop(rustls::crypto::ring::default_provider().install_default()));
-    let builder = reqwest::Client::builder().connect_timeout(connect).read_timeout(read);
-    builder.build().map_err(|e| format!("an HTTP client: {e}"))
 }
 
 /// The browser's client: its `fetch`.

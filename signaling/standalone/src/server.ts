@@ -540,11 +540,37 @@ setInterval(() => {
 	}
 }, 50).unref();
 
+function geoCountry(req: http.IncomingMessage): string {
+	const raw = req.headers["cf-ipcountry"];
+	const val = (Array.isArray(raw) ? raw[0] : raw ?? "").trim().toUpperCase();
+	if (!val || val === "XX" || !/^[A-Z0-9]{2}$/.test(val)) {
+		return "";
+	}
+	return val;
+}
+
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 	if (url.pathname === "/health") {
 		res.writeHead(200, { "Content-Type": "text/plain" });
 		res.end("ok\n");
+		return;
+	}
+	if (url.pathname === "/geo" && (req.method === "GET" || req.method === "HEAD")) {
+		const country = geoCountry(req);
+		const headers = {
+			"Content-Type": "application/json; charset=utf-8",
+			"Access-Control-Allow-Origin": "*",
+			"Cache-Control": "no-store",
+		};
+		if (!country) {
+			res.writeHead(503, headers);
+			res.end(req.method === "HEAD" ? undefined : JSON.stringify({ error: "geolocation unavailable" }));
+			return;
+		}
+		const body = JSON.stringify({ country, mainland: country === "CN" });
+		res.writeHead(200, headers);
+		res.end(req.method === "HEAD" ? undefined : body);
 		return;
 	}
 	if (url.pathname === "/spectate/rooms" && (req.method === "GET" || req.method === "HEAD")) {

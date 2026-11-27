@@ -502,3 +502,21 @@ msgstr "다음 곡"
 msgctxt "music"
 msgid "Open"
 msgstr "열기"
+
+msgid "UI theme"
+msgstr "UI 테마"
+
+msgid "Switch built-in styles or installed .saitotheme plugins."
+msgstr "내장 스타일 또는 설치된 .saitotheme 플러그인을 전환합니다."
+
+msgid "HD PET"
+msgstr "HD PET"
+
+msgid "Modern terminal"
+msgstr "모던 터미널"
+
+msgid "Import theme"
+msgstr "테마 가져오기"
+
+msgid "Import a .saitotheme file."
+msgstr ".saitotheme 파일을 가져옵니다."

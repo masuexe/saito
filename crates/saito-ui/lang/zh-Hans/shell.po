@@ -459,3 +459,9 @@ msgstr "麦克风"
 
 msgid "Shout!"
 msgstr "呐喊！"
+
+msgid "That file isn't a valid theme. Details are in the log file."
+msgstr "该文件不是有效的主题包。详情请查看日志文件。"
+
+msgid "Invalid theme"
+msgstr "无效的主题包"

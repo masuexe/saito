@@ -253,6 +253,8 @@ pub struct Settings {
     pub name: String,
     /// The language, by its code (`ja`); none: the system's.
     pub language: Option<String>,
+    /// Active UI theme ID (`pet-hd`, `terminal`, or a user `.saitotheme` ID).
+    pub ui_theme: String,
     /// The game last used: the one the app opens on.
     pub game: Option<String>,
     /// The most the battle's picture is, in multiples of 240 by 160; 0: the largest that fits.
@@ -341,6 +343,7 @@ impl Default for Settings {
         Settings {
             name: system_name(),
             language: None,
+            ui_theme: crate::themes::DEFAULT_THEME.into(),
             game: None,
             picture_size: 0,
             full_screen: false,

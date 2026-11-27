@@ -70,6 +70,11 @@ pub fn replays() -> PathBuf {
     folder("SAITO_REPLAYS", "SAITO_REPLAYS", "replays")
 }
 
+/// UI theme plugins (`.saitotheme` archives and theme folders): `$SAITO_THEMES`, else `themes`.
+pub fn themes() -> PathBuf {
+    folder("SAITO_THEMES", "SAITO_THEMES", "themes")
+}
+
 /// The log, which takes what goes wrong as the code says it (the player reads a plain sentence instead:
 /// `crate::errors`): `$SAITO_LOG` (`$SAITO_LOG`), else `saito.log`.
 pub fn log() -> PathBuf {
@@ -84,4 +89,9 @@ pub fn settings() -> PathBuf {
 /// Persistent ABD Mega/Giga/Dark/PA chip usage log (JSONL): `$SAITO_ABD_STATS`, else `abd-stats.jsonl`.
 pub fn abd_stats() -> PathBuf {
     env_var("SAITO_ABD_STATS", "SAITO_ABD_STATS").unwrap_or_else(|| data().join("abd-stats.jsonl"))
+}
+
+/// Integrity-checked region verification cache (intentionally not env-overridable).
+pub fn geo_cache() -> PathBuf {
+    data().join("region.cache")
 }

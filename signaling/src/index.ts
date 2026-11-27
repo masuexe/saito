@@ -376,6 +376,22 @@ function refuse(reason: Reason, message: string): Response {
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
+		if (url.pathname === "/geo" && (request.method === "GET" || request.method === "HEAD")) {
+			const country = countryOf(request).trim().toUpperCase();
+			const headers = {
+				"Content-Type": "application/json; charset=utf-8",
+				"Access-Control-Allow-Origin": "*",
+				"Cache-Control": "no-store",
+			};
+			if (!country || country === "XX" || !/^[A-Z0-9]{2}$/.test(country)) {
+				return new Response(request.method === "HEAD" ? null : JSON.stringify({ error: "geolocation unavailable" }), {
+					status: 503,
+					headers,
+				});
+			}
+			const body = JSON.stringify({ country, mainland: country === CHINA });
+			return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
+		}
 		const invite = url.pathname.match(/^\/rooms(?:\/([^/]*))?\/?$/);
 		const reconnect = url.pathname.match(/^\/reconnect\/([^/]*)\/?$/);
 		if (!invite && !reconnect) {

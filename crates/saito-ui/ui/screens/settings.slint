@@ -25,6 +25,8 @@ export global SettingsView {
     callback scrolled(length, length, length, [length]);
     in property <string> name;
     in property <string> language;
+    in property <bool> custom-themes-allowed: false;
+    in property <string> ui-theme;
     in property <string> picture-size;
     in property <bool> full-screen;
     in property <bool> is-android;
@@ -132,6 +134,8 @@ export global SettingsView {
     callback touch-close();
     // The picture size that isn't a number, as the list of sizes says it.
     out property <string> largest: @tr("Largest that fits");
+    out property <string> theme-pet-hd: @tr("HD PET");
+    out property <string> theme-terminal: @tr("Modern terminal");
     out property <string> update-checking-note: @tr("Checking for updates");
     out property <string> update-latest-note: @tr("You're on the latest version.");
     out property <string> update-failed-note: @tr("Couldn't check for updates.");
@@ -396,6 +400,40 @@ component SettingsPage inherits Page {
 
                 g-video := GroupTitle {
                     text: I18n.upper(@tr("Video"));
+                }
+
+                if SettingsView.custom-themes-allowed: Rectangle {
+                    height: theme-row.height;
+                    theme-row := SettingLabel {
+                        label: @tr("UI theme");
+                        note: @tr("Switch built-in styles or installed .saitotheme plugins.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Select {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width;
+                        nav: "set.ui-theme";
+                        value: SettingsView.ui-theme == "" ? SettingsView.theme-pet-hd : SettingsView.ui-theme;
+                    }
+                }
+
+                if SettingsView.custom-themes-allowed: Rectangle {
+                    height: theme-import-row.height;
+                    theme-import-row := SettingLabel {
+                        note: @tr("Import a .saitotheme file.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.ui-theme-import";
+                        text: I18n.upper(@tr("Import theme"));
+                    }
                 }
 
                 Rectangle {
