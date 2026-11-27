@@ -401,3 +401,96 @@ msgstr "가로 화면으로 전환"
 
 msgid "Switch to portrait"
 msgstr "세로 화면으로 전환"
+
+# Music library, favorites & main-menu BGM (S-135).
+
+msgid "Music library"
+msgstr "음악 라이브러리"
+
+msgid "Browse all BGM tracks and star your favorites."
+msgstr "모든 BGM을 감상하고 즐겨찾기에 등록합니다."
+
+msgid "{n} favorite track"
+msgid_plural "{n} favorite tracks"
+msgstr[0] "즐겨찾기 {n}곡"
+
+msgid "Battle favorite BGM"
+msgstr "배틀 즐겨찾기 BGM"
+
+msgid "Auto-play favorite tracks in battle, switching each round."
+msgstr "배틀 시 즐겨찾기 곡을 자동 재생하며 라운드마다 전환합니다."
+
+msgid "In order"
+msgstr "순서대로"
+
+msgid "Main menu BGM"
+msgstr "메인 메뉴 BGM"
+
+msgid "Music played on menu screens. Default uses the selected game's title theme."
+msgstr "메뉴 화면에서 재생되는 BGM입니다. 기본값은 선택한 게임의 타이틀 곡입니다."
+
+msgid "Default (Game title)"
+msgstr "기본값 (타이틀 곡)"
+
+msgid "Favorites"
+msgstr "즐겨찾기"
+
+msgid "Preview only"
+msgstr "미리듣기 전용"
+
+msgid "{} tracks · {} favorites"
+msgstr "전체 {}곡 · 즐겨찾기 {}곡"
+
+msgid "Play / Stop"
+msgstr "재생 / 정지"
+
+msgid "Favorite"
+msgstr "즐겨찾기"
+
+msgid "Filter"
+msgstr "필터"
+
+msgid "No favorite tracks yet. Press ★ on any looping track to add it here."
+msgstr "즐겨찾기 곡이 없습니다. 반복 재생 곡의 ★을 눌러 추가하세요."
+
+msgid "No tracks loaded for this filter yet."
+msgstr "이 필터에 불러온 곡이 없습니다."
+
+msgid "Now playing"
+msgstr "재생 중"
+
+msgid "Selected track"
+msgstr "선택한 곡"
+
+msgid "No track selected"
+msgstr "선택한 곡 없음"
+
+msgid "{} · Loops (Battle & Menu eligible)"
+msgstr "{} · 반복 곡 (배틀·메뉴 설정 가능)"
+
+msgid "{} · Short jingle (Preview only)"
+msgstr "{} · 짧은 징글 (미리듣기 전용)"
+
+msgid "Prev"
+msgstr "이전 곡"
+
+msgid "Stop"
+msgstr "정지"
+
+msgid "Preview"
+msgstr "미리듣기"
+
+msgid "★ Favorited"
+msgstr "★ 즐겨찾기됨"
+
+msgid "☆ Favorite"
+msgstr "☆ 즐겨찾기"
+
+msgid "Clear menu BGM"
+msgstr "메뉴 BGM 해제"
+
+msgid "Set menu BGM"
+msgstr "메뉴 BGM으로 설정"
+
+msgid "Favorite battle themes"
+msgstr "배틀 곡 일괄 즐겨찾기"

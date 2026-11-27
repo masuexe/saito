@@ -15,16 +15,20 @@
 //! battle, its cues, a replay and its rollback are the same whatever plays (`saito_audio::with_theme`,
 //! `saito_audio::RoundMusic`).
 
+mod titles;
+
 use crate::games::{Games, Ready};
+use crate::settings::FavoriteBgmMode;
 use crate::shell::Shell;
 use saito_audio::RoundMusic;
 use saito_battle::content::BackgroundId;
+use saito_frontend::player::{RoundContext, RoundLook};
 use saito_frontend::preload::SoundParts;
 use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Whether EXE5 default / background / escalating battle music should prefer
 /// the arranged EXE5DS `SDAT` counterparts when an EXE5DS ROM is loaded.
@@ -145,6 +149,109 @@ fn ds_theme_name(song: &str, lang: &str) -> Option<&'static str> {
     }
 }
 
+/// Canonical track key `"<game>/<song>"` used for persisted favorites and menu BGM (`S-135`).
+pub fn track_key(game: &str, song: &str) -> String {
+    format!("{game}/{song}")
+}
+
+/// Split a canonical track key `"<game>/<song>"` into `(game, song)`.
+pub fn parse_track_key(key: &str) -> Option<(&str, &str)> {
+    let (game, song) = key.split_once('/')?;
+    (!game.is_empty() && !song.is_empty() && !game.contains('/') && !song.contains('/')).then_some((game, song))
+}
+
+/// Whether `(game, song)` is a known non-looping short jingle (preview-only; never eligible for
+/// battle rotation or menu BGM).
+pub fn is_known_non_looping(game: &str, song: &str) -> bool {
+    if let Some(ds) = saito_extract::EXE5DS_BGM_TRACKS.iter().find(|t| t.key == song) {
+        return !ds.looping;
+    }
+    if let Some(gba) = saito_extract::gba_bgm_track(game, song) {
+        return !gba.looping;
+    }
+    false
+}
+
+/// Whether canonical key `"<game>/<song>"` is syntactically valid and not a known non-looping jingle.
+pub fn is_eligible_loop_key(key: &str) -> bool {
+    let Some((game, song)) = parse_track_key(key) else {
+        return false;
+    };
+    !is_known_non_looping(game, song)
+}
+
+/// One track entry shown in the Settings → Audio music library (`S-135`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogEntry {
+    pub key: String,
+    pub game: String,
+    pub song: String,
+    pub is_ds: bool,
+    pub looping: bool,
+    pub is_battle_theme: bool,
+}
+
+/// Complete BGM catalog across every loaded game (in app order; EXE5 GBA tracks followed by
+/// EXE5DS tracks when an EXE5DS ROM is attached).
+pub fn catalog(games: &Games) -> Vec<CatalogEntry> {
+    let mut out = Vec::new();
+    for g in &games.list {
+        let Some(ready) = games.read(&g.id) else { continue };
+        for track in ready.loaded.catalog_tracks() {
+            out.push(CatalogEntry {
+                key: track_key(&g.id, &track.song),
+                game: g.id.clone(),
+                song: track.song,
+                is_ds: track.is_ds,
+                looping: track.looping,
+                is_battle_theme: track.is_battle_theme,
+            });
+        }
+    }
+    out
+}
+
+/// Display badge for a track's game (`"EXE5DS"` / `"BN5DS"` for DS tracks, else `Shell::game_name`).
+pub fn game_badge(game: &str, is_ds: bool) -> String {
+    if is_ds {
+        let lang = NAMES_LANG.with(|l| l.borrow().clone());
+        return match lang.as_str() {
+            "zh-Hans" | "ja" | "ko" => "EXE5DS".to_string(),
+            _ => "BN5DS".to_string(),
+        };
+    }
+    Shell::game_name(game)
+}
+
+/// Localized track title alone (without the game prefix), for the music library list.
+pub fn track_title(game: &str, song: &str) -> String {
+    let lang = NAMES_LANG.with(|l| l.borrow().clone());
+    if let Some(title) = titles::track_title(game, song, &lang) {
+        return title.to_string();
+    }
+    NAMES
+        .with(|n| n.borrow().get(&(game.to_string(), song.to_string())).cloned())
+        .unwrap_or_else(|| song.to_string())
+}
+
+/// Localized full track display name with game prefix (`"EXE6 秋原镇"`, `"EXE5DS 解放任务"`).
+pub fn track_full_name(game: &str, song: &str) -> String {
+    let is_ds = song.starts_with("ds-");
+    format!("{} {}", game_badge(game, is_ds), track_title(game, song))
+}
+
+/// Resolve any catalog track (including non-looping short jingles) for preview playback.
+pub fn resolve_preview(games: &Games, key: &str) -> Option<(saito_audio::Theme, bool)> {
+    let (game, song) = parse_track_key(key)?;
+    games.read(game)?.loaded.preview_track(song)
+}
+
+/// Resolve a looping catalog track for custom main-menu BGM playback.
+pub fn resolve_menu_bgm(games: &Games, key: &str) -> Option<saito_audio::Theme> {
+    let (game, song) = parse_track_key(key)?;
+    games.read(game)?.loaded.theme(song)
+}
+
 /// A theme's name as a list shows it, in the language shown: its game's name, then the theme's ("BN4 Tournament
 /// Battle", "EXE4 トーナメントバトル"); a theme its locales don't name is its song's asset name. The backgrounds'
 /// is `own`, the UI's words for it.
@@ -155,8 +262,14 @@ pub fn name(music: &Music, own: &str) -> String {
             if let Some(ds_label) = NAMES_LANG.with(|l| ds_theme_name(song, &l.borrow())) {
                 return ds_label.to_string();
             }
-            let theme = NAMES.with(|n| n.borrow().get(&(game.clone(), song.clone())).cloned()).unwrap_or_else(|| song.clone());
-            format!("{} {theme}", Shell::game_name(game))
+            if let Some(theme) = NAMES.with(|n| n.borrow().get(&(game.clone(), song.clone())).cloned()) {
+                return format!("{} {theme}", Shell::game_name(game));
+            }
+            let lang = NAMES_LANG.with(|l| l.borrow().clone());
+            if let Some(title) = titles::track_title(game, song, &lang) {
+                return format!("{} {title}", game_badge(game, song.starts_with("ds-")));
+            }
+            format!("{} {song}", Shell::game_name(game))
         }
     }
 }
@@ -212,14 +325,121 @@ pub fn retheme(shell: &mut Shell) {
     let Some(game) = shell.battle.as_ref().map(|b| b.game.clone()) else { return };
     let Some(ready) = shell.games.read(&game) else { return };
     let music = shell.battle_music();
+    if music == Music::Background
+        && let Some(pres) = practice_favorites_presentation(
+            &shell.games,
+            &ready,
+            shell.settings.favorite_battle_bgm,
+            &shell.settings.favorite_music,
+            next_practice_fav_seed(),
+        )
+    {
+        if let Some(b) = &mut shell.battle {
+            b.stage.player.set_round_presentation(Some(pres.resolver));
+        }
+        return;
+    }
     let Some(parts) = sound(&shell.games, &ready, &music) else { return };
     let rounds = round_music(&shell.games, &ready, &music);
     if let Some(b) = &mut shell.battle {
+        b.stage.player.set_round_presentation(None);
         match rounds {
             Some(rounds) => b.stage.player.set_round_music(rounds),
             None => b.stage.player.set_sound_parts(parts),
         }
     }
+}
+
+/// Global round-advancing cursor for [`FavoriteBgmMode::Sequential`].
+static FAVORITE_SEQ_CURSOR: AtomicUsize = AtomicUsize::new(0);
+
+/// Counter used to vary random favorite picks across practice sessions.
+static PRACTICE_FAV_NONCE: AtomicUsize = AtomicUsize::new(1);
+
+pub fn next_practice_fav_seed() -> u32 {
+    let n = PRACTICE_FAV_NONCE.fetch_add(1, Ordering::Relaxed) as u32;
+    n.wrapping_mul(0x9E37_79B9) ^ 0x517C_C1B7
+}
+
+/// Reset the sequential favorite rotation cursor (used by deterministic unit tests).
+#[cfg(test)]
+pub fn reset_favorite_cursor() {
+    FAVORITE_SEQ_CURSOR.store(0, Ordering::Relaxed);
+}
+
+/// Resolve all currently available, looping favorite tracks as `(game, song, SoundParts)` in
+/// the player's saved favorite order. Unavailable games or non-looping entries are silently skipped.
+pub fn resolve_favorites(games: &Games, ready: &Ready, favorites: &[String]) -> Vec<(String, String, SoundParts)> {
+    let Some(sound) = ready.loaded.sound.as_ref() else {
+        return Vec::new();
+    };
+    let content = ready.content();
+    let mut out = Vec::new();
+    for key in favorites {
+        let Some((game, song)) = parse_track_key(key) else { continue };
+        let theme = games
+            .read(game)
+            .and_then(|of| of.loaded.theme(song))
+            .or_else(|| (game == content.game()).then(|| ready.loaded.theme(song)).flatten());
+        if let Some(theme) = theme {
+            out.push((game.to_string(), song.to_string(), sound.parts(content, Some(&theme))));
+        }
+    }
+    out
+}
+
+/// Choose the index into a non-empty favorite pool of length `pool_len` for one round.
+///
+/// - `Sequential`: advances a global cursor by 1 every round, wrapping around.
+/// - `Random`: picks pseudo-randomly from `(seed, round)` and avoids repeating `last_pick`
+///   whenever `pool_len > 1`.
+pub fn pick_favorite_index(mode: FavoriteBgmMode, pool_len: usize, seed: u32, round: u32, last_pick: Option<usize>) -> usize {
+    debug_assert!(pool_len > 0);
+    if pool_len <= 1 {
+        return 0;
+    }
+    match mode {
+        FavoriteBgmMode::Sequential => FAVORITE_SEQ_CURSOR.fetch_add(1, Ordering::Relaxed) % pool_len,
+        FavoriteBgmMode::Random | FavoriteBgmMode::Off => {
+            let mut picks = saito_match::pick::Picks::new(seed ^ 0x4641_5652 ^ round.wrapping_mul(0x9E37_79B1));
+            let mut idx = picks.below(pool_len);
+            if Some(idx) == last_pick {
+                let offset = 1 + picks.below(pool_len - 1);
+                idx = (idx + offset) % pool_len;
+            }
+            idx
+        }
+    }
+}
+
+/// Build a per-round presentation resolver for Practice mode when Favorite Battle BGM is active:
+/// keeps the battle's chosen background intact (`background: None`) while switching to a favorite
+/// track every round.
+pub fn practice_favorites_presentation(
+    games: &Games,
+    ready: &Ready,
+    mode: FavoriteBgmMode,
+    favorites: &[String],
+    seed: u32,
+) -> Option<crate::battle::BattlePresentation> {
+    if mode == FavoriteBgmMode::Off {
+        return None;
+    }
+    let pool = resolve_favorites(games, ready, favorites);
+    if pool.is_empty() {
+        return None;
+    }
+    let mut last_pick: Option<usize> = None;
+    let resolver = Box::new(move |ctx: RoundContext| {
+        let idx = pick_favorite_index(mode, pool.len(), seed, ctx.round as u32, last_pick);
+        last_pick = Some(idx);
+        RoundLook { background: None, sound: Some(pool[idx].2.clone()) }
+    });
+    Some(crate::battle::BattlePresentation {
+        extra_backgrounds: Vec::new(),
+        first_background: None,
+        resolver,
+    })
 }
 
 /// The sound of a battle of game `ready` with `music` (as the battle's preload takes it): a theme's song, with
@@ -673,5 +893,51 @@ mod tests {
         let own_gba = five.loaded.game.index.number(saito_content_api::AssetKind::Sound, "virus-battle").unwrap();
         assert_eq!(play_once(&Music::Background), (Some(own_gba), None), "GBA Virus Battle when prefer_ds_music=false");
         set_prefer_ds_music(prev);
+    }
+
+    /// Full BGM catalog, loop filtering (short jingles preview-only), localization, and per-round
+    /// favorite rotation (`S-135`).
+    #[test]
+    fn full_catalog_loop_filtering_and_favorite_rotation() {
+        let all = games(&["exe4", "exe5", "exe6"]);
+        // Verify non-looping jingle classification across all games.
+        assert!(is_known_non_looping("exe4", "transmission"));
+        assert!(is_known_non_looping("exe4", "game-over"));
+        assert!(is_known_non_looping("exe4", "winner"));
+        assert!(is_known_non_looping("exe5", "liberate-boss-fanfare"));
+        assert!(is_known_non_looping("exe5", "1turn-delete"));
+        assert!(is_known_non_looping("exe5", "ds-1turn-delete"));
+        assert!(is_known_non_looping("exe6", "winner-1"));
+        assert!(!is_known_non_looping("exe6", "acdc-town"));
+        assert!(!is_known_non_looping("exe5", "ds-liberate"));
+
+        // Non-looping jingles are allowed in preview_track but rejected by theme() / resolve_menu_bgm().
+        assert!(resolve_preview(&all, "exe6/winner-1").is_some());
+        assert!(resolve_menu_bgm(&all, "exe6/winner-1").is_none());
+
+        // Localized track titles exist in all four languages.
+        for lang in ["en", "ja", "zh-Hans", "ko"] {
+            crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], lang);
+            assert_ne!(track_title("exe6", "acdc-town"), "acdc-town");
+            assert_ne!(track_title("exe5", "oran-island"), "oran-island");
+            assert_ne!(track_title("exe4", "asteroid-comp"), "asteroid-comp");
+            assert_ne!(track_title("exe5", "ds-liberate"), "ds-liberate");
+        }
+
+        // Sequential rotation advances round-by-round wrapping cleanly.
+        reset_favorite_cursor();
+        let seq: Vec<usize> = (0..5)
+            .map(|r| pick_favorite_index(FavoriteBgmMode::Sequential, 3, 42, r, None))
+            .collect();
+        assert_eq!(seq, vec![0, 1, 2, 0, 1]);
+
+        // Random rotation never repeats consecutive rounds when pool has 2+ tracks.
+        let mut last = None;
+        for r in 0..20 {
+            let next = pick_favorite_index(FavoriteBgmMode::Random, 3, 12345, r, last);
+            assert!(next < 3);
+            assert_ne!(Some(next), last, "round {r} must not repeat previous favorite");
+            last = Some(next);
+        }
     }
 }

@@ -1,0 +1,440 @@
+// Music library & favorites, Settings' Audio subscreen (`S-135`):
+// Browse the complete BGM catalogs of EXE4, EXE5, EXE5DS, and EXE6, preview any track
+// (including short non-looping jingles), star looping tracks as battle favorites,
+// configure per-round favorite battle rotation, and pin a custom main-menu BGM.
+// Its Rust half is src/screens/settings/music.rs.
+
+import { Theme, I18n } from "../../theme.slint";
+import { Nav, Focusable } from "../../nav.slint";
+import { Shell, Page, PadButton } from "../../shell.slint";
+import { Label, Note, Value, Mono, Heading, Button, ButtonKind, Seg, Tab, TabBar, ListView, RowBack, RowTouch, PanelBack, Rule } from "../../widgets.slint";
+import { Arrive } from "../../motion.slint";
+
+// One BGM row in the filtered list.
+export struct MusicTrackRow {
+    number: string,
+    game: string,
+    title: string,
+    looping: bool,
+    favorite: bool,
+    playing: bool,
+    menu-bgm: bool,
+}
+
+// What the music library shows: src/screens/settings/music.rs sets these.
+export global MusicView {
+    in property <[Tab]> tabs;
+    in property <int> filter: 0;
+    in property <[MusicTrackRow]> rows;
+    in property <int> chosen: 0;
+    in property <int> favorite-count: 0;
+    in property <int> total-count: 0;
+    // 0 = Off, 1 = Random, 2 = In order.
+    in property <int> favorite-battle-bgm: 0;
+    in property <string> menu-bgm-label;
+    in property <bool> has-custom-menu-bgm: false;
+    // Selected track inspector.
+    in property <bool> has-selected: false;
+    in property <string> selected-game;
+    in property <string> selected-title;
+    in property <bool> selected-looping: true;
+    in property <bool> selected-favorite: false;
+    in property <bool> selected-menu-bgm: false;
+    in property <bool> selected-playing: false;
+    // Active preview status.
+    in property <bool> is-playing: false;
+    in property <string> playing-label;
+
+    // Localized tab & label words read by Rust.
+    out property <string> tab-all: @tr("All");
+    out property <string> tab-favorites: @tr("Favorites");
+    out property <string> menu-default: @tr("Default (Game title)");
+}
+
+// One track row in the list: play indicator / track number, game badge, title, status tag, and favorite star.
+component TrackRowView inherits Rectangle {
+    in property <MusicTrackRow> track;
+    in property <string> nav;
+    in property <int> nav-index;
+    property <length> star-w: 40px;
+
+    RowBack {
+        hover: touch.has-hover;
+
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+
+    // Active-playing accent stripe on the left edge.
+    Rectangle {
+        x: 0;
+        y: 6px;
+        width: 3px;
+        height: parent.height - 12px;
+        visible: root.track.playing;
+        background: Theme.cursor;
+    }
+
+    // Play marker or track index.
+    Mono {
+        x: 10px;
+        width: 28px;
+        height: parent.height;
+        text: root.track.playing ? "▶" : root.track.number;
+        color: root.track.playing ? Theme.cursor : Theme.muted;
+        font-size: 12px;
+        font-weight: root.track.playing ? 700 : 500;
+        horizontal-alignment: center;
+    }
+
+    // Game badge.
+    Rectangle {
+        x: 42px;
+        y: (parent.height - 20px) / 2;
+        width: Theme.phone ? 54px : 60px;
+        height: 20px;
+        background: Theme.inset;
+        border-width: 1px;
+        border-color: root.track.playing ? Theme.cursor : Theme.line;
+        Mono {
+            x: 2px;
+            width: parent.width - 4px;
+            height: parent.height;
+            text: root.track.game;
+            color: root.track.playing ? Theme.cursor : Theme.muted;
+            font-size: 10px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Track title + optional subtle tags.
+    HorizontalLayout {
+        x: Theme.phone ? 104px : 112px;
+        y: 0;
+        width: max(0px, parent.width - self.x - root.star-w - 8px);
+        height: parent.height;
+        spacing: 6px;
+        alignment: start;
+
+        Value {
+            text: root.track.title;
+            color: root.track.playing ? Theme.cursor : Theme.text;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        if root.track.menu-bgm: Rectangle {
+            width: menu-tag.preferred-width + 10px;
+            height: 18px;
+            y: (parent.height - 18px) / 2;
+            background: Theme.good.with-alpha(0.2);
+            border-width: 1px;
+            border-color: Theme.good;
+            menu-tag := Text {
+                text: @tr("Menu");
+                color: Theme.good;
+                font-family: Theme.body;
+                font-size: 10px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if !root.track.looping: Rectangle {
+            width: short-tag.preferred-width + 10px;
+            height: 18px;
+            y: (parent.height - 18px) / 2;
+            background: Theme.inset;
+            border-width: 1px;
+            border-color: Theme.line;
+            short-tag := Text {
+                text: @tr("Preview only");
+                color: Theme.muted;
+                font-family: Theme.body;
+                font-size: 10px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // Row click / tap plays or stops preview.
+    touch := RowTouch {
+        x: 0;
+        y: 0;
+        width: parent.width - root.star-w;
+        height: parent.height;
+        nav: root.nav;
+        nav-index: root.nav-index;
+    }
+
+    // Favorite toggle button on the right edge (disabled/hidden for non-looping short jingles).
+    if root.track.looping: Rectangle {
+        x: parent.width - root.star-w;
+        y: 0;
+        width: root.star-w;
+        height: parent.height;
+        Text {
+            text: root.track.favorite ? "★" : "☆";
+            color: root.track.favorite ? Theme.action : (star-hit.has-hover ? Theme.text : Theme.muted);
+            font-size: 18px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        star-hit := Focusable {
+            nav: "music.star";
+            nav-index: root.nav-index;
+        }
+    }
+}
+
+export component MusicPage inherits Page {
+    property <bool> compact: Theme.phone;
+    property <length> tab-h: 40px;
+    property <length> panel-w: Theme.sideways ? 290px : 356px;
+    property <length> list-w: root.compact ? self.body-width : max(240px, self.body-width - root.panel-w - 16px);
+    property <length> bottom-h: 236px;
+    property <length> list-y: root.tab-h + 8px;
+    property <length> list-h: root.compact ? max(140px, self.body-height - root.list-y - root.bottom-h - 8px) : max(140px, self.body-height - root.list-y);
+    property <length> panel-x: root.compact ? 0px : root.list-w + 16px;
+    property <length> panel-y: root.compact ? root.list-y + root.list-h + 8px : root.list-y;
+    property <length> panel-width: root.compact ? self.body-width : root.panel-w;
+    property <length> panel-height: root.compact ? root.bottom-h : root.list-h;
+
+    title: I18n.upper(@tr("Music library"));
+    back: I18n.upper(@tr("Settings"));
+    game: false;
+    status: @tr("{} tracks · {} favorites", MusicView.total-count, MusicView.favorite-count);
+    hints: [
+        { key: "↑↓", pad: PadButton.move, text: @tr("Move") },
+        { key: Shell.key-a, pad: Shell.pad-a, text: @tr("Play / Stop") },
+        { key: "F", pad: PadButton.north, text: @tr("Favorite") },
+        { key: Shell.key-l, key2: Shell.key-r, pad: PadButton.shoulders, text: @tr("Filter") },
+        { key: Shell.key-b, pad: Shell.pad-b, text: @tr("Back") },
+    ];
+
+    Arrive {
+        order: 0;
+        TabBar {
+            x: 0;
+            y: 0;
+            width: root.body-width;
+            nav: "music.tab";
+            tabs: MusicView.tabs;
+            chosen: MusicView.filter;
+        }
+    }
+
+    Arrive {
+        order: 1;
+        list := ListView {
+            x: 0;
+            y: root.list-y;
+            width: root.list-w;
+            height: root.list-h;
+            nav: "music.list";
+            count: MusicView.rows.length;
+            row-height: 44px;
+            chosen: MusicView.chosen;
+
+            for i in self.shown: TrackRowView {
+                property <int> row-index: list.first + i;
+                x: 0;
+                y: i * list.pitch;
+                width: list.row-width;
+                height: 44px;
+                nav: "music.list";
+                nav-index: self.row-index;
+                track: MusicView.rows[self.row-index];
+            }
+        }
+
+        // Empty state message (e.g. Favorites tab with no favorites yet).
+        Note {
+            x: 12px;
+            y: root.list-y + 16px;
+            width: root.list-w - 24px;
+            height: 48px;
+            visible: MusicView.rows.length == 0;
+            text: MusicView.filter == 1
+                ? @tr("No favorite tracks yet. Press ★ on any looping track to add it here.")
+                : @tr("No tracks loaded for this filter yet.");
+        }
+    }
+
+    // Inspector + Battle Favorites / Menu BGM controls panel.
+    Arrive {
+        order: 2;
+        Rectangle {
+            x: root.panel-x;
+            y: root.panel-y;
+            width: root.panel-width;
+            height: root.panel-height;
+
+            PanelBack {
+                accent: MusicView.is-playing;
+            }
+
+            Flickable {
+                x: 14px;
+                y: 12px;
+                width: parent.width - 28px;
+                height: parent.height - 24px;
+                content-width: self.width;
+                content-height: max(self.height, controls.preferred-height);
+
+                controls := VerticalLayout {
+                    width: parent.width;
+                    spacing: 10px;
+                    alignment: start;
+
+                    // Selected track summary.
+                    VerticalLayout {
+                        spacing: 3px;
+                        Label {
+                            text: MusicView.is-playing
+                                ? I18n.upper(@tr("Now playing"))
+                                : I18n.upper(@tr("Selected track"));
+                            color: MusicView.is-playing ? Theme.cursor : Theme.muted;
+                            font-size: 11px;
+                        }
+
+                        Heading {
+                            text: MusicView.has-selected ? MusicView.selected-title : @tr("No track selected");
+                            font-size: 18px;
+                            overflow: elide;
+                        }
+
+                        Note {
+                            text: !MusicView.has-selected
+                                ? ""
+                                : MusicView.selected-looping
+                                    ? @tr("{} · Loops (Battle & Menu eligible)", MusicView.selected-game)
+                                    : @tr("{} · Short jingle (Preview only)", MusicView.selected-game);
+                        }
+                    }
+
+                    // Transport controls: Prev / Play-Stop / Next.
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            nav: "music.prev";
+                            compact: true;
+                            enabled: MusicView.rows.length > 1;
+                            text: I18n.upper(@tr("Prev"));
+                        }
+
+                        Button {
+                            nav: "music.play";
+                            compact: true;
+                            kind: ButtonKind.main;
+                            enabled: MusicView.has-selected;
+                            text: I18n.upper(MusicView.selected-playing ? @tr("Stop") : @tr("Preview"));
+                        }
+
+                        Button {
+                            nav: "music.next";
+                            compact: true;
+                            enabled: MusicView.rows.length > 1;
+                            text: I18n.upper(@tr("Next"));
+                        }
+                    }
+
+                    // Per-track actions: Favorite + Set as Main Menu BGM.
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            nav: "music.fav";
+                            compact: true;
+                            kind: MusicView.selected-favorite ? ButtonKind.main : ButtonKind.normal;
+                            enabled: MusicView.has-selected && MusicView.selected-looping;
+                            text: MusicView.selected-favorite ? I18n.upper(@tr("★ Favorited")) : I18n.upper(@tr("☆ Favorite"));
+                        }
+
+                        Button {
+                            nav: "music.menu-bgm";
+                            compact: true;
+                            kind: MusicView.selected-menu-bgm ? ButtonKind.main : ButtonKind.normal;
+                            enabled: MusicView.has-selected && (MusicView.selected-looping || MusicView.selected-menu-bgm);
+                            text: MusicView.selected-menu-bgm ? I18n.upper(@tr("Clear menu BGM")) : I18n.upper(@tr("Set menu BGM"));
+                        }
+                    }
+
+                    Rule {
+                        height: 1px;
+                    }
+
+                    // Battle Favorites auto-play mode (Mode A: switches every round).
+                    VerticalLayout {
+                        spacing: 6px;
+                        Label {
+                            text: I18n.upper(@tr("Battle favorite BGM"));
+                            font-size: 11px;
+                        }
+
+                        Seg {
+                            nav: "music.battle-mode";
+                            first: I18n.upper(@tr("Off"));
+                            second: I18n.upper(@tr("Random"));
+                            third: I18n.upper(@tr("In order"));
+                            chosen: MusicView.favorite-battle-bgm;
+                        }
+
+                        Note {
+                            text: @tr("Auto-play favorite tracks in battle, switching each round.");
+                        }
+                    }
+
+                    // Current Menu BGM summary + reset button.
+                    VerticalLayout {
+                        spacing: 4px;
+                        Label {
+                            text: I18n.upper(@tr("Main menu BGM"));
+                            font-size: 11px;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Value {
+                                text: MusicView.menu-bgm-label == "" ? MusicView.menu-default : MusicView.menu-bgm-label;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            if MusicView.has-custom-menu-bgm: Button {
+                                nav: "music.reset-menu";
+                                compact: true;
+                                kind: ButtonKind.ghost;
+                                text: I18n.upper(@tr("Default"));
+                            }
+                        }
+                    }
+
+                    // Bulk favorite helpers.
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            nav: "music.fav-battles";
+                            compact: true;
+                            kind: ButtonKind.ghost;
+                            enabled: MusicView.total-count > 0;
+                            text: I18n.upper(@tr("Favorite battle themes"));
+                        }
+
+                        Button {
+                            nav: "music.clear-favs";
+                            compact: true;
+                            kind: ButtonKind.ghost;
+                            enabled: MusicView.favorite-count > 0;
+                            text: I18n.upper(@tr("Clear"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

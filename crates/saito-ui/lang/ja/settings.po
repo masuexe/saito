@@ -402,3 +402,96 @@ msgstr "横画面に切替"
 
 msgid "Switch to portrait"
 msgstr "縦画面に切替"
+
+# Music library, favorites & main-menu BGM (S-135).
+
+msgid "Music library"
+msgstr "ミュージックライブラリ"
+
+msgid "Browse all BGM tracks and star your favorites."
+msgstr "全BGMを一覧・試聴して、お気に入りに登録できます。"
+
+msgid "{n} favorite track"
+msgid_plural "{n} favorite tracks"
+msgstr[0] "お気に入り {n} 曲"
+
+msgid "Battle favorite BGM"
+msgstr "バトルお気に入りBGM"
+
+msgid "Auto-play favorite tracks in battle, switching each round."
+msgstr "バトル中にお気に入り曲を自動再生し、ラウンドごとに切り替えます。"
+
+msgid "In order"
+msgstr "順番"
+
+msgid "Main menu BGM"
+msgstr "メインメニューBGM"
+
+msgid "Music played on menu screens. Default uses the selected game's title theme."
+msgstr "メニュー画面で流れるBGM。デフォルトでは選択中タイトルの曲を使用します。"
+
+msgid "Default (Game title)"
+msgstr "デフォルト（タイトル曲）"
+
+msgid "Favorites"
+msgstr "お気に入り"
+
+msgid "Preview only"
+msgstr "試聴のみ"
+
+msgid "{} tracks · {} favorites"
+msgstr "全 {} 曲 · お気に入り {} 曲"
+
+msgid "Play / Stop"
+msgstr "再生 / 停止"
+
+msgid "Favorite"
+msgstr "お気に入り"
+
+msgid "Filter"
+msgstr "絞込"
+
+msgid "No favorite tracks yet. Press ★ on any looping track to add it here."
+msgstr "お気に入り曲はまだありません。ループ曲の ★ を押して追加してください。"
+
+msgid "No tracks loaded for this filter yet."
+msgstr "この条件で読み込み済みの曲はありません。"
+
+msgid "Now playing"
+msgstr "再生中"
+
+msgid "Selected track"
+msgstr "選択中の曲"
+
+msgid "No track selected"
+msgstr "曲未選択"
+
+msgid "{} · Loops (Battle & Menu eligible)"
+msgstr "{} · ループ曲（バトル・メニュー設定可）"
+
+msgid "{} · Short jingle (Preview only)"
+msgstr "{} · ジングル（試聴のみ）"
+
+msgid "Prev"
+msgstr "前へ"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Preview"
+msgstr "試聴"
+
+msgid "★ Favorited"
+msgstr "★ 登録済み"
+
+msgid "☆ Favorite"
+msgstr "☆ お気に入り"
+
+msgid "Clear menu BGM"
+msgstr "メニューBGM解除"
+
+msgid "Set menu BGM"
+msgstr "メニューBGMに設定"
+
+msgid "Favorite battle themes"
+msgstr "バトル曲を一括登録"

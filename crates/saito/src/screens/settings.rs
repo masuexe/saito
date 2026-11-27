@@ -7,10 +7,11 @@
 //! rest) and bind the controls by a [`Binding`] of their own.
 
 mod about;
+mod music;
 
 use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
-use crate::settings::{DEFAULT_SIGNAL_SERVER, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
+use crate::settings::{DEFAULT_SIGNAL_SERVER, FavoriteBgmMode, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
 use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
@@ -56,7 +57,7 @@ pub fn group_for_scroll(scroll: f32, view_height: f32, content_height: f32, tops
 /// Update `SettingsView.group` from the page's scroll position when Settings is on screen and laid out.
 pub fn scrolled(ui: &saito_ui::AppWindow, scroll: f32, view_height: f32, content_height: f32, tops: &[f32]) {
     let view = ui.global::<SettingsView>();
-    if view.get_about() || view.get_touch_editor() || !laid_out(view_height, content_height, tops) {
+    if view.get_about() || view.get_music_library() || view.get_touch_editor() || !laid_out(view_height, content_height, tops) {
         return;
     }
     let group = group_for_scroll(scroll, view_height, content_height, tops);
@@ -77,7 +78,7 @@ fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
         "set.picture" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
-        "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
+        "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.music-library" | "set.favorite-bgm" | "set.menu-bgm" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
         "set.folder" | "set.abd-format" | "set.abd-export" | "set.nearby" | "set.nearby.send" | "set.about" => 5,
@@ -164,6 +165,21 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_exe5ds_voices(s.exe5ds_voices);
     view.set_music(s.music as i32);
     view.set_effects(s.effects as i32);
+    let fav_count = s.favorite_music.len();
+    view.set_music_favorites_note(if fav_count == 0 {
+        view.get_music_favorites_empty()
+    } else {
+        view.invoke_music_favorites_count(fav_count as i32)
+    });
+    view.set_favorite_battle_bgm(s.favorite_battle_bgm.as_index() as i32);
+    view.set_menu_bgm(
+        s.menu_bgm
+            .as_deref()
+            .and_then(crate::music::parse_track_key)
+            .map(|(g, song)| crate::music::track_full_name(g, song))
+            .unwrap_or_default()
+            .into(),
+    );
     view.set_mic_supported(saito_audio::MicMonitor::is_supported());
     view.set_mic_shout_enabled(s.mic_shout_enabled);
     view.set_mic_sensitivity((s.mic_sensitivity * 100.0).round().clamp(25.0, 400.0) as i32);
@@ -381,6 +397,8 @@ pub struct Settings {
     binding: Binding,
     /// About, shown in the page's place while it is open.
     about: about::About,
+    /// Music library & favorites, shown in the page's place while it is open (`S-135`).
+    music: music::MusicLibrary,
     /// Interactive virtual touch pad layout editor, shown in the page's place while it is open.
     touch_editor: bool,
     /// Target `IP:port` entered for manual nearby transfer.
@@ -545,6 +563,57 @@ impl Settings {
         view.set_abd_stats_summary(summary);
     }
 
+    fn menu_bgm_options(shell: &Shell) -> Vec<Option<String>> {
+        std::iter::once(None)
+            .chain(
+                crate::music::catalog(&shell.games)
+                    .into_iter()
+                    .filter(|e| e.looping)
+                    .map(|e| Some(e.key)),
+            )
+            .collect()
+    }
+
+    fn pick_menu_bgm(&self, shell: &mut Shell, id: &str) {
+        let options = Self::menu_bgm_options(shell);
+        let default_label = shell.ui().global::<SettingsView>().get_menu_bgm_default().to_string();
+        let labels: Vec<String> = options
+            .iter()
+            .map(|opt| match opt.as_deref().and_then(crate::music::parse_track_key) {
+                Some((g, s)) => crate::music::track_full_name(g, s),
+                None => default_label.clone(),
+            })
+            .collect();
+        let chosen = options.iter().position(|o| *o == shell.settings.menu_bgm).unwrap_or(0);
+        shell.pick(id, 0, labels, chosen);
+    }
+
+    fn set_menu_bgm_choice(&mut self, shell: &mut Shell, choice: i32) {
+        let options = Self::menu_bgm_options(shell);
+        if let Some(picked) = options.get(choice.max(0) as usize) {
+            shell.settings.menu_bgm = picked.clone();
+            shell.save_settings();
+            shell.sync_menu_bgm();
+            self.show(shell);
+        }
+    }
+
+    fn step_menu_bgm(&mut self, shell: &mut Shell, by: i32) {
+        let options = Self::menu_bgm_options(shell);
+        let cur = options.iter().position(|o| *o == shell.settings.menu_bgm).unwrap_or(0);
+        let next = (cur as i32 + by).rem_euclid(options.len() as i32) as usize;
+        shell.settings.menu_bgm = options[next].clone();
+        shell.save_settings();
+        shell.sync_menu_bgm();
+        self.show(shell);
+    }
+
+    fn set_favorite_battle_bgm(&mut self, shell: &mut Shell, mode: FavoriteBgmMode) {
+        shell.settings.favorite_battle_bgm = mode;
+        shell.save_settings();
+        self.show(shell);
+    }
+
     fn export_abd_stats(&self, shell: &mut Shell) {
         let fmt = self.abd_format;
         let kind = shell.ui().global::<SettingsView>().get_abd_stats_files().to_string();
@@ -575,6 +644,9 @@ impl Screen for Settings {
         if self.about.is_open() {
             self.about.show(shell);
         }
+        if self.music.is_open() {
+            self.music.show(shell);
+        }
     }
 
     fn hide(&mut self, shell: &mut Shell) {
@@ -585,6 +657,9 @@ impl Screen for Settings {
         if self.about.is_open() {
             self.about.close(shell);
         }
+        if self.music.is_open() {
+            self.music.close(shell);
+        }
     }
 
     fn activate(&mut self, shell: &mut Shell, id: &str, index: i32) {
@@ -593,6 +668,9 @@ impl Screen for Settings {
         }
         if self.about.is_open() {
             return self.about.activate(shell, id, index);
+        }
+        if self.music.is_open() {
+            return self.music.activate(shell, id, index);
         }
         mark_group(shell, id);
         match id {
@@ -651,6 +729,12 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.music-library" => self.music.open(shell),
+            "set.favorite-bgm" => {
+                let next = FavoriteBgmMode::from_index(shell.settings.favorite_battle_bgm.as_index() as i32 + 1);
+                self.set_favorite_battle_bgm(shell, next);
+            }
+            "set.menu-bgm" => self.pick_menu_bgm(shell, id),
             "set.mic-shout" => self.set_mic_shout_enabled(shell, !shell.settings.mic_shout_enabled),
             "set.mic-test" => self.toggle_mic_test(shell),
             "set.quick-shout-tier" => {
@@ -680,7 +764,10 @@ impl Screen for Settings {
         }
     }
 
-    fn step(&mut self, shell: &mut Shell, id: &str, _index: i32, by: i32) {
+    fn step(&mut self, shell: &mut Shell, id: &str, index: i32, by: i32) {
+        if self.music.is_open() {
+            return self.music.step(shell, id, index, by);
+        }
         mark_group(shell, id);
         match id {
             "set.language" => set_language(shell, crate::lang::step(shell.i18n.code, by)),
@@ -725,6 +812,11 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.favorite-bgm" => {
+                let next = FavoriteBgmMode::from_index(shell.settings.favorite_battle_bgm.as_index() as i32 + by);
+                self.set_favorite_battle_bgm(shell, next);
+            }
+            "set.menu-bgm" => self.step_menu_bgm(shell, by),
             "set.mic-shout" => self.set_mic_shout_enabled(shell, by > 0),
             "set.mic-sensitivity" => {
                 let cur = (shell.settings.mic_sensitivity * 100.0).round() as i32;
@@ -755,7 +847,10 @@ impl Screen for Settings {
         }
     }
 
-    fn choose(&mut self, shell: &mut Shell, id: &str, _index: i32, choice: i32) {
+    fn choose(&mut self, shell: &mut Shell, id: &str, index: i32, choice: i32) {
+        if self.music.is_open() {
+            return self.music.choose(shell, id, index, choice);
+        }
         mark_group(shell, id);
         match id {
             "set.language" => choose_language(shell, choice),
@@ -797,6 +892,8 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
+            "set.favorite-bgm" => self.set_favorite_battle_bgm(shell, FavoriteBgmMode::from_index(choice)),
+            "set.menu-bgm" => self.set_menu_bgm_choice(shell, choice),
             "set.mic-shout" => self.set_mic_shout_enabled(shell, choice == 1),
             "set.mic-sensitivity" => self.set_mic_sensitivity_pct(shell, choice),
             "set.quick-shout-tier" => self.set_quick_shout_tier(shell, (choice + 1).clamp(1, 3) as u8),
@@ -858,6 +955,9 @@ impl Screen for Settings {
         if self.about.is_open() {
             return self.about.focused(shell, id, index);
         }
+        if self.music.is_open() {
+            return self.music.focused(shell, id, index);
+        }
         let ui = shell.ui();
         let view = ui.global::<SettingsView>();
         if id == "group" {
@@ -872,7 +972,14 @@ impl Screen for Settings {
     }
 
     fn key(&mut self, shell: &mut Shell, key: &KeyPress) -> bool {
+        if self.music.is_open() {
+            return self.music.key(shell, key);
+        }
         self.binding.key(shell, key)
+    }
+
+    fn action(&mut self, shell: &mut Shell, action: Action) -> bool {
+        self.music.is_open() && self.music.action(shell, action)
     }
 
     fn mouse(&mut self, shell: &mut Shell, button: MouseButton) -> bool {
@@ -887,12 +994,18 @@ impl Screen for Settings {
         self.about.is_open().then(|| self.about.scroll_view(shell, by)).flatten()
     }
 
-    /// Back in About or TouchLayoutEditor: within it, else to the settings.
+    /// Back in About, MusicLibrary, or TouchLayoutEditor: within it, else to the settings.
     fn back(&mut self, shell: &mut Shell) -> bool {
         if self.touch_editor {
             self.close_touch_editor(shell);
             shell.save_settings();
             shell.nav.enter(ScreenId::Settings.name(), self.main());
+            return true;
+        }
+        if self.music.is_open() {
+            self.music.close(shell);
+            shell.nav.enter(ScreenId::Settings.name(), self.main());
+            self.show(shell);
             return true;
         }
         if !self.about.is_open() {
@@ -1006,6 +1119,9 @@ impl Screen for Settings {
     }
 
     fn frame(&mut self, shell: &mut Shell, _now: web_time::Instant, shown: bool) {
+        if shown && self.music.is_open() {
+            self.music.frame(shell);
+        }
         if self.test_mic.is_armed() {
             if !shown {
                 self.stop_mic_test(shell);

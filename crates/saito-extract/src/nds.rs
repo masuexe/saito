@@ -100,6 +100,60 @@ pub const EXE5DS_BATTLE_THEMES: &[(&str, u16, Option<&str>)] = &[
     ("ds-exe45-battle", 41, None),
 ];
 
+/// One EXE5DS `SDAT` BGM track entry (`S-135`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DsBgmTrack {
+    pub key: &'static str,
+    pub seq_id: u16,
+    pub looping: bool,
+    pub gba_counterpart: Option<&'static str>,
+}
+
+/// Complete EXE5DS `sound_data.sdat` BGM catalog (`SEQ 01..=09`, `11..=41`;
+/// `SEQ 00` is silent `BGM_NO` and `SEQ 10` duplicates `SEQ 01`).
+pub const EXE5DS_BGM_TRACKS: &[DsBgmTrack] = &[
+    DsBgmTrack { key: "ds-title-screen", seq_id: 1, looping: true, gba_counterpart: Some("title-screen") },
+    DsBgmTrack { key: "ds-nebula-theme", seq_id: 2, looping: true, gba_counterpart: Some("nebula-theme") },
+    DsBgmTrack { key: "ds-acdc-town", seq_id: 3, looping: true, gba_counterpart: Some("acdc-town") },
+    DsBgmTrack { key: "ds-indoors", seq_id: 4, looping: true, gba_counterpart: Some("indoors") },
+    DsBgmTrack { key: "ds-scilab", seq_id: 5, looping: true, gba_counterpart: Some("scilab") },
+    DsBgmTrack { key: "ds-oran-island", seq_id: 6, looping: true, gba_counterpart: Some("oran-island") },
+    DsBgmTrack { key: "ds-queen-bohemia", seq_id: 7, looping: true, gba_counterpart: Some("queen-bohemia") },
+    DsBgmTrack { key: "ds-end-city", seq_id: 8, looping: true, gba_counterpart: Some("end-city") },
+    DsBgmTrack { key: "ds-dark-chip-factory", seq_id: 9, looping: true, gba_counterpart: Some("dark-chip-factory") },
+    DsBgmTrack { key: "ds-event-occurance", seq_id: 11, looping: true, gba_counterpart: Some("event-occurance") },
+    DsBgmTrack { key: "ds-crises", seq_id: 12, looping: true, gba_counterpart: Some("crises") },
+    DsBgmTrack { key: "ds-sad", seq_id: 13, looping: true, gba_counterpart: Some("sad") },
+    DsBgmTrack { key: "ds-you-are-not-alone", seq_id: 14, looping: true, gba_counterpart: Some("you-are-not-alone") },
+    DsBgmTrack { key: "ds-transmission", seq_id: 15, looping: false, gba_counterpart: Some("transmission") },
+    DsBgmTrack { key: "ds-main-comp", seq_id: 16, looping: true, gba_counterpart: Some("main-comp") },
+    DsBgmTrack { key: "ds-drill-comp", seq_id: 17, looping: true, gba_counterpart: Some("drill-comp") },
+    DsBgmTrack { key: "ds-factory-comp", seq_id: 18, looping: true, gba_counterpart: Some("factory-comp") },
+    DsBgmTrack { key: "ds-network", seq_id: 19, looping: true, gba_counterpart: Some("network") },
+    DsBgmTrack { key: "ds-undernet", seq_id: 20, looping: true, gba_counterpart: Some("undernet") },
+    DsBgmTrack { key: "ds-virus-battle", seq_id: 21, looping: true, gba_counterpart: Some("virus-battle") },
+    DsBgmTrack { key: "ds-boss-battle", seq_id: 22, looping: true, gba_counterpart: Some("boss-battle") },
+    DsBgmTrack { key: "ds-final-battle", seq_id: 23, looping: true, gba_counterpart: Some("final-battle") },
+    DsBgmTrack { key: "ds-liberate-boss-fanfare", seq_id: 24, looping: false, gba_counterpart: Some("liberate-boss-fanfare") },
+    DsBgmTrack { key: "ds-winner-0", seq_id: 25, looping: true, gba_counterpart: Some("winner-0") },
+    DsBgmTrack { key: "ds-loser", seq_id: 26, looping: true, gba_counterpart: Some("loser") },
+    DsBgmTrack { key: "ds-game-over", seq_id: 27, looping: false, gba_counterpart: Some("game-over") },
+    DsBgmTrack { key: "ds-boss-prelude", seq_id: 28, looping: true, gba_counterpart: Some("boss-prelude") },
+    DsBgmTrack { key: "ds-credits", seq_id: 29, looping: true, gba_counterpart: Some("credits") },
+    DsBgmTrack { key: "ds-navi-customizer", seq_id: 30, looping: true, gba_counterpart: Some("navi-customizer") },
+    DsBgmTrack { key: "ds-winner-1", seq_id: 31, looping: false, gba_counterpart: Some("winner-1") },
+    DsBgmTrack { key: "ds-ship-comp", seq_id: 32, looping: true, gba_counterpart: Some("ship-comp") },
+    DsBgmTrack { key: "ds-castle-comp", seq_id: 33, looping: true, gba_counterpart: Some("castle-comp") },
+    DsBgmTrack { key: "ds-liberate", seq_id: 34, looping: true, gba_counterpart: Some("liberate") },
+    DsBgmTrack { key: "ds-trial", seq_id: 35, looping: true, gba_counterpart: Some("trial") },
+    DsBgmTrack { key: "ds-1turn-delete", seq_id: 36, looping: false, gba_counterpart: Some("1turn-delete") },
+    DsBgmTrack { key: "ds-exe1-battle", seq_id: 37, looping: true, gba_counterpart: None },
+    DsBgmTrack { key: "ds-exe2-battle", seq_id: 38, looping: true, gba_counterpart: None },
+    DsBgmTrack { key: "ds-exe3-battle", seq_id: 39, looping: true, gba_counterpart: None },
+    DsBgmTrack { key: "ds-exe4-battle", seq_id: 40, looping: true, gba_counterpart: None },
+    DsBgmTrack { key: "ds-exe45-battle", seq_id: 41, looping: true, gba_counterpart: None },
+];
+
 /// Minimum expected sizes for the `kokoro_*` files in EXE5DS.
 const KOKORO_PIX_MIN_LEN: usize = 0x2C80;
 const KOKORO_NAVI_MIN_LEN: usize = 0x2880;
@@ -500,7 +554,7 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
 
     let (sound, voices) = match fs.read_file_or_find(PATH_SOUND_DATA, "sound_data.sdat") {
         Some(sdat_bytes) => {
-            let seq_ids: Vec<u16> = EXE5DS_BATTLE_THEMES.iter().map(|&(_, id, _)| id).collect();
+            let seq_ids: Vec<u16> = EXE5DS_BGM_TRACKS.iter().map(|t| t.seq_id).collect();
             let sound = sdat::parse::extract_sdat(sdat_bytes, &seq_ids).ok();
             let voices = sdat::parse::extract_ssar_voices(sdat_bytes).ok().filter(|v| !v.is_empty());
             (sound, voices)

@@ -1012,7 +1012,16 @@ impl Play {
             shell.nav.close("abd-guide.");
             shell.ui().global::<PlayView>().set_abd_guide_dialog(false);
         }
-        let (presentation, recorded_presentation) = self.stage_config.resolve_presentation(&shell.games, &ready, agreed.seed, agreed.settings.first_to());
+        let (presentation, recorded_presentation) = self.stage_config.resolve_presentation_with_favorites(
+            &shell.games,
+            &ready,
+            agreed.seed,
+            agreed.settings.first_to(),
+            stage::FavoriteBgmConfig {
+                mode: shell.settings.favorite_battle_bgm,
+                favorites: &shell.settings.favorite_music,
+            },
+        );
         let (me, other) = (agreed.side, 1 - agreed.side);
         let ui = shell.ui();
         let view = ui.global::<PlayView>();

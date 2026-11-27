@@ -9,6 +9,7 @@ import { Shell, Page, PadButton, FaceButton, NearbyWords } from "../shell.slint"
 import { Label, Note, Mono, Button, ButtonKind, Field, Select, Seg, Slider, Stepper, Row, Marker, GroupTitle, ScrollPage, Reach } from "../widgets.slint";
 import { Arrive } from "../motion.slint";
 import { AboutPage, AboutOverlay } from "settings/about.slint";
+import { MusicPage } from "settings/music.slint";
 import { TouchLayoutEditor } from "settings/touch_pad.slint";
 
 // A pad's button bound to an action: one of its four face buttons, drawn by its place, or a button with a cap.
@@ -69,6 +70,18 @@ export global SettingsView {
     in property <bool> exe5ds-voices: true;
     in property <int> music;
     in property <int> effects;
+    // Music library & favorites (`S-135`).
+    in property <bool> music-library;
+    in property <string> music-favorites-note;
+    // 0 = Off, 1 = Random, 2 = In order.
+    in property <int> favorite-battle-bgm: 0;
+    // Localized name of custom main-menu BGM, or empty for Default (selected game's title theme).
+    in property <string> menu-bgm;
+    out property <string> menu-bgm-default: @tr("Default (Game title)");
+    out property <string> music-favorites-empty: @tr("Browse all BGM tracks and star your favorites.");
+    pure public function music-favorites-count(count: int) -> string {
+        return @tr("{n} favorite track" | "{n} favorite tracks" % count);
+    }
     // EXE5DS Crisis Microphone settings & live test meter.
     in property <bool> mic-supported: true;
     in property <bool> mic-shout-enabled: false;
@@ -754,6 +767,61 @@ component SettingsPage inherits Page {
                     }
                 }
 
+                Rectangle {
+                    height: music-lib-row.height;
+                    music-lib-row := SettingLabel {
+                        label: @tr("Music library");
+                        note: SettingsView.music-favorites-note;
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Button {
+                        x: root.control-x;
+                        y: 4px;
+                        nav: "set.music-library";
+                        text: I18n.upper(@tr("Open"));
+                    }
+                }
+
+                Rectangle {
+                    height: fav-bgm-row.height;
+                    fav-bgm-row := SettingLabel {
+                        label: @tr("Battle favorite BGM");
+                        note: @tr("Auto-play favorite tracks in battle, switching each round.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.favorite-bgm";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("Random"));
+                        third: I18n.upper(@tr("In order"));
+                        chosen: SettingsView.favorite-battle-bgm;
+                    }
+                }
+
+                Rectangle {
+                    height: menu-bgm-row.height;
+                    menu-bgm-row := SettingLabel {
+                        label: @tr("Main menu BGM");
+                        note: @tr("Music played on menu screens. Default uses the selected game's title theme.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Select {
+                        x: root.control-x;
+                        y: 4px;
+                        width: root.control-width;
+                        nav: "set.menu-bgm";
+                        value: SettingsView.menu-bgm == "" ? SettingsView.menu-bgm-default : SettingsView.menu-bgm;
+                    }
+                }
+
                 SubTitle {
                     text: @tr("EXE5DS Crisis Microphone");
                 }
@@ -1202,15 +1270,18 @@ component SettingsPage inherits Page {
     }
 }
 
-// Settings, About, or the Touch Pad layout editor in their place.
+// Settings, About, Music Library, or the Touch Pad layout editor in their place.
 export component SettingsScreen inherits Rectangle {
-    if !SettingsView.about && !SettingsView.touch-editor: SettingsPage {
+    if !SettingsView.about && !SettingsView.music-library && !SettingsView.touch-editor: SettingsPage {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
     if SettingsView.about: AboutPage {
         Rectangle { }  // (Copied in: docs/app.md §14.)
     }
-    if SettingsView.touch-editor && !SettingsView.about: TouchLayoutEditor {
+    if SettingsView.music-library && !SettingsView.about: MusicPage {
+        Rectangle { }  // (Copied in: docs/app.md §14.)
+    }
+    if SettingsView.touch-editor && !SettingsView.about && !SettingsView.music-library: TouchLayoutEditor {
         width: parent.width;
         height: parent.height;
         selected: SettingsView.touch-selected;

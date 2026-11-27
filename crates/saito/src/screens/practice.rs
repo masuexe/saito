@@ -876,6 +876,19 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
     #[cfg(feature = "ai")]
     ai::replug(&mut driver, &mut session, &mut shell.practice.weights);
     view.set_getting_ready(GettingReady::default());
+    let presentation = if shell.battle_music() == crate::music::Music::Background {
+        shell.games.read(&start.game).and_then(|ready| {
+            crate::music::practice_favorites_presentation(
+                &shell.games,
+                &ready,
+                shell.settings.favorite_battle_bgm,
+                &shell.settings.favorite_music,
+                start.seed ^ crate::music::next_practice_fav_seed(),
+            )
+        })
+    } else {
+        None
+    };
     shell.start_battle(BattleStart {
         owner: ScreenId::Practice,
         kind: BattleKind::Practice,
@@ -890,7 +903,7 @@ pub fn start(shell: &mut Shell, mut start: Start) -> Result<(), UserError> {
         // Both standalone and room-waiting practice play the picked/background battle music (S-060).
         music: crate::battle::BattleMusic::Picked,
         gate: None,
-        presentation: None,
+        presentation,
         abd_log: saito_match::abd_mode::supported(&start.game).then(|| crate::abd_stats::AbdLogContext {
             game: start.game.clone(),
             mode: "practice",

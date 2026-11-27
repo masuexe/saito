@@ -22,6 +22,26 @@ pub struct Song {
     pub player: u8,
 }
 
+impl Song {
+    /// Whether this SSEQ bytecode contains an infinite loop marker (`0xD4 0x00`)
+    /// or a backward unconditional jump (`0x94` targeting an earlier offset).
+    pub fn is_looping(&self) -> bool {
+        let d = &self.data;
+        if d.windows(2).any(|w| w == [0xD4, 0x00]) {
+            return true;
+        }
+        for i in 0..d.len().saturating_sub(3) {
+            if d[i] == 0x94 {
+                let target = (d[i + 1] as usize) | ((d[i + 2] as usize) << 8) | ((d[i + 3] as usize) << 16);
+                if target < i {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 /// How an instrument note produces sound.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NoteKind {

@@ -401,3 +401,96 @@ msgstr "切换横屏"
 
 msgid "Switch to portrait"
 msgstr "切换竖屏"
+
+# Music library, favorites & main-menu BGM (S-135).
+
+msgid "Music library"
+msgstr "音乐库"
+
+msgid "Browse all BGM tracks and star your favorites."
+msgstr "浏览全部 BGM 曲目并收藏喜爱的乐曲。"
+
+msgid "{n} favorite track"
+msgid_plural "{n} favorite tracks"
+msgstr[0] "已收藏 {n} 首曲目"
+
+msgid "Battle favorite BGM"
+msgstr "对战收藏曲目"
+
+msgid "Auto-play favorite tracks in battle, switching each round."
+msgstr "对战时自动播放收藏曲目，每回合切换一首。"
+
+msgid "In order"
+msgstr "顺序"
+
+msgid "Main menu BGM"
+msgstr "主菜单 BGM"
+
+msgid "Music played on menu screens. Default uses the selected game's title theme."
+msgstr "菜单界面播放的背景音乐；默认使用当前选中作品的标题曲。"
+
+msgid "Default (Game title)"
+msgstr "默认（当前作品标题曲）"
+
+msgid "Favorites"
+msgstr "已收藏"
+
+msgid "Preview only"
+msgstr "仅试听"
+
+msgid "{} tracks · {} favorites"
+msgstr "共 {} 首 · 已收藏 {} 首"
+
+msgid "Play / Stop"
+msgstr "试听 / 停止"
+
+msgid "Favorite"
+msgstr "收藏"
+
+msgid "Filter"
+msgstr "筛选"
+
+msgid "No favorite tracks yet. Press ★ on any looping track to add it here."
+msgstr "还没有收藏曲目。点击任意循环曲目旁的 ★ 即可加入收藏。"
+
+msgid "No tracks loaded for this filter yet."
+msgstr "该分类下暂无已加载的曲目。"
+
+msgid "Now playing"
+msgstr "正在试听"
+
+msgid "Selected track"
+msgstr "当前选中"
+
+msgid "No track selected"
+msgstr "未选择曲目"
+
+msgid "{} · Loops (Battle & Menu eligible)"
+msgstr "{} · 循环曲（可用于对战与主菜单）"
+
+msgid "{} · Short jingle (Preview only)"
+msgstr "{} · 非循环短曲（仅限试听）"
+
+msgid "Prev"
+msgstr "上一首"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Preview"
+msgstr "试听"
+
+msgid "★ Favorited"
+msgstr "★ 已收藏"
+
+msgid "☆ Favorite"
+msgstr "☆ 收藏"
+
+msgid "Clear menu BGM"
+msgstr "取消主菜单 BGM"
+
+msgid "Set menu BGM"
+msgstr "设为主菜单 BGM"
+
+msgid "Favorite battle themes"
+msgstr "收藏全部战斗曲"

@@ -129,6 +129,43 @@ impl TouchPadLayouts {
     }
 }
 
+/// Battle favorite BGM rotation mode (`Settings::favorite_battle_bgm`, `S-135`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FavoriteBgmMode {
+    /// Do not override battle BGM with favorite tracks.
+    #[default]
+    Off,
+    /// Pick a random favorite track each round (avoiding consecutive repeats when possible).
+    Random,
+    /// Step through favorite tracks in order, advancing each round.
+    Sequential,
+}
+
+impl FavoriteBgmMode {
+    pub const COUNT: usize = 3;
+
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Off => 0,
+            Self::Random => 1,
+            Self::Sequential => 2,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(Self::COUNT as i32) {
+            1 => Self::Random,
+            2 => Self::Sequential,
+            _ => Self::Off,
+        }
+    }
+
+    pub fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+}
+
 /// Mobile screen orientation preference (`Settings::screen_orientation`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -254,6 +291,15 @@ pub struct Settings {
     /// 0 to 100.
     pub music: u32,
     pub effects: u32,
+    /// Ordered list of favorited looping tracks (`"<game>/<song>"`, `S-135`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub favorite_music: Vec<String>,
+    /// Auto-play favorite tracks in battle, switching each round (`S-135`).
+    #[serde(skip_serializing_if = "FavoriteBgmMode::is_off")]
+    pub favorite_battle_bgm: FavoriteBgmMode,
+    /// Optional custom main-menu BGM (`"<game>/<song>"`, looping only; `None` = selected game's title theme, `S-135`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub menu_bgm: Option<String>,
     /// Netplay's input delay, in frames: the value the lobby starts with (the library's
     /// `NetOptions::input_delay`).
     pub input_delay: u32,
@@ -314,6 +360,9 @@ impl Default for Settings {
             hd_chip_art: false,
             music: 80,
             effects: 100,
+            favorite_music: Vec::new(),
+            favorite_battle_bgm: FavoriteBgmMode::Off,
+            menu_bgm: None,
             input_delay: saito_frontend::netplay::DEFAULT_INPUT_DELAY,
             auto_input_delay: false,
             signaling_server: String::new(),
@@ -375,6 +424,33 @@ impl Settings {
             self.input_delay
         }
     }
+
+    /// Whether canonical track key `"<game>/<song>"` is currently in `favorite_music`.
+    pub fn is_favorite_music(&self, key: &str) -> bool {
+        self.favorite_music.iter().any(|k| k == key)
+    }
+
+    /// Toggle a looping track key in `favorite_music`; returns the new favorited state.
+    pub fn toggle_favorite_music(&mut self, key: &str) -> bool {
+        if let Some(pos) = self.favorite_music.iter().position(|k| k == key) {
+            self.favorite_music.remove(pos);
+            false
+        } else if crate::music::is_eligible_loop_key(key) {
+            self.favorite_music.push(key.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sanitize music favorites and menu BGM (deduplicate, drop malformed or known non-looping keys).
+    pub fn sanitize_music(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.favorite_music.retain(|k| crate::music::is_eligible_loop_key(k) && seen.insert(k.clone()));
+        if self.menu_bgm.as_deref().is_some_and(|k| !crate::music::is_eligible_loop_key(k)) {
+            self.menu_bgm = None;
+        }
+    }
 }
 
 /// The most the input delay can be set to: the library's.
@@ -431,6 +507,7 @@ impl Settings {
         };
         s.quick_shout_tier = s.quick_shout_tier.clamp(1, 3);
         s.touch_pad_layout = s.touch_pad_layout.sanitized();
+        s.sanitize_music();
         saito_extract::nds::set_exe5ds_rom_path(s.exe5ds_rom.clone());
         crate::music::set_prefer_ds_music(s.exe5ds_music);
         saito_frontend::ds_voices::set_enabled(s.exe5ds_voices);
@@ -667,5 +744,42 @@ mod tests {
         assert_eq!(s.resolved_input_delay(Some(saito_frontend::connection::Ping { ms: 200.0, jitter_ms: 10.0 })), 0);
         s.step_input_delay(99);
         assert!(!s.auto_input_delay && s.input_delay == MAX_INPUT_DELAY);
+    }
+
+    #[test]
+    fn favorite_music_and_menu_bgm_roundtrip_and_reject_non_looping() {
+        let legacy: Settings = toml::from_str("music = 70\n").unwrap();
+        assert!(legacy.favorite_music.is_empty());
+        assert_eq!(legacy.favorite_battle_bgm, FavoriteBgmMode::Off);
+        assert_eq!(legacy.menu_bgm, None);
+
+        let mut s = Settings::default();
+        assert!(s.toggle_favorite_music("exe6/virus-battle"));
+        assert!(s.toggle_favorite_music("exe5/ds-liberate"));
+        // Non-looping jingles are preview-only and must be rejected from favorites.
+        assert!(!s.toggle_favorite_music("exe6/transmission"));
+        assert!(!s.toggle_favorite_music("exe6/game-over"));
+        assert!(!s.toggle_favorite_music("exe5/ds-1turn-delete"));
+        assert!(!s.toggle_favorite_music("malformed-no-slash"));
+        assert_eq!(s.favorite_music, vec!["exe6/virus-battle", "exe5/ds-liberate"]);
+
+        // Toggling an existing favorite removes it.
+        assert!(!s.toggle_favorite_music("exe6/virus-battle"));
+        assert_eq!(s.favorite_music, vec!["exe5/ds-liberate"]);
+
+        s.favorite_battle_bgm = FavoriteBgmMode::Sequential;
+        s.menu_bgm = Some("exe6/acdc-town".into());
+        let encoded = toml::to_string(&s).unwrap();
+        let decoded: Settings = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, s);
+
+        // Sanitization deduplicates and drops non-looping entries from hand-edited TOML.
+        let mut dirty: Settings = toml::from_str(
+            "favorite_music = [\"exe6/acdc-town\", \"exe6/winner-1\", \"exe6/acdc-town\", \"bad\"]\nmenu_bgm = \"exe4/game-over\"\n",
+        )
+        .unwrap();
+        dirty.sanitize_music();
+        assert_eq!(dirty.favorite_music, vec!["exe6/acdc-town"]);
+        assert_eq!(dirty.menu_bgm, None);
     }
 }

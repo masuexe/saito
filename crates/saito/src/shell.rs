@@ -526,7 +526,27 @@ impl Shell {
 
     /// Start loading a game on its thread.
     fn load(&mut self, id: &str) {
-        self.games.load(id, self.i18n.code, |id, step| crate::with_app(|app| app.shell.games.step(&id, step)));
+        self.games.load(id, self.i18n.code, |id, step| {
+            crate::with_app(|app| {
+                app.shell.games.step(&id, step);
+                app.shell.sync_menu_bgm();
+            });
+        });
+    }
+
+    /// Apply the user's configured custom main-menu BGM (`settings.menu_bgm`, `S-135`),
+    /// falling back to the selected game's default title screen music when unset or not yet loaded.
+    pub fn sync_menu_bgm(&mut self) {
+        let Some(key) = self.settings.menu_bgm.clone() else {
+            self.sound.set_custom_menu_music(None, None);
+            return;
+        };
+        if let Some(theme) = crate::music::resolve_menu_bgm(&self.games, &key) {
+            self.sound.set_custom_menu_music(Some(&key), Some(theme));
+        } else {
+            // Game pack for the custom track is not ready yet (or was removed): fall back gracefully.
+            self.sound.set_custom_menu_music(None, None);
+        }
     }
 
     /// Say that no Legacy Collection is found to read a game's ROMs from, or that the one found lacks some of its
@@ -2751,6 +2771,7 @@ impl App {
                     let ready = ready.clone();
                     self.shell.announced = Some(id.clone());
                     self.shell.sound.use_game(&id, &ready.loaded);
+                    self.shell.sync_menu_bgm();
                     // In the look of the content it plays: content downloaded after the game was shown, or a newer
                     // revision of it, may state another (the same look changes nothing).
                     self.shell.looks.show(&ui, Some(&id), 0);

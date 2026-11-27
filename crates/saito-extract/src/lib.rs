@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bgm;
 mod elements;
 mod gfx;
 pub mod hd_art;
@@ -30,7 +31,8 @@ mod sound;
 pub mod source;
 mod sprite;
 
-pub use nds::{EXE5DS_BATTLE_THEMES, exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
+pub use bgm::{GbaBgmTrack, gba_bgm_track, gba_bgm_tracks};
+pub use nds::{DsBgmTrack, EXE5DS_BATTLE_THEMES, EXE5DS_BGM_TRACKS, exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
 pub use recipe::Recipe;
 pub use sound::SongVersions;
 pub use source::{Install, RomSource};

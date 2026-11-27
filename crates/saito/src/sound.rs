@@ -10,7 +10,7 @@
 //! its ticks and added to its samples; with none running they run on their own clock at the same rate
 //! (docs/app.md §1, "The sound").
 
-use saito_audio::{BattleAudio, Output, SoundCue};
+use saito_audio::{BankId, BankSong, BattleAudio, Output, Songs, SoundCue, SoundId, Theme};
 use saito_battle::content::{MusicRole, SoundRole};
 use saito_frontend::game::Loaded;
 use saito_frontend::player::FRAME_RATE;
@@ -54,6 +54,27 @@ struct Menu {
     playing: bool,
 }
 
+/// Active single-track preview inside the Settings → Audio music library (`S-135`).
+struct Preview {
+    key: String,
+    audio: BattleAudio,
+    looping: bool,
+    frames: u32,
+}
+
+/// Custom main-menu BGM selected by the user (`S-135`), overriding the selected game's title theme.
+struct CustomMenuMusic {
+    key: String,
+    audio: BattleAudio,
+    cue: SoundCue,
+    playing: bool,
+}
+
+fn theme_audio(theme: Theme) -> (BattleAudio, SoundCue) {
+    let songs = Songs(vec![BankSong { bank: BankId(0), song: theme.song }]);
+    (BattleAudio::new(theme.bank, songs), SoundCue::Music(SoundId(0)))
+}
+
 pub struct Sound {
     out: Option<Output>,
     /// True for [`Sound::silent`] (screenshot / headless mode), which must never open an audio device.
@@ -61,6 +82,10 @@ pub struct Sound {
     /// Backoff timestamp before retrying [`Output::open`] after a stream error or failed reopen.
     reopen_after: Option<Instant>,
     menu: Option<Menu>,
+    /// Optional custom main-menu BGM overriding `menu.music` across menu screens.
+    custom_menu: Option<CustomMenuMusic>,
+    /// Optional single-track preview player (suppresses menu music while active).
+    preview: Option<Preview>,
     /// Which game's sounds the menus have.
     game: Option<String>,
     /// The levels, 0 to 1: the music's, and the effects' (the battle's sound is at the effects').
@@ -72,6 +97,7 @@ pub struct Sound {
     /// The game before's title music, fading out under this one's, and how much of it is left.
     leaving: Option<(BattleAudio, f32)>,
     faded: Vec<[f32; 2]>,
+    preview_buf: Vec<[f32; 2]>,
     last: Option<Instant>,
     owed: f64,
     mix: Vec<[f32; 2]>,
@@ -140,7 +166,27 @@ impl Sound {
 
     /// No device: nothing is heard (the screenshot pass).
     pub fn silent() -> Sound {
-        Sound { out: None, silent: true, reopen_after: None, menu: None, game: None, music: 0.8, effects: 1.0, wanted: false, fade: 0.0, leaving: None, faded: Vec::new(), last: None, owed: 0.0, mix: Vec::new(), tune: Vec::new(), stats: None }
+        Sound {
+            out: None,
+            silent: true,
+            reopen_after: None,
+            menu: None,
+            custom_menu: None,
+            preview: None,
+            game: None,
+            music: 0.8,
+            effects: 1.0,
+            wanted: false,
+            fade: 0.0,
+            leaving: None,
+            faded: Vec::new(),
+            preview_buf: Vec::new(),
+            last: None,
+            owed: 0.0,
+            mix: Vec::new(),
+            tune: Vec::new(),
+            stats: None,
+        }
     }
 
     /// The sound queued for the device, in seconds.
@@ -172,11 +218,13 @@ impl Sound {
         let content = &game.game.content;
         let roles = content.defs.roles();
         let cue = |role| roles.try_sound(role).map(SoundCue::Effect);
-        // The music of the game before fades out under this one's.
-        if let Some(old) = self.menu.take().filter(|m| m.playing) {
-            self.leaving = Some((old.music, self.fade));
+        // The music of the game before fades out under this one's (unless a custom menu BGM is pinned).
+        if self.custom_menu.is_none() {
+            if let Some(old) = self.menu.take().filter(|m| m.playing) {
+                self.leaving = Some((old.music, self.fade));
+            }
+            self.fade = 0.0;
         }
-        self.fade = 0.0;
         let title = roles.try_music(MusicRole::TitleScreen).map(SoundCue::Music);
         self.menu = Some(Menu {
             effects: BattleAudio::new(sound.bank.clone(), sound.songs.clone()),
@@ -190,6 +238,62 @@ impl Sound {
             playing: false,
         });
         self.game = Some(id.to_string());
+    }
+
+    /// Set or clear a custom main-menu BGM (`key`: `"<game>/<song>"`, `theme`: resolved looping track).
+    /// Passing `None` restores the selected game's default title screen music with a smooth crossfade.
+    pub fn set_custom_menu_music(&mut self, key: Option<&str>, theme: Option<Theme>) {
+        match (key, theme) {
+            (Some(k), Some(theme)) => {
+                if self.custom_menu.as_ref().is_some_and(|c| c.key == k) {
+                    return;
+                }
+                if let Some(old) = self.custom_menu.take().filter(|c| c.playing) {
+                    self.leaving = Some((old.audio, self.fade));
+                } else if let Some(m) = self.menu.as_mut()
+                    && m.playing
+                {
+                    self.leaving = Some((m.music.clone(), self.fade));
+                    m.music.handle(&[SoundCue::StopMusic]);
+                    m.playing = false;
+                }
+                self.fade = 0.0;
+                let (audio, cue) = theme_audio(theme);
+                self.custom_menu = Some(CustomMenuMusic { key: k.to_string(), audio, cue, playing: false });
+            }
+            _ => {
+                if let Some(old) = self.custom_menu.take() {
+                    if old.playing {
+                        self.leaving = Some((old.audio, self.fade));
+                    }
+                    self.fade = 0.0;
+                }
+            }
+        }
+    }
+
+    /// Key of the currently installed custom menu BGM, if any.
+    #[cfg(test)]
+    pub fn custom_menu_music_key(&self) -> Option<&str> {
+        self.custom_menu.as_ref().map(|c| c.key.as_str())
+    }
+
+    /// Start previewing a single track (`key`: `"<game>/<song>"`, `theme`: M4A or SDAT).
+    /// Menu music smoothly fades out while preview is active.
+    pub fn start_preview(&mut self, key: &str, theme: Theme, looping: bool) {
+        let (mut audio, cue) = theme_audio(theme);
+        audio.handle(&[cue]);
+        self.preview = Some(Preview { key: key.to_string(), audio, looping, frames: 0 });
+    }
+
+    /// Stop any active track preview (menu music fades back in if wanted).
+    pub fn stop_preview(&mut self) {
+        self.preview = None;
+    }
+
+    /// Key of the track currently previewing, if any.
+    pub fn preview_key(&self) -> Option<&str> {
+        self.preview.as_ref().map(|p| p.key.as_str())
     }
 
     pub fn play(&mut self, cue: Cue) {
@@ -252,18 +356,43 @@ impl Sound {
         self.mix.clear();
         self.tune.clear();
         self.faded.clear();
+        self.preview_buf.clear();
+        let menu_wanted = self.wanted && self.preview.is_none();
         let mut fade = (self.fade, self.fade);
         if let Some(m) = &mut self.menu {
+            for _ in 0..due {
+                m.effects.tick(&mut self.mix);
+            }
+        }
+        if let Some(custom) = &mut self.custom_menu {
+            if menu_wanted && !custom.playing {
+                custom.audio.handle(&[custom.cue]);
+                custom.playing = true;
+            }
+            if menu_wanted {
+                self.fade = (self.fade + elapsed.as_secs_f32() / FADE_IN).min(1.0);
+            } else if custom.playing {
+                self.fade = (self.fade - elapsed.as_secs_f32() / FADE).max(0.0);
+                if self.fade == 0.0 {
+                    custom.audio.handle(&[SoundCue::StopMusic]);
+                    custom.playing = false;
+                }
+            }
+            fade.1 = self.fade;
+            for _ in 0..due {
+                custom.audio.tick(&mut self.tune);
+            }
+        } else if let Some(m) = &mut self.menu {
             // The title music: started (from nothing, fading in) when it is wanted, faded out and then stopped
             // when it isn't.
             let (music, cue, playing) = (&mut m.music, m.title, &mut m.playing);
-            if self.wanted && !*playing {
+            if menu_wanted && !*playing {
                 if let Some(cue) = cue {
                     music.handle(&[cue]);
                     *playing = true;
                 }
             }
-            if self.wanted {
+            if menu_wanted {
                 self.fade = (self.fade + elapsed.as_secs_f32() / FADE_IN).min(1.0);
             } else if *playing {
                 self.fade = (self.fade - elapsed.as_secs_f32() / FADE).max(0.0);
@@ -274,8 +403,17 @@ impl Sound {
             }
             fade.1 = self.fade;
             for _ in 0..due {
-                m.effects.tick(&mut self.mix);
                 music.tick(&mut self.tune);
+            }
+        }
+        if let Some(preview) = &mut self.preview {
+            for _ in 0..due {
+                preview.audio.tick(&mut self.preview_buf);
+                preview.frames = preview.frames.saturating_add(1);
+            }
+            // Non-looping short tracks stop automatically once their sequence completes.
+            if !preview.looping && preview.frames > 2 && preview.audio.playing_music_of(BankId(0)).is_none() {
+                self.preview = None;
             }
         }
         // The game before's music, on its way out.
@@ -299,7 +437,8 @@ impl Sound {
         }
         if ticks.is_none() {
             battle.clear();
-            battle.resize(self.mix.len(), [0.0; 2]);
+            let len = self.mix.len().max(self.tune.len()).max(self.preview_buf.len()).max(self.faded.len());
+            battle.resize(len, [0.0; 2]);
         }
         // (Added sample for sample; a sample the menus' drivers made past the battle's frames is let go, so the
         // stream keeps the battle's rate. The music's level goes from the last frame's to this one's across
@@ -309,11 +448,12 @@ impl Sound {
             let effect = self.mix.get(i).copied().unwrap_or_default();
             let tune = self.tune.get(i).copied().unwrap_or_default();
             let old = self.faded.get(i).copied().unwrap_or_default();
+            let prev = self.preview_buf.get(i).copied().unwrap_or_default();
             let along = i as f32 / count;
             let level = self.music * (fade.0 + (fade.1 - fade.0) * along);
             let leaving = self.music * (left.0 + (left.1 - left.0) * along);
-            b[0] += effect[0] * self.effects + tune[0] * level + old[0] * leaving;
-            b[1] += effect[1] * self.effects + tune[1] * level + old[1] * leaving;
+            b[0] += effect[0] * self.effects + tune[0] * level + old[0] * leaving + prev[0] * self.music;
+            b[1] += effect[1] * self.effects + tune[1] * level + old[1] * leaving + prev[1] * self.music;
         }
         // (`SAITO_PLAY_STATS`: what can't be seen in a screenshot, said each second.)
         if let Some((since, tune, stream)) = &mut self.stats {
@@ -391,5 +531,59 @@ mod tests {
         }
         assert_eq!(s.fade, 0.0);
         assert!(!s.menu.as_ref().unwrap().playing);
+    }
+
+    #[test]
+    fn preview_suppresses_menu_music_and_custom_menu_bgm_activates() {
+        let mut s = dummy_sound();
+        let mut t = Instant::now();
+        let mut battle = Vec::new();
+        let bank = Arc::new(SoundBank {
+            mixer: MixerConfig { mix_rate: 13379, ds_channels: 8, master_volume: 15, reverb: 0, dac_resolution: 2 },
+            players: Vec::new(),
+            songs: Vec::new(),
+            voicegroups: Vec::new(),
+            key_maps: Vec::new(),
+            samples: Vec::new(),
+            waves: Vec::new(),
+        });
+
+        s.want_music(true);
+        s.set_custom_menu_music(Some("exe6/acdc-town"), Some(Theme::m4a(bank.clone(), 0)));
+        assert_eq!(s.custom_menu_music_key(), Some("exe6/acdc-town"));
+        for _ in 0..30 {
+            t += Duration::from_millis(16);
+            s.frame(t, None, &mut battle);
+        }
+        assert!(s.fade > 0.9);
+
+        // Starting a preview fades out custom menu music cleanly.
+        s.start_preview("exe6/virus-battle", Theme::m4a(bank.clone(), 0), true);
+        assert_eq!(s.preview_key(), Some("exe6/virus-battle"));
+        for _ in 0..80 {
+            t += Duration::from_millis(16);
+            s.frame(t, None, &mut battle);
+        }
+        assert_eq!(s.fade, 0.0, "menu music suppressed while previewing");
+
+        // Stopping preview restores menu music fade-in.
+        s.stop_preview();
+        assert_eq!(s.preview_key(), None);
+        for _ in 0..30 {
+            t += Duration::from_millis(16);
+            s.frame(t, None, &mut battle);
+        }
+        assert!(s.fade > 0.9, "menu music fades back in after stopping preview");
+
+        // Non-looping empty/finished preview auto-stops after initial frames.
+        s.start_preview("exe6/transmission", Theme::m4a(bank, 0), false);
+        for _ in 0..5 {
+            t += Duration::from_millis(16);
+            s.frame(t, None, &mut battle);
+        }
+        assert_eq!(s.preview_key(), None, "finished non-looping jingle stops preview automatically");
+
+        s.set_custom_menu_music(None, None);
+        assert_eq!(s.custom_menu_music_key(), None);
     }
 }

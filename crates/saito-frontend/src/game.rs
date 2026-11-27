@@ -451,6 +451,20 @@ pub struct Loaded {
     pub sound: Option<Sound>,
 }
 
+/// One track available in a loaded game's full BGM catalog (`S-135`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogTrack {
+    /// Song key within the game (e.g. `"virus-battle"`, `"acdc-town"`, `"ds-liberate"`).
+    pub song: String,
+    /// True if the sequence loops indefinitely (eligible for battle & menu BGM);
+    /// false for short one-shot jingles (preview-only).
+    pub looping: bool,
+    /// True if sourced from an attached EXE5DS `SDAT` bank.
+    pub is_ds: bool,
+    /// True if part of the game's core battle themes.
+    pub is_battle_theme: bool,
+}
+
 impl Loaded {
     /// The sharp text's font for text in `lang`: the bundled font's cut of
     /// it (Noto Sans CJK's: the Chinese have their own hanzi), or a font file
@@ -481,6 +495,93 @@ impl Loaded {
         out
     }
 
+    /// Full BGM catalog for this loaded game (all ROM BGM tracks, any custom
+    /// content battle themes, and all extracted EXE5DS `SDAT` BGM tracks when
+    /// an EXE5DS ROM is attached).
+    pub fn catalog_tracks(&self) -> Vec<CatalogTrack> {
+        let Some(sound) = self.sound.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let game = self.game.name.as_str();
+        let content_themes = self.game.content.battle_themes();
+
+        for entry in saito_extract::gba_bgm_tracks(game) {
+            if let Some(song_data) = sound.bank.song(saito_audio::m4a::SongId(entry.song_id)) {
+                let is_battle_theme = content_themes.iter().any(|t| t == entry.key);
+                // Respect both catalog metadata and actual extracted sequence loop structure
+                // (custom/test banks without Goto still treat declared battle themes as looping).
+                let looping = entry.looping && (is_battle_theme || song_data.is_looping());
+                out.push(CatalogTrack {
+                    song: entry.key.to_string(),
+                    looping,
+                    is_ds: false,
+                    is_battle_theme,
+                });
+            }
+        }
+
+        // Include any custom/extra battle themes defined in content's `music.toml`
+        // that aren't already in the built-in ROM catalog.
+        for theme_key in content_themes {
+            if out.iter().any(|t| !t.is_ds && t.song == *theme_key) {
+                continue;
+            }
+            if let Some(id) = self.game.index.number(saito_content_api::AssetKind::Sound, theme_key)
+                && sound.bank.song(saito_audio::m4a::SongId(id)).is_some()
+            {
+                out.push(CatalogTrack {
+                    song: theme_key.clone(),
+                    looping: true,
+                    is_ds: false,
+                    is_battle_theme: true,
+                });
+            }
+        }
+
+        if let Some(ds_bank) = sound.ds_bank.as_ref() {
+            for entry in saito_extract::EXE5DS_BGM_TRACKS {
+                if let Some(song_data) = ds_bank.song(sdat::SongId(entry.seq_id)) {
+                    let is_battle_theme = saito_extract::EXE5DS_BATTLE_THEMES.iter().any(|&(k, _, _)| k == entry.key);
+                    let looping = entry.looping && (is_battle_theme || song_data.is_looping());
+                    out.push(CatalogTrack {
+                        song: entry.key.to_string(),
+                        looping,
+                        is_ds: true,
+                        is_battle_theme,
+                    });
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Resolve any track in this game's full BGM catalog (including non-looping
+    /// short jingles) for preview playback. Returns `(Theme, looping)`.
+    pub fn preview_track(&self, song: &str) -> Option<(saito_audio::Theme, bool)> {
+        let sound = self.sound.as_ref()?;
+        if let Some(entry) = saito_extract::EXE5DS_BGM_TRACKS.iter().find(|t| t.key == song) {
+            let ds_bank = sound.ds_bank.as_ref()?.clone();
+            let song_data = ds_bank.song(sdat::SongId(entry.seq_id))?;
+            let is_battle_theme = saito_extract::EXE5DS_BATTLE_THEMES.iter().any(|&(k, _, _)| k == entry.key);
+            let looping = entry.looping && (is_battle_theme || song_data.is_looping());
+            return Some((saito_audio::Theme::sdat(ds_bank, entry.seq_id), looping));
+        }
+        if let Some(entry) = saito_extract::gba_bgm_track(&self.game.name, song) {
+            let song_data = sound.bank.song(saito_audio::m4a::SongId(entry.song_id))?;
+            let is_battle_theme = self.game.content.battle_themes().iter().any(|t| t == entry.key);
+            let looping = entry.looping && (is_battle_theme || song_data.is_looping());
+            return Some((saito_audio::Theme::m4a(sound.bank.clone(), entry.song_id), looping));
+        }
+        if self.game.content.battle_themes().iter().any(|t| t == song) {
+            let id = self.game.index.number(saito_content_api::AssetKind::Sound, song)?;
+            sound.bank.song(saito_audio::m4a::SongId(id))?;
+            return Some((saito_audio::Theme::m4a(sound.bank.clone(), id), true));
+        }
+        None
+    }
+
     /// Whether this loaded game has optional EXE5DS `SDAT` battle music available.
     pub fn has_ds_music(&self) -> bool {
         self.sound.as_ref().is_some_and(|s| s.ds_bank.is_some())
@@ -501,22 +602,39 @@ impl Loaded {
             .map(|&(key, _, _)| key)
     }
 
-    /// Battle theme `song` (a song asset's name, one of
-    /// [`Loaded::battle_themes`]): its song with its game's bank, to play as
-    /// a battle's music in place of its own ([`Sound::parts`]). None where
-    /// the game has no such theme, or no sound loaded.
+    /// Battle-eligible (looping) track `song`: either one of [`Loaded::battle_themes`]
+    /// or any looping BGM track in the game's full catalog ([`Loaded::catalog_tracks`]).
+    /// Non-looping short jingles (e.g. `winner-1`, `game-over`, `transmission`) return
+    /// `None` so they cannot play as looping battle or menu BGM.
     pub fn theme(&self, song: &str) -> Option<saito_audio::Theme> {
-        if let Some(&(_, seq_id, _)) = saito_extract::EXE5DS_BATTLE_THEMES.iter().find(|&&(key, _, _)| key == song) {
+        if let Some(entry) = saito_extract::EXE5DS_BGM_TRACKS.iter().find(|t| t.key == song) {
+            if !entry.looping {
+                return None;
+            }
             let ds_bank = self.sound.as_ref()?.ds_bank.as_ref()?.clone();
-            return ds_bank.song(sdat::SongId(seq_id)).is_some().then(|| saito_audio::Theme::sdat(ds_bank, seq_id));
+            let song_data = ds_bank.song(sdat::SongId(entry.seq_id))?;
+            let is_battle_theme = saito_extract::EXE5DS_BATTLE_THEMES.iter().any(|&(k, _, _)| k == entry.key);
+            if !is_battle_theme && !song_data.is_looping() {
+                return None;
+            }
+            return Some(saito_audio::Theme::sdat(ds_bank, entry.seq_id));
         }
-        if !self.game.content.battle_themes().iter().any(|t| t == song) {
-            return None;
+        if self.game.content.battle_themes().iter().any(|t| t == song) {
+            // (By its name in the game's assets: a theme is presentation, which no module need name.)
+            let song = self.game.index.number(saito_content_api::AssetKind::Sound, song)?;
+            let bank = self.sound.as_ref()?.bank.clone();
+            return Some(saito_audio::Theme::m4a(bank, song));
         }
-        // (By its name in the game's assets: a theme is presentation, which no module need name.)
-        let song = self.game.index.number(saito_content_api::AssetKind::Sound, song)?;
-        let bank = self.sound.as_ref()?.bank.clone();
-        Some(saito_audio::Theme::m4a(bank, song))
+        if let Some(entry) = saito_extract::gba_bgm_track(&self.game.name, song)
+            && entry.looping
+        {
+            let bank = self.sound.as_ref()?.bank.clone();
+            let song_data = bank.song(saito_audio::m4a::SongId(entry.song_id))?;
+            if song_data.is_looping() {
+                return Some(saito_audio::Theme::m4a(bank, entry.song_id));
+            }
+        }
+        None
     }
 
     /// Everything the loaders reported, in the order they loaded.

@@ -97,6 +97,14 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
+impl Song {
+    /// Whether this song loops indefinitely (at least one track contains a
+    /// [`Command::Goto`], rather than ending cleanly at [`Command::Fine`]).
+    pub fn is_looping(&self) -> bool {
+        self.tracks.iter().any(|t| t.commands.iter().any(|c| matches!(c, Command::Goto(_))))
+    }
+}
+
 /// One track's commands, jumps resolved to command indices.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Track {
