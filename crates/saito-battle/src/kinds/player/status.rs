@@ -334,7 +334,7 @@ fn bug_effect(b: &mut Battle, r: ObjectRef) {
 /// own-gauges mode, battle flag 0x40), is counted, and closes the counter
 /// window.
 fn counter_hit_bookkeeping(b: &mut Battle, r: ObjectRef) {
-    if coll(b, r).acc.hit_flags & 0x40 == 0 {
+    if !b.game_rules().counter_hits || coll(b, r).acc.hit_flags & 0x40 == 0 {
         return;
     }
     let opp = b.objects.get(r).alliance ^ 1;
@@ -538,7 +538,7 @@ fn fall(b: &mut Battle, r: ObjectRef) {
 /// counter's mark (its rules hear it: EXE6's and EXE5's Full Synchro) or as
 /// the rules' gain of its mood; and the hits wear down this navi's mood.
 fn counter_and_mood(b: &mut Battle, r: ObjectRef) {
-    if b.is_battle_over() {
+    if b.is_battle_over() || !b.game_rules().emotion.enabled {
         return;
     }
     let side = b.objects.get(r).alliance;
@@ -1143,7 +1143,7 @@ pub(crate) const ANGER_TICKS: u16 = 600;
 /// `sub_8014326`: anger lasts [`ANGER_TICKS`] (player navis whose emotion
 /// allows it).
 fn tick_anger(b: &mut Battle, r: ObjectRef) {
-    if navi_record(b, r).actor_type != ActorType::Player {
+    if !b.game_rules().emotion.enabled || navi_record(b, r).actor_type != ActorType::Player {
         return;
     }
     // A body that never angers (its identity's `never_angers`: EXE5's
@@ -1184,9 +1184,11 @@ pub(crate) fn end_anger(b: &mut Battle, r: ObjectRef) {
     let side = b.objects.get(r).alliance as usize;
     // The mood back to 0x80: whatever holds it, or (EXE5's, 0x08011A94)
     // through the setter, a held mood staying (`emotion.anger_end`).
-    let through_setter = b.game_rules().emotion.anger_end == crate::content::AngerEnd::ThroughSetter;
-    if !(through_setter && super::mood_is_held(b, side as u8)) {
-        b.stats[side].mood = 0x80;
+    if b.game_rules().emotion.enabled {
+        let through_setter = b.game_rules().emotion.anger_end == crate::content::AngerEnd::ThroughSetter;
+        if !(through_setter && super::mood_is_held(b, side as u8)) {
+            b.stats[side].mood = 0x80;
+        }
     }
     clear_flag1(b, r, f1::ANGER);
     clear_flag2(b, r, 0x200);

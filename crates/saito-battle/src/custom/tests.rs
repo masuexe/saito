@@ -2184,3 +2184,105 @@ fn locked_first_pick_refuses_swap_replace_or_insert_before_but_allows_drag_out()
     p.step(0);
     assert_eq!((p.screen().selection(), p.screen().trade), (&[0, 1][..], None));
 }
+
+#[test]
+fn add_mode_free_picks_discards_empties_hand_expands_capacity_and_persists() {
+    use crate::content::testing;
+    use saito_content_api::CoreApi;
+
+    // 1. Custom-screen ADD flow on incompatible chips (different IDs & codes A, B, C).
+    let mut p = Player::new(&[(SHOT, 0), (WAVE, 1), (MEGA, 2), (SHOT, 1), (WAVE, 0)]);
+    p.open();
+    p.wait(10); // slide in
+    p.step(0);
+
+    // Normal mode: picking SHOT(A) grays out WAVE(B) and MEGA(C).
+    choose(&mut p, ScreenChoice::Pick(0));
+    assert_eq!(p.screen().slots[1].state, SlotState::Unavailable);
+    assert_eq!(p.screen().slots[2].state, SlotState::Unavailable);
+    choose(&mut p, ScreenChoice::TakeBack);
+    assert_eq!(p.screen().selection(), &[] as &[u8]);
+
+    // Enter ADD mode with 0 picks, then TakeBack cancels back to Phase::Choosing.
+    p.side.screen.as_mut().unwrap().start_add(None);
+    assert!(p.screen().is_adding());
+    assert_eq!(p.screen().phase, Phase::Adding { button: None });
+    choose(&mut p, ScreenChoice::TakeBack);
+    assert!(!p.screen().is_adding());
+    assert_eq!(p.screen().phase, Phase::Choosing);
+
+    // Re-enter ADD mode: free-pick 3 completely incompatible chips (SHOT A, WAVE B, MEGA C).
+    p.side.screen.as_mut().unwrap().start_add(None);
+    choose(&mut p, ScreenChoice::Pick(0));
+    assert_eq!(p.screen().slots[1].state, SlotState::Selectable, "ADD mode bypasses code/name matching");
+    assert_eq!(p.screen().slots[2].state, SlotState::Selectable);
+    choose(&mut p, ScreenChoice::Pick(1));
+    choose(&mut p, ScreenChoice::Pick(2));
+    assert_eq!(p.screen().selection(), &[0, 1, 2]);
+
+    // Confirm ADD: Request::ConfirmAdd discards picked chips from folder, closes
+    // with an EXPLICIT empty hand (Some(empty_hand)), and sets add_bonus = 3.
+    let req = choose_req(&mut p, ScreenChoice::Ok);
+    assert_eq!(req, Some(Request::ConfirmAdd));
+    assert_eq!(p.side.folder.count(), 27, "3 picked chips discarded from 30-chip folder");
+    assert_eq!(p.side.round.add_bonus, 3);
+    let (built_hand, _) = p.side.built.as_ref().expect("built hand");
+    let empty_hand = built_hand.as_ref().expect("ADD produces Some(empty_hand) so prior hand is cleared");
+    assert_eq!(empty_hand.ids, [None; 6]);
+
+    // Next turn opens with hand_size = custom_level(5) + add_bonus(3) = 8.
+    p.open();
+    p.wait(10);
+    p.step(0);
+    assert_eq!(p.screen().hand_size, 8);
+
+    // Second ADD of 5 chips: add_bonus grows to 8, capped at MAX_ADD_HAND_SIZE (10) on deal.
+    p.side.screen.as_mut().unwrap().start_add(None);
+    for s in 0..5u8 {
+        choose(&mut p, ScreenChoice::Pick(s));
+    }
+    assert_eq!(p.screen().selection(), &[0, 1, 2, 3, 4]);
+    // 6th pick is refused (MAX_SELECTIONS = 5).
+    assert_eq!(p.screen().slots[5].state, SlotState::Unavailable);
+    assert_eq!(choose_req(&mut p, ScreenChoice::Ok), Some(Request::ConfirmAdd));
+    assert_eq!(p.side.round.add_bonus, 8);
+    assert_eq!(p.side.folder.count(), 22);
+
+    p.open();
+    assert_eq!(p.screen().hand_size, screen::MAX_ADD_HAND_SIZE, "dealt hand size is capped at 10");
+
+    // 2. Full Battle integration: CoreApi custom_*_add*, empty hand clearing a prior
+    //    turn's leftover hand, Battle::clone() snapshot preservation, and Battle::digest().
+    let c = testing::content();
+    let mut setup = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&c));
+    testing::on(&mut setup, &c);
+    let mut b = Battle::new(setup, c);
+    let baseline_digest = b.digest();
+    assert_eq!(b.custom_add_bonus(0).unwrap(), 0);
+
+    // Put a leftover chip in side 0's hand, then confirm an ADD exchange -> hand becomes empty.
+    let chip = testing::chip_handle(testing::SUN_GUN_3);
+    b.hands[0].ids[0] = Some(chip);
+    let empty_res = crate::battle::CustomResult {
+        hand: Some(crate::hand::ChipHand::empty(&b.content)),
+        navi_stats: b.stats[0],
+        transform: TransformRequest::NONE,
+    };
+    let noop_res = crate::battle::CustomResult { hand: None, navi_stats: b.stats[1], transform: TransformRequest::NONE };
+    b.install_exchange([empty_res, noop_res]);
+    assert_eq!(b.hands[0].ids, [None; 6], "Some(empty_hand) clears prior turn's leftover hand");
+
+    // Setting add_bonus changes digest, caps at 10, and survives Battle::clone().
+    b.custom_set_add_bonus(0, 15).unwrap();
+    assert_eq!(b.custom_add_bonus(0).unwrap(), screen::MAX_ADD_HAND_SIZE);
+    let after_bonus_digest = b.digest();
+    assert_ne!(after_bonus_digest, baseline_digest, "add_bonus must be covered by Battle::digest()");
+
+    let cloned = b.clone();
+    assert_eq!(cloned.custom_add_bonus(0).unwrap(), screen::MAX_ADD_HAND_SIZE);
+    assert_eq!(cloned.digest(), after_bonus_digest, "Battle::clone() preserves ADD state and digest");
+}
+
+fn choose_req(p: &mut Player, choice: ScreenChoice) -> Option<Request> {
+    p.step_input(PlayerTick { choice: Some(choice), ..PlayerTick::buttons(0) }).0
+}

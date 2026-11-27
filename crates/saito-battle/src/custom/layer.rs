@@ -260,7 +260,7 @@ impl Was {
     /// The states the dark chip's hover shades in (`sub_802A394`: choosing
     /// chips, or a chip's description).
     fn hovers(self) -> bool {
-        matches!(self, Was::Screen(Phase::Settling | Phase::Choosing) | Was::Description { from_list: false })
+        matches!(self, Was::Screen(Phase::Settling | Phase::Choosing | Phase::Adding { .. }) | Was::Description { from_list: false })
     }
 }
 
@@ -616,7 +616,7 @@ impl Layer {
             self.clear_macros();
         }
         if let Some(Gesture::DragBegin(src)) = self.gesture
-            && phase == Phase::Choosing
+            && phase.is_picking()
             && !time_up
         {
             if matches!(self.sub, Sub::Description { from_list: false, .. }) {
@@ -636,7 +636,7 @@ impl Layer {
         // What the layer has up goes as the screen stops choosing (its time
         // is up; a choice of an earlier tick, given while it showed the
         // choosing, took it busy).
-        if self.sub != Sub::None && (phase != Phase::Choosing || time_up) {
+        if self.sub != Sub::None && (!phase.is_picking() || time_up) {
             self.plan.list_cancelled = time_up && matches!(self.sub, Sub::List(_));
             self.sub = Sub::None;
             self.list_opened_by_hover = false;
@@ -647,12 +647,12 @@ impl Layer {
         let switching = phase == Phase::Choosing && !time_up && out.switch_to.is_some_and(|m| switch_taken(&p.view, screen, m));
         self.plan.was = Some(self.was(phase));
         self.plan.kind = match phase {
-            Phase::Settling | Phase::Choosing | Phase::Window { .. } if time_up => {
+            Phase::Settling | Phase::Choosing | Phase::Adding { .. } | Phase::Window { .. } if time_up => {
                 self.plan.was = Some(Was::Screen(Phase::Choosing));
                 TickKind::Choosing
             }
             Phase::Choosing if switching => TickKind::Screen,
-            Phase::Choosing => {
+            Phase::Choosing | Phase::Adding { .. } => {
                 // (The pointer's gesture first: what it chooses or opens
                 // takes the tick from the keys.)
                 if self.sub == Sub::None {
@@ -681,7 +681,7 @@ impl Layer {
         };
         if let Some(c) = input.choice {
             out.choice = Some(c);
-            if phase == Phase::Choosing && self.sub == Sub::None {
+            if phase.is_picking() && self.sub == Sub::None {
                 self.cursor_to_choice(c, screen);
             }
         }
@@ -692,10 +692,10 @@ impl Layer {
     /// up.
     fn was(&self, phase: Phase) -> Was {
         match (phase, self.sub) {
-            (Phase::Choosing, Sub::Hidden(_)) => Was::Hidden,
-            (Phase::Choosing, Sub::Description { from_list, .. }) => Was::Description { from_list },
-            (Phase::Choosing, Sub::RunMessage { .. }) => Was::RunMessage,
-            (Phase::Choosing, Sub::List(_)) => Was::List,
+            (Phase::Choosing | Phase::Adding { .. }, Sub::Hidden(_)) => Was::Hidden,
+            (Phase::Choosing | Phase::Adding { .. }, Sub::Description { from_list, .. }) => Was::Description { from_list },
+            (Phase::Choosing | Phase::Adding { .. }, Sub::RunMessage { .. }) => Was::RunMessage,
+            (Phase::Choosing | Phase::Adding { .. }, Sub::List(_)) => Was::List,
             _ => Was::Screen(phase),
         }
     }
@@ -2057,7 +2057,7 @@ impl Layer {
         let on_chip = self.on_chip(screen);
         // A form list whose choice the screen took (its window up), or
         // whatever the layer had up as the screen stopped choosing: gone.
-        if self.sub != Sub::None && screen.phase != Phase::Choosing {
+        if self.sub != Sub::None && !screen.phase.is_picking() {
             self.sub = Sub::None;
         }
         let now = self.was(screen.phase);
@@ -2083,7 +2083,7 @@ impl Layer {
                 // no cursor on the tick a key leaves the choosing, and takes
                 // the last turns' block off where the key leaves the window,
                 // OK or SELECT: 0x0801E412.)
-                let drawn_after = layout.cursor_after_leaving || now == Was::Screen(Phase::Choosing);
+                let drawn_after = layout.cursor_after_leaving || matches!(now, Was::Screen(p) if p.is_picking());
                 if drawn_after {
                     self.draw_cursor(on_chip);
                 } else if matches!(now, Was::Description { from_list: false } | Was::RunMessage) && on_chip {

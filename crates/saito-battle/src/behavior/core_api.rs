@@ -441,7 +441,13 @@ impl CoreApi for Battle {
 
     fn add_final_hit_mod(&mut self, o: ObjectRef, bits: u8) {
         let c = self.objects.get(o).collision.unwrap_or_else(|| panic!("add_final_hit_mod: {o:?} has no collision data"));
-        self.collision.get_mut(c).hit_mod_final |= bits;
+        let max_mode = matches!(self.game_rules().hit_modifier, crate::content::HitModifierMode::MaxIndexTable { .. });
+        let d = self.collision.get_mut(c);
+        if max_mode {
+            d.hit_mod_final = d.hit_mod_final.max(bits);
+        } else {
+            d.hit_mod_final |= bits;
+        }
     }
 
     fn form_trait(&self, o: ObjectRef, name: &str) -> ApiResult<bool> {
@@ -451,10 +457,17 @@ impl CoreApi for Battle {
 
     fn add_hit_mod(&mut self, o: ObjectRef, bits: u8) {
         let c = self.objects.get(o).collision.unwrap_or_else(|| panic!("add_hit_mod: {o:?} has no collision data"));
+        let max_mode = matches!(self.game_rules().hit_modifier, crate::content::HitModifierMode::MaxIndexTable { .. });
         let d = self.collision.get_mut(c);
-        d.hit_mod_final |= bits;
-        d.hit_mod_by_side[0] |= bits;
-        d.hit_mod_by_side[1] |= bits;
+        if max_mode {
+            d.hit_mod_final = d.hit_mod_final.max(bits);
+            d.hit_mod_by_side[0] = d.hit_mod_by_side[0].max(bits);
+            d.hit_mod_by_side[1] = d.hit_mod_by_side[1].max(bits);
+        } else {
+            d.hit_mod_final |= bits;
+            d.hit_mod_by_side[0] |= bits;
+            d.hit_mod_by_side[1] |= bits;
+        }
     }
 
     fn lose_round(&mut self, side: u8) {
@@ -939,6 +952,37 @@ impl CoreApi for Battle {
         let s = self.custom_screen_mut(side)?;
         let slot = s.pressed_button_slot().ok_or_else(|| ApiError::Other("custom.redeal: no button is pressed".into()))?;
         s.start_redeal(slot);
+        Ok(())
+    }
+
+    fn custom_start_add(&mut self, side: u8) -> ApiResult<()> {
+        let slot = self.custom_screen(side)?.pressed_button_slot();
+        self.with_custom_screen(side, |screen, view, folder, _, extras| {
+            screen.start_add(slot);
+            screen.update_availability(view, folder, extras);
+        })
+        .ok_or_else(|| ApiError::Other("no custom screen is open".into()))
+    }
+
+    fn custom_cancel_add(&mut self, side: u8) -> ApiResult<()> {
+        self.with_custom_screen(side, |screen, view, folder, _, extras| {
+            if screen.cancel_add() {
+                screen.update_availability(view, folder, extras);
+            }
+        })
+        .ok_or_else(|| ApiError::Other("no custom screen is open".into()))
+    }
+
+    fn custom_is_adding(&self, side: u8) -> ApiResult<bool> {
+        Ok(self.custom_screen(side)?.is_adding())
+    }
+
+    fn custom_add_bonus(&self, side: u8) -> ApiResult<u8> {
+        Ok(self.custom.sides[side as usize & 1].round.add_bonus)
+    }
+
+    fn custom_set_add_bonus(&mut self, side: u8, bonus: u8) -> ApiResult<()> {
+        self.custom.sides[side as usize & 1].round.add_bonus = bonus.min(crate::custom::screen::MAX_ADD_HAND_SIZE);
         Ok(())
     }
 
@@ -2055,6 +2099,7 @@ impl CoreApi for Battle {
             stamina: s.stamina,
             hit_mod: s.hit_mod,
             status: s.status,
+            status2: s.status2,
             bug: s.bug,
             bug_arg: s.bug_arg,
         };
@@ -2756,7 +2801,9 @@ impl CoreApi for Battle {
         let def = |registry, h: Option<u16>| Ok(h.map_or(Value::Nil, |h| Value::Def(registry, h)));
         match f {
             CollisionField::StatusBase => return def(Registry::Status, c.status_base.map(|h| h.0)),
+            CollisionField::StatusBase2 => return def(Registry::Status, c.status_base2.map(|h| h.0)),
             CollisionField::StatusFinal => return def(Registry::Status, c.status_final.map(|h| h.0)),
+            CollisionField::StatusFinal2 => return def(Registry::Status, c.status_final2.map(|h| h.0)),
             CollisionField::Region => return def(Registry::Region, c.region.map(|h| h.0)),
             CollisionField::HitEffect => return def(Registry::Spark, c.hit_effect.map(|h| h.0)),
             CollisionField::HitsWhileDimmed => return Ok(Value::Bool(c.self_flags & DIMMED_HITTER != 0)),
@@ -2768,7 +2815,9 @@ impl CoreApi for Battle {
             CollisionField::Region
             | CollisionField::HitEffect
             | CollisionField::StatusBase
+            | CollisionField::StatusBase2
             | CollisionField::StatusFinal
+            | CollisionField::StatusFinal2
             | CollisionField::HitsWhileDimmed
             | CollisionField::ConfusionVisual
             | CollisionField::BlindnessVisual => unreachable!("handled above"),
@@ -2790,14 +2839,19 @@ impl CoreApi for Battle {
             CollisionField::DamageElements => c.acc.damage_elements as i64,
             CollisionField::HitModFinal => c.hit_mod_final as i64,
             // BARRIER_STATES
-            CollisionField::Barrier => match c.barrier {
-                0 => 0,
-                0x10 => 2,
-                _ => 1,
-            },
+            CollisionField::Barrier => {
+                let popped = self.game_rules().intake.barrier.popped_id();
+                if c.barrier == 0 {
+                    0
+                } else if c.barrier == popped {
+                    2
+                } else {
+                    1
+                }
+            }
             CollisionField::BarrierHp => c.barrier_hp as i64,
             CollisionField::BarrierPopHitMod => c.barrier_saved_hmf as i64,
-            CollisionField::Bubble => (c.barrier == 8) as i64,
+            CollisionField::Bubble => (c.barrier != 0 && self.game_rules().intake.barrier.rule_for(c.barrier).bubble) as i64,
             CollisionField::BarrierTimer => c.barrier_timer as i64,
         }))
     }
@@ -2821,8 +2875,10 @@ impl CoreApi for Battle {
         // The definitions it names: a handle of the field's registry, or
         // none.
         let defined = match f {
-            CollisionField::StatusBase => Some((Registry::Status, self.content.defs.statuses.len())),
-            CollisionField::StatusFinal => Some((Registry::Status, self.content.defs.statuses.len())),
+            CollisionField::StatusBase
+            | CollisionField::StatusBase2
+            | CollisionField::StatusFinal
+            | CollisionField::StatusFinal2 => Some((Registry::Status, self.content.defs.statuses.len())),
             CollisionField::Region => Some((Registry::Region, self.content.defs.regions.len())),
             CollisionField::HitEffect => Some((Registry::Spark, self.content.defs.sparks.len())),
             _ => None,
@@ -2836,12 +2892,15 @@ impl CoreApi for Battle {
             let c = self.collision_of_mut(o)?;
             match f {
                 CollisionField::StatusBase => c.status_base = h.map(saito_content_api::StatusHandle),
+                CollisionField::StatusBase2 => c.status_base2 = h.map(saito_content_api::StatusHandle),
                 CollisionField::StatusFinal => c.status_final = h.map(saito_content_api::StatusHandle),
+                CollisionField::StatusFinal2 => c.status_final2 = h.map(saito_content_api::StatusHandle),
                 CollisionField::Region => c.region = h.map(RegionHandle),
                 _ => c.hit_effect = h.map(SparkHandle),
             }
             return Ok(());
         }
+        let popped_id = self.game_rules().intake.barrier.popped_id();
         let c = self.collision_of_mut(o)?;
         match (f, v) {
             (CollisionField::HitsWhileDimmed, FieldValue::Bool(on)) => {
@@ -2861,7 +2920,7 @@ impl CoreApi for Battle {
             (CollisionField::Barrier, FieldValue::Enum(i)) => {
                 c.barrier = match i {
                     0 => 0,
-                    2 => 0x10,
+                    2 => popped_id,
                     _ => return Err(ApiError::Other("barrier: a barrier goes up with raise_barrier".into())),
                 };
                 return Ok(());
@@ -2873,7 +2932,9 @@ impl CoreApi for Battle {
             CollisionField::Region
             | CollisionField::HitEffect
             | CollisionField::StatusBase
+            | CollisionField::StatusBase2
             | CollisionField::StatusFinal
+            | CollisionField::StatusFinal2
             | CollisionField::HitsWhileDimmed
             | CollisionField::ConfusionVisual
             | CollisionField::BlindnessVisual
@@ -2907,17 +2968,15 @@ impl CoreApi for Battle {
 
     fn raise_barrier(&mut self, o: ObjectRef, spec: saito_content_api::api::BarrierSpec) -> ApiResult<()> {
         let c = self.collision_of_mut(o)?;
-        // The barrier byte the rules' barrier code (`sub_801A802`) tells
-        // the behaviors apart by: a plain barrier as the game's type 1
-        // (types 1..7, 9 and 0xB..0xF behave alike), a bubble as type 8, a
-        // regenerating one as type 0xA, a regrowing one as EXE4's type 4
-        // (0x08012DF8).
-        c.barrier = match spec.behavior {
+        // Explicit rule-table barrier ID when provided; else map classic
+        // behaviors to the game's barrier bytes (plain=1, bubble=8,
+        // regenerating=0xA, regrowing=4).
+        c.barrier = spec.id.unwrap_or_else(|| match spec.behavior {
             0 => 1,
             1 => 8,
             2 => 0xA,
             _ => 4,
-        };
+        });
         c.barrier_weak = spec.weak_element;
         c.barrier_hp = spec.hp;
         c.barrier_threshold = spec.threshold;

@@ -586,6 +586,9 @@ pub(super) fn slide_vector(b: &Battle, r: ObjectRef) -> SlideVector {
         0 => SlideVector::NONE,
         1 => {
             let reading = &b.game_rules().push_reading;
+            if !b.game_rules().hit_modifier.reads_pushes() || reading.bits == 0 {
+                return SlideVector::NONE;
+            }
             let none = reading.bits as usize;
             match reading.reads {
                 // sub_800E548 (EXE4's 0x0800ACAA): the first of the final

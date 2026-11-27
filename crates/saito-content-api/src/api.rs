@@ -101,6 +101,9 @@ pub const BARRIER_BEHAVIORS: [&str; 4] = ["plain", "bubble", "regenerating", "re
 /// `sub_801A7CC`'s row: what a barrier sets in the collision data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BarrierSpec {
+    /// Optional explicit barrier ID (1..=255) for games with a data-driven
+    /// barrier table (`status.barrier.types`). When `None`, mapped from `behavior`.
+    pub id: Option<u8>,
     /// Index into [`BARRIER_BEHAVIORS`].
     pub behavior: u8,
     /// Its HP (+0x16), the damage a hit must reach to wear it (+0x17), its
@@ -432,9 +435,13 @@ named_fields! {
         SecondaryElement = "secondary_element", U8, rw;
         /// The status its hits carry (a status definition), or none.
         StatusBase = "status_base", Ref(Registry::Status, None), rw;
+        /// The secondary status its hits carry (for dual-status games), or none.
+        StatusBase2 = "status_base2", Ref(Registry::Status, None), rw;
         /// The status it takes this window (its hits', a counter's, or one
         /// the rules put in their place: the NaviCust's hit bug), or none.
         StatusFinal = "status_final", Ref(Registry::Status, None), rw;
+        /// The secondary status it takes this window (for dual-status games), or none.
+        StatusFinal2 = "status_final2", Ref(Registry::Status, None), rw;
         /// Bug code (low byte) and argument (high byte).
         Bugs = "bugs", U16, rw;
         /// The bug code and argument the last resolution's hits brought
@@ -1311,6 +1318,7 @@ pub struct HitboxSpec {
     pub stamina: u16,
     pub hit_mod: u8,
     pub status: Option<crate::StatusHandle>,
+    pub status2: Option<crate::StatusHandle>,
     pub bug: u8,
     pub bug_arg: u8,
 }
@@ -1607,6 +1615,18 @@ pub trait CoreApi {
     fn custom_hand_size(&self, side: u8) -> ApiResult<u8>;
     fn custom_sacrifice(&mut self, side: u8) -> ApiResult<()>;
     fn custom_redeal(&mut self, side: u8) -> ApiResult<()>;
+    /// Enter custom-screen ADD mode from the currently pressed button: free-pick
+    /// up to 5 chips to discard on OK, closing with an empty hand and expanding
+    /// custom capacity for the rest of the round.
+    fn custom_start_add(&mut self, side: u8) -> ApiResult<()>;
+    /// Leave custom-screen ADD mode back to normal chip selection.
+    fn custom_cancel_add(&mut self, side: u8) -> ApiResult<()>;
+    /// Whether `side`'s custom screen is currently in ADD mode.
+    fn custom_is_adding(&self, side: u8) -> ApiResult<bool>;
+    /// `side`'s persistent ADD capacity bonus for the current round (0..=10).
+    fn custom_add_bonus(&self, side: u8) -> ApiResult<u8>;
+    /// Set `side`'s persistent ADD capacity bonus for the current round (clamped to 10).
+    fn custom_set_add_bonus(&mut self, side: u8, bonus: u8) -> ApiResult<()>;
     fn custom_last_pick_is_chip(&self, side: u8) -> ApiResult<bool>;
     fn custom_cursor_state(&self, side: u8) -> ApiResult<&'static str>;
     /// More of the side's custom screen, for the rules' buttons and windows

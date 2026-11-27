@@ -274,6 +274,9 @@ impl Battle {
     /// `sub_801E5F8` (the intro's HUD setup): the emotion windows' task
     /// starts, their first check 120 ticks away.
     pub(crate) fn start_emotion_windows(&mut self) {
+        if !self.content.rules().emotion.enabled {
+            return;
+        }
         use crate::setup::effects;
         // The glitch is kept outside random battles and battle modes 1-5
         // and 8.
@@ -299,7 +302,7 @@ impl Battle {
     /// window (`sub_800FE52` counts the navi's NaviCust bugs), where the
     /// game's has its check (`effects.bug_flicker`).
     pub(crate) fn update_emotion_windows(&mut self) {
-        if !self.content.rules().effects.bug_flicker {
+        if !self.content.rules().emotion.enabled || !self.content.rules().effects.bug_flicker {
             return;
         }
         for side in 0..2 {

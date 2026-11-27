@@ -131,6 +131,8 @@ struct PanelRolesSection {
 struct ReactionsSection {
     push: [SlideVector; 10],
     push_reading: super::rules::PushReading,
+    #[serde(default)]
+    hit_modifier: super::rules::HitModifierMode,
     hit_test: super::rules::HitTest,
     obstacle_slide_bounds: bool,
     #[serde(default)]
@@ -331,6 +333,10 @@ struct BannersSection {
     holding: Vec<BannerId>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StatusSection {
@@ -354,6 +360,8 @@ struct StatusSection {
     #[serde(default)]
     navi_status_immune_effect: Option<u32>,
     emotion: super::rules::EmotionRules,
+    #[serde(default = "default_true")]
+    counter_hits: bool,
     form_break: super::FormBreak,
     weakness_hit_breaks_form: bool,
     weakness_mark: super::rules::WeaknessMark,
@@ -442,6 +450,7 @@ impl Stated {
             reactions: Some(ReactionsSection {
                 push: r.push_vectors,
                 push_reading: r.push_reading.clone(),
+                hit_modifier: r.hit_modifier.clone(),
                 hit_test: r.hit_test,
                 obstacle_slide_bounds: r.obstacle_slide_bounds,
                 slide_rows: r.slide_rows,
@@ -476,11 +485,12 @@ impl Stated {
                 no_charge_drive: r.intake.no_charge_drive,
                 hp_loss: r.intake.hp_loss,
                 hit_sound: r.intake.hit_sound,
-                barrier: r.intake.barrier,
+                barrier: r.intake.barrier.clone(),
                 anti_traps: r.intake.anti_traps,
                 chip_destruction: r.intake.chip_destruction,
                 navi_status_immune_effect: r.intake.navi_status_immune_effect,
                 emotion: r.emotion.clone(),
+                counter_hits: r.counter_hits,
                 form_break: r.form_break,
                 weakness_hit_breaks_form: r.weakness_hit_breaks_form,
                 weakness_mark: r.weakness_mark,
@@ -536,6 +546,7 @@ impl Stated {
             reaction_actions: status.reaction_actions,
             drag: status.drag,
             emotion: status.emotion,
+            counter_hits: status.counter_hits,
             form_break: status.form_break,
             weakness_hit_breaks_form: status.weakness_hit_breaks_form,
             weakness_mark: status.weakness_mark,
@@ -565,6 +576,7 @@ impl Stated {
             sine: self.sine.unwrap_or_default(),
             push_vectors: reactions.push,
             push_reading: reactions.push_reading,
+            hit_modifier: reactions.hit_modifier,
             hit_test: reactions.hit_test,
             obstacle_slide_bounds: reactions.obstacle_slide_bounds,
             slide_rows: reactions.slide_rows,

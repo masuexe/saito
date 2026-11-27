@@ -1010,4 +1010,143 @@ local step = { grounded = { any_panel, any_panel }, floor_free = { any_panel, an
         let e = c.define().unwrap_err().message;
         assert!(e.contains("lib/x.luau: chip y: support pack lib defines nothing a game has"), "{e}");
     }
+
+    #[test]
+    fn gen1_rule_fields_deserialize_from_luau() {
+        let mut c = stated();
+        let rules = r#"
+return {
+    flow = {
+        result_words = 49,
+        sequencer_before_custom = true,
+        escape_check = false,
+        result_wait = { normal = 100, special = 90 },
+        low_hp_music = true,
+        navi_win_banner = "operation_battle",
+        intro_steps_on_init = false,
+        sequencer_at_turn_start = true,
+        custom_request = "joypads",
+        final_turn = false,
+        fight_cycles = { 20, 180 },
+    },
+    effects = {
+        shake = "battle_rng",
+        spark_steps_at_start = true,
+        hit_marker_steps = { weakness = 18, bug = 18 },
+        retype = "is_and_hits",
+        damage_word = { plain = true },
+        palette_flash = "mode_runs_through_pause",
+        palette_flash_order = "after_fades",
+        afterimages_run_while_paused = true,
+        form_overlay = { start = "after_navis_in", reloads_animation = true, palette_each_tick = true, facing_each_tick = true, waiting_steps = false, run_while_paused = true },
+        afterimages_wear_overlays = true,
+        load_sets_part_palette = true,
+        dimmed_update_steps_on_load = true,
+        immobilized_blinks = true,
+        obstacle_actions = "own_from_6",
+        full_synchro_aura = { follows_identity = true, steps_while_paused = true, stops_at_a_pause_in_the_fight = false, spawn_runs_while_paused = false },
+        charge_glow = "with_navi",
+        charge = "hold_flags",
+        steps = { keys = { "up", "down", "right", "left" }, confused = { up = "down", down = "up", left = "right", right = "left" }, idle_checks_target = false },
+        fade_clear = "at_target",
+        banner = { slide_in = 5, hold = 0x30, slide_out = 5, release = "holds_three_more", bounces = true },
+        telops = "banners",
+        rng1_per_frame = true,
+        chip_icons = "attach_point",
+        used_chip_ticks = 0x3C,
+        used_chips_end_early = true,
+        bug_flicker = true,
+        panel_trail = "by_chance",
+        status_visual = { place = "attach_point" },
+        draw_order = "update_list",
+        sprite_depth = "ground",
+        sprite_budget = { tiles = 0x2FF, palettes = 10 },
+    },
+    reactions = {
+        push = {
+            { dx = 0, dy = 0, panels = 0 }, { dx = 0, dy = 0, panels = 0 },
+            { dx = 0, dy = 0, panels = 0 }, { dx = 0, dy = 0, panels = 0 },
+            { dx = 0, dy = 0, panels = 0 }, { dx = 0, dy = 0, panels = 0 },
+            { dx = 0, dy = 0, panels = 0 }, { dx = 0, dy = 0, panels = 0 },
+            { dx = 0, dy = 0, panels = 0 }, { dx = 0, dy = 0, panels = 0 },
+        },
+        push_reading = { reads = "final", bits = 4, drag_bit = 0x40, obstacle_rows = {} },
+        hit_modifier = {
+            mode = "max_index_table",
+            read_pushes = false,
+            table = {
+                { flinch = false, flash = false },
+                { flinch = true, flash = true, ignores_super_armor = false },
+                { flinch = true, flash = true, ignores_super_armor = true, requests = 0x100 },
+            },
+        },
+        hit_test = { float_shoe_needs_self_bit = false, bubbled_as_submerged = false, elec_reaches_submerged = false, guard_breaks_to = 2, guard_before_untouchable = false, guard_marks_direction = false },
+        obstacle_slide_bounds = false,
+        move_direction = "by_side",
+        bubble_bob = { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 },
+        slide_speed = { x = 0x30000, y = 0x20000 },
+        overlay_restart = "reload",
+        stance_counter = "next_tick",
+        trap_counter = "at_once",
+        idle_entry_counter = false,
+        dead_player = "kept",
+        attack_end_lockout = "by_kind",
+        request_clears = { attack = {}, paralysis = {}, flinch = {}, drag = {}, cut_in = {} },
+        status_end = { flags = {}, requests = 0, timers = {} },
+    },
+    status = {
+        hp_drain = { periods = { 30, 30, 30, 30, 30, 30, 30, 30 }, stops_while_paused = true },
+        custom_drain = { periods = "stat", status = 0 },
+        form_tick = false,
+        form_keeps_back_special = false,
+        flash_hides_on_clear = false,
+        missing_collision_status = 0,
+        reactions = "flash_timer_first",
+        reaction_actions = "marked",
+        drag = { poses = { otherwise = 0 }, ending = "stands" },
+        bugs_before_drain = false,
+        no_charge_drive = false,
+        hp_loss = "hp_alone",
+        hit_sound = "by_console",
+        barrier = {
+            stops_while_paused = true,
+            wind = "pops",
+            types = {
+                { id = 8, bubble = false, wind_pops = true, elec_pops = false, regrow = false, threshold_aura = false },
+            },
+        },
+        anti_traps = { damage_min = 10, armed_swallows_below = true, sword_spares = 0, drops_requests = 0 },
+        chip_destruction = "next",
+        emotion = { enabled = false },
+        counter_hits = false,
+        form_break = "marked_forms",
+        weakness_hit_breaks_form = false,
+        weakness_mark = "weak_element_damage",
+        paused_navi = "pause_handler",
+        timers_while_paused = false,
+        idle_stands = false,
+        idle_asks_controller = false,
+    },
+}
+"#;
+        c.scripts.add_game("game", [("rules/init".to_string(), rules.to_string())].into());
+        c.define().unwrap_or_else(|e| panic!("{}", e.message));
+        let r = c.rules();
+        assert_eq!(r.flow.final_turn, None);
+        assert!(r.effects.damage_word.plain);
+        assert!(!r.emotion.enabled);
+        assert!(!r.counter_hits);
+        assert!(!r.hit_modifier.reads_pushes());
+        match &r.hit_modifier {
+            crate::content::HitModifierMode::MaxIndexTable { table, read_pushes } => {
+                assert!(!read_pushes);
+                assert_eq!(table.len(), 3);
+                assert!(table[2].ignores_super_armor);
+                assert_eq!(table[2].requests, 0x100);
+            }
+            other => panic!("expected MaxIndexTable, got {other:?}"),
+        }
+        let b8 = r.intake.barrier.rule_for(8);
+        assert!(!b8.bubble && !b8.elec_pops && !b8.regrow && !b8.threshold_aura);
+    }
 }
