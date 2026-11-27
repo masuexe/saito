@@ -324,11 +324,13 @@ pub fn extract_ssar_voices(sdat: &[u8]) -> Result<VoiceBank, Error> {
             _ => continue,
         };
         let mut program = 0usize;
-        let mut cum_ticks = 0u64;
+        let mut tempo = 120u32;
+        let mut note_wait = true;
+        let mut delay_samples = 0u64;
         let mut steps = Vec::new();
         let mut guard = 0usize;
 
-        while pos < ssar.len() && guard < 64 {
+        while pos < ssar.len() && guard < 128 {
             guard += 1;
             let op = ssar[pos];
             pos += 1;
@@ -336,7 +338,9 @@ pub fn extract_ssar_voices(sdat: &[u8]) -> Result<VoiceBank, Error> {
                 0xFF => break,
                 0x80 => {
                     let Some(wait) = read_vlq(ssar, &mut pos) else { break };
-                    cum_ticks = cum_ticks.saturating_add(wait as u64);
+                    // NitroComposer SSAR runs at 48 PPQN => `tempo * 48 / 60` ticks/sec.
+                    let ticks_per_sec = (tempo as u64 * 48).max(60);
+                    delay_samples = delay_samples.saturating_add(wait as u64 * OUT_RATE as u64 * 60 / ticks_per_sec);
                 }
                 0x81 => {
                     let Some(p) = read_vlq(ssar, &mut pos) else { break };
@@ -369,13 +373,41 @@ pub fn extract_ssar_voices(sdat: &[u8]) -> Result<VoiceBank, Error> {
                             None
                         };
                         if let Some(wave) = wave_idx {
-                            // Default NitroComposer SSAR tempo is 120 BPM at 48 PPQN = 96 seq ticks/sec.
-                            let delay_samples = (cum_ticks * OUT_RATE as u64 / 96) as u32;
-                            steps.push(VoiceStep { wave, delay_samples });
+                            steps.push(VoiceStep { wave, delay_samples: delay_samples.min(u32::MAX as u64) as u32 });
                         }
                     }
-                    // SSAR defaults to note-wait on: a non-zero duration advances time before the next phrase.
-                    cum_ticks = cum_ticks.saturating_add(dur as u64);
+                    if note_wait {
+                        let ticks_per_sec = (tempo as u64 * 48).max(60);
+                        delay_samples = delay_samples.saturating_add(dur as u64 * OUT_RATE as u64 * 60 / ticks_per_sec);
+                    }
+                }
+                // 1-byte parameter opcodes (pan, volume, transpose, priority, note-wait, etc.)
+                0xC0..=0xDF => {
+                    let Some(&arg) = ssar.get(pos) else { break };
+                    pos += 1;
+                    if op == 0xC7 {
+                        note_wait = arg != 0;
+                    }
+                }
+                // 2-byte parameter opcodes (mod delay, tempo, sweep pitch)
+                0xE0..=0xE3 => {
+                    if pos + 2 > ssar.len() {
+                        break;
+                    }
+                    if op == 0xE1 {
+                        let t = u16::from_le_bytes([ssar[pos], ssar[pos + 1]]) as u32;
+                        if t > 0 {
+                            tempo = t;
+                        }
+                    }
+                    pos += 2;
+                }
+                // 1-byte portamento / tie / modulation flags
+                0xB0..=0xBF => {
+                    if pos + 3 > ssar.len() {
+                        break;
+                    }
+                    pos += 3;
                 }
                 _ => break,
             }

@@ -10,7 +10,10 @@
 
 use saito_audio::BattleAudio;
 use saito_battle::battle::{battle_flags, fight, mode};
+use saito_battle::collision::f1;
 use saito_battle::content::{ChipClass, ChipFlags};
+use saito_battle::custom::screen::{Phase as CustomPhase, ProgramAdvanceStep};
+use saito_battle::setup::effects;
 use saito_battle::transform::{SequencerState, TransformPhase};
 use saito_battle::Battle;
 use saito_content_api::{keys, ChipHandle, FormHandle};
@@ -46,22 +49,51 @@ fn voice_hash(ticks: u32, side: u8, salt: u32) -> u32 {
 /// SSAR voice ID offset for a voiced EXE5DS playable Navi (verified from
 /// EXE5DS JP ARM9 table `0x020CBA48`: MegaMan = `+0`, ProtoMan = `+100`,
 /// Colonel = `+200`, all other Team Navis = `None`).
+///
+/// DarkSoul (`dark_megaman`) is explicitly muted (`None`), matching EXE5DS
+/// ARM9 checks on `NaviStats +0x58 != 0` (`0x02098A74`, `0x02098AC8`,
+/// `0x02098AE0`, `0x02098B16`, `0x02002B1C`, `0x0221ED52`).
 pub fn navi_voice_offset(navi_local_key: &str) -> Option<u16> {
     match navi_local_key {
-        "megaman" | "dark_megaman" => Some(0x00),
+        "megaman" => Some(0x00),
         "protoman" => Some(0x64),
         "colonel" => Some(0xC8),
         _ => None,
     }
 }
 
-/// Lan's Battle Start callout (`V_NET0101..0103`) for the lead Navi.
-pub fn battle_start_voice(navi_local_key: &str) -> u16 {
-    match navi_local_key {
-        "protoman" => 0x1F5,
-        "colonel" => 0x1F6,
-        _ => 0x1F4,
-    }
+/// Navi's Turn 1 Battle Start callout from EXE5DS ARM9 `0x02002AF0` / table
+/// `0x020CBAC4` (called at `0x0208DABC` & `0x020A2B4E` on turn 1 start banner):
+/// - MegaMan: `0x261..=0x264` (`V_ROCK0401..0404`, 4 clips)
+/// - ProtoMan: `0x2C5..=0x2C7` (`V_BLUES0401..0403`, 3 clips)
+/// - Colonel: `0x329..=0x32B` (`V_COLONEL0401..0403`, 3 clips)
+/// - All other Team Navis / DarkSoul: silent (`None`).
+pub fn battle_start_voice(navi_local_key: &str, variant: u32) -> Option<u16> {
+    let table: &[u16] = match navi_local_key {
+        "megaman" => &[0x261, 0x262, 0x263, 0x264],
+        "protoman" => &[0x2C5, 0x2C6, 0x2C7],
+        "colonel" => &[0x329, 0x32A, 0x32B],
+        _ => return None,
+    };
+    Some(table[variant as usize % table.len()])
+}
+
+/// Navi's Danger Microphone Shout cry from EXE5DS `OV423` `T4 0x93`
+/// (`0x0221ED44`, table `0x02223D10`), indexed by Navi and shout strength
+/// tier (`0` = low, `1` = medium, `2` = high/Full Synchro):
+/// - MegaMan: `[0x289, 0x28A, 0x286]` (`V_ROCK0811`, `0812`, `0808`)
+/// - ProtoMan: `[0x2EE, 0x2ED, 0x2EC]` (`V_BLUES0812`, `0811`, `0810`)
+/// - Colonel: `[0x352, 0x350, 0x34E]` (`V_COLONEL0812`, `0810`, `0808`)
+/// - All other Team Navis / DarkSoul: silent (`None`).
+pub fn danger_shout_voice(navi_local_key: &str, strength: u8) -> Option<u16> {
+    let idx = (strength as usize).min(2);
+    let table: [u16; 3] = match navi_local_key {
+        "megaman" => [0x289, 0x28A, 0x286],
+        "protoman" => [0x2EE, 0x2ED, 0x2EC],
+        "colonel" => [0x352, 0x350, 0x34E],
+        _ => return None,
+    };
+    Some(table[idx])
 }
 
 /// Lan's Soul Unison (`0x1FC..=0x207`) or Chaos Unison (`0x208..=0x213`) voice
@@ -160,6 +192,12 @@ pub fn hurt_cry_voice(damage_taken: u16, speaker_offset: u16, variant: u32) -> u
     base + (variant % 3) as u16 + speaker_offset
 }
 
+/// Status-infliction / stun cry (`0x02098AE0`, called from `0x020615B4`):
+/// 6 variants (`0x277..=0x27C`) + speaker offset.
+pub fn status_cry_voice(speaker_offset: u16, variant: u32) -> u16 {
+    0x277 + (variant % 6) as u16 + speaker_offset
+}
+
 /// Presentation-only state tracker that observes one console side of an EXE5
 /// battle and fires EXE5DS voice clips on [`BattleAudio`].
 #[derive(Clone, Debug, Default)]
@@ -168,12 +206,16 @@ pub struct DsVoiceObserver {
     last_ticks: u32,
     started_round: bool,
     prev_hp: Option<u16>,
+    prev_total_damage: Option<u16>,
     prev_party_active: u8,
     prev_form: Option<FormHandle>,
+    announced_form: Option<FormHandle>,
     prev_used_chip: Option<(ChipHandle, u8)>,
     prev_telop: Option<(u8, Option<ChipHandle>)>,
+    prev_pa_step: Option<ProgramAdvanceStep>,
     prev_danger: bool,
-    prev_transform_change: bool,
+    prev_stunned: bool,
+    prev_transform_fade: bool,
     result_played: bool,
     deleted_played: bool,
 }
@@ -210,70 +252,120 @@ impl DsVoiceObserver {
             .map(|d| keys::local(&d.key))
             .unwrap_or("");
         let speaker_offset = navi_voice_offset(navi_key);
-        let cur_hp = battle.player(side).map(|r| battle.objects.get(r).hp);
+        let player_ref = battle.player(side);
+        let cur_hp = player_ref.map(|r| battle.objects.get(r).hp);
+        // `actor.total_damage_taken` accumulates only direct hit damage (`final_damage`),
+        // matching EXE5DS ARM9 `0x020629B0..0x02062A16` where hurt cries (`0x02098B04`)
+        // trigger only on direct hits (`+0x78`), never on passive poison / HP-bug drain (`+0x84`).
+        let cur_total_damage = player_ref
+            .and_then(|r| battle.objects.get(r).actor)
+            .map(|a| battle.actors.get(a).total_damage_taken);
+        let cur_stunned = player_ref.is_some_and(|r| {
+            battle.objects.get(r).collision.is_some_and(|c| {
+                battle.collision.get(c).f1 & (f1::PARALYZED | f1::FROZEN | f1::BUBBLED | f1::IMMOBILIZED) != 0
+            })
+        });
         let cur_party_active = battle.party[s].active;
         let cur_form = battle.stats[s].form;
         let cur_danger = battle.is_danger(side);
         let cur_used = battle.used_chips[s].map(|u| (u.chip, u.ticks));
         let cur_telop = battle.banner.telop.map(|t| (t.side, t.chip));
-        let in_transform_change = matches!(
+        let cur_pa = battle.custom.sides[s].screen.as_ref().and_then(|scr| match scr.phase {
+            CustomPhase::ProgramAdvance { anim } => scr.program_advance.map(|pa| (anim.step, pa.chip)),
+            _ => None,
+        });
+        let cur_pa_step = cur_pa.map(|(step, _)| step);
+        let in_transform_fade = matches!(
             battle.transform_seq.state,
-            SequencerState::Transform { phase: TransformPhase::Change, .. }
+            SequencerState::Transform { phase: TransformPhase::FadeOut, .. }
         );
 
         if !self.initialized {
             self.initialized = true;
             self.last_ticks = ticks;
             self.prev_hp = cur_hp;
+            self.prev_total_damage = cur_total_damage;
             self.prev_party_active = cur_party_active;
             self.prev_form = Some(cur_form);
+            self.announced_form = None;
             self.prev_used_chip = cur_used;
             self.prev_telop = cur_telop;
+            self.prev_pa_step = cur_pa_step;
             self.prev_danger = cur_danger;
-            self.prev_transform_change = in_transform_change;
+            self.prev_stunned = cur_stunned;
+            self.prev_transform_fade = in_transform_fade;
             return;
         }
         self.last_ticks = ticks;
 
-        // 1. Battle Start (first turn start banner): Lan "Battle Routine, Set! Execute!"
+        // 1. Battle Start (Turn 1 START_BANNER): ARM9 `0x02002AF0` / table `0x020CBAC4`
+        //    Navi battle-start line (MegaMan `0x261..=0x264`, ProtoMan `0x2C5..=0x2C7`,
+        //    Colonel `0x329..=0x32B`; other Team Navis / DarkSoul silent).
         if !self.started_round && battle.round.mode == mode::FIGHTING && battle.fight.state == fight::START_BANNER {
             self.started_round = true;
-            audio.play_voice(battle_start_voice(navi_key), CH_LAN);
+            let h = voice_hash(ticks, side, 0x11);
+            if let Some(clip) = battle_start_voice(navi_key, h) {
+                audio.play_voice(clip, CH_NAVI);
+            }
         }
 
-        // 2. Party Navi Switch (in-battle or at turn start from custom screen)
+        // 2. Program Advance Formation (Custom Screen PA reveal, ARM9 `0x0200CB1A` -> `0x0200CDC0`):
+        //    fires at the exact `BannerIn -> Names` transition (20 ticks after PA banner holds).
+        if let Some((ProgramAdvanceStep::Names, pa_chip)) = cur_pa
+            && self.prev_pa_step != Some(ProgramAdvanceStep::Names)
+            && let Some(chip_def) = battle.content.defs.chips.get(pa_chip.0 as usize)
+        {
+            let chip_data = battle.content.chip(pa_chip);
+            if let Some(pa_clip) = pa_voice(keys::local(&chip_def.key), chip_data.class) {
+                audio.play_voice(pa_clip, CH_LAN);
+            }
+        }
+
+        // 3. Party Navi Switch:
+        //    - Custom-screen switch (`0x02007D64` / table `0x020CC204`): always `NC` (`0x214..=0x220`).
+        //    - In-battle switch (`0x02098B90` / table `0x021309E4`): 50/50 `NC` or `PLS` (`0x221..=0x22D`).
         if cur_party_active != self.prev_party_active {
             if let Some((nc_id, pls_id)) = navi_switch_voices(navi_key) {
-                let h = voice_hash(ticks, side, 0x51);
-                let clip = if (h & 1) == 0 { nc_id } else { pls_id };
+                let from_custom = battle.transform_seq.busy || battle.turn_transforms[s].navi_switch.is_some();
+                let clip = if from_custom {
+                    nc_id
+                } else {
+                    let h = voice_hash(ticks, side, 0x51);
+                    if (h & 1) == 0 { nc_id } else { pls_id }
+                };
                 audio.play_voice(clip, CH_LAN);
             }
-            // Avoid mistaking the incoming navi's different HP for damage taken.
+            // Avoid mistaking the incoming navi's different HP / damage / status for damage or stun.
             self.prev_hp = cur_hp;
+            self.prev_total_damage = cur_total_damage;
+            self.prev_stunned = cur_stunned;
             self.deleted_played = false;
         }
 
-        // 3. Soul Unison / Chaos Unison transformation
-        let triggered_transform = (in_transform_change && !self.prev_transform_change)
-            .then(|| battle.turn_transforms[s])
-            .filter(|req| req.form.is_some());
-        if let Some(req) = triggered_transform {
+        // 4. Soul Unison / Chaos Unison transformation (`0x0205FED6` -> `0x02007D64`):
+        //    plays on `TransformPhase::FadeOut` entry for this side's own request.
+        if in_transform_fade && !self.prev_transform_fade {
+            let req = battle.transform_seq.requests[s];
             if let Some(form) = req.form
                 && let Some(form_def) = battle.content.defs.forms.get(form.0 as usize)
                 && let Some(clip) = soul_voice(keys::local(&form_def.key), req.alternate)
             {
+                self.announced_form = Some(form);
                 audio.play_voice(clip, CH_LAN);
             }
         } else if self.prev_form.is_some_and(|prev| prev != cur_form) {
-            // Fallback for transformations outside the turn sequencer.
-            if let Some(form_def) = battle.content.defs.forms.get(cur_form.0 as usize)
+            if self.announced_form == Some(cur_form) {
+                self.announced_form = None;
+            } else if let Some(form_def) = battle.content.defs.forms.get(cur_form.0 as usize)
                 && let Some(clip) = soul_voice(keys::local(&form_def.key), battle.turn_transforms[s].alternate)
             {
                 audio.play_voice(clip, CH_LAN);
             }
         }
 
-        // 4. Chip Used (non-dimming via `used_chips[s]`, dimming/cut-in via `telop_for(side)`)
+        // 5. Chip Used (non-dimming via `used_chips[s]`, dimming/cut-in via `telop`):
+        //    ARM9 `0x02007086` -> `0x02098A60` Navi attack cry (including PA chip execution,
+        //    since Lan already called out the PA name during Custom Screen formation).
         let mut newly_used_chip: Option<(ChipHandle, u16)> = None;
         if let Some(used) = battle.used_chips[s] {
             let is_new = match self.prev_used_chip {
@@ -293,66 +385,94 @@ impl DsVoiceObserver {
             newly_used_chip = Some((chip, telop.damage.saturating_add(telop.bonus)));
         }
         if let Some((chip, shown_dmg)) = newly_used_chip
-            && let Some(chip_def) = battle.content.defs.chips.get(chip.0 as usize)
+            && let Some(offset) = speaker_offset
         {
             let chip_data = battle.content.chip(chip);
-            let local_key = keys::local(&chip_def.key);
-            if let Some(pa_clip) = pa_voice(local_key, chip_data.class) {
-                audio.play_voice(pa_clip, CH_LAN);
-            } else if let Some(offset) = speaker_offset {
-                let has_damage = (chip_data.flags.0 & ChipFlags::HAS_DAMAGE) != 0 || shown_dmg > 0;
-                if has_damage {
-                    let dmg = if shown_dmg > 0 { shown_dmg } else { chip_data.damage };
-                    let h = voice_hash(ticks, side, chip.0 as u32 ^ 0xA3);
-                    audio.play_voice(chip_cry_voice(dmg, offset, h), CH_NAVI);
-                }
+            let has_damage = (chip_data.flags.0 & ChipFlags::HAS_DAMAGE) != 0 || shown_dmg > 0;
+            if has_damage {
+                let dmg = if shown_dmg > 0 { shown_dmg } else { chip_data.damage };
+                let h = voice_hash(ticks, side, chip.0 as u32 ^ 0xA3);
+                audio.play_voice(chip_cry_voice(dmg, offset, h), CH_NAVI);
             }
         }
 
-        // 5. Danger Microphone Shout triggered
+        // 6. Danger Microphone Shout triggered (`OV423` `T4 0x93`, `0x0221ED44` / `0x02223D10`):
         if self.prev_danger
             && !cur_danger
             && battle.mic_levels[s] >= 30
             && (battle.round.flags & battle_flags::DIMMED) != 0
-            && let Some(offset) = speaker_offset
         {
-            let h = voice_hash(ticks, side, 0xD7);
-            audio.play_voice(0x261 + (h % 4) as u16 + offset, CH_NAVI);
+            let level = battle.mic_levels[s];
+            let max_only = (battle.setup.settings.effects & effects::DS_SHOUT_MAX_ONLY) != 0;
+            let strength = if max_only || level > 0x4B {
+                2
+            } else if level > 0x28 {
+                1
+            } else {
+                0
+            };
+            if let Some(clip) = danger_shout_voice(navi_key, strength) {
+                audio.play_voice(clip, CH_NAVI);
+            }
         }
 
-        // 6. Hurt cry & Deletion cry on HP drop
+        // 7. Status-infliction / stun cry (`0x020615B4` -> `0x02098AE0`):
+        if cur_stunned
+            && !self.prev_stunned
+            && cur_hp.is_some_and(|hp| hp > 0)
+            && let Some(offset) = speaker_offset
+        {
+            let h = voice_hash(ticks, side, 0x77);
+            audio.play_voice(status_cry_voice(offset, h), CH_NAVI);
+        }
+
+        // 8. Hurt cry (`0x02098B04`, direct hits only — excludes poison/HP-bug drain)
+        //    & Deletion cry (`0x02098ABC`, any HP -> 0).
         let mut deleted_this_tick = false;
         if let (Some(prev), Some(cur)) = (self.prev_hp, cur_hp)
             && cur < prev
             && let Some(offset) = speaker_offset
         {
-            let dmg = prev - cur;
             if cur == 0 && !self.deleted_played {
                 self.deleted_played = true;
                 deleted_this_tick = true;
                 audio.play_voice(0x265 + offset, CH_NAVI);
-            } else if cur > 0 {
-                // ARM9 `0x02098B04`: 2/8 (25%) chance on hurt, using pure presentation hash.
-                let h = voice_hash(ticks, side, ((cur as u32) << 16) | dmg as u32);
+            } else if cur > 0
+                && let (Some(prev_dmg), Some(cur_dmg)) = (self.prev_total_damage, cur_total_damage)
+                && cur_dmg > prev_dmg
+            {
+                let hit_dmg = cur_dmg - prev_dmg;
+                // ARM9 `0x02098B04`: 2/8 (25%) chance on direct hit, using pure presentation hash.
+                let h = voice_hash(ticks, side, ((cur as u32) << 16) | hit_dmg as u32);
                 if (h & 7) >= 6 {
-                    audio.play_voice(hurt_cry_voice(dmg, offset, h >> 3), CH_NAVI);
+                    audio.play_voice(hurt_cry_voice(hit_dmg, offset, h >> 3), CH_NAVI);
                 }
             }
         }
 
-        // 7. Round Win / Lose Result voices
+        // 9. Round Win (`0x02070FC4` / `0x02109800`) & Lose (`0x02074A3E`) Result voices
         if !self.result_played && let Some(offset) = speaker_offset {
             match battle.fight.state {
                 fight::WIN => {
                     self.result_played = true;
                     let h = voice_hash(ticks, side, 0x91);
-                    let high_hp = cur_hp.is_some_and(|hp| (hp as u32) * 2 >= battle.stats[s].max_hp as u32);
-                    let base = if high_hp { 0x268 } else { 0x26A };
+                    let max_hp = battle.stats[s].max_hp.max(1) as u32;
+                    let hp = cur_hp.unwrap_or(0) as u32;
+                    let base = if hp * 4 >= max_hp * 3 {
+                        0x268 // Rank >= 9 tier
+                    } else if hp * 4 >= max_hp {
+                        0x26A // Rank 5..=8 tier
+                    } else {
+                        0x26C // Rank <= 4 tier
+                    };
                     audio.play_voice(base + (h & 1) as u16 + offset, CH_NAVI);
                 }
                 fight::LOSE => {
                     self.result_played = true;
-                    if !deleted_this_tick && !self.deleted_played {
+                    // Deletion cry (`0x265`) plays ~90 frames earlier when HP hits 0;
+                    // when `fight::LOSE` begins, play the post-defeat line (`0x266..=0x267`)
+                    // unless deletion happened on this exact tick.
+                    if !deleted_this_tick {
                         let h = voice_hash(ticks, side, 0x92);
                         audio.play_voice(0x266 + (h & 1) as u16 + offset, CH_NAVI);
                     }
@@ -362,12 +482,15 @@ impl DsVoiceObserver {
         }
 
         self.prev_hp = cur_hp;
+        self.prev_total_damage = cur_total_damage;
         self.prev_party_active = cur_party_active;
         self.prev_form = Some(cur_form);
         self.prev_used_chip = cur_used;
         self.prev_telop = cur_telop;
+        self.prev_pa_step = cur_pa_step;
         self.prev_danger = cur_danger;
-        self.prev_transform_change = in_transform_change;
+        self.prev_stunned = cur_stunned;
+        self.prev_transform_fade = in_transform_fade;
     }
 }
 
@@ -376,12 +499,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn speaker_offsets_match_arm9_table() {
+    fn speaker_offsets_and_battle_start_and_shout_match_arm9_tables() {
         assert_eq!(navi_voice_offset("megaman"), Some(0));
+        assert_eq!(navi_voice_offset("dark_megaman"), None);
         assert_eq!(navi_voice_offset("protoman"), Some(0x64));
         assert_eq!(navi_voice_offset("colonel"), Some(0xC8));
         assert_eq!(navi_voice_offset("gyroman"), None);
         assert_eq!(navi_voice_offset("tomahawkman"), None);
+
+        // ARM9 0x020CBAC4 Battle Start Navi callouts
+        assert_eq!(battle_start_voice("megaman", 0), Some(0x261));
+        assert_eq!(battle_start_voice("megaman", 3), Some(0x264));
+        assert_eq!(battle_start_voice("protoman", 0), Some(0x2C5));
+        assert_eq!(battle_start_voice("protoman", 2), Some(0x2C7));
+        assert_eq!(battle_start_voice("protoman", 3), Some(0x2C5));
+        assert_eq!(battle_start_voice("colonel", 0), Some(0x329));
+        assert_eq!(battle_start_voice("colonel", 2), Some(0x32B));
+        assert_eq!(battle_start_voice("dark_megaman", 0), None);
+        assert_eq!(battle_start_voice("gyroman", 0), None);
+
+        // OV423 0x02223D10 Danger Shout cries by strength tier (0, 1, 2)
+        assert_eq!(danger_shout_voice("megaman", 0), Some(0x289));
+        assert_eq!(danger_shout_voice("megaman", 1), Some(0x28A));
+        assert_eq!(danger_shout_voice("megaman", 2), Some(0x286));
+        assert_eq!(danger_shout_voice("protoman", 0), Some(0x2EE));
+        assert_eq!(danger_shout_voice("protoman", 1), Some(0x2ED));
+        assert_eq!(danger_shout_voice("protoman", 2), Some(0x2EC));
+        assert_eq!(danger_shout_voice("colonel", 0), Some(0x352));
+        assert_eq!(danger_shout_voice("colonel", 1), Some(0x350));
+        assert_eq!(danger_shout_voice("colonel", 2), Some(0x34E));
+        assert_eq!(danger_shout_voice("dark_megaman", 2), None);
+        assert_eq!(danger_shout_voice("tomahawkman", 2), None);
+
+        // ARM9 0x02098AE0 Status/stun cry (6 variants)
+        assert_eq!(status_cry_voice(0, 0), 0x277);
+        assert_eq!(status_cry_voice(0, 5), 0x27C);
+        assert_eq!(status_cry_voice(0x64, 1), 0x2DC);
+        assert_eq!(status_cry_voice(0xC8, 2), 0x341);
     }
 
     #[test]
@@ -491,11 +645,9 @@ mod tests {
             loop_end: 2048,
         };
         let mut clips = BTreeMap::new();
-        for id in [0x1F4u16, 0x1F5, 0x1F6, 0x265, 0x266, 0x267, 0x268, 0x269, 0x26A, 0x26B]
-            .into_iter()
-            .chain(0x26E..=0x28A)
-            .chain(0x2D2..=0x2EE)
-            .chain(0x336..=0x352)
+        for id in (0x261u16..=0x28A)
+            .chain(0x2C5..=0x2EE)
+            .chain(0x329..=0x352)
         {
             clips.insert(id, sdat::VoiceClip { volume: 88, steps: vec![sdat::VoiceStep { wave: 0, delay_samples: 0 }] });
         }

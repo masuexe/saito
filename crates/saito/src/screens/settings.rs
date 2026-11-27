@@ -142,9 +142,14 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_hd_chip_art(s.hd_chip_art);
     view.set_has_hd_art(shell.games.has_all_hd_art());
     let display_name = |p: &std::path::Path| {
-        p.file_name()
+        let base = p
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| p.display().to_string())
+            .unwrap_or_else(|| p.display().to_string());
+        match saito_extract::nds::exe5ds_rom_region(p) {
+            Some(region) => format!("{base} [{}]", region.voice_tag()),
+            None => base,
+        }
     };
     let (rom_name, rom_clearable) = if let Some(p) = s.exe5ds_rom.as_ref() {
         (display_name(p), true)
@@ -596,7 +601,7 @@ impl Screen for Settings {
                 }
             }
             "set.exe5ds-rom" => {
-                shell.choose_files("EXE5DS ROM (*.nds)", &["nds"], "exe5ds-rom");
+                shell.choose_files("EXE5DS / BN5DS ROM (*.nds)", &["nds"], "exe5ds-rom");
             }
             "set.exe5ds-rom-clear" => {
                 if let Some(prev) = shell.settings.exe5ds_rom.take() {

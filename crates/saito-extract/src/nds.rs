@@ -19,8 +19,39 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-/// Supported EXE5DS NDS header game codes (JP / US / EU).
+/// Supported EXE5DS / BN5DS NDS header game codes (JP / US / EU).
 const VALID_GAME_CODES: [&[u8; 4]; 3] = [b"A5TJ", b"A5TE", b"A5TP"];
+
+/// Regional edition of a Mega Man Battle Network 5: Double Team DS / Rockman
+/// EXE 5 DS: Twin Leaders ROM (`A5TJ`, `A5TE`, or `A5TP`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exe5DsRegion {
+    /// Japanese (`A5TJ` — Japanese battle voices).
+    Jp,
+    /// North American (`A5TE` — English battle voices).
+    Us,
+    /// European (`A5TP` — English battle voices).
+    Eu,
+}
+
+impl Exe5DsRegion {
+    pub fn from_game_code(code: &[u8; 4]) -> Option<Self> {
+        match code {
+            b"A5TJ" => Some(Self::Jp),
+            b"A5TE" => Some(Self::Us),
+            b"A5TP" => Some(Self::Eu),
+            _ => None,
+        }
+    }
+
+    /// Short voice-language badge for UI display (`"JP"` or `"EN"`).
+    pub fn voice_tag(self) -> &'static str {
+        match self {
+            Self::Jp => "JP",
+            Self::Us | Self::Eu => "EN",
+        }
+    }
+}
 
 /// Minimum NDS header length required to validate game code and FNT/FAT fields.
 const NDS_HEADER_MIN_LEN: usize = 0x200;
@@ -126,23 +157,26 @@ fn validate_header_and_bounds(header: &[u8], file_len: u64) -> Option<(usize, us
     ))
 }
 
-/// Return `true` if `path` points to a readable EXE5DS NDS ROM (`A5TJ`, `A5TE`,
-/// or `A5TP`) whose FNT and FAT tables are within file bounds.
-pub fn is_exe5ds_rom(path: &Path) -> bool {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(meta) = file.metadata() else {
-        return false;
-    };
+/// Return the regional edition (`Jp`, `Us`, `Eu`) if `path` points to a
+/// readable EXE5DS / BN5DS NDS ROM (`A5TJ`, `A5TE`, or `A5TP`) with valid
+/// FNT/FAT bounds.
+pub fn exe5ds_rom_region(path: &Path) -> Option<Exe5DsRegion> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() < NDS_HEADER_MIN_LEN as u64 {
-        return false;
+        return None;
     }
     let mut header = [0u8; NDS_HEADER_MIN_LEN];
-    if file.read_exact(&mut header).is_err() {
-        return false;
-    }
-    validate_header_and_bounds(&header, meta.len()).is_some()
+    file.read_exact(&mut header).ok()?;
+    validate_header_and_bounds(&header, meta.len())?;
+    let code: &[u8; 4] = header[0x0C..0x10].try_into().ok()?;
+    Exe5DsRegion::from_game_code(code)
+}
+
+/// Return `true` if `path` points to a readable EXE5DS / BN5DS NDS ROM (`A5TJ`,
+/// `A5TE`, or `A5TP`) whose FNT and FAT tables are within file bounds.
+pub fn is_exe5ds_rom(path: &Path) -> bool {
+    exe5ds_rom_region(path).is_some()
 }
 
 /// Read-only view of an NDS ROM's NitroFS filesystem.
@@ -230,17 +264,91 @@ impl<'a> NitroFs<'a> {
                 dir_id = matched_dir?;
             } else {
                 let file_id = matched_file?;
-                let fat_entry_off = file_id.checked_mul(8)?;
-                if fat_entry_off.checked_add(8)? > self.fat_len {
-                    return None;
+                return self.read_fat_entry(file_id);
+            }
+        }
+        None
+    }
+
+    /// Look up `preferred` by exact NitroFS path, falling back to a recursive
+    /// case-insensitive filename scan so regional ROMs (`A5TJ` / `A5TE` /
+    /// `A5TP`) that relocate files under `data/rom_usa/` or `data/rom_eur/`
+    /// still resolve cleanly.
+    pub fn read_file_or_find(&self, preferred: &str, filename: &str) -> Option<&'a [u8]> {
+        if let Some(bytes) = self.read_file(preferred) {
+            return Some(bytes);
+        }
+        self.find_file_in_dir(0xF000, filename, 0)
+    }
+
+    fn read_fat_entry(&self, file_id: usize) -> Option<&'a [u8]> {
+        let fat_entry_off = file_id.checked_mul(8)?;
+        if fat_entry_off.checked_add(8)? > self.fat_len {
+            return None;
+        }
+        let fat_entry = &self.rom[self.fat_off + fat_entry_off..self.fat_off + fat_entry_off + 8];
+        let start = u32::from_le_bytes(fat_entry[0..4].try_into().unwrap()) as usize;
+        let end = u32::from_le_bytes(fat_entry[4..8].try_into().unwrap()) as usize;
+        if start > end || end > self.rom.len() {
+            return None;
+        }
+        Some(&self.rom[start..end])
+    }
+
+    fn find_file_in_dir(&self, dir_id: u16, filename: &str, depth: usize) -> Option<&'a [u8]> {
+        if depth > 16 {
+            return None;
+        }
+        let dir_idx = (dir_id & 0x0FFF) as usize;
+        let main_off = dir_idx.checked_mul(8)?;
+        if main_off.checked_add(8)? > self.fnt_len {
+            return None;
+        }
+        let entry = &self.rom[self.fnt_off + main_off..self.fnt_off + main_off + 8];
+        let sub_off = u32::from_le_bytes(entry[0..4].try_into().unwrap()) as usize;
+        let mut fid = u16::from_le_bytes(entry[4..6].try_into().unwrap()) as usize;
+        if sub_off >= self.fnt_len {
+            return None;
+        }
+        let mut pos = sub_off;
+        let mut subdirs = Vec::new();
+        loop {
+            if pos >= self.fnt_len {
+                break;
+            }
+            let hdr = self.rom[self.fnt_off + pos];
+            pos += 1;
+            if hdr == 0 {
+                break;
+            }
+            let is_dir = (hdr & 0x80) != 0;
+            let name_len = (hdr & 0x7F) as usize;
+            let name_end = pos.checked_add(name_len)?;
+            if name_end > self.fnt_len {
+                break;
+            }
+            let name_bytes = &self.rom[self.fnt_off + pos..self.fnt_off + name_end];
+            pos = name_end;
+            if is_dir {
+                let id_end = pos.checked_add(2)?;
+                if id_end > self.fnt_len {
+                    break;
                 }
-                let fat_entry = &self.rom[self.fat_off + fat_entry_off..self.fat_off + fat_entry_off + 8];
-                let start = u32::from_le_bytes(fat_entry[0..4].try_into().unwrap()) as usize;
-                let end = u32::from_le_bytes(fat_entry[4..8].try_into().unwrap()) as usize;
-                if start > end || end > self.rom.len() {
-                    return None;
+                let sub_dir = u16::from_le_bytes(
+                    self.rom[self.fnt_off + pos..self.fnt_off + id_end].try_into().unwrap(),
+                );
+                pos = id_end;
+                subdirs.push(sub_dir);
+            } else {
+                if std::str::from_utf8(name_bytes).is_ok_and(|n| n.eq_ignore_ascii_case(filename)) {
+                    return self.read_fat_entry(fid);
                 }
-                return Some(&self.rom[start..end]);
+                fid = fid.checked_add(1)?;
+            }
+        }
+        for sub_dir in subdirs {
+            if let Some(found) = self.find_file_in_dir(sub_dir, filename, depth + 1) {
+                return Some(found);
             }
         }
         None
@@ -298,12 +406,16 @@ fn read_face_and_box(data: &[u8], off: usize) -> Option<(Tiles, Tiles)> {
 pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
     let fs = NitroFs::parse(rom).ok_or_else(|| Error("not a valid EXE5DS ROM (expected A5TJ/A5TE/A5TP)".into()))?;
 
-    let pl0d = fs.read_file(PATH_PL0D).ok_or_else(|| Error(format!("missing {PATH_PL0D} in EXE5DS ROM")))?;
+    let pl0d = fs
+        .read_file_or_find(PATH_PL0D, "pl0d.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_PL0D} in EXE5DS ROM")))?;
     let mut solcross_megaman = sprite::sheet(pl0d, SOLCROSS_MEGAMAN_SPRITE.0, SOLCROSS_MEGAMAN_SPRITE.1)
         .ok_or_else(|| Error(format!("failed to decode {PATH_PL0D}")))?;
     mask_sheet_palettes(&mut solcross_megaman);
 
-    let pshl03 = fs.read_file(PATH_PSHL03).ok_or_else(|| Error(format!("missing {PATH_PSHL03} in EXE5DS ROM")))?;
+    let pshl03 = fs
+        .read_file_or_find(PATH_PSHL03, "pshl03.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_PSHL03} in EXE5DS ROM")))?;
     let mut buster_arm = sprite::sheet(pshl03, BUSTER_ARM_SPRITE.0, BUSTER_ARM_SPRITE.1)
         .ok_or_else(|| Error(format!("failed to decode {PATH_PSHL03}")))?;
     mask_sheet_palettes(&mut buster_arm);
@@ -315,14 +427,22 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
         )));
     }
 
-    let shl00 = fs.read_file(PATH_SHL00).ok_or_else(|| Error(format!("missing {PATH_SHL00} in EXE5DS ROM")))?;
+    let shl00 = fs
+        .read_file_or_find(PATH_SHL00, "shl00.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_SHL00} in EXE5DS ROM")))?;
     let mut sol_sun = sprite::sheet(shl00, SOL_SUN_SPRITE.0, SOL_SUN_SPRITE.1)
         .ok_or_else(|| Error(format!("failed to decode {PATH_SHL00}")))?;
     mask_sheet_palettes(&mut sol_sun);
 
-    let pix = fs.read_file(PATH_KOKORO_PIX).ok_or_else(|| Error(format!("missing {PATH_KOKORO_PIX} in EXE5DS ROM")))?;
-    let clt = fs.read_file(PATH_KOKORO_CLT).ok_or_else(|| Error(format!("missing {PATH_KOKORO_CLT} in EXE5DS ROM")))?;
-    let navi = fs.read_file(PATH_KOKORO_NAVI).ok_or_else(|| Error(format!("missing {PATH_KOKORO_NAVI} in EXE5DS ROM")))?;
+    let pix = fs
+        .read_file_or_find(PATH_KOKORO_PIX, "kokoro_pix.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_KOKORO_PIX} in EXE5DS ROM")))?;
+    let clt = fs
+        .read_file_or_find(PATH_KOKORO_CLT, "kokoro_clt.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_KOKORO_CLT} in EXE5DS ROM")))?;
+    let navi = fs
+        .read_file_or_find(PATH_KOKORO_NAVI, "kokoro_navi.bin")
+        .ok_or_else(|| Error(format!("missing {PATH_KOKORO_NAVI} in EXE5DS ROM")))?;
 
     if pix.len() < KOKORO_PIX_MIN_LEN || clt.len() < KOKORO_CLT_MIN_LEN || navi.len() < KOKORO_NAVI_MIN_LEN {
         return Err(Error("truncated kokoro_* emotion window files in EXE5DS ROM".into()));
@@ -378,7 +498,7 @@ pub fn extract_from_bytes(rom: &[u8]) -> Result<Exe5DsAssets, Error> {
         navi_danger_mugshots.push(Some(NaviDangerFace { tiles, box_tiles, palette }));
     }
 
-    let (sound, voices) = match fs.read_file(PATH_SOUND_DATA) {
+    let (sound, voices) = match fs.read_file_or_find(PATH_SOUND_DATA, "sound_data.sdat") {
         Some(sdat_bytes) => {
             let seq_ids: Vec<u16> = EXE5DS_BATTLE_THEMES.iter().map(|&(_, id, _)| id).collect();
             let sound = sdat::parse::extract_sdat(sdat_bytes, &seq_ids).ok();
@@ -902,6 +1022,11 @@ mod tests {
             return;
         }
         assert!(is_exe5ds_rom(rom_path), "expected {LOCAL_EXE5DS_ROM} to validate as EXE5DS");
+        assert_eq!(exe5ds_rom_region(rom_path), Some(Exe5DsRegion::Jp));
+        assert_eq!(Exe5DsRegion::from_game_code(b"A5TJ").map(Exe5DsRegion::voice_tag), Some("JP"));
+        assert_eq!(Exe5DsRegion::from_game_code(b"A5TE").map(Exe5DsRegion::voice_tag), Some("EN"));
+        assert_eq!(Exe5DsRegion::from_game_code(b"A5TP").map(Exe5DsRegion::voice_tag), Some("EN"));
+        assert_eq!(Exe5DsRegion::from_game_code(b"XXXX"), None);
 
         let mut bundle = sample_gba_exe5_bundle();
         let (ds_sound, ds_voices, warnings) = apply_exe5_ds_assets_from_path(&mut bundle, Some(rom_path));
