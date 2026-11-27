@@ -305,9 +305,37 @@ pub fn sanitize_id(raw: &str) -> String {
     if clean.is_empty() { "custom-theme".to_string() } else { clean.to_ascii_lowercase() }
 }
 
-/// Built-in HD Vector PET look for a specific game (`exe4`, `exe5`, `exe6`).
+/// Built-in HD Vector PET look for a specific game (`exe3`, `exe4`, `exe5`, `exe6`).
 pub fn pet_hd_look(game: Option<&str>) -> Look {
     match game {
+        Some("exe3") => Look {
+            ground_top: ThemeRgb::from_u32(0x222328).color(),
+            ground_bottom: ThemeRgb::from_u32(0x09090B).color(),
+            ground_glow: ThemeRgb::from_u32(0xD4D8E2).with_alpha(0.16),
+            panel: ThemeRgb::from_u32(0x141519).color(),
+            raised: ThemeRgb::from_u32(0x1D1F25).color(),
+            line: ThemeRgb::from_u32(0xD4D8E2).color(),
+            inset: ThemeRgb::from_u32(0x0B0C0F).color(),
+            text: ThemeRgb::from_u32(0xF5F6F8).color(),
+            muted: ThemeRgb::from_u32(0xB4B8C4).color(),
+            dim: ThemeRgb::from_u32(0x6F7380).color(),
+            cursor: ThemeRgb::from_u32(0xE2E6F0).color(),
+            action: ThemeRgb::from_u32(0xFF9400).color(),
+            action_ink: ThemeRgb::from_u32(0xFFFFFF).color(),
+            pattern: PatternKind::PetGrid,
+            pattern_color: ThemeRgb::from_u32(0xD4D8E2).color(),
+            pattern_strength: 0.09,
+            frame_stroke: ThemeRgb::from_u32(0x464954).color(),
+            btn_shadow: ThemeRgb::from_u32(0x050507).color(),
+            active_top: ThemeRgb::from_u32(0xFFA408).color(),
+            active_bot: ThemeRgb::from_u32(0xFF7800).color(),
+            active_border: ThemeRgb::from_u32(0xFFF4D6).color(),
+            active_shadow: ThemeRgb::from_u32(0xD98200).color(),
+            slot_bg: ThemeRgb::from_u32(0x272932).color(),
+            slot_border: ThemeRgb::from_u32(0xC8CDD8).color(),
+            bar_start: ThemeRgb::from_u32(0x7A7F8E).color(),
+            bar_end: ThemeRgb::from_u32(0xE2E6F0).color(),
+        },
         Some("exe4") => Look {
             ground_top: ThemeRgb::from_u32(0x321D78).color(),
             ground_bottom: ThemeRgb::from_u32(0x120933).color(),
@@ -714,7 +742,7 @@ pub fn resolve_in(dir: &Path, id: &str, terminal_games: &HashMap<String, Look>) 
 
 fn build_pet_hd() -> ResolvedTheme {
     let mut games = HashMap::new();
-    for g in ["exe4", "exe5", "exe6"] {
+    for g in ["exe3", "exe4", "exe5", "exe6"] {
         games.insert(g.to_string(), pet_hd_look(Some(g)));
     }
     ResolvedTheme {
@@ -877,5 +905,6 @@ slot_border = "#123456"
         let resolved = resolve_in(dir.path(), "does-not-exist", &HashMap::new());
         assert_eq!(resolved.id, DEFAULT_THEME);
         assert!(resolved.pet);
+        assert_eq!(resolved.games["exe3"].ground_bottom, Color::from_rgb_u8(0x09, 0x09, 0x0B));
     }
 }
