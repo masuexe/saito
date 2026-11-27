@@ -141,6 +141,217 @@ language = "en"
 "mstrstyl" = { name = "MstrStyl", description = "4-element Master\nblade onslaught!" }
 "invalid" = { name = " ", description = "" }
 "zeroed" = { name = "", description = "" }
+"airshot2" = { name = "AirShot2", description = "Knocks enemy back\n1 square!" }
+"airshot3" = { name = "AirShot3", description = "Knocks enemy back\n1 square!" }
+"lavacan1" = { name = "LavaCan1", description = "Lava cannon melts\ntarget panel!" }
+"lavacan2" = { name = "LavaCan2", description = "Strong lava cannon\nmelts target panel!" }
+"lavacan3" = { name = "LavaCan3", description = "Heavy lava cannon\nmelts target panel!" }
+"volcano" = { name = "Volcano", description = "Erupts all Lava\npanels on field!" }
+"iceball" = { name = "IceBall", description = "Throws an icy ball\nfreezing target!" }
+"lavaball" = { name = "LavaBall", description = "Throws a lava ball\nmelting target!" }
+"blkbomb1" = { name = "BlkBomb1", description = "Ignite with Fire\nfor a 3x3 blast!" }
+"blkbomb2" = { name = "BlkBomb2", description = "Strong bomb blasts\n3x3 with Fire!" }
+"blkbomb3" = { name = "BlkBomb3", description = "Huge bomb blasts\n3x3 with Fire!" }
+"airswrd" = { name = "AirSwrd", description = "Wind blade slashes\n& blows foe back!" }
+"shockwav" = { name = "ShockWav", description = "Shockwave travels\nalong the ground!" }
+"sonicwav" = { name = "SonicWav", description = "Fast shockwave\ntravels the row!" }
+"dynawave" = { name = "DynaWave", description = "High-speed wave\nrips down the row!" }
+"bigwave" = { name = "BigWave", description = "Massive shockwaves\nsweep all 3 rows!" }
+"gutpunch" = { name = "GutPunch", description = "Breaking punch\nknocks back foes!" }
+"gutstrgt" = { name = "GutStrgt", description = "2-panel breaking\nstraight punch!" }
+"gutimpct" = { name = "GutImpct", description = "Heavy breaking\npunch cracks floor!" }
+"dashatk" = { name = "DashAtk", description = "Dashes across row\npiercing enemies!" }
+"burner" = { name = "Burner", description = "Ignites flames on\nall 8 panels around!" }
+"condor" = { name = "Condor", description = "Diving bird pierces\nwide forward zone!" }
+"burning" = { name = "Burning", description = "Blazing cross dash\nscorches enemies!" }
+"zapring1" = { name = "ZapRing1", description = "Elec ring paralyzes\nenemy on contact!" }
+"zapring2" = { name = "ZapRing2", description = "Fast elec ring\nparalyzes enemy!" }
+"zapring3" = { name = "ZapRing3", description = "High-volt ring\nparalyzes enemy!" }
+"icewave1" = { name = "IceWave1", description = "Sliding ice wave\nfreezes the row!" }
+"icewave2" = { name = "IceWave2", description = "Wide ice waves\nfreeze panels!" }
+"icewave3" = { name = "IceWave3", description = "3-row ice waves\nfreeze the field!" }
+"yo-yo1" = { name = "Yo-Yo1", description = "3-panel multi-hit\nspinning yo-yo!" }
+"yo-yo2" = { name = "Yo-Yo2", description = "Strong multi-hit\nspinning yo-yo!" }
+"yo-yo3" = { name = "Yo-Yo3", description = "Heavy multi-hit\nspinning yo-yo!" }
+"airstrm1" = { name = "AirStrm1", description = "3 rapid wind gusts\nsweep the row!" }
+"airstrm2" = { name = "AirStrm2", description = "3 strong wind gusts\nsweep the row!" }
+"airstrm3" = { name = "AirStrm3", description = "3 fierce wind gusts\nsweep the row!" }
+"arrow1" = { name = "Arrow1", description = "Piercing elec arrow\nsweeps the row!" }
+"arrow2" = { name = "Arrow2", description = "Twin elec arrows\nsweep the field!" }
+"arrow3" = { name = "Arrow3", description = "3-row elec arrows\npierce everything!" }
+"ratton1" = { name = "Ratton1", description = "Homing rat missile\nturns toward foe!" }
+"ratton2" = { name = "Ratton2", description = "Fast homing rat\nturns toward foe!" }
+"ratton3" = { name = "Ratton3", description = "High-speed homing\nrat missile!" }
+"fireratn" = { name = "FireRatn", description = "Explosive fire rat\nblasts cross area!" }
+"wave" = { name = "Wave", description = "Aqua waves sweep\nacross all 3 rows!" }
+"redwave" = { name = "RedWave", description = "Lava waves scorch\n& melt all 3 rows!" }
+"mudwave" = { name = "MudWave", description = "Mud waves sweep &\nbreak all 3 rows!" }
+"tornado" = { name = "Tornado", description = "8-hit wind twister\n2 squares ahead!" }
+"spice1" = { name = "Spice1", description = "Explodes all Grass\npanels on field!" }
+"spice2" = { name = "Spice2", description = "Strongly explodes\nall Grass panels!" }
+"spice3" = { name = "Spice3", description = "Massively explodes\nall Grass panels!" }
+"shake1" = { name = "Shake1", description = "Seismic bomb shakes\na 3-panel row!" }
+"shake2" = { name = "Shake2", description = "Strong seismic bomb\nshakes 3 panels!" }
+"shake3" = { name = "Shake3", description = "Heavy seismic bomb\nshakes 3 panels!" }
+"nobeam1" = { name = "NoBeam1", description = "Full-power laser if\nobject is behind!" }
+"nobeam2" = { name = "NoBeam2", description = "Stronger beam when\nobject is behind!" }
+"nobeam3" = { name = "NoBeam3", description = "Maximum laser when\nobject is behind!" }
+"hammer" = { name = "Hammer", description = "Crushes obstacles &\ncracks panel ahead!" }
+"geyser" = { name = "Geyser", description = "Aqua geyser erupts\nin a 3x3 blast!" }
+"rope1" = { name = "Rope1", description = "Wood rope lashes &\nparalyzes target!" }
+"rope2" = { name = "Rope2", description = "Strong wood rope\nbinds & paralyzes!" }
+"rope3" = { name = "Rope3", description = "Long wood rope\nbinds 3 ahead!" }
+"boomer1" = { name = "Boomer1", description = "Wood boomerang\nsweeps outer edge!" }
+"boomer2" = { name = "Boomer2", description = "Fast wood boomerang\nsweeps outer edge!" }
+"boomer3" = { name = "Boomer3", description = "Fierce boomerang\nsweeps outer edge!" }
+"rockarm1" = { name = "RockArm1", description = "Breaking rock arm\nsmashes & cracks!" }
+"rockarm2" = { name = "RockArm2", description = "Strong rock arm\nsmashes & cracks!" }
+"rockarm3" = { name = "RockArm3", description = "Heavy rock arm\nsmashes & cracks!" }
+"crsshld1" = { name = "CrsShld1", description = "Guard & counter\nwith breaking cross!" }
+"crsshld2" = { name = "CrsShld2", description = "Strong guard with\nbreaking counter!" }
+"crsshld3" = { name = "CrsShld3", description = "Heavy guard with\nbreaking counter!" }
+"magnum1" = { name = "Magnum1", description = "Cursor blast breaks\nvertical column!" }
+"magnum2" = { name = "Magnum2", description = "Cursor blast breaks\nhorizontal row!" }
+"magnum3" = { name = "Magnum3", description = "Cursor blast breaks\ncross pattern!" }
+"rndmmetr" = { name = "RndmMetr", description = "Rains fire meteors\nrandomly on foes!" }
+"holemetr" = { name = "HoleMetr", description = "Rains meteors that\nbreak enemy panels!" }
+"shotmetr" = { name = "ShotMetr", description = "Rains aimed meteors\nright on target!" }
+"needler1" = { name = "Needler1", description = "Rapid-fire turret\nshoots 5 needles!" }
+"needler2" = { name = "Needler2", description = "Strong turret fires\n5 rapid needles!" }
+"needler3" = { name = "Needler3", description = "Heavy turret fires\n5 rapid needles!" }
+"totem1" = { name = "Totem1", description = "Fire totem heals &\nshoots flames!" }
+"totem2" = { name = "Totem2", description = "Strong fire totem\nheals & blasts!" }
+"totem3" = { name = "Totem3", description = "Great fire totem\nheals & blasts!" }
+"pawn" = { name = "Pawn", description = "Chess Pawn slashes\n2 panels ahead!" }
+"knight" = { name = "Knight", description = "Chess Knight leaps\nwith breaking slam!" }
+"rook" = { name = "Rook", description = "Places a 600-HP\nRook barrier piece!" }
+"team1" = { name = "Team1", description = "Allied support hits\nwith a shockwave!" }
+"team2" = { name = "Team2", description = "Allied support heals\n& grants invuln!" }
+"timebomb" = { name = "TimeBomb", description = "Countdown bomb\nblasts enemy area!" }
+"mine" = { name = "Mine", description = "Hides a 300-dmg\nmine on enemy area!" }
+"lance" = { name = "Lance", description = "Bamboo lance strikes\nenemy back column!" }
+"snake" = { name = "Snake", description = "Fires Wood snakes\nfrom your holes!" }
+"guard" = { name = "Guard", description = "Blocks hits & fires\na counter wave!" }
+"grabback" = { name = "GrabBack", description = "40x stolen panels\n& reclaims area!" }
+"grabrvng" = { name = "GrabRvng", description = "80x stolen panels\n& reclaims area!" }
+"prism" = { name = "Prism", description = "Crystal refracts\nhits to 8 around!" }
+"fanfare" = { name = "Fanfare", description = "Horn melody grants\nbrief invuln!" }
+"discord" = { name = "Discord", description = "Harsh horn melody\nconfuses opponent!" }
+"timpani" = { name = "Timpani", description = "Drumbeat stuns &\nparalyzes opponent!" }
+"repair" = { name = "Repair", description = "Restores all broken\npanels in your area!" }
+"panic" = { name = "Panic", description = "Confusing wave\nscrambles controls!" }
+"airshoes" = { name = "AirShoes", description = "Lets you stand over\nbroken/hole panels!" }
+"nrthwind" = { name = "NrthWind", description = "Strips ALL barriers\n& auras on field!" }
+"mettaur" = { name = "Mettaur", description = "Summons Mettaur\nfor a shockwave!" }
+"bunny" = { name = "Bunny", description = "Summons Bunny for\nparalyzing zap!" }
+"spikey" = { name = "Spikey", description = "Summons Spikey for\na fire row blast!" }
+"swordy" = { name = "Swordy", description = "Summons Swordy for\na wide sword cut!" }
+"jelly" = { name = "Jelly", description = "Summons Jelly for\na sweeping strike!" }
+"mushy" = { name = "Mushy", description = "Summons Mushy for\nconfusing spores!" }
+"momogra" = { name = "Momogra", description = "Summons Momogra for\nambush strike!" }
+"killreye" = { name = "KillrEye", description = "Summons KillrEye for\npiercing elec beam!" }
+"scuttlst" = { name = "Scuttlst", description = "Summons Scuttlest\nfor cross barrage!" }
+"hole" = { name = "Hole", description = "Opens black hole\nbreaking panels!" }
+"fire-30" = { name = "Fire+30", description = "+30 power for\nselected Fire chip" }
+"aqua-30" = { name = "Aqua+30", description = "+30 power for\nselected Aqua chip" }
+"elec-30" = { name = "Elec+30", description = "+30 power for\nselected Elec chip" }
+"wood-30" = { name = "Wood+30", description = "+30 power for\nselected Wood chip" }
+"protomnv5" = { name = "ProtoMnV5", description = "Steps in & slashes\n3 vertical panels!" }
+"flashmnv5" = { name = "FlashMnV5", description = "Blinding elec flash\nparalyzes foes!" }
+"plantmnv5" = { name = "PlantMnV5", description = "Wood vines strike\n4x & bind target!" }
+"mistmanv5" = { name = "MistMnV5", description = "Mist apparitions\nstrike 3 times!" }
+"bowlmanv5" = { name = "BowlMnV5", description = "Bowling pins sweep\nall 3 rows!" }
+"roll" = { name = "Roll", description = "3 rapid hits on foe\n& heals 60 HP!" }
+"rollv2" = { name = "RollV2", description = "3 rapid hits on foe\n& heals 100 HP!" }
+"rollv3" = { name = "RollV3", description = "3 rapid hits on foe\n& heals 140 HP!" }
+"gutsman" = { name = "GutsMan", description = "Ground slam cracks\nall enemy panels!" }
+"gutsmanv2" = { name = "GutsManV2", description = "Ground slam cracks\nall enemy panels!" }
+"gutsmanv3" = { name = "GutsManV3", description = "Ground slam cracks\nall enemy panels!" }
+"gutsmanv4" = { name = "GutsManV4", description = "Ground slam cracks\nall enemy panels!" }
+"gutsmanv5" = { name = "GutsManV5", description = "Ground slam cracks\nall enemy panels!" }
+"beastman" = { name = "BeastMan", description = "3-hit claw slash\nacross front row!" }
+"beastmnv2" = { name = "BeastMnV2", description = "3-hit claw slash\nacross front row!" }
+"beastmnv3" = { name = "BeastMnV3", description = "3-hit claw slash\nacross front row!" }
+"beastmnv4" = { name = "BeastMnV4", description = "3-hit claw slash\nacross front row!" }
+"beastmnv5" = { name = "BeastMnV5", description = "3-hit claw slash\nacross front row!" }
+"bubblman" = { name = "BubblMan", description = "Aqua bubble volley\nscales at low HP!" }
+"bubblmnv2" = { name = "BubblMnV2", description = "Aqua bubble volley\nscales at low HP!" }
+"bubblmnv3" = { name = "BubblMnV3", description = "Aqua bubble volley\nscales at low HP!" }
+"bubblmnv4" = { name = "BubblMnV4", description = "Aqua bubble volley\nscales at low HP!" }
+"bubblmnv5" = { name = "BubblMnV5", description = "Aqua bubble volley\nscales at low HP!" }
+"desrtman" = { name = "DesrtMan", description = "Sand fists erupt\nacross enemy rows!" }
+"desrtmnv2" = { name = "DesrtMnV2", description = "Sand fists erupt\nacross enemy rows!" }
+"desrtmnv3" = { name = "DesrtMnV3", description = "Sand fists erupt\nacross enemy rows!" }
+"desrtmnv4" = { name = "DesrtMnV4", description = "Sand fists erupt\nacross enemy rows!" }
+"desrtmnv5" = { name = "DesrtMnV5", description = "Sand fists erupt\nacross enemy rows!" }
+"flamman" = { name = "FlamMan", description = "3-row fire wave\nscorches enemy area!" }
+"flammanv2" = { name = "FlamManV2", description = "3-row fire wave\nscorches enemy area!" }
+"flammanv3" = { name = "FlamManV3", description = "3-row fire wave\nscorches enemy area!" }
+"flammanv4" = { name = "FlamManV4", description = "3-row fire wave\nscorches enemy area!" }
+"flammanv5" = { name = "FlamManV5", description = "3-row fire wave\nscorches enemy area!" }
+"drillman" = { name = "DrillMan", description = "Breaking drills\npierce across area!" }
+"drillmnv2" = { name = "DrillMnV2", description = "Breaking drills\npierce across area!" }
+"drillmnv3" = { name = "DrillMnV3", description = "Breaking drills\npierce across area!" }
+"drillmnv4" = { name = "DrillMnV4", description = "Breaking drills\npierce across area!" }
+"drillmnv5" = { name = "DrillMnV5", description = "Breaking drills\npierce across area!" }
+"metalman" = { name = "MetalMan", description = "Breaking MetalFist\nsmashes 2 ahead!" }
+"metalmnv2" = { name = "MetalMnV2", description = "Breaking MetalFist\nsmashes 2 ahead!" }
+"metalmnv3" = { name = "MetalMnV3", description = "Breaking MetalFist\nsmashes 2 ahead!" }
+"metalmnv4" = { name = "MetalMnV4", description = "Breaking MetalFist\nsmashes 2 ahead!" }
+"metalmnv5" = { name = "MetalMnV5", description = "Breaking MetalFist\nsmashes 2 ahead!" }
+"kingman" = { name = "KingMan", description = "Checkmate leap hits\ntarget & cross!" }
+"kingmanv2" = { name = "KingManV2", description = "Checkmate leap hits\ntarget & cross!" }
+"kingmanv3" = { name = "KingManV3", description = "Checkmate leap hits\ntarget & cross!" }
+"kingmanv4" = { name = "KingManV4", description = "Checkmate leap hits\ntarget & cross!" }
+"kingmanv5" = { name = "KingManV5", description = "Checkmate leap hits\ntarget & cross!" }
+"darkman" = { name = "DarkMan", description = "Dark bats inflict\nrandom ailment!" }
+"darkmanv2" = { name = "DarkManV2", description = "Dark bats inflict\nrandom ailment!" }
+"darkmanv3" = { name = "DarkManV3", description = "Dark bats inflict\nrandom ailment!" }
+"darkmanv4" = { name = "DarkManV4", description = "Dark bats inflict\nrandom ailment!" }
+"darkmanv5" = { name = "DarkManV5", description = "Dark bats inflict\nrandom ailment!" }
+"japanman" = { name = "JapanMan", description = "Rapid multi-hit\nspear thrust combo!" }
+"japanmnv2" = { name = "JapanMnV2", description = "Rapid multi-hit\nspear thrust combo!" }
+"japanmnv3" = { name = "JapanMnV3", description = "Rapid multi-hit\nspear thrust combo!" }
+"japanmnv4" = { name = "JapanMnV4", description = "Rapid multi-hit\nspear thrust combo!" }
+"japanmnv5" = { name = "JapanMnV5", description = "Rapid multi-hit\nspear thrust combo!" }
+"punk" = { name = "Punk", description = "High-speed rolling\nwheel smash!" }
+"guardian" = { name = "Guardian", description = "Statue counters any\nhit for 200 dmg!" }
+"zeushamr" = { name = "ZeusHamr", description = "250 breaking dmg to\nall grounded Navis!" }
+"godstone" = { name = "GodStone", description = "Summons statue on\nhole to fire meteors!" }
+"oldwood" = { name = "OldWood", description = "Summons tree on hole\nto rain wood shots!" }
+"meteors" = { name = "Meteors", description = "Fire meteor shower\nrains on enemy area!" }
+"poltrgst" = { name = "Poltrgst", description = "Hurls all obstacles\nat foe for 150 dmg!" }
+"jealousy" = { name = "Jealousy", description = "Deals 100 dmg per\nchip in foe's hand!" }
+"standout" = { name = "StandOut", description = "Fire pillar erupts\nacross enemy row!" }
+"salamndr" = { name = "Salamndr", description = "Massive fire wave\nblasts enemy area!" }
+"watrline" = { name = "WatrLine", description = "Aqua jet sweeps\nforward and back!" }
+"fountain" = { name = "Fountain", description = "Wide aqua torrent\nsweeps forward & back!" }
+"ligtning" = { name = "Ligtning", description = "Elec strike hits foe\n& adjacent panels!" }
+"bolt" = { name = "Bolt", description = "Heavy elec bolt hits\n3x3 around target!" }
+"gaiaswrd" = { name = "GaiaSwrd", description = "Absorbs next chips'\npower into WideSwrd!" }
+"gaiablad" = { name = "GaiaBlad", description = "Absorbs next chips'\npower into LifeSwrd!" }
+"bassgs" = { name = "BassGS", description = "Vanishing World\n700-dmg breaking blast!" }
+"z-punch" = { name = "Z-Punch", description = "Invincible & throws\nrapid GutPunches!" }
+"z-strght" = { name = "Z-Strght", description = "Invincible & throws\nrapid GutStrgts!" }
+"z-impact" = { name = "Z-Impact", description = "Invincible & throws\nrapid GutImpcts!" }
+"z-varibl" = { name = "Z-Varibl", description = "Invincible & swings\nrapid VarSwrds!" }
+"z-yoyo1" = { name = "Z-Yoyo1", description = "Invincible & throws\nrapid Yo-Yo1s!" }
+"z-yoyo2" = { name = "Z-Yoyo2", description = "Invincible & throws\nrapid Yo-Yo2s!" }
+"z-yoyo3" = { name = "Z-Yoyo3", description = "Invincible & throws\nrapid Yo-Yo3s!" }
+"z-step1" = { name = "Z-Step1", description = "Invincible & chains\nrapid StepSwrds!" }
+"z-step2" = { name = "Z-Step2", description = "Invincible & chains\nrapid StepCrosses!" }
+"timebom" = { name = "TimeBom+", description = "Places a 500-dmg\nbomb in enemy area!" }
+"h-burst" = { name = "H-Burst", description = "5x100 rapid spread\nexplosions on foe!" }
+"elemswrd" = { name = "ElemSwrd", description = "4-element 150-dmg\nblade barrage!" }
+"evilcut" = { name = "EvilCut", description = "Triple 150-dmg dark\nstep-slash combo!" }
+"hyperrat" = { name = "HyperRat", description = "500-dmg homing rat\nmissile strike!" }
+"evercrse" = { name = "EverCrse", description = "5-hit 100-dmg curse\nshield counter!" }
+"gelrain" = { name = "GelRain", description = "3x150 Aqua gel rain\nsteals front column!" }
+"bigheart" = { name = "BigHeart", description = "Full HP heal + 6-hit\nRoll heart attack!" }
+"gtsshoot" = { name = "GtsShoot", description = "GutsMan hurls you\nfor 300 break dmg!" }
+"deuxhero" = { name = "DeuxHero", description = "MegaMan & ProtoMan\n8x70 Hero combo!" }
+"momquake" = { name = "MomQuake", description = "3x200 breaking quake\ncracks enemy area!" }
+"prixpowr" = { name = "PrixPowr", description = "N1 Grand Prix Navis\n3x300 combo assault!" }
 
 [navis]
 "megaman" = { name = "MegaMan", run_message = "Lan, this is no time\nto run away!" }

@@ -141,6 +141,217 @@ language = "ko"
 "mstrstyl" = { name = "마스터스타일", description = "4속성 원소 검기로\n연속 참격!" }
 "invalid" = { name = " ", description = "" }
 "zeroed" = { name = "", description = "" }
+"airshot2" = { name = "에어슛2", description = "명중한 적을 뒤로\n1칸 밀어낸다!" }
+"airshot3" = { name = "에어슛3", description = "명중한 적을 뒤로\n1칸 밀어낸다!" }
+"lavacan1" = { name = "마그마캐논1", description = "명중한 패널을\n용암으로 바꾼다!" }
+"lavacan2" = { name = "마그마캐논2", description = "강력한 용암포로\n패널을 용암화!" }
+"lavacan3" = { name = "마그마캐논3", description = "초강력 용암포로\n패널을 용암화!" }
+"volcano" = { name = "볼케이노", description = "모든 용암 패널에서\n십자 대분화!" }
+"iceball" = { name = "아이스볼", description = "3칸 앞을 얼리고\n얼음 패널로 만든다!" }
+"lavaball" = { name = "마그마볼", description = "3칸 앞에 던져\n용암 패널로 만든다!" }
+"blkbomb1" = { name = "블랙봄1", description = "불꽃에 반응해\n3x3 대폭발!" }
+"blkbomb2" = { name = "블랙봄2", description = "강력한 폭탄이 불로\n3x3 대폭발!" }
+"blkbomb3" = { name = "블랙봄3", description = "초강력 폭탄이 불로\n3x3 대폭발!" }
+"airswrd" = { name = "에어소드", description = "바람 칼날로 베고\n1칸 뒤로 밀친다!" }
+"shockwav" = { name = "쇼크웨이브", description = "지면을 타고 나아가는\n충격파 공격!" }
+"sonicwav" = { name = "소닉웨이브", description = "빠른 충격파로\n가로 1열을 공격!" }
+"dynawave" = { name = "다이나웨이브", description = "초고속 충격파로\n가로 1열을 공격!" }
+"bigwave" = { name = "빅웨이브", description = "전 3열에 거대한\n충격파를 방출!" }
+"gutpunch" = { name = "거츠펀치", description = "눈앞을 강타해 적과\n장애물을 날린다!" }
+"gutstrgt" = { name = "거츠스트레이트", description = "전방 2칸을 뚫는\n강력한 스트레이트!" }
+"gutimpct" = { name = "거츠임팩트", description = "눈앞을 강타해 2칸\n날리고 금을 낸다!" }
+"dashatk" = { name = "대시어택", description = "가로 1열을 관통하며\n돌진 공격!" }
+"burner" = { name = "버너", description = "자신 주위 8칸을\n불꽃으로 태운다!" }
+"condor" = { name = "콘도르", description = "전방 넓은 범위를\n관통하는 맹습격!" }
+"burning" = { name = "버닝", description = "불꽃을 두르고\n상하와 전방을 태운다!" }
+"zapring1" = { name = "재프링1", description = "적을 마비시키는\n전격 링 발사!" }
+"zapring2" = { name = "재프링2", description = "빠른 전격 링으로\n적을 마비!" }
+"zapring3" = { name = "재프링3", description = "고압 전격 링으로\n적을 마비!" }
+"icewave1" = { name = "아이스웨이브1", description = "얼음 파도로 공격하고\n패널을 얼린다!" }
+"icewave2" = { name = "아이스웨이브2", description = "넓은 얼음 파도로\n패널을 얼린다!" }
+"icewave3" = { name = "아이스웨이브3", description = "전 3열 얼음 파도로\n필드를 얼린다!" }
+"yo-yo1" = { name = "요요1", description = "3칸 앞에서 회전하며\n연속 타격!" }
+"yo-yo2" = { name = "요요2", description = "강력한 요요가 3칸\n앞에서 연속 타격!" }
+"yo-yo3" = { name = "요요3", description = "초강력 요요가 3칸\n앞에서 연속 타격!" }
+"airstrm1" = { name = "에어스톰1", description = "3연발 돌풍으로\n가로 1열을 공격!" }
+"airstrm2" = { name = "에어스톰2", description = "강한 3연발 돌풍으로\n가로 1열을 공격!" }
+"airstrm3" = { name = "에어스톰3", description = "맹렬한 3연발 돌풍으로\n가로 1열을 공격!" }
+"arrow1" = { name = "일렉애로우1", description = "가로 1열을 관통하는\n전격의 화살!" }
+"arrow2" = { name = "일렉애로우2", description = "2발의 전격 화살이\n적진을 관통!" }
+"arrow3" = { name = "일렉애로우3", description = "전 3열에 전격 화살을\n일제 발사!" }
+"ratton1" = { name = "래튼1", description = "적의 열에서 꺾이는\n추적 쥐 미사일!" }
+"ratton2" = { name = "래튼2", description = "빠른 추적 쥐 미사일이\n적을 쫓는다!" }
+"ratton3" = { name = "래튼3", description = "초고속 추적 쥐\n미사일이 적을 폭파!" }
+"fireratn" = { name = "파이어래튼", description = "명중 시 십자 대폭발을\n일으키는 불꽃 쥐!" }
+"wave" = { name = "웨이브", description = "전 3열을 휩쓰는\n아쿠아 파도!" }
+"redwave" = { name = "레드웨이브", description = "전 3열을 용암으로\n바꾸는 마그마 파도!" }
+"mudwave" = { name = "머드웨이브", description = "전 3열의 패널을\n부수는 진흙 파도!" }
+"tornado" = { name = "토네이도", description = "2칸 앞에 8연타\n회오리를 일으킨다!" }
+"spice1" = { name = "스파이스1", description = "모든 풀숲 패널에서\n대폭발을 일으킨다!" }
+"spice2" = { name = "스파이스2", description = "모든 풀숲 패널에서\n강력한 폭발!" }
+"spice3" = { name = "스파이스3", description = "모든 풀숲 패널에서\n초강력 폭발!" }
+"shake1" = { name = "셰이크1", description = "3칸 앞에 던져\n가로 3칸을 흔든다!" }
+"shake2" = { name = "셰이크2", description = "강력한 진동탄으로\n가로 3칸을 공격!" }
+"shake3" = { name = "셰이크3", description = "초강력 진동탄으로\n가로 3칸을 공격!" }
+"nobeam1" = { name = "노빔1", description = "뒤에 물체가 있으면\n풀파워 관통 레이저!" }
+"nobeam2" = { name = "노빔2", description = "뒤에 물체가 있으면\n강력한 관통 레이저!" }
+"nobeam3" = { name = "노빔3", description = "뒤에 물체가 있으면\n최대 위력 레이저!" }
+"hammer" = { name = "해머", description = "눈앞의 장애물을\n일격에 분쇄한다!" }
+"geyser" = { name = "가이저", description = "3칸 앞에 3x3\n간헐천이 솟구친다!" }
+"rope1" = { name = "로프1", description = "전방 2칸을 묶고\n마비시키는 밧줄!" }
+"rope2" = { name = "로프2", description = "강한 밧줄로 전방\n2칸을 묶고 마비!" }
+"rope3" = { name = "로프3", description = "전방 3칸을 묶고\n마비시키는 긴 밧줄!" }
+"boomer1" = { name = "부메랑1", description = "필드 외곽을 도는\n나무 부메랑!" }
+"boomer2" = { name = "부메랑2", description = "고속으로 외곽을 도는\n나무 부메랑!" }
+"boomer3" = { name = "부메랑3", description = "초고속으로 외곽을\n도는 강력 부메랑!" }
+"rockarm1" = { name = "록암1", description = "눈앞 2칸을 부수고\n패널을 파괴!" }
+"rockarm2" = { name = "록암2", description = "강력한 바위 팔로\n2칸을 부수고 파괴!" }
+"rockarm3" = { name = "록암3", description = "초강력 바위 팔로\n2칸을 부수고 파괴!" }
+"crsshld1" = { name = "크로스실드1", description = "공격을 막으면 십자\n브레이크 반격!" }
+"crsshld2" = { name = "크로스실드2", description = "공격을 막고 강력한\n십자 브레이크 반격!" }
+"crsshld3" = { name = "크로스실드3", description = "공격을 막고 초강력\n십자 브레이크 반격!" }
+"magnum1" = { name = "매그넘1", description = "커서로 조준한\n세로 1열을 파괴!" }
+"magnum2" = { name = "매그넘2", description = "커서로 조준한\n가로 1열을 파괴!" }
+"magnum3" = { name = "매그넘3", description = "커서로 조준한\n십자 패널을 파괴!" }
+"rndmmetr" = { name = "랜덤메테오", description = "적 에어리어에 무작위로\n메테오를 떨어뜨린다!" }
+"holemetr" = { name = "홀메테오", description = "패널을 부수는 메테오를\n적진에 떨어뜨린다!" }
+"shotmetr" = { name = "샷메테오", description = "적의 위치를 조준해\n메테오를 연사!" }
+"needler1" = { name = "니들러1", description = "5연발 바늘로 적을\n집중 사격!" }
+"needler2" = { name = "니들러2", description = "강력한 5연발 바늘로\n적을 집중 사격!" }
+"needler3" = { name = "니들러3", description = "초강력 5연발 바늘로\n적을 집중 사격!" }
+"totem1" = { name = "토템1", description = "HP를 회복하며\n불꽃을 쏘는 토템!" }
+"totem2" = { name = "토템2", description = "회복과 강력한 불꽃을\n쏘는 토템!" }
+"totem3" = { name = "토템3", description = "대회복과 초강력 불꽃을\n쏘는 토템!" }
+"pawn" = { name = "폰", description = "전방 2칸을 롱소드로\n주기적으로 베어낸다!" }
+"knight" = { name = "나이트", description = "적의 머리 위로 뛰어\n브레이크 강타!" }
+"rook" = { name = "룩", description = "HP 600의 견고한\n룩을 눈앞에 설치!" }
+"team1" = { name = "팀1", description = "아군 지원 공격으로\n적을 타격!" }
+"team2" = { name = "팀2", description = "아군 지원으로 HP 회복\n및 잠시 무적!" }
+"timebomb" = { name = "타임봄", description = "카운트 0에 적진\n전체를 대폭발!" }
+"mine" = { name = "마인", description = "적진에 보이지 않는\n300 대미지 지뢰 설치!" }
+"lance" = { name = "랜스", description = "적 최후열에서 죽창이\n튀어나와 공격!" }
+"snake" = { name = "스네이크", description = "아군 구멍 수만큼\n뱀이 적을 덮친다!" }
+"guard" = { name = "가드", description = "공격을 막고 40 대미지\n충격파로 반격!" }
+"grabback" = { name = "그랩백", description = "빼앗긴 칸×40 대미지\n및 에어리어 탈환!" }
+"grabrvng" = { name = "그랩리벤지", description = "빼앗긴 칸×80 대미지\n및 에어리어 탈환!" }
+"prism" = { name = "프리즘", description = "받은 공격을 주위\n8칸으로 확산!" }
+"fanfare" = { name = "팡파레", description = "우렁찬 음색으로\n잠시 무적이 된다!" }
+"discord" = { name = "디스코드", description = "불협화음으로 상대를\n혼란 상태로 만든다!" }
+"timpani" = { name = "팀파니", description = "북소리로 상대의\n움직임을 멈춘다!" }
+"repair" = { name = "리페어", description = "아군 에어리어의 구멍과\n금을 모두 수복!" }
+"panic" = { name = "패닉", description = "상대를 혼란시키는\n기묘한 파동!" }
+"airshoes" = { name = "에어슈즈", description = "구멍 패널 위에서도\n이동할 수 있게 된다!" }
+"nrthwind" = { name = "북풍", description = "피아의 배리어와\n오라를 모두 제거!" }
+"mettaur" = { name = "메톨", description = "메톨을 소환해\n충격파로 공격!" }
+"bunny" = { name = "바니", description = "바니를 소환해\n마비 전격으로 공격!" }
+"spikey" = { name = "스파이키", description = "스파이키를 소환해\n가로 1열 불꽃 공격!" }
+"swordy" = { name = "소디", description = "소디를 소환해\n와이드소드 참격!" }
+"jelly" = { name = "젤리", description = "젤리를 소환해\n적을 타격!" }
+"mushy" = { name = "머시", description = "머시를 소환해\n혼란 포자로 공격!" }
+"momogra" = { name = "모모그라", description = "모모그라를 소환해\n땅속에서 기습 공격!" }
+"killreye" = { name = "킬러아이", description = "킬러아이가 관통\n전격 빔을 발사!" }
+"scuttlst" = { name = "스커틀리스트", description = "스커틀리스트가\n십자로 강력 공격!" }
+"hole" = { name = "홀", description = "적진의 빈 패널과\n장애물을 삼킨다!" }
+"fire-30" = { name = "파이어+30", description = "앞선 공격 칩의\n위력을 +30!" }
+"aqua-30" = { name = "아쿠아+30", description = "앞선 공격 칩의\n위력을 +30!" }
+"elec-30" = { name = "일렉+30", description = "앞선 공격 칩의\n위력을 +30!" }
+"wood-30" = { name = "우드+30", description = "앞선 공격 칩의\n위력을 +30!" }
+"protomnv5" = { name = "블루스V5", description = "적 앞으로 이동해\n와이드소드 참격!" }
+"flashmnv5" = { name = "플래시맨V5", description = "화면 전체 섬광으로\n전기 공격과 마비!" }
+"plantmnv5" = { name = "플랜트맨V5", description = "덩굴 4연타로 적을\n속박하고 마비!" }
+"mistmanv5" = { name = "미스트맨V5", description = "안개 분신이 적진을\n3회 연속 타격!" }
+"bowlmanv5" = { name = "보울맨V5", description = "볼링 핀이 모든\n3열을 휩쓴다!" }
+"roll" = { name = "롤", description = "적을 3연타하고\nHP를 60 회복!" }
+"rollv2" = { name = "롤V2", description = "적을 3연타하고\nHP를 100 회복!" }
+"rollv3" = { name = "롤V3", description = "적을 3연타하고\nHP를 140 회복!" }
+"gutsman" = { name = "거츠맨", description = "땅을 내리쳐 적\n패널에 금을 낸다!" }
+"gutsmanv2" = { name = "거츠맨V2", description = "땅을 내리쳐 적\n패널에 금을 낸다!" }
+"gutsmanv3" = { name = "거츠맨V3", description = "땅을 내리쳐 적\n패널에 금을 낸다!" }
+"gutsmanv4" = { name = "거츠맨V4", description = "땅을 내리쳐 적\n패널에 금을 낸다!" }
+"gutsmanv5" = { name = "거츠맨V5", description = "땅을 내리쳐 적\n패널에 금을 낸다!" }
+"beastman" = { name = "비스트맨", description = "앞줄을 발톱으로\n3연속 베어낸다!" }
+"beastmnv2" = { name = "비스트맨V2", description = "앞줄을 발톱으로\n3연속 베어낸다!" }
+"beastmnv3" = { name = "비스트맨V3", description = "앞줄을 발톱으로\n3연속 베어낸다!" }
+"beastmnv4" = { name = "비스트맨V4", description = "앞줄을 발톱으로\n3연속 베어낸다!" }
+"beastmnv5" = { name = "비스트맨V5", description = "앞줄을 발톱으로\n3연속 베어낸다!" }
+"bubblman" = { name = "버블맨", description = "HP가 낮을수록\n거품 수가 증가!" }
+"bubblmnv2" = { name = "버블맨V2", description = "HP가 낮을수록\n거품 수가 증가!" }
+"bubblmnv3" = { name = "버블맨V3", description = "HP가 낮을수록\n거품 수가 증가!" }
+"bubblmnv4" = { name = "버블맨V4", description = "HP가 낮을수록\n거품 수가 증가!" }
+"bubblmnv5" = { name = "버블맨V5", description = "HP가 낮을수록\n거품 수가 증가!" }
+"desrtman" = { name = "데저트맨", description = "모래 주먹이 적진\n각 열을 강타한다!" }
+"desrtmnv2" = { name = "데저트맨V2", description = "모래 주먹이 적진\n각 열을 강타한다!" }
+"desrtmnv3" = { name = "데저트맨V3", description = "모래 주먹이 적진\n각 열을 강타한다!" }
+"desrtmnv4" = { name = "데저트맨V4", description = "모래 주먹이 적진\n각 열을 강타한다!" }
+"desrtmnv5" = { name = "데저트맨V5", description = "모래 주먹이 적진\n각 열을 강타한다!" }
+"flamman" = { name = "플레임맨", description = "3열 전체를 불꽃으로\n휩쓸어 태운다!" }
+"flammanv2" = { name = "플레임맨V2", description = "3열 전체를 불꽃으로\n휩쓸어 태운다!" }
+"flammanv3" = { name = "플레임맨V3", description = "3열 전체를 불꽃으로\n휩쓸어 태운다!" }
+"flammanv4" = { name = "플레임맨V4", description = "3열 전체를 불꽃으로\n휩쓸어 태운다!" }
+"flammanv5" = { name = "플레임맨V5", description = "3열 전체를 불꽃으로\n휩쓸어 태운다!" }
+"drillman" = { name = "드릴맨", description = "브레이크 드릴이\n적진을 관통한다!" }
+"drillmnv2" = { name = "드릴맨V2", description = "브레이크 드릴이\n적진을 관통한다!" }
+"drillmnv3" = { name = "드릴맨V3", description = "브레이크 드릴이\n적진을 관통한다!" }
+"drillmnv4" = { name = "드릴맨V4", description = "브레이크 드릴이\n적진을 관통한다!" }
+"drillmnv5" = { name = "드릴맨V5", description = "브레이크 드릴이\n적진을 관통한다!" }
+"metalman" = { name = "메탈맨", description = "2칸 앞을 부수는\n메탈 피스트 강타!" }
+"metalmnv2" = { name = "메탈맨V2", description = "2칸 앞을 부수는\n메탈 피스트 강타!" }
+"metalmnv3" = { name = "메탈맨V3", description = "2칸 앞을 부수는\n메탈 피스트 강타!" }
+"metalmnv4" = { name = "메탈맨V4", description = "2칸 앞을 부수는\n메탈 피스트 강타!" }
+"metalmnv5" = { name = "메탈맨V5", description = "2칸 앞을 부수는\n메탈 피스트 강타!" }
+"kingman" = { name = "킹맨", description = "체크메이트 도약으로\n십자 범위 강타!" }
+"kingmanv2" = { name = "킹맨V2", description = "체크메이트 도약으로\n십자 범위 강타!" }
+"kingmanv3" = { name = "킹맨V3", description = "체크메이트 도약으로\n십자 범위 강타!" }
+"kingmanv4" = { name = "킹맨V4", description = "체크메이트 도약으로\n십자 범위 강타!" }
+"kingmanv5" = { name = "킹맨V5", description = "체크메이트 도약으로\n십자 범위 강타!" }
+"darkman" = { name = "다크맨", description = "어둠의 박쥐 떼가\n무작위 상태이상!" }
+"darkmanv2" = { name = "다크맨V2", description = "어둠의 박쥐 떼가\n무작위 상태이상!" }
+"darkmanv3" = { name = "다크맨V3", description = "어둠의 박쥐 떼가\n무작위 상태이상!" }
+"darkmanv4" = { name = "다크맨V4", description = "어둠의 박쥐 떼가\n무작위 상태이상!" }
+"darkmanv5" = { name = "다크맨V5", description = "어둠의 박쥐 떼가\n무작위 상태이상!" }
+"japanman" = { name = "야마토맨", description = "창으로 적을 향해\n초고속 연속 찌르기!" }
+"japanmnv2" = { name = "야마토맨V2", description = "창으로 적을 향해\n초고속 연속 찌르기!" }
+"japanmnv3" = { name = "야마토맨V3", description = "창으로 적을 향해\n초고속 연속 찌르기!" }
+"japanmnv4" = { name = "야마토맨V4", description = "창으로 적을 향해\n초고속 연속 찌르기!" }
+"japanmnv5" = { name = "야마토맨V5", description = "창으로 적을 향해\n초고속 연속 찌르기!" }
+"punk" = { name = "펑크", description = "고속 회전 바퀴로\n적진을 돌파 강타!" }
+"guardian" = { name = "가디언", description = "공격받으면 적에게\n200 대미지 천벌!" }
+"zeushamr" = { name = "제우스해머", description = "지상의 모든 대상에\n250 브레이크 타격!" }
+"godstone" = { name = "갓스톤", description = "구멍에 석상을 소환해\n운석을 연사한다!" }
+"oldwood" = { name = "올드우드", description = "구멍에 고목을 소환해\n나무 탄막을 퍼붓는다!" }
+"meteors" = { name = "메테오스", description = "화염 운석우가 적\n에어리어에 쏟아진다!" }
+"poltrgst" = { name = "폴터가이스트", description = "필드의 모든 장애물을\n적에게 투척(각 150)!" }
+"jealousy" = { name = "젤러시", description = "상대 남은 칩 수만큼\n각 100 대미지!" }
+"standout" = { name = "스탠드아웃", description = "전방 열에 강력한\n화염 기둥이 솟는다!" }
+"salamndr" = { name = "샐러맨더", description = "거대한 화염 파도가\n적 에어리어를 태운다!" }
+"watrline" = { name = "워터라인", description = "물줄기가 전방으로\n왕복하며 휩쓴다!" }
+"fountain" = { name = "파운틴", description = "넓은 물줄기가 3열을\n왕복하며 휩쓴다!" }
+"ligtning" = { name = "라이트닝", description = "적과 주변 십자 칸을\n번개로 내리친다!" }
+"bolt" = { name = "볼트", description = "적 주변 3×3 범위를\n강력한 번개로 강타!" }
+"gaiaswrd" = { name = "가이아소드", description = "뒤따른 칩 위력을\n흡수하는 와이드소드!" }
+"gaiablad" = { name = "가이아블레이드", description = "뒤따른 칩 위력을\n흡수하는 드림소드!" }
+"bassgs" = { name = "포르테GS", description = "배니싱 월드로 적진에\n700 브레이크 대폭발!" }
+"z-punch" = { name = "Z펀치", description = "무적 상태로 거츠펀치\n고속 연속 타격!" }
+"z-strght" = { name = "Z스트레이트", description = "무적 상태로 거츠스트레이트\n고속 연속 타격!" }
+"z-impact" = { name = "Z임팩트", description = "무적 상태로 거츠임팩트\n고속 연속 강타!" }
+"z-varibl" = { name = "Z배리어블", description = "무적 상태로 배리어블소드\n고속 연속 참격!" }
+"z-yoyo1" = { name = "Z요요1", description = "무적 상태로 요요1을\n고속 연속 투척!" }
+"z-yoyo2" = { name = "Z요요2", description = "무적 상태로 요요2를\n고속 연속 투척!" }
+"z-yoyo3" = { name = "Z요요3", description = "무적 상태로 요요3을\n고속 연속 투척!" }
+"z-step1" = { name = "Z스텝1", description = "무적 상태로 스텝소드\n고속 연속 참격!" }
+"z-step2" = { name = "Z스텝2", description = "무적 상태로 스텝크로스\n고속 연속 참격!" }
+"timebom" = { name = "타임봄+", description = "적 에어리어를 폭파하는\n500 대미지 시한폭탄!" }
+"h-burst" = { name = "하이퍼버스트", description = "100 대미지 5연속\n광역 대폭발 공격!" }
+"elemswrd" = { name = "엘리먼트소드", description = "4속성 150 대미지의\n연속 소드 참격!" }
+"evilcut" = { name = "이블컷", description = "150 대미지 3연속\n초고속 스텝 참격!" }
+"hyperrat" = { name = "하이퍼랫", description = "적을 추적해 폭발하는\n500 대미지 미사일!" }
+"evercrse" = { name = "에버커스", description = "저주의 방패에서 5연타\n100 대미지 공격!" }
+"gelrain" = { name = "겔레인", description = "3×150 물속성 겔 비로\n적 앞열을 빼앗는다!" }
+"bigheart" = { name = "빅하트", description = "HP 완전 회복 후\n롤의 6연속 공격!" }
+"gtsshoot" = { name = "거츠슛", description = "거츠맨이 던져 날리는\n300 브레이크 돌격!" }
+"deuxhero" = { name = "더블히어로", description = "록맨과 블루스의\n8×70 히어로 콤보!" }
+"momquake" = { name = "마더퀘이크", description = "3×200 브레이크 지진으로\n적 패널에 금을 낸다!" }
+"prixpowr" = { name = "그랑프리파워", description = "N1 내비들이 3×300\n연속 총공격을 펼친다!" }
 
 [navis]
 "megaman" = { name = "록맨", run_message = "열투, 지금은 도망칠\n때가 아니야!" }
