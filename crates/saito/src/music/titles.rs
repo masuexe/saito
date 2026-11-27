@@ -139,11 +139,41 @@ fn exe5_title(song: &str, lang: &str) -> Option<&'static str> {
 
 fn ds_title(base: &str, lang: &str) -> Option<&'static str> {
     match base {
-        "exe1-battle" => Some(pick(lang, "Net Battle (BN1)", "ネットバトル (EXE1)", "网络对战 (EXE1)", "넷 배틀 (EXE1)")),
-        "exe2-battle" => Some(pick(lang, "Virus Busting (BN2)", "ウイルスバスティング (EXE2)", "病毒清除 (EXE2)", "바이러스 버스팅 (EXE2)")),
-        "exe3-battle" => Some(pick(lang, "Shooting Enemy (BN3)", "シューティングエネミー (EXE3)", "射击敌人 (EXE3)", "슈팅 에너미 (EXE3)")),
-        "exe4-battle" => Some(pick(lang, "Cyber Battle (BN4)", "サイバーバトル (EXE4)", "赛博对战 (EXE4)", "사이버 배틀 (EXE4)")),
-        "exe45-battle" => Some(pick(lang, "Battle Field (BN4.5)", "バトルフィールド (EXE4.5)", "Battle Field (EXE4.5)", "Battle Field (EXE4.5)")),
+        "exe1-battle" => Some(pick(
+            lang,
+            "Battle Theme - EXE 1 STYLE -",
+            "バトルテーマ - EXE 1 STYLE -",
+            "战斗主题 - EXE 1 STYLE -",
+            "배틀 테마 - EXE 1 STYLE -",
+        )),
+        "exe2-battle" => Some(pick(
+            lang,
+            "Battle Theme - EXE 2 STYLE -",
+            "バトルテーマ - EXE 2 STYLE -",
+            "战斗主题 - EXE 2 STYLE -",
+            "배틀 테마 - EXE 2 STYLE -",
+        )),
+        "exe3-battle" => Some(pick(
+            lang,
+            "Battle Theme - EXE 3 STYLE -",
+            "バトルテーマ - EXE 3 STYLE -",
+            "战斗主题 - EXE 3 STYLE -",
+            "배틀 테마 - EXE 3 STYLE -",
+        )),
+        "exe4-battle" => Some(pick(
+            lang,
+            "Battle Theme - EXE 4 STYLE -",
+            "バトルテーマ - EXE 4 STYLE -",
+            "战斗主题 - EXE 4 STYLE -",
+            "배틀 테마 - EXE 4 STYLE -",
+        )),
+        "exe45-battle" => Some(pick(
+            lang,
+            "Battle Theme - EXE 4.5 STYLE -",
+            "バトルテーマ - EXE 4.5 STYLE -",
+            "战斗主题 - EXE 4.5 STYLE -",
+            "배틀 테마 - EXE 4.5 STYLE -",
+        )),
         other => exe5_title(other, lang),
     }
 }
@@ -190,7 +220,7 @@ fn exe6_title(song: &str, lang: &str) -> Option<&'static str> {
         "loser" => "Loser",
         "pavilion" => pick(lang, "Secret Base", "秘密の本拠地", "秘密总部", "비밀 본거지"),
         "pavilion-comp" => "Two of Braves",
-        "final-battle" => pick(lang, "Decisive Battle, Cyber Beasts!", "決戦、電脳獣!", "决战、电脑兽!", "결전, 전뇌수!"),
+        "final-battle" => pick(lang, "Decisive Battle, Cyber Beasts!", "決戦、電脳獣!", "决战，电脑兽!", "결전, 전뇌수!"),
         "credits" => pick(lang, "Future ~ Epilogue", "未来 ~ Epilogue", "未来 ~ Epilogue", "미래 ~ Epilogue"),
         // ROM-only extras:
         "crossover-battle" => pick(

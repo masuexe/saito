@@ -947,7 +947,13 @@ mod tests {
         assert_eq!(track_title("exe6", "virus-battle"), "Battle Field");
         assert_eq!(track_title("exe6", "pavilion"), "秘密总部");
         assert_eq!(track_title("exe6", "pavilion-comp"), "Two of Braves");
-        assert_eq!(track_title("exe6", "final-battle"), "决战、电脑兽!");
+        assert_eq!(track_title("exe5", "ds-exe1-battle"), "战斗主题 - EXE 1 STYLE -");
+        assert_eq!(track_title("exe5", "ds-exe45-battle"), "战斗主题 - EXE 4.5 STYLE -");
+        assert_eq!(track_title("exe6", "final-battle"), "决战，电脑兽!");
+        let exe6_keys: Vec<&str> = saito_extract::gba_bgm_tracks("exe6").iter().map(|t| t.key).collect();
+        let gy = exe6_keys.iter().position(|&k| k == "graveyard-area").unwrap();
+        assert_eq!(exe6_keys[gy + 1], "crossover-battle");
+        assert_eq!(exe6_keys[gy + 2], "game-over");
         assert_eq!(track_title("exe4", "event-occurance"), "大获全胜!");
         assert_eq!(saito_extract::gba_bgm_track("exe4", "event-occurance").unwrap().song_id, 0x01F);
         assert_eq!(track_title("exe4", "vampire-mansion"), "多朗基馆");

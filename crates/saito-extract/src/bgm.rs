@@ -125,14 +125,14 @@ pub const EXE6_BGM_TRACKS: &[GbaBgmTrack] = &[
     GbaBgmTrack { key: "navi-customizer", song_id: 0x01E, looping: true },
     GbaBgmTrack { key: "expo", song_id: 0x025, looping: true },
     GbaBgmTrack { key: "graveyard-area", song_id: 0x009, looping: true },
+    GbaBgmTrack { key: "crossover-battle", song_id: 0x022, looping: true },
     GbaBgmTrack { key: "game-over", song_id: 0x01B, looping: false },
     GbaBgmTrack { key: "loser", song_id: 0x01A, looping: true },
     GbaBgmTrack { key: "pavilion", song_id: 0x018, looping: true },
     GbaBgmTrack { key: "pavilion-comp", song_id: 0x020, looping: true },
     GbaBgmTrack { key: "final-battle", song_id: 0x017, looping: true },
     GbaBgmTrack { key: "credits", song_id: 0x01D, looping: true },
-    // ROM-only extras not present in Legacy Collection Music Player:
-    GbaBgmTrack { key: "crossover-battle", song_id: 0x022, looping: true },
+    // ROM-only short fanfare variant:
     GbaBgmTrack { key: "winner-1", song_id: 0x01F, looping: false },
 ];
 
