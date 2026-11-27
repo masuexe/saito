@@ -433,6 +433,15 @@ pub(crate) fn install(lua: &Lua, data: Data) -> LResult<()> {
             lua.create_sequence_from(anims.into_iter().map(GfxAnimHandle))
         })?,
     )?;
+    gfx.set(
+        "anim",
+        lua.create_function(|lua, (r, ptr, buffer, word_units): (mlua::UserDataRef<RomHandle>, f64, f64, Option<bool>)| {
+            let (ptr, buffer) = (word(ptr, "gfx.anim")?, word(buffer, "gfx.anim")?);
+            let word_units = word_units.unwrap_or(false);
+            let anim = guarded("gfx.anim", || rom::located(here(lua), || crate::gfx::gfx_anim(&r.rom, ptr, buffer, word_units)))?;
+            Ok(anim.map(GfxAnimHandle))
+        })?,
+    )?;
     g.set("gfx", gfx)?;
 
     let font = lua.create_table()?;
@@ -457,6 +466,17 @@ pub(crate) fn install(lua: &Lua, data: Data) -> LResult<()> {
                 Ok(FontHandle(DialogueFont { pixels, advances, chars }))
             },
         )?,
+    )?;
+    font.set(
+        "dialogue_tiled",
+        lua.create_function(|lua, (r, glyphs, n, advance, chars): (mlua::UserDataRef<RomHandle>, f64, f64, f64, Vec<String>)| {
+            let (glyphs, n) = (word(glyphs, "font.dialogue_tiled")?, count(n, "font.dialogue_tiled")?);
+            let advance = int(advance, "font.dialogue_tiled: advance", 0, 255)? as u8;
+            r.check("font.dialogue_tiled", glyphs, 0x40 * n)?;
+            let at = here(lua);
+            let raw = rom::located(at, || r.rom.bytes(glyphs, 0x40 * n).to_vec());
+            Ok(FontHandle(decode_dialogue_tiled(&raw, n, advance, chars)))
+        })?,
     )?;
     g.set("font", font)?;
 
@@ -512,6 +532,22 @@ fn toml_value(lua: &Lua, v: &toml::Value) -> LResult<Value> {
     })
 }
 
+/// Decode `count` 8x16 tiled 4bpp dialogue glyphs (`0x40` bytes each: top 8x8 tile in bytes `0..32`,
+/// bottom 8x8 tile in bytes `32..64`, low nibble = left pixel) into an 8x16 linear [`DialogueFont`].
+pub(crate) fn decode_dialogue_tiled(raw: &[u8], count: usize, advance: u8, chars: Vec<String>) -> DialogueFont {
+    let mut pixels = Vec::with_capacity(count * DialogueFont::TILED_WIDTH * DialogueFont::TILED_HEIGHT);
+    for glyph in raw.chunks_exact(0x40).take(count) {
+        // Top 8x8 tile (rows 0..8) followed by bottom 8x8 tile (rows 8..16):
+        // because each tile is 8 pixels wide, expanding each 4bpp byte to [lo, hi]
+        // directly yields the 8x16 row-major pixel layout (128 bytes per glyph).
+        for &b in glyph {
+            pixels.push(b & 15);
+            pixels.push(b >> 4);
+        }
+    }
+    DialogueFont { pixels, advances: vec![advance; count], chars }
+}
+
 /// The ROMs' table a recipe is given: each declared code to its ROM.
 pub(crate) fn rom_set(lua: &Lua, roms: impl IntoIterator<Item = RomHandle>) -> LResult<Table> {
     let set = lua.create_table()?;
@@ -520,4 +556,35 @@ pub(crate) fn rom_set(lua: &Lua, roms: impl IntoIterator<Item = RomHandle>) -> L
     }
     set.set_readonly(true);
     Ok(set)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_dialogue_tiled_unpacks_stacked_8x8_4bpp_tiles() {
+        // Two 8x16 glyphs (0x40 bytes each).
+        let mut raw = vec![0u8; 0x80];
+        // Glyph 0, top tile row 0 (bytes 0..4): pixels [1, 2, 0, 0, 0, 0, 3, 4]
+        raw[0] = 0x21;
+        raw[3] = 0x43;
+        // Glyph 0, bottom tile row 7 -> overall row 15 (bytes 60..64): pixels [5, 6, ..., 7, 8]
+        raw[60] = 0x65;
+        raw[63] = 0x87;
+        // Glyph 1, top tile row 1 (bytes 68..72): first two pixels [9, 10]
+        raw[0x40 + 4] = 0xA9;
+
+        let font = decode_dialogue_tiled(&raw, 2, 8, vec!["A".into(), "B".into()]);
+        assert_eq!(font.len(), 2);
+        assert_eq!(font.glyph_size(), (8, 16));
+        assert_eq!(font.advances, vec![8, 8]);
+        let g0 = font.glyph(0).expect("glyph 0");
+        assert_eq!(g0.len(), 128);
+        assert_eq!(&g0[0..8], &[1, 2, 0, 0, 0, 0, 3, 4]);
+        assert_eq!(&g0[15 * 8..16 * 8], &[5, 6, 0, 0, 0, 0, 7, 8]);
+        let g1 = font.glyph(1).expect("glyph 1");
+        assert_eq!(&g1[8..10], &[9, 10]);
+        assert_eq!(font.glyph(2), None);
+    }
 }

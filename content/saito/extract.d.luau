@@ -116,6 +116,9 @@ end
 declare gfx: {
     -- A background's animation list at `list`, palette addresses counted from `palette_buffer`.
     anims: (rom: Rom, list: number, palette_buffer: number) -> { GfxAnim },
+    -- A single background animation struct at `ptr`, palette addresses counted from `palette_buffer`.
+    -- When `word_units` is true, `cmd == 0` palette lengths are counted in 32-bit words (8 words = 1 palette).
+    anim: (rom: Rom, ptr: number, palette_buffer: number, word_units: boolean?) -> GfxAnim?,
 }
 
 -- The dialogue font (the chatbox's).
@@ -127,6 +130,9 @@ declare font: {
     -- at `advances` (`advance_bytes` apart: 1 in EXE6, 4 in EXE5 and EXE4, the low byte read), glyph k drawing
     -- chars[k].
     dialogue: (rom: Rom, glyphs: number, advances: number, count: number, advance_bytes: number, chars: { string }) -> DialogueFont,
+    -- `count` 8x16 tiled 4bpp glyphs of 0x40 bytes (two stacked 8x8 tiles: top 0..32, bottom 32..64) at `glyphs`,
+    -- each with fixed pixel advance `advance`, glyph k drawing chars[k].
+    dialogue_tiled: (rom: Rom, glyphs: number, count: number, advance: number, chars: { string }) -> DialogueFont,
 }
 
 -- A file of the game's compat/, by its path in the game's pack (`compat/assets.toml`): TOML as tables (read once,

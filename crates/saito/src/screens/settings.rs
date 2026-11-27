@@ -622,7 +622,7 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, None),
             "set.hd-chip-art-import" => {
                 if self.importing_hd_art.is_none() {
-                    shell.choose_files("vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
+                    shell.choose_files("vol1.dat / vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
                 }
             }
             "set.exe5ds-rom" => {
@@ -962,7 +962,13 @@ impl Screen for Settings {
             let mut last_err: Option<String> = None;
             let mut cleanup_dirs = std::collections::BTreeSet::new();
             for src in &picked {
-                if saito_extract::hd_art::is_valid_vol2(src) {
+                if saito_extract::hd_art::is_valid_vol1(src) {
+                    let dst = copies_dir.join(saito_extract::hd_art::VOL1_FILE);
+                    match saito_extract::hd_art::compact_vol1(src, &dst) {
+                        Ok(n) => imported += n,
+                        Err(e) => last_err = Some(e.to_string()),
+                    }
+                } else if saito_extract::hd_art::is_valid_vol2(src) {
                     let dst = copies_dir.join(saito_extract::hd_art::VOL2_FILE);
                     match saito_extract::hd_art::compact_vol2(src, &dst) {
                         Ok(n) => imported += n,

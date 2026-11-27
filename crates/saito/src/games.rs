@@ -290,6 +290,12 @@ impl Games {
         self.source.as_ref()
     }
 
+    /// Whether Legacy Collection Vol. 1's `vol1.dat` (full or compacted) is available for HD chip art.
+    pub fn has_vol1_dat(&self) -> bool {
+        self.source.as_ref().and_then(RomSource::vol1_dat).is_some()
+            || saito_files::is_file(&copies().join(saito_extract::hd_art::VOL1_FILE))
+    }
+
     /// Whether Legacy Collection Vol. 2's `vol2.dat` (full or compacted) is available for HD chip art.
     pub fn has_vol2_dat(&self) -> bool {
         self.source.as_ref().and_then(RomSource::vol2_dat).is_some()
@@ -301,9 +307,20 @@ impl Games {
         saito_extract::hd_art::has_cross_sheets(self.source.as_ref(), &copies())
     }
 
-    /// Whether all Legacy Collection Vol. 2 HD assets (`vol2.dat` + EXE6 Gregar/Falzar cross sheets) are available.
+    /// Whether all Legacy Collection HD assets for the available volume(s) are present
+    /// (`vol1.dat` when a Vol. 1 game is playable; `vol2.dat` + EXE6 Gregar/Falzar cross sheets for Vol. 2).
     pub fn has_all_hd_art(&self) -> bool {
-        self.has_vol2_dat() && self.has_hd_cross_art()
+        let needs_vol1 = self.list.iter().any(|e| {
+            !matches!(e.state, State::NoRoms | State::Failed | State::NoContent { .. })
+                && saito_extract::hd_art::vol_file_for_game(&e.id) == Some(saito_extract::hd_art::VOL1_FILE)
+        });
+        let needs_vol2 = self.list.iter().any(|e| {
+            !matches!(e.state, State::NoRoms | State::Failed | State::NoContent { .. })
+                && saito_extract::hd_art::vol_file_for_game(&e.id) == Some(saito_extract::hd_art::VOL2_FILE)
+        });
+        let vol1_ok = !needs_vol1 || self.has_vol1_dat();
+        let vol2_ok = (!needs_vol2 && needs_vol1) || (self.has_vol2_dat() && self.has_hd_cross_art());
+        vol1_ok && vol2_ok
     }
 
     /// Mark every currently loaded game for reload (e.g. after importing `vol2.dat` for HD chip art).
@@ -732,7 +749,8 @@ impl Games {
         };
         let content = entry.map(|e| e.content.clone());
         let pool = crate::contents::pool();
-        let hd_art_fallback = Some(copies().join(saito_extract::hd_art::VOL2_FILE));
+        let vol_file = saito_extract::hd_art::vol_file_for_game(id).unwrap_or(saito_extract::hd_art::VOL2_FILE);
+        let hd_art_fallback = Some(copies().join(vol_file));
         game::Options { roms: self.source.clone(), content, pool, hd_art_fallback, ..game::Options::default() }
     }
 

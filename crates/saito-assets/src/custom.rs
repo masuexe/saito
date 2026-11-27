@@ -33,12 +33,30 @@ pub struct PatchList {
     pub patches: Vec<MapPatch>,
 }
 
-/// A 56x48 picture in the chip window (7x6 tiles, row by row) with its
-/// palette.
+/// A picture in the chip window (7x6 = 42 tiles / 56x48 px in EXE4–6, or
+/// 8x7 = 56 tiles / 64x56 px in EXE3, row by row) with its palette.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Picture {
     pub tiles: Tiles,
     pub palette: Palette,
+}
+
+impl Picture {
+    /// Tile grid dimensions `(columns, rows)` of this picture: `8x7` (56 tiles, `64x56` px)
+    /// when `tiles.len() == CustomScreen::WIDE_PICTURE_TILES`, else `7x6` (42 tiles, `56x48` px).
+    pub fn tile_dims(&self) -> (usize, usize) {
+        if self.tiles.len() == CustomScreen::WIDE_PICTURE_TILES {
+            (CustomScreen::WIDE_PICTURE_COLUMNS, CustomScreen::WIDE_PICTURE_TILES / CustomScreen::WIDE_PICTURE_COLUMNS)
+        } else {
+            (CustomScreen::PICTURE_COLUMNS, CustomScreen::PICTURE_TILES / CustomScreen::PICTURE_COLUMNS)
+        }
+    }
+
+    /// Tile count of this picture's grid (56 for 8x7, 42 for 7x6).
+    pub fn tile_count(&self) -> usize {
+        let (cols, rows) = self.tile_dims();
+        cols * rows
+    }
 }
 
 /// A navi's emblem over the picked column (`sub_8029C08`), under its navi's
@@ -483,9 +501,33 @@ impl CustomScreen {
     /// The form list names' looks: a version's forms on the cursor's row
     /// (from the first), then on the others' (from this).
     pub const FORM_NAMES_UNDER_CURSOR: usize = 5;
-    /// A chip window picture's tiles (7x6, row by row).
+    /// A chip window picture's tiles (7x6 in EXE4–6; 8x7 = 56 tiles in EXE3, row by row).
     pub const PICTURE_COLUMNS: usize = 7;
     pub const PICTURE_TILES: usize = 42;
+    pub const WIDE_PICTURE_COLUMNS: usize = 8;
+    pub const WIDE_PICTURE_TILES: usize = 56;
+
+    /// Tile count of the chip window's picture block (56 for 8x7, 42 for 7x6),
+    /// inferred from the screen's OK picture or chip art.
+    pub fn picture_tiles(&self) -> usize {
+        if self.pictures.ok.tiles.len() == Self::WIDE_PICTURE_TILES
+            || self.pictures.ok_picked.tiles.len() == Self::WIDE_PICTURE_TILES
+            || self.chip_art.iter().any(|a| a.picture.tiles.len() == Self::WIDE_PICTURE_TILES)
+        {
+            Self::WIDE_PICTURE_TILES
+        } else {
+            Self::PICTURE_TILES
+        }
+    }
+
+    /// Tile columns of the chip window's picture block (8 for 8x7, 7 for 7x6).
+    pub fn picture_columns(&self) -> usize {
+        if self.picture_tiles() == Self::WIDE_PICTURE_TILES {
+            Self::WIDE_PICTURE_COLUMNS
+        } else {
+            Self::PICTURE_COLUMNS
+        }
+    }
 
     /// A chip's picture by its key.
     pub fn chip_art(&self, key: &str) -> Option<&ChipArt> {

@@ -18,7 +18,7 @@ pub fn gfx_anims(rom: &Rom, list: u32, palette_buffer: u32) -> Vec<GfxAnim> {
         if p & 0x8000_0000 != 0 || p == 0 || !rom.contains(p) {
             break;
         }
-        if let Some(anim) = gfx_anim(rom, p, palette_buffer) {
+        if let Some(anim) = gfx_anim(rom, p, palette_buffer, false) {
             out.push(anim);
         }
         a += 4;
@@ -26,7 +26,13 @@ pub fn gfx_anims(rom: &Rom, list: u32, palette_buffer: u32) -> Vec<GfxAnim> {
     out
 }
 
-fn gfx_anim(rom: &Rom, p: u32, palette_buffer: u32) -> Option<GfxAnim> {
+/// A single graphics animation struct at `p`, the palette animations' targets read against the palette
+/// buffer at `palette_buffer`. When `word_units` is true, `cmd == 0` palette counts are read in 32-bit
+/// words (8 words = 1 palette of 32 bytes, as in EXE3) rather than bytes (32 bytes = 1 palette, EXE4–6).
+pub fn gfx_anim(rom: &Rom, p: u32, palette_buffer: u32, word_units: bool) -> Option<GfxAnim> {
+    if p & 0x8000_0000 != 0 || p == 0 || !rom.contains(p) || !rom.has(p, 12) {
+        return None;
+    }
     let (param0, param1) = (rom.u32(p), rom.u32(p + 4));
     let command = rom.u8(p + 8);
     let param2 = rom.u8(p + 10);
@@ -36,9 +42,10 @@ fn gfx_anim(rom: &Rom, p: u32, palette_buffer: u32) -> Option<GfxAnim> {
             if first >= 16 {
                 return None;
             }
+            let count = if word_units { param1 / 8 } else { param1 / 32 };
             AnimTarget::Palettes {
                 first: first as u8,
-                count: (param1 / 32) as u8,
+                count: count as u8,
             }
         }
         4 => AnimTarget::Tiles {
@@ -140,6 +147,44 @@ mod tests {
         data[4..8].copy_from_slice(&32u32.to_le_bytes());
         data[12..16].copy_from_slice(&2u32.to_le_bytes());
         data[16..20].copy_from_slice(&0x0800_000cu32.to_le_bytes());
-        assert!(gfx_anim(&Rom(data), 0x0800_0000, 0x0300_1960).is_none());
+        assert!(gfx_anim(&Rom(data), 0x0800_0000, 0x0300_1960, false).is_none());
+    }
+
+    #[test]
+    fn word_units_cmd0_extracts_one_palette_for_eight_words() {
+        // Header (12 bytes) + 1 frame entry (8 bytes) + loop cmd (4 bytes) + 1 palette (32 bytes).
+        let pal_off = 24u32;
+        let mut data = vec![0u8; pal_off as usize + 32];
+        let pal_buf = 0x0200_9810u32;
+        // Target slot 2: pal_buf + 2 * 32
+        data[0..4].copy_from_slice(&(pal_buf + 64).to_le_bytes());
+        // param1 = 8 (32-bit words = 1 palette of 32 bytes in EXE3)
+        data[4..8].copy_from_slice(&8u32.to_le_bytes());
+        // command = 0 (palette animation)
+        data[8] = 0;
+        // Frame 0: pointer to palette at 0x0800_0018, delay 14
+        data[12..16].copy_from_slice(&(0x0800_0000 + pal_off).to_le_bytes());
+        data[16..20].copy_from_slice(&14u32.to_le_bytes());
+        // Loop control word = 1
+        data[20..24].copy_from_slice(&1u32.to_le_bytes());
+        // Palette color 0 = 0x1234, color 15 = 0x5678
+        data[pal_off as usize..pal_off as usize + 2].copy_from_slice(&0x1234u16.to_le_bytes());
+        data[pal_off as usize + 30..pal_off as usize + 32].copy_from_slice(&0x5678u16.to_le_bytes());
+
+        let rom = Rom(data);
+        // Byte-counted mode (EXE4–6): 8 / 32 == 0 palettes.
+        let bytes_mode = gfx_anim(&rom, 0x0800_0000, pal_buf, false).expect("parses in byte mode");
+        assert_eq!(bytes_mode.target, AnimTarget::Palettes { first: 2, count: 0 });
+        assert!(bytes_mode.frames[0].palettes.is_empty());
+
+        // Word-counted mode (EXE3): 8 / 8 == 1 palette.
+        let words_mode = gfx_anim(&rom, 0x0800_0000, pal_buf, true).expect("parses in word mode");
+        assert_eq!(words_mode.target, AnimTarget::Palettes { first: 2, count: 1 });
+        assert_eq!(words_mode.repeat_from, Some(0));
+        assert_eq!(words_mode.frames.len(), 1);
+        assert_eq!(words_mode.frames[0].delay, 14);
+        assert_eq!(words_mode.frames[0].palettes.len(), 1);
+        assert_eq!(words_mode.frames[0].palettes[0][0], 0x1234);
+        assert_eq!(words_mode.frames[0].palettes[0][15], 0x5678);
     }
 }
