@@ -498,3 +498,7 @@ msgstr "收藏全部战斗曲"
 msgctxt "music"
 msgid "Next"
 msgstr "下一首"
+
+msgctxt "music"
+msgid "Open"
+msgstr "打开"

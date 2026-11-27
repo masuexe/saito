@@ -948,6 +948,14 @@ mod tests {
         assert_eq!(track_title("exe6", "pavilion"), "秘密总部");
         assert_eq!(track_title("exe6", "pavilion-comp"), "Two of Braves");
         assert_eq!(track_title("exe6", "final-battle"), "决战、电脑兽!");
+        assert_eq!(track_title("exe4", "event-occurance"), "大获全胜!");
+        assert_eq!(saito_extract::gba_bgm_track("exe4", "event-occurance").unwrap().song_id, 0x01F);
+        assert_eq!(track_title("exe4", "vampire-mansion"), "多朗基馆");
+        assert_eq!(saito_extract::gba_bgm_track("exe4", "vampire-mansion").unwrap().song_id, 0x00A);
+        assert_eq!(track_title("exe6", "crises"), "事件发生!");
+        assert_eq!(saito_extract::gba_bgm_track("exe6", "crises").unwrap().song_id, 0x00C);
+        assert_eq!(track_title("exe6", "event-occurance"), "疑惑");
+        assert_eq!(saito_extract::gba_bgm_track("exe6", "event-occurance").unwrap().song_id, 0x00B);
         assert_eq!(track_title("exe6", "school"), "才叶学园");
 
         // Sequential rotation advances round-by-round wrapping cleanly.

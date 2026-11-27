@@ -2469,13 +2469,14 @@ impl App {
             self.call(id, |s, shell| s.frame_end(shell, now));
         }
         self.settle();
-        // The title music plays on the menu screens (not under a battle with music of its own, nor on the cards
-        // before one).
+        // The title / menu music plays on menu screens, muted inside the Music Library and during battles.
         let silent = |m: crate::battle::BattleMusic| m == crate::battle::BattleMusic::None;
         let in_battle = self.shell.battle.as_ref().is_some_and(|b| !silent(b.music))
             || self.shell.loading.as_ref().is_some_and(|l| !silent(l.music()))
             || (ticks.is_some() && !self.shell.battle.as_ref().is_some_and(|b| silent(b.music)));
-        self.shell.sound.want_music(!in_battle && self.shell.ready().is_some());
+        let in_music_library = self.shell.screen == ScreenId::Settings
+            && self.shell.ui().global::<saito_ui::SettingsView>().get_music_library();
+        self.shell.sound.want_music(!in_battle && !in_music_library && self.shell.ready().is_some());
         self.shell.sound.frame(now, ticks, &mut samples);
         // The screen that was leaving has left.
         if self.shell.swap.as_ref().is_some_and(|s| now >= s.at) {

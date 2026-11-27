@@ -499,3 +499,7 @@ msgstr "バトル曲を一括登録"
 msgctxt "music"
 msgid "Next"
 msgstr "次へ"
+
+msgctxt "music"
+msgid "Open"
+msgstr "開く"

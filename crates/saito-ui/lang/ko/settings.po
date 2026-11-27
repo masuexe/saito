@@ -498,3 +498,7 @@ msgstr "배틀 곡 일괄 즐겨찾기"
 msgctxt "music"
 msgid "Next"
 msgstr "다음 곡"
+
+msgctxt "music"
+msgid "Open"
+msgstr "열기"
