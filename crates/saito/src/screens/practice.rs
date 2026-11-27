@@ -1539,13 +1539,17 @@ impl Practice {
                 Change::By(by) => (shell.settings.input_delay as i32 + by).clamp(0, MAX_INPUT_DELAY as i32) as u32,
                 Change::To(at) => (at as u32).min(MAX_INPUT_DELAY),
             };
-            if next != shell.settings.input_delay {
+            if next != shell.settings.input_delay || shell.settings.auto_input_delay {
+                shell.settings.auto_input_delay = false;
                 shell.settings.input_delay = next;
                 shell.save_settings();
                 if let Some(b) = &mut shell.battle {
                     b.stage.player.set_input_delay(next);
                 }
-                shell.ui().global::<saito_ui::PlayView>().set_input_delay(next as i32);
+                let ui = shell.ui();
+                let view = ui.global::<saito_ui::PlayView>();
+                view.set_auto_input_delay(false);
+                view.set_input_delay(next as i32);
             }
             tell_rows(shell, &session, &[PracticeOption::InputDelay]);
             shell.practice.session = Some(session);

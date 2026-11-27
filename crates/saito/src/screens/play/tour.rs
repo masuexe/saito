@@ -620,6 +620,7 @@ pub fn steps(add: &mut dyn FnMut(u64, Step), shot: &dyn Fn(&mut dyn FnMut(u64, S
             // (What a pass before this one left remembered.)
             app.shell.settings.remembered.retain(|key, _| !key.starts_with("play."));
             app.shell.settings.input_delay = saito_frontend::netplay::DEFAULT_INPUT_DELAY;
+            app.shell.settings.auto_input_delay = false;
             app.go_now(ScreenId::Play);
             app.shell.nav.show_cursor(true, false);
         }),
@@ -1035,6 +1036,7 @@ pub fn apart(add: &mut dyn FnMut(u64, Step), hosts: bool) {
             RIG.with(|rig| *rig.borrow_mut() = Some(Rig { apart: true, ..Rig::new() }));
             app.shell.settings.remembered.retain(|key, _| !key.starts_with("play."));
             app.shell.settings.input_delay = saito_frontend::netplay::DEFAULT_INPUT_DELAY;
+            app.shell.settings.auto_input_delay = false;
             app.go_now(ScreenId::Play);
         }),
     );

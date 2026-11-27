@@ -92,6 +92,29 @@ impl Ping {
     pub fn quality(self) -> Quality {
         Quality::of(self.ms, self.jitter_ms)
     }
+
+    /// Suggested local input delay in ticks for this smoothed ping and jitter
+    /// ([`suggested_input_delay`]).
+    pub fn suggested_input_delay(self) -> u32 {
+        suggested_input_delay(self.ms, self.jitter_ms)
+    }
+}
+
+/// Suggested local input delay in ticks from a smoothed round-trip `ping_ms`
+/// and `jitter_ms`, both in milliseconds.
+///
+/// Uses the same conservative round-trip estimate as [`Quality::of`]
+/// (`ping_ms + 2 * jitter_ms`), converts the one-way half into 60 fps ticks
+/// rounded up so the delay covers typical jitter without excessive rollbacks,
+/// and clamps to `AUTO_MIN_INPUT_DELAY..=*INPUT_DELAY.end()`.
+pub fn suggested_input_delay(ping_ms: f64, jitter_ms: f64) -> u32 {
+    if !ping_ms.is_finite() || !jitter_ms.is_finite() {
+        return crate::netplay::DEFAULT_INPUT_DELAY;
+    }
+    let slow_ms = ping_ms.max(0.0) + 2.0 * jitter_ms.max(0.0);
+    // One-way ticks at 60 Hz: (slow_ms / 2) / (1000 / 60) = slow_ms * 60 / 2000.
+    let ticks = (slow_ms * 60.0 / 2000.0).ceil() as u32;
+    ticks.clamp(crate::netplay::AUTO_MIN_INPUT_DELAY, *crate::netplay::INPUT_DELAY.end())
 }
 
 /// What went one way over a connection: datagrams, and their bytes (the
@@ -144,5 +167,22 @@ mod tests {
         let jumped = Ping::after(ping, 200.0);
         assert!((jumped.ms - 60.0).abs() < 1e-6 && (jumped.jitter_ms - 40.0).abs() < 1e-6, "{jumped:?}");
         assert_eq!(jumped.quality(), Quality::Fair);
+    }
+
+    /// Suggested input delay follows `ping + 2 * jitter` one-way ticks (rounded up)
+    /// and clamps to `1..=10` (non-finite inputs fall back to default).
+    #[test]
+    fn suggested_input_delay_tracks_ping_and_jitter() {
+        assert_eq!(suggested_input_delay(0.0, 0.0), 1);
+        assert_eq!(suggested_input_delay(20.0, 2.0), 1);
+        assert_eq!(suggested_input_delay(50.0, 5.0), 2);
+        assert_eq!(suggested_input_delay(50.0, 25.0), 3);
+        assert_eq!(suggested_input_delay(100.0, 5.0), 4);
+        assert_eq!(suggested_input_delay(150.0, 10.0), 6);
+        assert_eq!(suggested_input_delay(400.0, 50.0), 10);
+        assert_eq!(suggested_input_delay(-10.0, -5.0), 1);
+        assert_eq!(suggested_input_delay(f64::NAN, 5.0), crate::netplay::DEFAULT_INPUT_DELAY);
+        assert_eq!(suggested_input_delay(50.0, f64::INFINITY), crate::netplay::DEFAULT_INPUT_DELAY);
+        assert_eq!(Ping { ms: 60.0, jitter_ms: 5.0 }.suggested_input_delay(), 3);
     }
 }

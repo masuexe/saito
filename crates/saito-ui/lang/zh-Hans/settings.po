@@ -133,8 +133,14 @@ msgstr "音效"
 msgid "Input delay"
 msgstr "输入延迟"
 
-msgid "In frames. Lower feels faster; higher rolls back less."
-msgstr "单位为帧。越低反应越快，越高回滚越少。"
+msgid "In frames (Auto picks from ping). Lower feels faster; higher rolls back less."
+msgstr "单位为帧（自动将按延迟计算）。越低反应越快，越高回滚越少。"
+
+msgid "Auto"
+msgstr "自动"
+
+msgid "Auto ({})"
+msgstr "自动 ({})"
 
 msgid "Key"
 msgstr "键盘"

@@ -10,7 +10,7 @@ mod about;
 
 use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
-use crate::settings::{DEFAULT_SIGNAL_SERVER, MAX_INPUT_DELAY, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
+use crate::settings::{DEFAULT_SIGNAL_SERVER, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
 use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
@@ -164,6 +164,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_mic_sensitivity((s.mic_sensitivity * 100.0).round().clamp(25.0, 400.0) as i32);
     view.set_quick_shout_tier(s.quick_shout_tier.clamp(1, 3) as i32);
     view.set_input_delay(s.input_delay as i32);
+    view.set_auto_input_delay(s.auto_input_delay);
     view.set_signaling_server(s.signaling_server.as_str().into());
     view.set_default_signaling_server(DEFAULT_SIGNAL_SERVER.into());
     view.set_auto_upload_replays(s.auto_upload_replays);
@@ -704,7 +705,7 @@ impl Screen for Settings {
                 self.set_quick_shout_tier(shell, next);
             }
             "set.delay" => {
-                shell.settings.input_delay = (shell.settings.input_delay as i32 + by).clamp(0, MAX_INPUT_DELAY as i32) as u32;
+                shell.settings.step_input_delay(by);
                 shell.save_settings();
                 self.show(shell);
             }

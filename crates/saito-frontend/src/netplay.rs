@@ -79,6 +79,11 @@ pub const DEFAULT_INPUT_DELAY: u32 = 4;
 /// late to play).
 pub const INPUT_DELAY: std::ops::RangeInclusive<u32> = 0..=10;
 
+/// The lowest input delay auto-delay picks, in ticks: even over LAN two
+/// independent 60 Hz loops can sit up to a frame out of phase, so 1 absorbs
+/// that without rollbacks while manual selection still offers 0.
+pub const AUTO_MIN_INPUT_DELAY: u32 = 1;
+
 /// The set both players of a match play, and the match: the agreed
 /// settings' rounds, every place stated as the match's seed picks those
 /// they leave (as a replay keeps them; a background from what the settings'

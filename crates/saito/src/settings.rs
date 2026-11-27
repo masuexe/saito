@@ -257,6 +257,9 @@ pub struct Settings {
     /// Netplay's input delay, in frames: the value the lobby starts with (the library's
     /// `NetOptions::input_delay`).
     pub input_delay: u32,
+    /// When true, automatically calculate netplay's input delay from the measured ping and jitter
+    /// when a match starts (locked for the match; manual override still works in-match).
+    pub auto_input_delay: bool,
     /// Custom signaling server URL (`ws://...` or `wss://...`); empty uses `DEFAULT_SIGNAL_SERVER`.
     pub signaling_server: String,
     /// Automatically upload completed online match replays to the signaling server's recent-replays feed.
@@ -312,6 +315,7 @@ impl Default for Settings {
             music: 80,
             effects: 100,
             input_delay: saito_frontend::netplay::DEFAULT_INPUT_DELAY,
+            auto_input_delay: false,
             signaling_server: String::new(),
             auto_upload_replays: false,
             keys: BTreeMap::new(),
@@ -347,6 +351,29 @@ impl Settings {
     pub fn set_enhancements(&mut self, e: saito_frontend::game::Enhancements) {
         (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number, self.sync_dark_buster_arm, self.hd_chip_art) =
             (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number, e.sync_dark_buster_arm, e.hd_chip_art);
+    }
+
+    /// Step netplay's input delay across `Auto` (`-1`) and fixed `0..=MAX_INPUT_DELAY`.
+    pub fn step_input_delay(&mut self, by: i32) {
+        let cur = if self.auto_input_delay { -1 } else { self.input_delay as i32 };
+        let next = (cur + by).clamp(-1, MAX_INPUT_DELAY as i32);
+        if next < 0 {
+            self.auto_input_delay = true;
+        } else {
+            self.auto_input_delay = false;
+            self.input_delay = next as u32;
+        }
+    }
+
+    /// Resolve the concrete input delay (in ticks) to apply to a netplay match from the latest
+    /// measured ping. Falls back to `DEFAULT_INPUT_DELAY` when `auto_input_delay` is enabled but
+    /// no ping sample has been measured yet.
+    pub fn resolved_input_delay(&self, ping: Option<saito_frontend::connection::Ping>) -> u32 {
+        if self.auto_input_delay {
+            ping.map_or(saito_frontend::netplay::DEFAULT_INPUT_DELAY, saito_frontend::connection::Ping::suggested_input_delay)
+        } else {
+            self.input_delay
+        }
     }
 }
 
@@ -609,5 +636,36 @@ mod tests {
         assert_eq!(OrientationLock::Auto.as_android_mode(), 0);
         assert_eq!(OrientationLock::Portrait.as_android_mode(), 1);
         assert_eq!(OrientationLock::Landscape.as_android_mode(), 2);
+    }
+
+    #[test]
+    fn auto_input_delay_steps_resolves_and_roundtrips() {
+        let legacy: Settings = toml::from_str("input_delay = 3\n").unwrap();
+        assert!(!legacy.auto_input_delay);
+        assert_eq!(legacy.input_delay, 3);
+
+        let mut s = Settings { input_delay: 1, auto_input_delay: false, ..Settings::default() };
+        s.step_input_delay(-1);
+        assert!(!s.auto_input_delay && s.input_delay == 0);
+        s.step_input_delay(-1);
+        assert!(s.auto_input_delay, "stepping below 0 enters Auto");
+        s.step_input_delay(-1);
+        assert!(s.auto_input_delay, "Auto clamps at the lower bound");
+
+        // Resolved delay in Auto mode uses ping+jitter or falls back to default when unmeasured.
+        assert_eq!(s.resolved_input_delay(None), saito_frontend::netplay::DEFAULT_INPUT_DELAY);
+        assert_eq!(s.resolved_input_delay(Some(saito_frontend::connection::Ping { ms: 50.0, jitter_ms: 5.0 })), 2);
+
+        // Roundtrip in TOML.
+        let encoded = toml::to_string(&s).unwrap();
+        let decoded: Settings = toml::from_str(&encoded).unwrap();
+        assert!(decoded.auto_input_delay);
+
+        // Stepping right from Auto returns to 0 and clamps at MAX_INPUT_DELAY.
+        s.step_input_delay(1);
+        assert!(!s.auto_input_delay && s.input_delay == 0);
+        assert_eq!(s.resolved_input_delay(Some(saito_frontend::connection::Ping { ms: 200.0, jitter_ms: 10.0 })), 0);
+        s.step_input_delay(99);
+        assert!(!s.auto_input_delay && s.input_delay == MAX_INPUT_DELAY);
     }
 }

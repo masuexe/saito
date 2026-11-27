@@ -72,7 +72,6 @@ use i_slint_backend_winit::winit::keyboard::KeyCode;
 use crate::input::{Action, KeyPress, Scroll, bind_cap, button_index, pad_cap, pad_face};
 use crate::nav::Key;
 use crate::screens::{Screen, ScreenId, practice, settings};
-use crate::settings::MAX_INPUT_DELAY;
 use crate::shell::{Dialog, Shell};
 use crate::sound::Cue;
 use saito_gamepad::Button;
@@ -324,6 +323,7 @@ struct Live {
     ds_shout_max_only: bool,
     bars: i32,
     ping: i32,
+    auto_delay_frames: Option<u32>,
     note: Option<LobbyNote>,
     seconds: i32,
 }
@@ -1626,12 +1626,31 @@ impl Play {
     }
 
     fn set_delay(&mut self, shell: &mut Shell, by: i32) {
-        shell.settings.input_delay = (shell.settings.input_delay as i32 + by).clamp(0, MAX_INPUT_DELAY as i32) as u32;
+        shell.settings.step_input_delay(by);
         shell.save_settings();
+        let in_match = matches!(self.stage, Stage::Match { .. });
+        let mut auto_frames = self.live.auto_delay_frames.map_or(-1, |d| d as i32);
         if let Some(b) = &mut shell.battle {
-            b.stage.player.set_input_delay(shell.settings.input_delay);
+            let next = if shell.settings.auto_input_delay && in_match {
+                let live_ping = b
+                    .stage
+                    .player
+                    .net_status()
+                    .and_then(|n| n.ping_ms.map(|ms| saito_frontend::connection::Ping { ms, jitter_ms: n.jitter_ms.unwrap_or(0.0) }))
+                    .or_else(|| self.session.as_ref().and_then(Session::ping));
+                let resolved = shell.settings.resolved_input_delay(live_ping);
+                auto_frames = resolved as i32;
+                resolved
+            } else {
+                shell.settings.input_delay
+            };
+            b.stage.player.set_input_delay(next);
         }
-        shell.ui().global::<PlayView>().set_input_delay(shell.settings.input_delay as i32);
+        let ui = shell.ui();
+        let view = ui.global::<PlayView>();
+        view.set_auto_input_delay(shell.settings.auto_input_delay);
+        view.set_input_delay(shell.settings.input_delay as i32);
+        view.set_auto_input_delay_frames(auto_frames);
     }
 
     fn set_full_screen(&mut self, shell: &mut Shell, on: bool) {
@@ -1715,6 +1734,13 @@ impl Play {
             ds_shout_max_only: settings.ds_shout_max_only,
             bars: if reconnecting.is_some() { 0 } else { steady.map_or(ping.map_or(0, |p| p.quality().bars() as i32), |s| s.0) },
             ping: if reconnecting.is_some() { -1 } else { steady.map_or(ping.map_or(-1, |p| p.ms.round() as i32), |s| s.1) },
+            auto_delay_frames: if reconnecting.is_some() {
+                None
+            } else {
+                steady
+                    .map(|s| saito_frontend::connection::suggested_input_delay(s.1 as f64, 0.0))
+                    .or_else(|| ping.map(saito_frontend::connection::Ping::suggested_input_delay))
+            },
             // (A build the settings can't play: the lobby's own check, typed; while the host waits, the same check
             // of the build it brings.)
             note: Some(match (reconnecting, ready, their_ready) {
@@ -1836,6 +1862,9 @@ impl Play {
         }
         view.set_bars(live.bars);
         view.set_ping(live.ping);
+        if !matches!(self.stage, Stage::Match { .. }) {
+            view.set_auto_input_delay_frames(live.auto_delay_frames.map_or(-1, |d| d as i32));
+        }
         view.set_note(live.note.unwrap_or(LobbyNote::None));
         view.set_note_seconds(live.seconds);
         let first_to_changed = live.first_to != self.live.first_to;
@@ -2292,7 +2321,18 @@ impl Play {
         }
         view.set_music(shell.settings.music as i32);
         view.set_effects(shell.settings.effects as i32);
+        view.set_auto_input_delay(shell.settings.auto_input_delay);
         view.set_input_delay(shell.settings.input_delay as i32);
+        if matches!(self.stage, Stage::Match { .. }) {
+            let active = shell
+                .battle
+                .as_ref()
+                .and_then(|b| b.stage.player.net_status())
+                .map(|n| n.input_delay as i32)
+                .or_else(|| self.live.auto_delay_frames.map(|d| d as i32))
+                .unwrap_or(-1);
+            view.set_auto_input_delay_frames(active);
+        }
         settings::show_values(shell, &self.binding);
         view.set_page(self.page);
     }
@@ -2792,7 +2832,9 @@ impl Screen for Play {
         view.set_waiting(matches!(self.stage, Stage::Waiting));
         view.set_invite(self.invite().into());
         view.set_invite_direct(self.session.as_ref().is_some_and(|s| s.way == Way::Host));
+        view.set_auto_input_delay(shell.settings.auto_input_delay);
         view.set_input_delay(shell.settings.input_delay as i32);
+        view.set_auto_input_delay_frames(self.live.auto_delay_frames.map_or(-1, |d| d as i32));
         view.set_note_error(self.ended.as_ref().map(|e| e.line(&ui)).unwrap_or_default().into());
         view.set_changing(self.changing);
         self.ensure_stage_loaded(shell);
@@ -3692,7 +3734,8 @@ impl Screen for Play {
                 if !gate.go.get()
                     && let (Some(agreed), Some(channel)) = (&self.agreed, session.channel())
                 {
-                    let options = NetOptions { input_delay: shell.settings.input_delay, ..NetOptions::default() };
+                    let delay = shell.settings.resolved_input_delay(session.ping());
+                    let options = NetOptions { input_delay: delay, ..NetOptions::default() };
                     *gate.driver.borrow_mut() = Some(Box::new(NetPlayer::new(channel, agreed.side, agreed.set.clone(), options)));
                     gate.theirs.set(1.0);
                     gate.go.set(true);

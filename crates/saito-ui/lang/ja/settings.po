@@ -132,8 +132,14 @@ msgstr "効果音"
 msgid "Input delay"
 msgstr "入力遅延"
 
-msgid "In frames. Lower feels faster; higher rolls back less."
-msgstr "フレーム単位。小さいほど反応が速く、大きいほど巻き戻しが減ります。"
+msgid "In frames (Auto picks from ping). Lower feels faster; higher rolls back less."
+msgstr "フレーム単位（自動はPingから算出）。小さいほど反応が速く、大きいほど巻き戻しが減ります。"
+
+msgid "Auto"
+msgstr "自動"
+
+msgid "Auto ({})"
+msgstr "自動 ({})"
 
 msgid "Key"
 msgstr "キー"

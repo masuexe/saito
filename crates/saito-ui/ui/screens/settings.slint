@@ -83,6 +83,7 @@ export global SettingsView {
     in property <int> mic-last-tier: 0;
     in property <string> mic-error;
     in property <int> input-delay;
+    in property <bool> auto-input-delay;
     in property <string> signaling-server;
     in property <string> default-signaling-server;
     in property <bool> auto-upload-replays;
@@ -902,7 +903,7 @@ component SettingsPage inherits Page {
                     height: row8.height;
                     row8 := SettingLabel {
                         label: @tr("Input delay");
-                        note: @tr("In frames. Lower feels faster; higher rolls back less.");
+                        note: @tr("In frames (Auto picks from ping). Lower feels faster; higher rolls back less.");
                         control-x: root.control-x;
                         control-width: root.control-width;
                     }
@@ -911,9 +912,9 @@ component SettingsPage inherits Page {
                         x: root.control-x;
                         y: 6px;
                         nav: "set.delay";
-                        value: SettingsView.input-delay;
-                        value-width: 48px;
-                        numeric: true;
+                        value: SettingsView.auto-input-delay ? @tr("Auto") : "\{SettingsView.input-delay}";
+                        value-width: 72px;
+                        numeric: !SettingsView.auto-input-delay;
                     }
                 }
 

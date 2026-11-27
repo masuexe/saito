@@ -133,8 +133,14 @@ msgstr "효과음"
 msgid "Input delay"
 msgstr "입력 지연"
 
-msgid "In frames. Lower feels faster; higher rolls back less."
-msgstr "프레임 단위입니다. 낮을수록 반응이 빠르고, 높을수록 롤백이 줄어듭니다."
+msgid "In frames (Auto picks from ping). Lower feels faster; higher rolls back less."
+msgstr "프레임 단위입니다 (자동은 핑에 따라 계산). 낮을수록 반응이 빠르고, 높을수록 롤백이 줄어듭니다."
+
+msgid "Auto"
+msgstr "자동"
+
+msgid "Auto ({})"
+msgstr "자동 ({})"
 
 msgid "Key"
 msgstr "키보드"

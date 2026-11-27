@@ -189,6 +189,18 @@ export global PlayView {
     // The player's own, apart from the match's (the user: "the input delay and ping settings should probably be
     // displayed separately from the lobby settings, since those are client-local things").
     in property <int> input-delay;
+    in property <bool> auto-input-delay;
+    // Resolved auto input delay in frames (-1: ping not measured yet).
+    in property <int> auto-input-delay-frames: -1;
+    pure public function delay-text() -> string {
+        if !PlayView.auto-input-delay {
+            return "\{PlayView.input-delay}";
+        }
+        if PlayView.auto-input-delay-frames < 0 {
+            return @tr("Auto");
+        }
+        return @tr("Auto ({})", PlayView.auto-input-delay-frames);
+    }
     // The connection: its bars (0 to 4) and the round trip in ms (-1: not measured).
     in property <int> bars;
     in property <int> ping: -1;
@@ -1088,9 +1100,9 @@ component ConnectionFacts inherits Rectangle {
         x: Theme.phone ? parent.width - self.width : root.x1;
         y: Theme.phone ? (root.line - self.height) / 2 : root.control-y + (root.control-height - self.height) / 2;
         nav: "lobby.delay";
-        value: PlayView.input-delay;
-        value-width: 48px;
-        numeric: true;
+        value: PlayView.delay-text();
+        value-width: 72px;
+        numeric: !PlayView.auto-input-delay;
     }
 
     Rectangle {
@@ -2419,9 +2431,9 @@ export component MatchMenu inherits MenuOverlay {
                 visible: !PlayView.watch-menu;
                 enabled: !PlayView.watch-menu;
                 nav: "menu.set.delay";
-                value: PlayView.input-delay;
-                value-width: 48px;
-                numeric: true;
+                value: PlayView.delay-text();
+                value-width: 72px;
+                numeric: !PlayView.auto-input-delay;
             }
 
             Seg {
