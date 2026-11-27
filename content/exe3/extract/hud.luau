@@ -1,12 +1,7 @@
 --!strict
--- EXE3's Battle HUD graphics: 8x16 HUD font, HUD tiles/palettes, Custom Gauge tiles/frame, HP box, enemy HP palette &
--- digits, chip icons (0x20-byte chip table), 13 battle banners (0xFF-terminated glyph-index arrays), PAUSE tiles,
--- HUD text lines (terminator 0xE7), and chatbox tiles/palette/arrow.
---
--- Primitive Gap #2 (`font.dialogue`): EXE3's dialogue font ([0x08026A14] US / [0x08026B74] JP) uses 8x16 tiled 4bpp
--- glyphs (0x40 bytes/glyph, fixed 8px advance, no advances table), whereas `saito-extract`'s `font.dialogue` hardcodes
--- EXE4-6's 0x60-byte 16x12 linear format + advances table. `dialogue_font` is therefore omitted until `saito-extract`
--- adds an 8x16 tiled dialogue font primitive (docs/design/exe3-extract-map.md §3 Gap #2).
+-- EXE3's Battle HUD graphics: 8x16 HUD font, 8x16 tiled dialogue font, HUD tiles/palettes, Custom Gauge tiles/frame,
+-- HP box, enemy HP palette & digits, chip icons (0x20-byte chip table), 13 battle banners (0xFF-terminated glyph-index
+-- arrays), PAUSE tiles, HUD text lines (terminator 0xE7), and chatbox tiles/palette/arrow.
 
 local place = require("@exelib/extract/place")
 local colors = require("@exelib/extract/colors")
@@ -36,6 +31,11 @@ end
 function hud.font(rom: Rom, cell: { string }, dialogue: { string }): (Tiles, { string })
     local n = math.min(#cell + #dialogue, FONT_GLYPHS)
     return gba.tiles(rom, at(rom, FONT), 0x40 * n), glyphs.chars(cell, dialogue, n)
+end
+
+function hud.dialogue_font(rom: Rom, cell: { string }, dialogue: { string }): DialogueFont
+    local n = math.min(#cell + #dialogue, FONT_GLYPHS)
+    return font.dialogue_tiled(rom, at(rom, hud.DIALOGUE_FONT), n, 8, glyphs.chars(cell, dialogue, n))
 end
 
 function hud.texts(rom: Rom): { { number } }
@@ -164,6 +164,7 @@ end
 local function worded(rom: Rom, names: AssetNames, h: Hud)
     local cell, dialogue = names.glyphs or {}, names.dialogue_glyphs or {}
     h.font, h.font_chars = hud.font(rom, cell, dialogue)
+    h.dialogue_font = hud.dialogue_font(rom, cell, dialogue)
     h.texts = hud.texts(rom)
     local banners: { BannerLayout } = {}
     for id = 0, BANNER_COUNT - 1 do

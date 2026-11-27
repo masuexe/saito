@@ -1,0 +1,189 @@
+# English localization for EXE3 (Mega Man Battle Network 3).
+
+language = "en"
+
+[game]
+"name" = "BN3"
+
+[chips]
+"cannon" = { name = "Cannon", description = "Cannon to attack\n1 enemy ahead" }
+"hicannon" = { name = "HiCannon", description = "Cannon to attack\n1 enemy ahead" }
+"m-cannon" = { name = "M-Cannon", description = "Cannon to attack\n1 enemy ahead" }
+"airshot1" = { name = "AirShot1", description = "Knocks enemy back\n1 square!" }
+"shotgun" = { name = "ShotGun", description = "Explodes 1 square\nbehind target!" }
+"v-gun" = { name = "V-Gun", description = "Explodes 2 diagonal\nsquares behind!" }
+"sidegun" = { name = "SideGun", description = "Explodes above and\nbelow target!" }
+"spreader" = { name = "Spreader", description = "Explodes across\nadjacent panels!" }
+"minibomb" = { name = "MiniBomb", description = "Throws a bomb\n3 squares ahead" }
+"snglbomb" = { name = "SnglBomb", description = "Throws a bomb\n3 squares ahead!" }
+"dublbomb" = { name = "DublBomb", description = "Throws 2 bombs\n3 squares ahead!" }
+"trplbomb" = { name = "TrplBomb", description = "Throws 3 bombs\n3 squares ahead!" }
+"cannball" = { name = "CannBall", description = "Heavy cannonball\nthrown 3 ahead!" }
+"sword" = { name = "Sword", description = "Cuts enemy in front!\nRange: 1 square" }
+"wideswrd" = { name = "WideSwrd", description = "Cuts enemy in front!\nRange: 3 vertical" }
+"longswrd" = { name = "LongSwrd", description = "Cuts enemy in front!\nRange: 2 ahead" }
+"fireswrd" = { name = "FireSwrd", description = "Fire blade cuts\n3 vertical squares!" }
+"aquaswrd" = { name = "AquaSwrd", description = "Aqua blade cuts\n3 vertical squares!" }
+"elecswrd" = { name = "ElecSwrd", description = "Elec blade cuts\n3 vertical squares!" }
+"bambswrd" = { name = "BambSwrd", description = "Wood blade cuts\n3 vertical squares!" }
+"stepswrd" = { name = "StepSwrd", description = "Steps 2 forward and\ncuts 3 vertical!" }
+"panlout1" = { name = "PanlOut1", description = "Destroys 1 panel\nin front of you" }
+"panlout3" = { name = "PanlOut3", description = "Destroys 3 vertical\npanels in front" }
+"panlgrab" = { name = "PanlGrab", description = "Steals 1 enemy\npanel in your row" }
+"areagrab" = { name = "AreaGrab", description = "Steals the front\ncolumn of enemy area" }
+"geddon1" = { name = "Geddon1", description = "Cracks every panel\non the battlefield!" }
+"recov10" = { name = "Recov10", description = "Recovers 10 HP" }
+"recov30" = { name = "Recov30", description = "Recovers 30 HP" }
+"recov50" = { name = "Recov50", description = "Recovers 50 HP" }
+"recov80" = { name = "Recov80", description = "Recovers 80 HP" }
+"recov120" = { name = "Recov120", description = "Recovers 120 HP" }
+"recov150" = { name = "Recov150", description = "Recovers 150 HP" }
+"recov200" = { name = "Recov200", description = "Recovers 200 HP" }
+"recov300" = { name = "Recov300", description = "Recovers 300 HP" }
+"slogauge" = { name = "SloGauge", description = "Slows down the\nCustom Gauge" }
+"fstgauge" = { name = "FstGauge", description = "Speeds up the\nCustom Gauge" }
+"invis" = { name = "Invis", description = "Invisible for a\nshort time" }
+"barrier" = { name = "Barrier", description = "Nullifies up to\n10 HP of damage" }
+"barr100" = { name = "Barr100", description = "Nullifies up to\n100 HP of damage" }
+"barr200" = { name = "Barr200", description = "Nullifies up to\n200 HP of damage" }
+"aura" = { name = "Aura", description = "Repels attacks\nunder 100 damage" }
+"lifeaura" = { name = "LifeAura", description = "Repels attacks\nunder 200 damage" }
+"atk-10" = { name = "Atk+10", description = "+10 power for\nselected atk chip" }
+"atk-30" = { name = "Atk+30", description = "+30 power for\nselected atk chip" }
+"z-canon1" = { name = "Z-Canon1", description = "Program Advance!\nHigh-power cannon" }
+"lifeswrd" = { name = "LifeSwrd", description = "Cuts a 3x2 area\nin front for 400!" }
+"invalid" = { name = " ", description = "" }
+"zeroed" = { name = "", description = "" }
+
+[navis]
+"megaman" = { name = "MegaMan", run_message = "Lan, this is no time\nto run away!" }
+
+[forms]
+"base" = { name = "Normal Style" }
+"guts" = { name = "Guts Style" }
+"custom" = { name = "Custom Style" }
+"team" = { name = "Team Style" }
+"shield" = { name = "Shield Style" }
+"ground" = { name = "Ground Style" }
+"shadow" = { name = "Shadow Style" }
+"bug" = { name = "Bug Style" }
+
+[backgrounds]
+"acdc-net" = { name = "ACDC Area" }
+"acdc-net-dark" = { name = "ACDC Area (Dark)" }
+"lan-hp" = { name = "Lan's HP" }
+"school-comp" = { name = "School Comp" }
+"sci-lab-net" = { name = "SciLab Area" }
+"yoka-net" = { name = "Yoka Area" }
+"beach-net" = { name = "Beach Area" }
+"zoo-comp" = { name = "Zoo Comp" }
+"inn-comp" = { name = "Inn Comp" }
+"yoka-net-alt" = { name = "Yoka Area (Alt)" }
+"hospital-comp" = { name = "Hospital Comp" }
+"n1-grand-prix" = { name = "N1 Grand Prix" }
+"n1-grand-prix-alt" = { name = "N1 Grand Prix Finals" }
+"hadess-isle" = { name = "Hades Isle" }
+"hadess-isle-alt" = { name = "Hades Isle Deep" }
+"www-comp" = { name = "WWW Comp" }
+"undernet" = { name = "Undernet" }
+"undernet-1" = { name = "Undernet 1" }
+"undernet-2" = { name = "Undernet 2" }
+"undernet-3" = { name = "Undernet 3" }
+"undernet-4" = { name = "Undernet 4" }
+"alpha-core" = { name = "Alpha Core" }
+"alpha-final" = { name = "Alpha Final" }
+"secret-area" = { name = "Secret Area" }
+"generic-comp" = { name = "Cyberworld" }
+"serenade-area" = { name = "Serenade's Domain" }
+"yoka-net-2" = { name = "Yoka Area 2" }
+"yoka-net-3" = { name = "Yoka Area 3" }
+"yoka-net-4" = { name = "Yoka Area 4" }
+"alpha-core-fast" = { name = "Alpha Core (Fast)" }
+
+[navicust_programs]
+"sprarmor" = { name = "SprArmor", description = "Prevents flinching\nfrom enemy attacks" }
+"custom1" = { name = "Custom1", description = "Adds +1 chip in\nCustom Screen" }
+"custom2" = { name = "Custom2", description = "Adds +2 chips in\nCustom Screen" }
+"megfldr1" = { name = "MegFldr1", description = "Adds +1 MegaChip\nslot to Folder" }
+"megfldr2" = { name = "MegFldr2", description = "Adds +2 MegaChip\nslots to Folder" }
+"gigfldr1" = { name = "GigFldr1", description = "Adds +1 GigaChip\nslot to Folder" }
+"shield" = { name = "Shield", description = "Press B+Left to\nblock attacks" }
+"reflect" = { name = "Reflect", description = "Press B+Left to\nreflect attacks" }
+"flotshoe" = { name = "FlotShoe", description = "Ignores negative\npanel effects" }
+"antidmg" = { name = "AntiDmg", description = "Press B+Left to\ncounter with star" }
+"airshoes" = { name = "AirShoes", description = "Walk freely over\nempty panels" }
+"undersht" = { name = "UnderSht", description = "Survive fatal hit\nwith 1 HP left" }
+"fstgauge" = { name = "FstGauge", description = "Starts battle with\na fast Custom Gauge" }
+"bugstop" = { name = "BugStop", description = "Prevents all NaviCust\nbugs from occurring" }
+"bustrmax" = { name = "BustrMAX", description = "Maxes out all\nMegaBuster stats" }
+"hubbatc" = { name = "HubBatc", description = "Unlocks MegaMan's\nfull potential" }
+"rush" = { name = "Rush", description = "Cancels opponent's\ninvisibility in PvP" }
+"beat" = { name = "Beat", description = "Steals opponent's\nfirst Mega/Giga chip" }
+"tango" = { name = "Tango", description = "Heals you when HP\nbecomes critical" }
+"hp-100" = { name = "HP+100", description = "Increases Max HP\nby 100" }
+"hp-200" = { name = "HP+200", description = "Increases Max HP\nby 200" }
+"hp-300" = { name = "HP+300", description = "Increases Max HP\nby 300" }
+"hp-500" = { name = "HP+500", description = "Increases Max HP\nby 500" }
+"atk-1" = { name = "Atk+1", description = "Increases Buster\nAttack by 1" }
+"speed-1" = { name = "Speed+1", description = "Increases Buster\nSpeed by 1" }
+"charge-1" = { name = "Charge+1", description = "Increases Buster\nCharge by 1" }
+"reg-5" = { name = "Reg+5", description = "Increases Regular\nMemory by 5 MB" }
+
+[bugs]
+"buster" = "Buster misfire bug"
+"custom" = "Custom HP bug"
+"hp" = "Battle HP bug"
+"hub" = "HubBatch bug"
+"move" = "Movement bug"
+"panel" = "Panel bug"
+"support" = "Support bug"
+
+[builds]
+"versions" = "Select a version."
+"version.white" = "White"
+"version.blue" = "Blue"
+
+[rulesets]
+"category.folder" = "Chips"
+"category.navicust_programs" = "NaviCust"
+"preset.masters" = "Masters Class"
+"preset.senior" = "Senior Class"
+"theirs" = "Host Rules"
+
+[battle_themes]
+"battle-net" = "Shooting Enemy"
+"battle-boss" = "Boss Battle"
+"netbattle-1" = "NetBattle 1"
+"netbattle-2" = "NetBattle 2"
+"netbattle-3" = "NetBattle 3"
+"netbattle-4" = "NetBattle 4"
+
+[lettering]
+"banner.battle-start" = "BATTLE START!"
+"banner.round-start" = "BATTLE {n} START!"
+"banner.turn-start" = "TURN {n} START!"
+"banner.final-turn" = "FINAL TURN!"
+"banner.enemy-deleted" = "ENEMY DELETED"
+"banner.megaman-deleted" = "MEGAMAN DELETED"
+"banner.win" = "YOU WIN!"
+"banner.lose" = "YOU LOSE"
+"banner.draw" = "DRAW!"
+"banner.hit-damage" = "HIT DAMAGE JUDGE"
+"banner.time-up" = "TIME UP!"
+"banner.flag-deleted" = "FLAG DELETED"
+"banner.program-advance" = "PROGRAM ADVANCE"
+"pause" = "PAUSE"
+"waiting" = "CUSTOMIZING..."
+"gauge.custom" = "CUSTOM"
+"gauge.l-or-r" = "L or R"
+"turn-limit" = "FINAL TURN"
+"pictures.ok.title" = "NO DATA\nSELECTED"
+"pictures.ok.words" = "No chip data\nhas been\nselected"
+"pictures.ok-picked.title" = "CHIP DATA\nTRANSMISSION"
+"pictures.ok-picked.words" = "Sending selected\nchip data"
+"pictures.add.title" = "ADD CHIP\nDATA"
+"pictures.add.words" = "Discard chips to\ndraw extra chips\nnext turn"
+"window.chip-select" = "CHIP SELECT"
+"logo.program-advance" = "PROGRAM ADVANCE"
+"window.ok" = "OK"
+"window.add" = "ADD"

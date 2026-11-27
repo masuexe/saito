@@ -1,0 +1,189 @@
+# Korean localization for EXE3 (록맨 에그제 3).
+
+language = "ko"
+
+[game]
+"name" = "EXE3"
+
+[chips]
+"cannon" = { name = "캐논", description = "전방의 적 1기를\n공격하는 캐논포" }
+"hicannon" = { name = "하이캐논", description = "전방의 적 1기를\n공격하는 하이캐논" }
+"m-cannon" = { name = "메가캐논", description = "전방의 적 1기를\n공격하는 메가캐논" }
+"airshot1" = { name = "에어슛1", description = "명중한 적을 뒤로\n1칸 밀어낸다!" }
+"shotgun" = { name = "샷건", description = "명중 시 뒤쪽 1칸\n까지 폭발!" }
+"v-gun" = { name = "브이건", description = "명중 시 대각선 뒤\n2칸까지 폭발!" }
+"sidegun" = { name = "사이드건", description = "명중 시 위아래\n2칸까지 폭발!" }
+"spreader" = { name = "스프레드건", description = "명중 시 주위 1칸\n전체에 폭발!" }
+"minibomb" = { name = "미니봄", description = "3칸 앞에 떨어지는\n폭탄을 던진다" }
+"snglbomb" = { name = "싱글봄", description = "3칸 앞에 폭탄을\n던진다!" }
+"dublbomb" = { name = "더블봄", description = "3칸 앞에 폭탄\n2발을 던진다!" }
+"trplbomb" = { name = "트리플봄", description = "3칸 앞에 폭탄\n3발을 던진다!" }
+"cannball" = { name = "캐논볼", description = "3칸 앞에 중량\n캐논볼을 던진다!" }
+"sword" = { name = "소드", description = "눈앞 1칸의 적을\n베어낸다!" }
+"wideswrd" = { name = "와이드소드", description = "눈앞 세로 3칸을\n베어낸다!" }
+"longswrd" = { name = "롱소드", description = "눈앞 가로 2칸을\n베어낸다!" }
+"fireswrd" = { name = "파이어소드", description = "불꽃 칼날로 세로\n3칸을 베어낸다!" }
+"aquaswrd" = { name = "아쿠아소드", description = "물의 칼날로 세로\n3칸을 베어낸다!" }
+"elecswrd" = { name = "일렉소드", description = "전기 칼날로 세로\n3칸을 베어낸다!" }
+"bambswrd" = { name = "밤부소드", description = "나무 칼날로 세로\n3칸을 베어낸다!" }
+"stepswrd" = { name = "스텝소드", description = "앞으로 2칸 진입해\n세로 3칸을 벤다!" }
+"panlout1" = { name = "패널아웃1", description = "눈앞의 1칸을\n파괴한다" }
+"panlout3" = { name = "패널아웃3", description = "눈앞의 세로 3칸을\n파괴한다" }
+"panlgrab" = { name = "패널스틸", description = "전방 적 에어리어\n1칸을 빼앗는다" }
+"areagrab" = { name = "에어리어스틸", description = "적 에어리어 앞쪽\n1열을 빼앗는다" }
+"geddon1" = { name = "데스매치1", description = "모든 패널에\n금을 가게 한다!" }
+"recov10" = { name = "리커버리10", description = "HP를 10 회복" }
+"recov30" = { name = "리커버리30", description = "HP를 30 회복" }
+"recov50" = { name = "리커버리50", description = "HP를 50 회복" }
+"recov80" = { name = "리커버리80", description = "HP를 80 회복" }
+"recov120" = { name = "리커버리120", description = "HP를 120 회복" }
+"recov150" = { name = "리커버리150", description = "HP를 150 회복" }
+"recov200" = { name = "리커버리200", description = "HP를 200 회복" }
+"recov300" = { name = "리커버리300", description = "HP를 300 회복" }
+"slogauge" = { name = "헤비게이지", description = "커스텀 게이지의\n속도를 늦춘다" }
+"fstgauge" = { name = "퀵게이지", description = "커스텀 게이지의\n속도를 높인다" }
+"invis" = { name = "인비저블", description = "잠시 동안 투명해져\n공격을 피한다" }
+"barrier" = { name = "배리어", description = "HP 10의 배리어로\n공격을 막는다" }
+"barr100" = { name = "배리어100", description = "HP 100의 배리어로\n공격을 막는다" }
+"barr200" = { name = "배리어200", description = "HP 200의 배리어로\n공격을 막는다" }
+"aura" = { name = "드림오라", description = "100 미만의 공격을\n모두 막는다" }
+"lifeaura" = { name = "라이프오라", description = "200 미만의 공격을\n모두 막는다" }
+"atk-10" = { name = "어택+10", description = "앞선 공격 칩의\n위력을 +10" }
+"atk-30" = { name = "어택+30", description = "앞선 공격 칩의\n위력을 +30" }
+"z-canon1" = { name = "제타캐논1", description = "프로그램 어드밴스!\n고위력 캐논" }
+"lifeswrd" = { name = "드림소드", description = "전방 3×2칸을 베어\n400 대미지!" }
+"invalid" = { name = " ", description = "" }
+"zeroed" = { name = "", description = "" }
+
+[navis]
+"megaman" = { name = "록맨", run_message = "열투, 지금은 도망칠\n때가 아니야!" }
+
+[forms]
+"base" = { name = "노멀 스타일" }
+"guts" = { name = "거츠 스타일" }
+"custom" = { name = "커스텀 스타일" }
+"team" = { name = "브라더 스타일" }
+"shield" = { name = "실드 스타일" }
+"ground" = { name = "그라운드 스타일" }
+"shadow" = { name = "섀도우 스타일" }
+"bug" = { name = "버그 스타일" }
+
+[backgrounds]
+"acdc-net" = { name = "아키하라 에어리어" }
+"acdc-net-dark" = { name = "아키하라 에어리어(암)" }
+"lan-hp" = { name = "열투의 HP" }
+"school-comp" = { name = "학교의 전뇌" }
+"sci-lab-net" = { name = "과학성 에어리어" }
+"yoka-net" = { name = "요카요카 에어리어" }
+"beach-net" = { name = "비치 에어리어" }
+"zoo-comp" = { name = "동물원의 전뇌" }
+"inn-comp" = { name = "여관의 전뇌" }
+"yoka-net-alt" = { name = "요카요카 에어리어(별)" }
+"hospital-comp" = { name = "병원의 전뇌" }
+"n1-grand-prix" = { name = "N1 그랑프리" }
+"n1-grand-prix-alt" = { name = "N1 그랑프리 결승" }
+"hadess-isle" = { name = "지옥섬" }
+"hadess-isle-alt" = { name = "지옥섬 심부" }
+"www-comp" = { name = "WWW의 전뇌" }
+"undernet" = { name = "우라 인터넷" }
+"undernet-1" = { name = "우라 인터넷 1" }
+"undernet-2" = { name = "우라 인터넷 2" }
+"undernet-3" = { name = "우라 인터넷 3" }
+"undernet-4" = { name = "우라 인터넷 4" }
+"alpha-core" = { name = "프로토의 전뇌" }
+"alpha-final" = { name = "프로토 최심부" }
+"secret-area" = { name = "시크릿 에어리어" }
+"generic-comp" = { name = "전뇌 공간" }
+"serenade-area" = { name = "세레나데의 영역" }
+"yoka-net-2" = { name = "요카요카 에어리어 2" }
+"yoka-net-3" = { name = "요카요카 에어리어 3" }
+"yoka-net-4" = { name = "요카요카 에어리어 4" }
+"alpha-core-fast" = { name = "프로토의 전뇌(고속)" }
+
+[navicust_programs]
+"sprarmor" = { name = "슈퍼아머", description = "공격을 받아도\n경직되지 않는다!" }
+"custom1" = { name = "커스텀1", description = "커스텀 화면 선택\n칩 수 +1" }
+"custom2" = { name = "커스텀2", description = "커스텀 화면 선택\n칩 수 +2" }
+"megfldr1" = { name = "메가폴더1", description = "폴더 메가클래스\n상한 +1" }
+"megfldr2" = { name = "메가폴더2", description = "폴더 메가클래스\n상한 +2" }
+"gigfldr1" = { name = "기가폴더1", description = "폴더 기가클래스\n상한 +1" }
+"shield" = { name = "실드", description = "B+좌 입력으로\n공격을 막는다" }
+"reflect" = { name = "리플렉트", description = "B+좌 입력으로\n공격을 반사한다" }
+"flotshoe" = { name = "플로트슈즈", description = "패널의 부정적\n효과를 무시한다" }
+"antidmg" = { name = "카와리미매직", description = "B+좌 입력으로\n수리검 반격" }
+"airshoes" = { name = "에어슈즈", description = "구멍 위에서도\n이동할 수 있다" }
+"undersht" = { name = "언더셔츠", description = "치명상을 받아도\nHP 1로 버틴다" }
+"fstgauge" = { name = "퀵게이지", description = "배틀 시작 시\n게이지가 빨라진다" }
+"bugstop" = { name = "버그스토퍼", description = "내비커스트 버그를\n완전히 방지한다" }
+"bustrmax" = { name = "버스터MAX", description = "버스터의 모든\n능력치가 최대!" }
+"hubbatc" = { name = "사이트배치", description = "잠재능력을 100%\n이끌어낸다" }
+"rush" = { name = "러시서포트", description = "상대의 투명화를\n해제하고 돌진" }
+"beat" = { name = "비트서포트", description = "상대의 첫 메가/기가\n칩을 빼앗는다" }
+"tango" = { name = "탱고서포트", description = "위기 시 나타나\nHP를 회복한다" }
+"hp-100" = { name = "HP+100", description = "최대 HP +100" }
+"hp-200" = { name = "HP+200", description = "최대 HP +200" }
+"hp-300" = { name = "HP+300", description = "최대 HP +300" }
+"hp-500" = { name = "HP+500", description = "최대 HP +500" }
+"atk-1" = { name = "어택+1", description = "버스터 공격력 +1" }
+"speed-1" = { name = "래피드+1", description = "버스터 연사력 +1" }
+"charge-1" = { name = "차지+1", description = "버스터 차지 +1" }
+"reg-5" = { name = "레귤러+5", description = "레귤러 메모리 +5MB" }
+
+[bugs]
+"buster" = "버스터 공포탄 버그"
+"custom" = "커스텀 HP 버그"
+"hp" = "배틀 HP 버그"
+"hub" = "사이트배치 버그"
+"move" = "이동 버그"
+"panel" = "패널 버그"
+"support" = "서포트 버그"
+
+[builds]
+"versions" = "버전을 선택합니다."
+"version.white" = "화이트"
+"version.blue" = "블랙"
+
+[rulesets]
+"category.folder" = "칩"
+"category.navicust_programs" = "내비커스트"
+"preset.masters" = "마스터 클래스"
+"preset.senior" = "시니어 클래스"
+"theirs" = "호스트 규칙"
+
+[battle_themes]
+"battle-net" = "슈팅 에너미"
+"battle-boss" = "보스 배틀"
+"netbattle-1" = "넷배틀 1"
+"netbattle-2" = "넷배틀 2"
+"netbattle-3" = "넷배틀 3"
+"netbattle-4" = "넷배틀 4"
+
+[lettering]
+"banner.battle-start" = "BATTLE START!"
+"banner.round-start" = "BATTLE {n} START!"
+"banner.turn-start" = "TURN {n} START!"
+"banner.final-turn" = "FINAL TURN!"
+"banner.enemy-deleted" = "ENEMY DELETED"
+"banner.megaman-deleted" = "ROCKMAN DELETED"
+"banner.win" = "YOU WIN!"
+"banner.lose" = "YOU LOSE"
+"banner.draw" = "DRAW!"
+"banner.hit-damage" = "HIT DAMAGE JUDGE"
+"banner.time-up" = "TIME UP!"
+"banner.flag-deleted" = "FLAG DELETED"
+"banner.program-advance" = "프로그램 어드밴스"
+"pause" = "PAUSE"
+"waiting" = "커스텀 중…"
+"gauge.custom" = "CUSTOM"
+"gauge.l-or-r" = "L or R"
+"turn-limit" = "FINAL TURN"
+"pictures.ok.title" = "NO DATA\nSELECTED"
+"pictures.ok.words" = "칩이 선택되지\n않았습니다"
+"pictures.ok-picked.title" = "CHIP DATA\nTRANSMISSION"
+"pictures.ok-picked.words" = "칩 데이터를\n전송합니다"
+"pictures.add.title" = "ADD CHIP\nDATA"
+"pictures.add.words" = "칩을 버리고\n다음 턴 선택 수 증가"
+"window.chip-select" = "CHIP SELECT"
+"logo.program-advance" = "프로그램 어드밴스"
+"window.ok" = "OK"
+"window.add" = "ADD"

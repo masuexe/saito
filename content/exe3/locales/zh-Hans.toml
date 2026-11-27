@@ -1,0 +1,189 @@
+# Simplified Chinese localization for EXE3 (洛克人EXE3).
+
+language = "zh-Hans"
+
+[game]
+"name" = "EXE3"
+
+[chips]
+"cannon" = { name = "加农炮", description = "攻击前方1名敌人的\n加农炮" }
+"hicannon" = { name = "高能加农炮", description = "攻击前方1名敌人的\n高能加农炮" }
+"m-cannon" = { name = "百万加农炮", description = "攻击前方1名敌人的\n强力加农炮" }
+"airshot1" = { name = "空气炮1", description = "击中敌人并将其\n击退1格!" }
+"shotgun" = { name = "霰弹枪", description = "命中后会波及\n后方1格!" }
+"v-gun" = { name = "V字枪", description = "命中后会波及\n斜后方2格!" }
+"sidegun" = { name = "侧向枪", description = "命中后会波及\n上下2格!" }
+"spreader" = { name = "扩散枪", description = "命中后会向周围\n1格范围扩散爆炸!" }
+"minibomb" = { name = "迷你炸弹", description = "向前方3格处\n投掷炸弹" }
+"snglbomb" = { name = "单发炸弹", description = "向前方3格处\n投掷炸弹!" }
+"dublbomb" = { name = "双发炸弹", description = "向前方3格处\n投掷2发炸弹!" }
+"trplbomb" = { name = "三发炸弹", description = "向前方3格处\n投掷3发炸弹!" }
+"cannball" = { name = "重型炮弹", description = "向前方3格处\n投掷重型炮弹!" }
+"sword" = { name = "剑", description = "斩击面前1格的\n敌人!" }
+"wideswrd" = { name = "宽剑", description = "斩击面前纵向\n3格的敌人!" }
+"longswrd" = { name = "长剑", description = "斩击面前横向\n2格的敌人!" }
+"fireswrd" = { name = "火焰剑", description = "火焰之刃斩击\n纵向3格!" }
+"aquaswrd" = { name = "水流剑", description = "水流之刃斩击\n纵向3格!" }
+"elecswrd" = { name = "电击剑", description = "电击之刃斩击\n纵向3格!" }
+"bambswrd" = { name = "翠竹剑", description = "木属性之刃斩击\n纵向3格!" }
+"stepswrd" = { name = "踏步斩", description = "向前踏进2格并\n斩击纵向3格!" }
+"panlout1" = { name = "地面破坏1", description = "破坏面前的\n1格地面" }
+"panlout3" = { name = "地面破坏3", description = "破坏面前纵向\n3格地面" }
+"panlgrab" = { name = "地盘夺取", description = "夺取同行敌方\n1格地盘" }
+"areagrab" = { name = "区域夺取", description = "夺取敌方最前\n1列地盘" }
+"geddon1" = { name = "末日裂地1", description = "使全场所有地面\n产生裂纹!" }
+"recov10" = { name = "回复10", description = "回复10点HP" }
+"recov30" = { name = "回复30", description = "回复30点HP" }
+"recov50" = { name = "回复50", description = "回复50点HP" }
+"recov80" = { name = "回复80", description = "回复80点HP" }
+"recov120" = { name = "回复120", description = "回复120点HP" }
+"recov150" = { name = "回复150", description = "回复150点HP" }
+"recov200" = { name = "回复200", description = "回复200点HP" }
+"recov300" = { name = "回复300", description = "回复300点HP" }
+"slogauge" = { name = "减速槽", description = "减慢自定义槽的\n充能速度" }
+"fstgauge" = { name = "加速槽", description = "加快自定义槽的\n充能速度" }
+"invis" = { name = "隐身", description = "短时间内隐身并\n免疫普通攻击" }
+"barrier" = { name = "防护罩", description = "张开可抵挡10点\n伤害的防护罩" }
+"barr100" = { name = "防护罩100", description = "张开可抵挡100点\n伤害的防护罩" }
+"barr200" = { name = "防护罩200", description = "张开可抵挡200点\n伤害的防护罩" }
+"aura" = { name = "梦幻光环", description = "抵挡所有低于\n100点的伤害" }
+"lifeaura" = { name = "生命光环", description = "抵挡所有低于\n200点的伤害" }
+"atk-10" = { name = "攻击+10", description = "使前一张攻击芯片\n威力+10" }
+"atk-30" = { name = "攻击+30", description = "使前一张攻击芯片\n威力+30" }
+"z-canon1" = { name = "Z加农炮1", description = "程序进阶!\n高威力加农炮" }
+"lifeswrd" = { name = "梦幻之剑", description = "斩击前方3×2格\n造成400点伤害!" }
+"invalid" = { name = " ", description = "" }
+"zeroed" = { name = "", description = "" }
+
+[navis]
+"megaman" = { name = "洛克人", run_message = "热斗，现在可不是\n逃跑的时候!" }
+
+[forms]
+"base" = { name = "普通形态" }
+"guts" = { name = "气力形态" }
+"custom" = { name = "自定义形态" }
+"team" = { name = "兄弟形态" }
+"shield" = { name = "护盾形态" }
+"ground" = { name = "大地形态" }
+"shadow" = { name = "暗影形态" }
+"bug" = { name = "漏洞形态" }
+
+[backgrounds]
+"acdc-net" = { name = "秋原区域" }
+"acdc-net-dark" = { name = "秋原区域(暗)" }
+"lan-hp" = { name = "热斗的主页" }
+"school-comp" = { name = "学校电脑" }
+"sci-lab-net" = { name = "科学省区域" }
+"yoka-net" = { name = "余暇区域" }
+"beach-net" = { name = "海滨区域" }
+"zoo-comp" = { name = "动物园电脑" }
+"inn-comp" = { name = "旅馆电脑" }
+"yoka-net-alt" = { name = "余暇区域(变体)" }
+"hospital-comp" = { name = "医院电脑" }
+"n1-grand-prix" = { name = "N1大奖赛" }
+"n1-grand-prix-alt" = { name = "N1大奖赛决赛" }
+"hadess-isle" = { name = "地狱岛" }
+"hadess-isle-alt" = { name = "地狱岛深处" }
+"www-comp" = { name = "WWW电脑" }
+"undernet" = { name = "里网络" }
+"undernet-1" = { name = "里网络1" }
+"undernet-2" = { name = "里网络2" }
+"undernet-3" = { name = "里网络3" }
+"undernet-4" = { name = "里网络4" }
+"alpha-core" = { name = "阿尔法核心" }
+"alpha-final" = { name = "阿尔法最深部" }
+"secret-area" = { name = "秘密区域" }
+"generic-comp" = { name = "电脑空间" }
+"serenade-area" = { name = "小夜曲领域" }
+"yoka-net-2" = { name = "余暇区域2" }
+"yoka-net-3" = { name = "余暇区域3" }
+"yoka-net-4" = { name = "余暇区域4" }
+"alpha-core-fast" = { name = "阿尔法核心(高速)" }
+
+[navicust_programs]
+"sprarmor" = { name = "超级装甲", description = "受到攻击时不会\n产生硬直!" }
+"custom1" = { name = "自定义1", description = "自定义画面可选\n芯片数+1" }
+"custom2" = { name = "自定义2", description = "自定义画面可选\n芯片数+2" }
+"megfldr1" = { name = "百万文件夹1", description = "文件夹可放入的\n百万芯片上限+1" }
+"megfldr2" = { name = "百万文件夹2", description = "文件夹可放入的\n百万芯片上限+2" }
+"gigfldr1" = { name = "十亿文件夹1", description = "文件夹可放入的\n十亿芯片上限+1" }
+"shield" = { name = "护盾", description = "B+左指令展开\n护盾防御攻击" }
+"reflect" = { name = "反射护盾", description = "B+左指令反射\n敌方攻击" }
+"flotshoe" = { name = "漂浮鞋", description = "免疫负面地面\n面板效果" }
+"antidmg" = { name = "替身术", description = "B+左指令闪避并\n投掷手里剑反击" }
+"airshoes" = { name = "空气鞋", description = "可以在破损空洞\n面板上自由移动" }
+"undersht" = { name = "防身内衣", description = "受到致命伤害时\n保留1点HP" }
+"fstgauge" = { name = "快速自定义", description = "开局即进入快速\n自定义槽状态" }
+"bugstop" = { name = "漏洞抑制器", description = "完全消除领航员\n自定义器漏洞" }
+"bustrmax" = { name = "破坏炮全满", description = "破坏炮全属性\n提升至最大!" }
+"hubbatc" = { name = "彩斗批次", description = "彻底解放洛克人\n潜能的危险程序" }
+"rush" = { name = "莱西支援", description = "对战专用!解除\n对手隐身并突袭" }
+"beat" = { name = "比特支援", description = "对战专用!夺走\n对手首张百万/十亿芯片" }
+"tango" = { name = "探戈支援", description = "对战专用!濒危时\n出现回复生命" }
+"hp-100" = { name = "HP+100", description = "最大HP+100" }
+"hp-200" = { name = "HP+200", description = "最大HP+200" }
+"hp-300" = { name = "HP+300", description = "最大HP+300" }
+"hp-500" = { name = "HP+500", description = "最大HP+500" }
+"atk-1" = { name = "攻击+1", description = "破坏炮攻击力+1" }
+"speed-1" = { name = "连射+1", description = "破坏炮连射力+1" }
+"charge-1" = { name = "蓄力+1", description = "破坏炮蓄力+1" }
+"reg-5" = { name = "常规+5", description = "常规芯片容量+5MB" }
+
+[bugs]
+"buster" = "破坏炮空枪漏洞"
+"custom" = "自定义HP漏洞"
+"hp" = "战斗HP漏洞"
+"hub" = "彩斗批次漏洞"
+"move" = "移动漏洞"
+"panel" = "面板漏洞"
+"support" = "支援漏洞"
+
+[builds]
+"versions" = "选择版本。"
+"version.white" = "白版"
+"version.blue" = "黑版"
+
+[rulesets]
+"category.folder" = "芯片"
+"category.navicust_programs" = "领航员自定义"
+"preset.masters" = "大师组"
+"preset.senior" = "高级组"
+"theirs" = "房主规则"
+
+[battle_themes]
+"battle-net" = "普通战斗"
+"battle-boss" = "首领战"
+"netbattle-1" = "网络对战1"
+"netbattle-2" = "网络对战2"
+"netbattle-3" = "网络对战3"
+"netbattle-4" = "网络对战4"
+
+[lettering]
+"banner.battle-start" = "BATTLE START!"
+"banner.round-start" = "BATTLE {n} START!"
+"banner.turn-start" = "TURN {n} START!"
+"banner.final-turn" = "FINAL TURN!"
+"banner.enemy-deleted" = "ENEMY DELETED"
+"banner.megaman-deleted" = "MEGAMAN DELETED"
+"banner.win" = "YOU WIN!"
+"banner.lose" = "YOU LOSE"
+"banner.draw" = "DRAW!"
+"banner.hit-damage" = "HIT DAMAGE JUDGE"
+"banner.time-up" = "TIME UP!"
+"banner.flag-deleted" = "FLAG DELETED"
+"banner.program-advance" = "程序进阶"
+"pause" = "PAUSE"
+"waiting" = "自定义中…"
+"gauge.custom" = "CUSTOM"
+"gauge.l-or-r" = "L or R"
+"turn-limit" = "FINAL TURN"
+"pictures.ok.title" = "NO DATA\nSELECTED"
+"pictures.ok.words" = "尚未选择\n任何芯片"
+"pictures.ok-picked.title" = "CHIP DATA\nTRANSMISSION"
+"pictures.ok-picked.words" = "正在传送\n芯片数据"
+"pictures.add.title" = "ADD CHIP\nDATA"
+"pictures.add.words" = "弃置芯片以增加\n下回合可选张数"
+"window.chip-select" = "CHIP SELECT"
+"logo.program-advance" = "程序进阶"
+"window.ok" = "OK"
+"window.add" = "ADD"

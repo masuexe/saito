@@ -21,6 +21,7 @@ function lettering.hud(set: Set, base: Hud, names: AssetNames): HudLettering
     local cell: { string } = if glyphs and glyphs.glyphs then glyphs.glyphs else {}
     local dialogue: { string } = if glyphs and glyphs.dialogue_glyphs then glyphs.dialogue_glyphs else {}
     local font, font_chars = hud.font(rom, cell, dialogue)
+    local dialogue_font = hud.dialogue_font(rom, cell, dialogue)
     local texts = hud.texts(rom)
     local own_banners = base.banners or {}
     local banners: { [number]: BannerLayout, n: number } = { n = #own_banners }
@@ -33,6 +34,7 @@ function lettering.hud(set: Set, base: Hud, names: AssetNames): HudLettering
     return {
         font = font,
         font_chars = font_chars,
+        dialogue_font = dialogue_font,
         texts = texts,
         banners = banners,
         banner_palette = base.banner_palette,

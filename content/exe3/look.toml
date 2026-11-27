@@ -1,0 +1,22 @@
+# BN3 / EXE3's look in saito: White & Blue Cyberworld palette (deep cobalt cyber-slate with crisp ice-white highlights
+# and warm N1 Grand Prix amber accents over an isometric cyber grid).
+
+ground_top = 0x07182E
+ground_bottom = 0x030B17
+glow = 0x38C6FF
+glow_strength = 0.24
+panel = 0x0B203B
+raised = 0x133258
+line = 0x29689E
+inset = 0x040F1F
+text = 0xEEF8FF
+muted = 0x98C0DF
+dim = 0x5B7D9C
+cursor = 0x66EEFF
+action = 0xFFCC33
+action_ink = 0x1A1200
+
+[pattern]
+kind = "isometric_grid"
+color = 0x5AD2FF
+strength = 0.09

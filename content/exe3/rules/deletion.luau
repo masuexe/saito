@@ -1,0 +1,98 @@
+--!strict
+-- EXE3 player navi deletion action.
+
+local deletion_sprite = asset.sprite("deletion")
+local navi_status = require("@exelib/navi_status")
+
+local deletion = {}
+
+local DELETED = asset.sound("deleted")
+local EXPLOSION = new.effect { sprite = deletion_sprite, anim = 0, palette = 0, steps = 22 }
+
+local START, EXPLODE, WAIT, FADE = 0x0, 0x4, 0x8, 0xC
+
+local function go(me: Object, phase: number)
+    me.phase, me.phase_init = phase, 0
+end
+
+local function start(me: Object)
+    battle.set_alive_count(me.alliance, battle.alive_count(me.alliance) - 1)
+    me.collision:set_region(nil)
+    me.collision.confusion_visual = nil
+    me.collision.blindness_visual = nil
+    me:set_status_timer("submerged", 0)
+    me:set_status("submerged", false)
+    navi_status.reset_charge(me)
+    me.chip = nil
+    me.anim = 2
+    me:unreserve_panel(me.future_panel_x, me.future_panel_y)
+    me.barrier_visual = nil
+    me.collision.barrier = "none"
+    go(me, EXPLODE)
+end
+
+local function explode(me: Object)
+    if battle.dimmed() then
+        return
+    end
+    me.related1 = nil
+    me.prevent_anim = 0
+    me.full_synchro_aura = nil
+    battle.play_sound(DELETED)
+    local pos = me.pos
+    battle.effect(pos, EXPLOSION)
+    battle.effect_after_spawn(pos.z, EXPLOSION)
+    me.timer = 21
+    go(me, WAIT)
+end
+
+local function wait(me: Object)
+    local t = me.timer - 1
+    me.timer = t
+    if t == 0 then
+        go(me, FADE)
+    end
+end
+
+local function fade(me: Object)
+    local t = me.timer + 1
+    me.timer = t
+    local sprite = me.sprite
+    if t ~= 32 then
+        local half = bit32.rshift(t, 1)
+        sprite.mosaic = if half ~= 0 then half else nil
+        sprite.alpha = 16 - half
+        return
+    end
+    sprite.mosaic = nil
+    sprite.alpha = nil
+    local side = me.alliance
+    local carry = battle.damage_carry(side)
+    if carry.target == me then
+        carry.target = nil
+        battle.set_damage_carry(side, carry)
+    end
+    me.visible = false
+    me:set_lifecycle("destroy")
+end
+
+deletion.action = new.action {
+    id = "deletion",
+    update = function(me: Object)
+        me.sprite.white = true
+        local phase = me.phase
+        if phase == START then
+            start(me)
+        elseif phase == EXPLODE then
+            explode(me)
+        elseif phase == WAIT then
+            wait(me)
+        elseif phase == FADE then
+            fade(me)
+        else
+            error(string.format("deletion phase %#x out of range", phase))
+        end
+    end,
+}
+
+return deletion

@@ -1,0 +1,189 @@
+# Japanese (primary content locale for EXE3).
+
+language = "ja"
+
+[game]
+"name" = "EXE3"
+
+[chips]
+"cannon" = { name = "キャノン", description = "前方のてき1たいを\n攻撃できる\nキャノンほう" }
+"hicannon" = { name = "ハイキャノン", description = "前方のてき1たいを\n攻撃できる\nキャノンほう" }
+"m-cannon" = { name = "メガキャノン", description = "前方のてき1たいを\n攻撃できる\nキャノンほう" }
+"airshot1" = { name = "エアシュート1", description = "ヒットしたあいてを\n1マスおくへおす\nくうきほう" }
+"shotgun" = { name = "ショットガン", description = "ヒットすると\nおくの1マスにも\nゆうばくする!" }
+"v-gun" = { name = "ブイガン", description = "ヒットすると\nななめおく2マスに\nゆうばくする!" }
+"sidegun" = { name = "サイドガン", description = "ヒットすると\n上下の2マスに\nゆうばくする!" }
+"spreader" = { name = "スプレッドガン", description = "ヒットすると\nまわりの1マスに\nゆうばく!" }
+"minibomb" = { name = "ミニボム", description = "3マス前におちる\nボムをなげつける" }
+"snglbomb" = { name = "シングルボム", description = "3マス前にボムを\nなげつける!" }
+"dublbomb" = { name = "ダブルボム", description = "3マス前に2発の\nボムをなげつける!" }
+"trplbomb" = { name = "トリプルボム", description = "3マス前に3発の\nボムをなげつける!" }
+"cannball" = { name = "キャノンボール", description = "3マス前にじゅうたい\nキャノンボールを\nなげつける!" }
+"sword" = { name = "ソード", description = "目の前のてきを\nきりつける!\n攻撃はんいは1マス" }
+"wideswrd" = { name = "ワイドソード", description = "目の前のてきを\nきりつける!\nはんいはたて3マス" }
+"longswrd" = { name = "ロングソード", description = "目の前のてきを\nきりつける!\nはんいはよこ2マス" }
+"fireswrd" = { name = "フレイムソード", description = "ほのおのやいばで\nたて3マスを\nきりつける!" }
+"aquaswrd" = { name = "アクアソード", description = "みずのやいばで\nたて3マスを\nきりつける!" }
+"elecswrd" = { name = "エレキソード", description = "でんきのやいばで\nたて3マスを\nきりつける!" }
+"bambswrd" = { name = "バンブーソード", description = "たけのやいばで\nたて3マスを\nきりつける!" }
+"stepswrd" = { name = "フミコミザン", description = "2マス前へふみこみ\nたて3マスを\nきりつける!" }
+"panlout1" = { name = "パネルアウト1", description = "目の前の1マスを\nけしさってしまう" }
+"panlout3" = { name = "パネルアウト3", description = "目の前のたて3マスを\nけしさってしまう" }
+"panlgrab" = { name = "パネルスチール", description = "前方のてきエリアの\n1マスを 自分の\nエリアにぬりかえる" }
+"areagrab" = { name = "エリアスチール", description = "てきエリアの左はし\nたて1れつを自分の\nエリアにぬりかえる" }
+"geddon1" = { name = "デスマッチ1", description = "すべてのパネルに\nヒビをいれる!" }
+"recov10" = { name = "リカバリー10", description = "HPを10\nかいふくする" }
+"recov30" = { name = "リカバリー30", description = "HPを30\nかいふくする" }
+"recov50" = { name = "リカバリー50", description = "HPを50\nかいふくする" }
+"recov80" = { name = "リカバリー80", description = "HPを80\nかいふくする" }
+"recov120" = { name = "リカバリー120", description = "HPを120\nかいふくする" }
+"recov150" = { name = "リカバリー150", description = "HPを150\nかいふくする" }
+"recov200" = { name = "リカバリー200", description = "HPを200\nかいふくする" }
+"recov300" = { name = "リカバリー300", description = "HPを300\nかいふくする" }
+"slogauge" = { name = "ヘビーゲージ", description = "カスタムゲージの\nたまるスピードを\nおそくする" }
+"fstgauge" = { name = "クイックゲージ", description = "カスタムゲージの\nたまるスピードを\nはやくする" }
+"invis" = { name = "インビジブル", description = "しばらくのあいだ\nすがたをけし\n攻撃をうけない" }
+"barrier" = { name = "バリア", description = "HP10のバリアを\nはり ダメージを\nふせぐ" }
+"barr100" = { name = "バリア100", description = "HP100のバリアを\nはり ダメージを\nふせぐ" }
+"barr200" = { name = "バリア200", description = "HP200のバリアを\nはり ダメージを\nふせぐ" }
+"aura" = { name = "ドリームオーラ", description = "100みまんの\n攻撃をふせぐ\nオーラをまとう" }
+"lifeaura" = { name = "ライフオーラ", description = "200みまんの\n攻撃をふせぐ\nオーラをまとう" }
+"atk-10" = { name = "アタック+10", description = "攻撃チップのあとに\nえらぶと 攻撃力を\n+10できる" }
+"atk-30" = { name = "アタック+30", description = "攻撃チップのあとに\nえらぶと 攻撃力を\n+30できる" }
+"z-canon1" = { name = "ゼータキャノン1", description = "しばらくのあいだ\nキャノンをうてる\nPAキャノン!" }
+"lifeswrd" = { name = "ドリームソード", description = "前方のたて3×よこ2\nマスをきりさく\nきょうりょくソード!" }
+"invalid" = { name = " ", description = "" }
+"zeroed" = { name = "", description = "" }
+
+[navis]
+"megaman" = { name = "ロックマン", run_message = "熱斗くん、にげてるばあいじゃ\nないよ!" }
+
+[forms]
+"base" = { name = "ノーマルスタイル" }
+"guts" = { name = "ガッツスタイル" }
+"custom" = { name = "カスタムスタイル" }
+"team" = { name = "ブラザースタイル" }
+"shield" = { name = "シールドスタイル" }
+"ground" = { name = "グランドスタイル" }
+"shadow" = { name = "シャドースタイル" }
+"bug" = { name = "バグスタイル" }
+
+[backgrounds]
+"acdc-net" = { name = "秋原エリア" }
+"acdc-net-dark" = { name = "秋原エリア(暗)" }
+"lan-hp" = { name = "熱斗のHP" }
+"school-comp" = { name = "学校の電脳" }
+"sci-lab-net" = { name = "科学省エリア" }
+"yoka-net" = { name = "よかよかエリア" }
+"beach-net" = { name = "ビーチエリア" }
+"zoo-comp" = { name = "どうぶつえんの電脳" }
+"inn-comp" = { name = "りょかんの電脳" }
+"yoka-net-alt" = { name = "よかよかエリア(別)" }
+"hospital-comp" = { name = "びょういんの電脳" }
+"n1-grand-prix" = { name = "N1グランプリ" }
+"n1-grand-prix-alt" = { name = "N1グランプリ(決勝)" }
+"hadess-isle" = { name = "じごくじま" }
+"hadess-isle-alt" = { name = "じごくじま(深部)" }
+"www-comp" = { name = "WWWの電脳" }
+"undernet" = { name = "ウラインターネット" }
+"undernet-1" = { name = "ウラインターネット1" }
+"undernet-2" = { name = "ウラインターネット2" }
+"undernet-3" = { name = "ウラインターネット3" }
+"undernet-4" = { name = "ウラインターネット4" }
+"alpha-core" = { name = "プロトの電脳" }
+"alpha-final" = { name = "プロト最深部" }
+"secret-area" = { name = "シークレットエリア" }
+"generic-comp" = { name = "電脳空間" }
+"serenade-area" = { name = "セレナーデの領域" }
+"yoka-net-2" = { name = "よかよかエリア2" }
+"yoka-net-3" = { name = "よかよかエリア3" }
+"yoka-net-4" = { name = "よかよかエリア4" }
+"alpha-core-fast" = { name = "プロトの電脳(高速)" }
+
+[navicust_programs]
+"sprarmor" = { name = "スーパーアーマー", description = "攻撃をくらっても\nのけぞらなくなる!" }
+"custom1" = { name = "カスタム1", description = "カスタム画面で\nさいしょにえらべる\nチップ枚数が+1" }
+"custom2" = { name = "カスタム2", description = "カスタム画面で\nさいしょにえらべる\nチップ枚数が+2" }
+"megfldr1" = { name = "メガフォルダ1", description = "フォルダに入れられる\nメガクラスチップの\n枚数が+1" }
+"megfldr2" = { name = "メガフォルダ2", description = "フォルダに入れられる\nメガクラスチップの\n枚数が+2" }
+"gigfldr1" = { name = "ギガフォルダ1", description = "フォルダに入れられる\nギガクラスチップの\n枚数が+1" }
+"shield" = { name = "シールド", description = "Ⓑ+左のコマンドで\nほとんどの攻撃を\nふせぐシールド!" }
+"reflect" = { name = "リフレクト", description = "Ⓑ+左のコマンドで\n攻撃をはねかえす\nリフレクト!" }
+"flotshoe" = { name = "フロートシューズ", description = "地面からすこしういて\nいるのでパネルの\nえいきょうをうけない" }
+"antidmg" = { name = "カワリミマジック", description = "Ⓑ+左のコマンドで\n攻撃をうけたふりして\nしゅりけんをなげる!" }
+"airshoes" = { name = "エアシューズ", description = "パネルのないマスでも\nいどうできる!" }
+"undersht" = { name = "アンダーシャツ", description = "ちしりょうのダメージ\nをうけてもHP1で\nとりあえずたえる!" }
+"fstgauge" = { name = "クイックゲージ", description = "バトルかいしから\nカスタムゲージが\nはやくなる!" }
+"bugstop" = { name = "バグストッパー", description = "バグの発生をおさえる\nとくしゅなプログラム" }
+"bustrmax" = { name = "バスターMAX", description = "バスターのすべての\nのうりょくがMAXに!" }
+"hubbatc" = { name = "サイトバッチ", description = "せんざいのうりょくを\n100%ひきだす\nキケンなプログラム" }
+"rush" = { name = "ラッシュサポート", description = "たいせんせんよう!\nきえたあいてのニオイ\nをかぎつけとびかかる" }
+"beat" = { name = "ビートサポート", description = "たいせんせんよう!\nメガクラスいじょうの\nチップをうばいさる" }
+"tango" = { name = "タンゴサポート", description = "たいせんせんよう!\nひんしになったときに\nてあてをしてくれる!" }
+"hp-100" = { name = "HP+100", description = "マックスHPが\n100ふえる!" }
+"hp-200" = { name = "HP+200", description = "マックスHPが\n200ふえる!" }
+"hp-300" = { name = "HP+300", description = "マックスHPが\n300ふえる!" }
+"hp-500" = { name = "HP+500", description = "マックスHPが\n500ふえる!" }
+"atk-1" = { name = "アタック+1", description = "ロックバスターの\n攻撃力が1アップ!" }
+"speed-1" = { name = "ラピッド+1", description = "ロックバスターの\n連射力が1アップ!" }
+"charge-1" = { name = "チャージ+1", description = "ロックバスターの\nチャージ力が\n1アップ!" }
+"reg-5" = { name = "レギュラー+5", description = "レギュラーメモリが\n5MBふえる!" }
+
+[bugs]
+"buster" = "バスターからうち"
+"custom" = "カスタムHPバグ"
+"hp" = "バトルHPバグ"
+"hub" = "サイトバッチバグ"
+"move" = "いどうバグ"
+"panel" = "パネルバグ"
+"support" = "サポートバグ"
+
+[builds]
+"versions" = "バージョンを選択します。"
+"version.white" = "ホワイト"
+"version.blue" = "ブラック"
+
+[rulesets]
+"category.folder" = "チップ"
+"category.navicust_programs" = "ナビカス"
+"preset.masters" = "マスタークラス"
+"preset.senior" = "シニアクラス"
+"theirs" = "ホストのルール"
+
+[battle_themes]
+"battle-net" = "シューティングエネミー"
+"battle-boss" = "ボスバトル"
+"netbattle-1" = "ネットバトル1"
+"netbattle-2" = "ネットバトル2"
+"netbattle-3" = "ネットバトル3"
+"netbattle-4" = "ネットバトル4"
+
+[lettering]
+"banner.battle-start" = "BATTLE START!"
+"banner.round-start" = "BATTLE {n} START!"
+"banner.turn-start" = "TURN {n} START!"
+"banner.final-turn" = "FINAL TURN!"
+"banner.enemy-deleted" = "ENEMY DELETED"
+"banner.megaman-deleted" = "ROCKMAN DELETED"
+"banner.win" = "YOU WIN!"
+"banner.lose" = "YOU LOSE"
+"banner.draw" = "DRAW!"
+"banner.hit-damage" = "HIT DAMAGE JUDGE"
+"banner.time-up" = "TIME UP!"
+"banner.flag-deleted" = "FLAG DELETED"
+"banner.program-advance" = "プログラムアドバンス"
+"pause" = "PAUSE"
+"waiting" = "カスタム中…"
+"gauge.custom" = "CUSTOM"
+"gauge.l-or-r" = "L or R"
+"turn-limit" = "FINAL TURN"
+"pictures.ok.title" = "NO DATA\nSELECTED"
+"pictures.ok.words" = "チップが\nえらばれて\nいません"
+"pictures.ok-picked.title" = "CHIP DATA\nTRANSMISSION"
+"pictures.ok-picked.words" = "チップデータを\n送信します"
+"pictures.add.title" = "ADD CHIP\nDATA"
+"pictures.add.words" = "チップをすてて\nつぎのターンの\nまいすうをふやす"
+"window.chip-select" = "CHIP SELECT"
+"logo.program-advance" = "プログラムアドバンス"
+"window.ok" = "OK"
+"window.add" = "ADD"
