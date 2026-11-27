@@ -5724,7 +5724,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "saito"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "block2 0.6.2",
  "cc",
@@ -5884,7 +5884,7 @@ dependencies = [
 
 [[package]]
 name = "saito-extract"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "m4a",
@@ -5920,7 +5920,7 @@ dependencies = [
 
 [[package]]
 name = "saito-frontend"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "m4a",
@@ -6076,7 +6076,7 @@ dependencies = [
 
 [[package]]
 name = "saito-sim-abi"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6084,7 +6084,7 @@ dependencies = [
 
 [[package]]
 name = "saito-sim-guest"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "saito-battle",
  "saito-content",
@@ -6099,7 +6099,7 @@ dependencies = [
 
 [[package]]
 name = "saito-sim-host"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "flate2",
  "saito-battle",
