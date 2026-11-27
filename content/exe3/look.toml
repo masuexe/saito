@@ -1,0 +1,22 @@
+# BN3 / EXE3's look in saito: Rockman EXE 3 Black obsidian palette (deep matte black surfaces with crisp silver-chrome
+# borders and warm amber accents over a subtle isometric grid).
+
+ground_top = 0x16161A
+ground_bottom = 0x050507
+glow = 0xD8DDE6
+glow_strength = 0.14
+panel = 0x111114
+raised = 0x1B1B20
+line = 0x454752
+inset = 0x08080A
+text = 0xF4F5F7
+muted = 0xA6AAB6
+dim = 0x666A75
+cursor = 0xE6EAF2
+action = 0xFFCC33
+action_ink = 0x141000
+
+[pattern]
+kind = "isometric_grid"
+color = 0xC8CDD8
+strength = 0.06

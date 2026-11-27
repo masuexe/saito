@@ -550,7 +550,12 @@ fn aura_bonus(b: &Battle, r: ObjectRef, chip: Option<ChipHandle>) -> u16 {
         return 0;
     }
     let c = super::coll(b, r);
-    let up = (1..0x10).contains(&c.barrier) && (c.barrier != 8 || c.barrier_hp != 0);
+    let up = if c.barrier == 0 {
+        false
+    } else {
+        let spec = b.game_rules().intake.barrier.rule_for(c.barrier);
+        !spec.popped && (!spec.bubble || c.barrier_hp != 0)
+    };
     if up { 50 } else { 0 }
 }
 

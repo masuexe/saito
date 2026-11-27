@@ -353,9 +353,13 @@ declare extern type Collision with
     secondary_element: number
     -- The status its hits carry (rules/status), if any.
     status_base: Status?
+    -- Optional second simultaneous status its hits carry (Gen-1 dual status slot).
+    status_base2: Status?
     -- The status it takes this window (its hits', a counter's, or one the
     -- rules put in their place: the NaviCust's hit bug), if any.
     status_final: Status?
+    -- Optional second simultaneous status it takes this window.
+    status_final2: Status?
     -- Bug code (low byte) and argument (high byte).
     bugs: number
     -- The bug code and argument the last resolution's hits brought (CollisionData+0x9C, +0x9D), which the navi takes.
@@ -1066,6 +1070,7 @@ export type HitboxSpec = {
     stamina: number?,
     hit_mod: number?,
     status: Status?,
+    status2: Status?,
     bug: number?,
     bug_arg: number?,
 }
@@ -1139,7 +1144,10 @@ export type BarrierBehavior = "plain" | "bubble" | "regenerating" | "regrowing"
 -- reach to wear it, its timer (0xFFFF: none) and the element that breaks
 -- it (an element byte; 0: none).
 export type BarrierSpec = {
-    behavior: BarrierBehavior,
+    -- Optional explicit barrier type ID (used with data-driven `status.intake.barrier.types`).
+    -- When omitted, `behavior` maps to the classic barrier IDs (plain=1, bubble=8, regenerating=0xA, regrowing=4).
+    id: number?,
+    behavior: BarrierBehavior?,
     hp: number,
     threshold: number,
     timer: number,
@@ -3339,6 +3347,13 @@ declare custom: {
     refuse: (side: number) -> (),
     sacrifice: (side: number) -> (),
     redeal: (side: number) -> (),
+    -- Enter/exit ADD mode (free-picking up to 5 chips to discard for persistent
+    -- round hand-size expansion, closing with an empty turn hand).
+    start_add: (side: number) -> (),
+    cancel_add: (side: number) -> (),
+    is_adding: (side: number) -> boolean,
+    add_bonus: (side: number) -> number,
+    set_add_bonus: (side: number, bonus: number) -> (),
     last_pick_is_chip: (side: number) -> boolean,
     cursor_state: (side: number) -> "selectable" | "unavailable" | "selected",
     -- For the rules' buttons and windows: the button pressed picked (in its

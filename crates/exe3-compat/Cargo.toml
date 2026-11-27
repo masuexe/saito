@@ -1,0 +1,24 @@
+[package]
+name = "exe3-compat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The original games' numbers for EXE3's content (content/exe3/compat), and what reads them: codecs of EXE3's records (NaviStats, hand block, link record), Style packing, EXE3 save file parsing/import (White and Blue/Black, US and JP), and mGBA differential trace replay. The engine never depends on it."
+
+[dependencies]
+saito-files = { path = "../saito-files" }
+saito-battle.workspace = true
+saito-content-api = { path = "../saito-content-api" }
+saito-match = { path = "../saito-match" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[dev-dependencies]
+exe3-compat = { path = ".", features = ["builtin"] }
+saito-match = { path = "../saito-match", features = ["testing"] }
+
+[features]
+# This repository's content/exe3/compat compiled in (`Compat::exe3`), for tools and tests: the app reads the compat of
+# the content it plays at run time (`Compat::of_content`), and builds without content/.
+builtin = []

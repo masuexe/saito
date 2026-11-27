@@ -35,6 +35,17 @@ const TEXT_WIDTH: usize = 192;
 const TEXT_ROWS: usize = 40;
 const LINE_ROWS: usize = 14;
 const TEXT_SPRITES: [(usize, usize); 3] = [(0, 16), (16, 16), (32, 8)];
+
+/// Line-buffer height, line pitch and sprite rows for `font`: 48px / 16px pitch
+/// (three 32x16 rows) for 8x16 tiled dialogue fonts (EXE3), and the original
+/// 40px / 14px pitch (32x16, 32x16, 32x8) for 16x12 fonts (EXE4–6).
+fn text_metrics(font: &saito_assets::DialogueFont) -> (usize, usize, [(usize, usize); 3]) {
+    if font.glyph_size().1 > saito_assets::DialogueFont::HEIGHT {
+        (48, 16, [(0, 16), (16, 16), (32, 16)])
+    } else {
+        (TEXT_ROWS, LINE_ROWS, TEXT_SPRITES)
+    }
+}
 /// The rows past the line buffer the text layer may draw a third line's
 /// descenders in (a font's go lower than the dialogue font's, which the
 /// buffer's 40 rows hold; the box's frame is further down).
@@ -134,8 +145,9 @@ pub fn prepare<'a>(
         Some(l) => crate::lookups::dialogue(&assets.hud.dialogue_font, l, string, problems),
         None => Vec::new(),
     };
+    let (text_rows, _, _) = text_metrics(&assets.hud.dialogue_font);
     let (text, lines) = if sink.takes(string, Role::Dialogue) {
-        (Tiles { pixels: vec![0; TEXT_WIDTH * TEXT_ROWS] }, Some(printed(&chatbox, string, translated)))
+        (Tiles { pixels: vec![0; TEXT_WIDTH * text_rows] }, Some(printed(&chatbox, string, translated)))
     } else {
         (text_tiles(assets, &chatbox, &glyphs, translated), None)
     };
@@ -213,15 +225,16 @@ pub fn shown(chatbox: &Chatbox, units: &[usize], translated: bool) -> Vec<usize>
 /// by row).
 fn text_tiles(assets: &Bundle, chatbox: &Chatbox, lines: &[Vec<u16>], translated: bool) -> Tiles {
     let font = &assets.hud.dialogue_font;
-    let mut image = vec![0u8; TEXT_WIDTH * TEXT_ROWS];
+    let (text_rows, line_rows, sprites) = text_metrics(font);
+    let mut image = vec![0u8; TEXT_WIDTH * text_rows];
     if chatbox.look().text.is_some() {
         let units: Vec<usize> = lines.iter().map(Vec::len).collect();
         for (k, (glyphs, n)) in lines.iter().zip(shown(chatbox, &units, translated)).enumerate() {
-            fonts::dialogue_text(font, &glyphs[..n], &mut image, TEXT_WIDTH, LINE_ROWS * k);
+            fonts::dialogue_text(font, &glyphs[..n], &mut image, TEXT_WIDTH, line_rows * k);
         }
     }
-    let mut tiles = Tiles { pixels: Vec::with_capacity(TEXT_WIDTH * TEXT_ROWS) };
-    for (top, height) in TEXT_SPRITES {
+    let mut tiles = Tiles { pixels: Vec::with_capacity(TEXT_WIDTH * text_rows) };
+    for (top, height) in sprites {
         for column in 0..TEXT_WIDTH / 32 {
             for ty in 0..height / 8 {
                 for tx in 0..4 {
@@ -258,9 +271,10 @@ pub fn draw<'a>(shown: &'a Shown<'a>, assets: &'a Bundle, names_layer: &mut Laye
     // chatbox_804021C: the text, when the box is open; the line buffer's
     // last row of sprites first.
     if c.shows_contents() {
+        let (_, _, sprites) = text_metrics(&assets.hud.dialogue_font);
         let mut first = 0;
         let mut rows: Vec<Vec<SpritePart<'a>>> = Vec::new();
-        for (top, height) in TEXT_SPRITES {
+        for (top, height) in sprites {
             let mut row = Vec::new();
             for column in 0..TEXT_WIDTH / 32 {
                 let at = (text_x + 32 * column as i32, text_y + top as i32);

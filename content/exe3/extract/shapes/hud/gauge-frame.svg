@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1152" height="128" viewBox="0 0 144 16">
+<!-- EXE3 custom gauge frame (word stripped, fill cells overlaid in middle): slate top bar and rounded end caps with dark outer edge and glowing indicator lamps. -->
+<!-- Outer dark outline at rounded end caps -->
+<path d="M1 7 H143 L144 8 V14 L143 15 H1 L0 14 V8 Z" fill="#282828" data-color="2"/>
+<!-- Slate bezel along top, caps, and bottom corners -->
+<path d="M6 6 H138 L138 7 H142 L143 8 V14 L142 15 H138 V16 H6 V15 H2 L1 14 V8 L2 7 H6 Z" fill="#486078" data-color="12"/>
+<!-- Inner dark frame across gauge slot -->
+<rect x="7" y="7" width="130" height="8" fill="#282828" data-color="2"/>
+<!-- Left cap inner recess and vertical lamp -->
+<rect x="2" y="8" width="3" height="6" fill="#282828" data-color="2"/>
+<rect x="3" y="9" width="2" height="4" fill="#6070c0" data-color="8"/>
+<rect x="3" y="10" width="2" height="2" fill="#7898d8" data-color="7"/>
+<!-- Right cap inner recess and vertical lamp -->
+<rect x="139" y="8" width="3" height="6" fill="#282828" data-color="2"/>
+<rect x="139" y="9" width="2" height="4" fill="#6070c0" data-color="8"/>
+<rect x="139" y="10" width="2" height="2" fill="#7898d8" data-color="7"/>
+</svg>

@@ -1051,10 +1051,11 @@ fn button_letters(name: &str, b: &saito_assets::ButtonPictures, say: &mut dyn Fn
 /// soul and Arm Change, each under half; the panels are four fifths and
 /// more).
 pub fn help_letters(p: &saito_assets::Picture) -> Option<HelpLetters> {
-    if p.tiles.len() < CustomScreen::PICTURE_TILES {
+    let (cols, rows) = p.tile_dims();
+    if p.tiles.len() < cols * rows {
         return None;
     }
-    let picture = Picture::grid(&p.tiles, 0, CustomScreen::PICTURE_COLUMNS, CustomScreen::PICTURE_TILES / CustomScreen::PICTURE_COLUMNS);
+    let picture = Picture::grid(&p.tiles, 0, cols, rows);
     let palette = p.palette;
     let color = |v: u8| palette[v as usize & 15] & 0x7FFF;
     let frame = color(picture.at(0, 0)?);
@@ -1681,7 +1682,7 @@ pub fn custom_layered(c: &CustomScreen) -> (BTreeMap<String, LayeredPicture>, Ve
         let palette = p.4;
         Variant { file: p.1.clone(), tiles: p.2, blank: &p.3, color: Box::new(move |_, v| palette[v as usize & 15]) }
     }
-    let (layered, panel_notes) = shared_panel(&pictures.iter().filter(|p| p.5).map(variant).collect::<Vec<_>>(), CustomScreen::PICTURE_COLUMNS);
+    let (layered, panel_notes) = shared_panel(&pictures.iter().filter(|p| p.5).map(variant).collect::<Vec<_>>(), c.picture_columns());
     out.extend(layered);
     let mut others: Vec<&str> = Vec::new();
     for p in pictures.iter().filter(|p| !p.5) {

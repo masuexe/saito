@@ -148,6 +148,7 @@ fn absorb_hit(c: &mut CollisionData) {
     c.hit_mod_by_side = [0; 2];
     c.push_sides = 0;
     c.status_final = None;
+    c.status_final2 = None;
     c.acc.inflicted_bugs = 0;
 }
 
@@ -166,7 +167,7 @@ fn set_barrier_hp16(c: &mut CollisionData, v: u16) {
 /// `sub_801A802`: barriers and auras absorb this tick's hits (fed by the
 /// raw channel), wear down, time out and regrow (§4.2).
 fn barrier(b: &mut Battle, r: ObjectRef) {
-    let rule = b.game_rules().intake.barrier;
+    let rule = b.game_rules().intake.barrier.clone();
     if b.paused && rule.stops_while_paused {
         return;
     }
@@ -179,60 +180,33 @@ fn barrier(b: &mut Battle, r: ObjectRef) {
         if c.barrier != 0 { b.game_rules().panels.rule(panel_kind(b, c.panel)).damage_shift as u32 } else { 0 }
     };
     let c = coll_mut(b, r);
-    let mut barrier = c.barrier;
+    let barrier = c.barrier;
     if barrier == 0 {
         return;
     }
-    let regrowing = matches!(barrier, 4 | 8 | 0xA) && barrier_hp16(c) == 0;
-    match rule.wind {
-        crate::content::BarrierWind::Pops if !regrowing && (c.acc.raw_elements & 0x20 != 0 || c.acc.raw_hit_flags & 0xA20 != 0) => {
-            // Popped (wind): absorbs everything until its visual clears it.
-            barrier = 0x10;
-            c.barrier = 0x10;
-            set_barrier_hp16(c, 0);
-            c.barrier_saved_hmf = c.hit_mod_final;
+    let mut spec = rule.rule_for(barrier);
+    let regrowing = spec.regrow && barrier_hp16(c) == 0;
+    if spec.wind_pops && !regrowing {
+        match rule.wind {
+            crate::content::BarrierWind::Pops if c.acc.raw_elements & 0x20 != 0 || c.acc.raw_hit_flags & 0xA20 != 0 => {
+                // Popped (wind): absorbs everything until its visual clears it.
+                let popped_id = rule.popped_id();
+                c.barrier = popped_id;
+                spec = rule.rule_for(popped_id);
+                set_barrier_hp16(c, 0);
+                c.barrier_saved_hmf = c.hit_mod_final;
+            }
+            crate::content::BarrierWind::TakesAway if c.acc.raw_hit_flags & 0x20 != 0 => {
+                // Gone at once (EXE4's 0x08012E1E); the rest of the tick goes on
+                // by the type it had.
+                c.barrier = 0;
+                set_barrier_hp16(c, 0);
+            }
+            _ => {}
         }
-        crate::content::BarrierWind::TakesAway if !regrowing && c.acc.raw_hit_flags & 0x20 != 0 => {
-            // Gone at once (EXE4's 0x08012E1E); the rest of the tick goes on
-            // by the type it had.
-            c.barrier = 0;
-            set_barrier_hp16(c, 0);
-        }
-        _ => {}
     }
-    match barrier {
-        // The rules' regrowing barrier (EXE4's type 4, 0x08012E44): no time
-        // out; worn down, back whole after the rules' ticks (not while
-        // dimmed), letting hits through meanwhile.
-        4 => {
-            if barrier_hp16(c) == 0 {
-                if dimmed {
-                    return;
-                }
-                let Some(regrowth) = rule.regrowing else {
-                    panic!("content error: a regrowing barrier, and the rules' barrier tick has no `regrowing`")
-                };
-                c.barrier_timer = c.barrier_timer.wrapping_add(1);
-                if c.barrier_timer >= regrowth.after {
-                    set_barrier_hp16(c, regrowth.hp as u16);
-                }
-                return;
-            }
-        }
-        8 => {
-            if barrier_hp16(c) == 0 {
-                // Regrows after 240 ticks (not while dimmed, frozen or bubbled).
-                if dimmed || matches!(action, super::NaviAction::Freeze | super::NaviAction::Bubble) {
-                    return;
-                }
-                c.barrier_timer = c.barrier_timer.wrapping_add(1);
-                if c.barrier_timer >= 0xF0 {
-                    set_barrier_hp16(c, 1);
-                }
-                return;
-            }
-        }
-        0xA => {
+    if spec.regrow {
+        if spec.regen_interval != 0 {
             let hp = barrier_hp16(c);
             if hp == 0 {
                 if dimmed {
@@ -240,16 +214,16 @@ fn barrier(b: &mut Battle, r: ObjectRef) {
                 }
                 let t = ((c.barrier_timer >> 8) as u8).wrapping_add(1);
                 c.barrier_timer = (c.barrier_timer & 0xFF) | (t as u16) << 8;
-                if t >= 0x78 {
-                    set_barrier_hp16(c, 0xC8);
+                if t as u16 >= spec.regrow_ticks {
+                    set_barrier_hp16(c, spec.regrow_hp);
                 }
                 return;
             }
-            // Regenerates 1 HP every 6 ticks up to 200. At full HP the low
+            // Regenerates 1 HP every `regen_interval` ticks up to `regrow_hp`. At full HP the low
             // timer byte gets a stale register (the raw hit flags).
-            let t = if hp < 0xC8 {
+            let t = if hp < spec.regrow_hp {
                 let t = (c.barrier_timer as u8).wrapping_add(1);
-                if t >= 6 {
+                if t >= spec.regen_interval {
                     set_barrier_hp16(c, hp + 1);
                     0
                 } else {
@@ -259,20 +233,30 @@ fn barrier(b: &mut Battle, r: ObjectRef) {
                 c.acc.raw_hit_flags as u8
             };
             c.barrier_timer = (c.barrier_timer & 0xFF00) | t as u16;
-        }
-        // A popped barrier times out even while dimmed.
-        _ if (c.barrier == 0x10 || !dimmed) && c.barrier_timer != 0xFFFF => {
-            let t = c.barrier_timer as i32 - 1;
-            c.barrier_timer = t as u16;
-            if t <= 0 {
-                c.barrier = 0;
+        } else if barrier_hp16(c) == 0 {
+            if dimmed || (spec.regrow_blocked_by_status && matches!(action, super::NaviAction::Freeze | super::NaviAction::Bubble)) {
+                return;
             }
+            if rule.types.is_empty() && spec.id == 4 && rule.regrowing.is_none() {
+                panic!("content error: a regrowing barrier, and the rules' barrier tick has no `regrowing`");
+            }
+            c.barrier_timer = c.barrier_timer.wrapping_add(1);
+            if c.barrier_timer >= spec.regrow_ticks {
+                set_barrier_hp16(c, spec.regrow_hp);
+            }
+            return;
         }
-        _ => {}
+    } else if (spec.popped || !dimmed) && c.barrier_timer != 0xFFFF {
+        // A popped barrier times out even while dimmed.
+        let t = c.barrier_timer as i32 - 1;
+        c.barrier_timer = t as u16;
+        if t <= 0 {
+            c.barrier = 0;
+        }
     }
-    // Elec breaks a type-8 barrier (and its damage counts double); the
-    // weak element passes through.
-    let breaks = if barrier == 8 && c.acc.raw_element_damage[3] != 0 {
+    // Elec breaks a barrier with `elec_pops` (and its damage counts double);
+    // the weak element passes through.
+    let breaks = if spec.elec_pops && c.acc.raw_element_damage[3] != 0 {
         c.acc.element_damage[3] = c.acc.element_damage[3].wrapping_add(c.acc.elec_damage);
         true
     } else {
@@ -287,11 +271,11 @@ fn barrier(b: &mut Battle, r: ObjectRef) {
     }
     let mut sum: u32 = c.acc.raw_element_damage[..5].iter().map(|&d| d as u32).sum();
     sum = (sum + (1 << shift) - 1) >> shift;
-    if sum >= c.barrier_threshold as u32 {
+    if !spec.threshold_aura || sum >= c.barrier_threshold as u32 {
         let left = c.barrier_hp as i32 - sum as i32;
         c.barrier_hp = left as u8;
         if left <= 0 {
-            if !matches!(barrier, 4 | 8 | 0xA) && c.barrier != 0x10 {
+            if !spec.regrow && !spec.popped {
                 c.barrier = 0;
             }
             c.barrier_timer = 0;
@@ -554,11 +538,33 @@ pub fn take_navi_bug(b: &mut Battle, side: u8, bugs: u16) {
 /// none but the push's is set in it.)
 fn hit_modifier_requests(b: &mut Battle, r: ObjectRef) {
     let hm = coll(b, r).hit_mod_final;
-    if flag1(b, r) & (f1::SUPERARMOR | f1::ANGER) == 0 && hm & 1 != 0 {
-        set_flag2(b, r, 0x4);
-    }
-    if hm & 2 != 0 {
-        set_flag2(b, r, 0x2);
+    let read_pushes = match b.game_rules().hit_modifier.clone() {
+        crate::content::HitModifierMode::Bitfield => {
+            if flag1(b, r) & (f1::SUPERARMOR | f1::ANGER) == 0 && hm & 1 != 0 {
+                set_flag2(b, r, 0x4);
+            }
+            if hm & 2 != 0 {
+                set_flag2(b, r, 0x2);
+            }
+            true
+        }
+        crate::content::HitModifierMode::MaxIndexTable { table, read_pushes } => {
+            if let Some(&entry) = table.get(hm as usize) {
+                if entry.flinch && (entry.ignores_super_armor || flag1(b, r) & (f1::SUPERARMOR | f1::ANGER) == 0) {
+                    set_flag2(b, r, 0x4);
+                }
+                if entry.flash {
+                    set_flag2(b, r, 0x2);
+                }
+                if entry.requests != 0 {
+                    set_flag2(b, r, entry.requests);
+                }
+            }
+            read_pushes
+        }
+    };
+    if !read_pushes {
+        return;
     }
     let reading = &b.game_rules().push_reading;
     if hm & reading.mask() == 0 {
@@ -577,11 +583,19 @@ fn hit_modifier_requests(b: &mut Battle, r: ObjectRef) {
 /// `sub_800EB26`: a counter hit paralyzes (150 ticks) instead of flinching
 /// or flashing, unless a bubble status landed.
 fn counter_paralysis(b: &mut Battle, r: ObjectRef) {
-    let c = coll(b, r);
-    if c.acc.hit_flags & 0x40 == 0 || c.status_final.is_some_and(|s| b.content.status(s).survives_counter) {
+    if !b.game_rules().counter_hits {
         return;
     }
-    coll_mut(b, r).status_final = Some(b.roles().status(StatusRole::CounterParalysis));
+    let c = coll(b, r);
+    let survives = c.status_final.is_some_and(|s| b.content.status(s).survives_counter)
+        || c.status_final2.is_some_and(|s| b.content.status(s).survives_counter);
+    if c.acc.hit_flags & 0x40 == 0 || survives {
+        return;
+    }
+    let status = b.roles().status(StatusRole::CounterParalysis);
+    let cm = coll_mut(b, r);
+    cm.status_final = Some(status);
+    cm.status_final2 = None;
     set_flag2(b, r, 0x4000);
     clear_flag2(b, r, 0x6);
 }
@@ -598,10 +612,17 @@ fn navicust_hit_bug(b: &mut Battle, r: ObjectRef) {
     b.rules_navi_flinched(side, r);
 }
 
-/// `sub_801A554`: apply the status the hit carried: set its timer and
-/// raise its request (§4.8).
+/// `sub_801A554`: apply the status(es) the hit carried: set their timers and
+/// raise their requests (§4.8).
 fn apply_status(b: &mut Battle, r: ObjectRef) {
-    if let Some(s) = coll(b, r).status_final {
+    let (s1, s2) = {
+        let c = coll(b, r);
+        (c.status_final, c.status_final2)
+    };
+    if let Some(s) = s1 {
+        take_status(b, r, s);
+    }
+    if let Some(s) = s2 {
         take_status(b, r, s);
     }
 }
@@ -733,7 +754,7 @@ fn tick_counter_window(b: &mut Battle, r: ObjectRef) {
 
 /// `sub_80143FC`: count the ticks spent flinching or paralyzed.
 fn count_stun_ticks(b: &mut Battle, r: ObjectRef) {
-    if b.is_dimmed() || b.paused {
+    if !b.game_rules().emotion.enabled || b.is_dimmed() || b.paused {
         return;
     }
     let stunned = flag1(b, r) & (f1::FLINCHING | f1::PARALYZED) != 0;
@@ -745,7 +766,12 @@ fn count_stun_ticks(b: &mut Battle, r: ObjectRef) {
 /// (`emotion.anger_damage`: EXE6's and EXE5's 300; EXE4's 0x0800C540 none),
 /// a tick's hits of that much damage (base MegaMan only).
 fn anger_trigger(b: &mut Battle, r: ObjectRef) {
-    if battle_mode(b) == 1 || !super::is_megaman(b, r) || !super::in_base_form(b, r) || flag1(b, r) & f1::ANGER != 0 {
+    if !b.game_rules().emotion.enabled
+        || battle_mode(b) == 1
+        || !super::is_megaman(b, r)
+        || !super::in_base_form(b, r)
+        || flag1(b, r) & f1::ANGER != 0
+    {
         return;
     }
     let damage = b.game_rules().emotion.anger_damage;
@@ -993,5 +1019,170 @@ mod tests {
         assert_eq!(hit(None, 3), (3, 3, request::BUSTER), "no chip at the cursor: it stays");
         let hand = Some(ChipDestruction::Hand);
         assert_eq!(hit(hand, 1), (0, 0, request::BUSTER), "the hand, the cursor back at its first chip");
+    }
+
+    #[test]
+    fn max_index_table_decodes_flinch_flash_and_skips_bitfield_pushes() {
+        use crate::content::{HitModifierEntry, HitModifierMode, SlideVector};
+        let table = vec![
+            HitModifierEntry::default(),
+            HitModifierEntry { flinch: true, flash: true, ignores_super_armor: false, requests: 0 },
+            HitModifierEntry { flinch: true, flash: true, ignores_super_armor: true, requests: 0 },
+            HitModifierEntry { flinch: false, flash: false, ignores_super_armor: false, requests: 0x100 },
+        ];
+        let run = |hm: u8, super_armor: bool| {
+            let (mut b, r) = fight_with(|rules| {
+                rules.hit_modifier = HitModifierMode::MaxIndexTable { table: table.clone(), read_pushes: false };
+            });
+            if super_armor {
+                super::super::set_flag1(&mut b, r, f1::SUPERARMOR);
+            }
+            coll_mut(&mut b, r).hit_mod_final = hm;
+            hit_modifier_requests(&mut b, r);
+            let f2 = flag2(&b, r);
+            b.objects.get_mut(r).slide_type = 1;
+            let slide = super::super::reactions::slide_vector(&b, r);
+            (f2 & 0x4 != 0, f2 & 0x2 != 0, f2 & 0x100 != 0, slide)
+        };
+        assert_eq!(run(0, false), (false, false, false, SlideVector::NONE));
+        assert_eq!(run(1, false), (true, true, false, SlideVector::NONE));
+        assert_eq!(run(1, true), (false, true, false, SlideVector::NONE), "entry 1 respects SuperArmor");
+        assert_eq!(run(2, true), (true, true, false, SlideVector::NONE), "entry 2 pierces SuperArmor");
+        assert_eq!(run(3, false), (false, false, true, SlideVector::NONE), "entry 3 raises custom request");
+        assert_eq!(run(99, false), (false, false, false, SlideVector::NONE), "out-of-range index is a no-op");
+    }
+
+    #[test]
+    fn dual_status_applies_both_statuses_and_clears_on_absorb() {
+        use crate::content::{StatusDef, StatusEffect, StatusTimer};
+        let (mut b, r) = on_ice(0);
+        let mut c = (*b.content).clone();
+        let h1 = saito_content_api::StatusHandle(c.defs.statuses.len() as u16);
+        c.defs.statuses.push(StatusDef {
+            key: "test/paralyze".into(),
+            effect: StatusEffect { timer: StatusTimer::Paralyze, duration: 90, requests: 0x4000, cancels_flinch: false, survives_counter: false },
+        });
+        let h2 = saito_content_api::StatusHandle(c.defs.statuses.len() as u16);
+        c.defs.statuses.push(StatusDef {
+            key: "test/confuse".into(),
+            effect: StatusEffect { timer: StatusTimer::Confuse, duration: 180, requests: 0x0040, cancels_flinch: false, survives_counter: false },
+        });
+        b.content = Arc::new(c);
+
+        let t1 = StatusTimer::Paralyze.timer().unwrap();
+        let t2 = StatusTimer::Confuse.timer().unwrap();
+        coll_mut(&mut b, r).status_final = Some(h1);
+        coll_mut(&mut b, r).status_final2 = Some(h2);
+        apply_status(&mut b, r);
+        assert_eq!(coll(&b, r).status_timers[t1], 90, "primary status timer applied");
+        assert_eq!(coll(&b, r).status_timers[t2], 180, "secondary status timer applied simultaneously");
+        assert_eq!(flag2(&b, r) & 0x4040, 0x4040, "both statuses' requests raised");
+
+        // absorb_hit clears both status_final and status_final2.
+        coll_mut(&mut b, r).status_final = Some(h1);
+        coll_mut(&mut b, r).status_final2 = Some(h2);
+        absorb_hit(coll_mut(&mut b, r));
+        assert_eq!(coll(&b, r).status_final, None);
+        assert_eq!(coll(&b, r).status_final2, None);
+    }
+
+    #[test]
+    fn data_driven_barrier_table_allows_id_8_without_bubblewrap_collision() {
+        use crate::content::BarrierTypeRule;
+        use saito_content_api::api::BarrierSpec;
+        use saito_content_api::{CollisionField, CoreApi, Value};
+
+        // Custom barrier table: ID 8 is a plain 100-HP FirstBarrier (NOT BubbleWrap).
+        let (mut b, r) = fight_with(|rules| {
+            rules.intake.barrier.types = vec![
+                BarrierTypeRule {
+                    id: 8,
+                    popped: false,
+                    bubble: false,
+                    wind_pops: true,
+                    elec_pops: false,
+                    regrow: false,
+                    regrow_ticks: 0,
+                    regrow_hp: 0,
+                    regrow_blocked_by_status: false,
+                    regen_interval: 0,
+                    threshold_aura: false,
+                },
+                BarrierTypeRule { id: 0x10, popped: true, ..BarrierTypeRule::plain(0x10) },
+            ];
+        });
+        b.raise_barrier(r, BarrierSpec { id: Some(8), behavior: 0, hp: 100, threshold: 50, timer: 0xFFFF, weak_element: 0 }).unwrap();
+        assert_eq!(b.collision_get(r, CollisionField::Barrier).unwrap(), Value::Int(1));
+        assert_eq!(b.collision_get(r, CollisionField::Bubble).unwrap(), Value::Int(0), "ID 8 is NOT BubbleWrap in custom table");
+
+        // 30 elec damage: does NOT pop/double via BubbleWrap elec rule; wears HP 100 -> 70 (threshold ignored).
+        coll_mut(&mut b, r).acc.raw_element_damage[3] = 30;
+        coll_mut(&mut b, r).acc.element_damage[3] = 30;
+        barrier(&mut b, r);
+        assert_eq!(coll(&b, r).barrier, 8);
+        assert_eq!(coll(&b, r).barrier_hp, 70);
+        assert_eq!(coll(&b, r).acc.element_damage[3], 0, "absorbed by barrier");
+
+        // 80 damage depletes barrier completely to 0 (no regrow).
+        coll_mut(&mut b, r).acc.raw_element_damage[0] = 80;
+        coll_mut(&mut b, r).acc.element_damage[0] = 80;
+        barrier(&mut b, r);
+        assert_eq!(coll(&b, r).barrier, 0, "depleted plain barrier clears to 0");
+        assert_eq!(coll(&b, r).barrier_hp, 0);
+
+        // Contrast with default empty barrier table: ID 8 IS BubbleWrap.
+        let (mut b_classic, r_classic) = on_ice(0);
+        b_classic
+            .raise_barrier(r_classic, BarrierSpec { id: Some(8), behavior: 1, hp: 1, threshold: 0, timer: 0xFFFF, weak_element: 0 })
+            .unwrap();
+        assert_eq!(b_classic.collision_get(r_classic, CollisionField::Bubble).unwrap(), Value::Int(1));
+        // Non-elec hit pops BubbleWrap into regrow state (stays barrier == 8, hp == 0, regrows after 240 ticks).
+        coll_mut(&mut b_classic, r_classic).acc.raw_element_damage[0] = 30;
+        coll_mut(&mut b_classic, r_classic).acc.element_damage[0] = 30;
+        barrier(&mut b_classic, r_classic);
+        assert_eq!(coll(&b_classic, r_classic).barrier, 8, "classic BubbleWrap stays active to regrow");
+        assert_eq!(coll(&b_classic, r_classic).barrier_hp, 0);
+        assert_eq!(coll(&b_classic, r_classic).acc.element_damage[0], 0);
+        for _ in 0..240 {
+            barrier(&mut b_classic, r_classic);
+        }
+        assert_eq!(coll(&b_classic, r_classic).barrier_hp, 1, "classic BubbleWrap regrows after 240 ticks");
+
+        // Elec hit destroys classic BubbleWrap permanently and doubles elec damage.
+        coll_mut(&mut b_classic, r_classic).acc.raw_element_damage[3] = 30;
+        coll_mut(&mut b_classic, r_classic).acc.element_damage[3] = 30;
+        coll_mut(&mut b_classic, r_classic).acc.elec_damage = 30;
+        barrier(&mut b_classic, r_classic);
+        assert_eq!(coll(&b_classic, r_classic).barrier, 0, "elec permanently breaks classic BubbleWrap");
+        assert_eq!(coll(&b_classic, r_classic).acc.element_damage[3], 60, "classic BubbleWrap doubles elec damage");
+    }
+
+    #[test]
+    fn disabled_emotions_and_counter_hits_skip_counter_paralysis_and_anger() {
+        let (mut b, r) = fight_with(|rules| {
+            rules.counter_hits = false;
+            rules.emotion = crate::content::EmotionRules::disabled();
+        });
+        assert!(b.game_rules().emotion.holdable().is_empty());
+
+        // Counter paralysis is a no-op when counter_hits = false.
+        coll_mut(&mut b, r).acc.hit_flags |= 0x40;
+        counter_paralysis(&mut b, r);
+        assert_eq!(coll(&b, r).status_final, None);
+        assert_eq!(flag2(&b, r) & 0x4000, 0);
+
+        // Mood/anger/stun ticks are all no-ops when emotion.enabled = false.
+        let side = b.objects.get(r).alliance;
+        let before_mood = b.stats[side as usize].mood;
+        super::super::set_mood(&mut b, side, 0xFF);
+        super::super::gain_mood(&mut b, side, 50);
+        assert_eq!(b.stats[side as usize].mood, before_mood);
+
+        ai_mut(&mut b, r).stun_ticks = 119;
+        super::super::set_navi_action(&mut b, r, super::super::NaviAction::Flinch);
+        count_stun_ticks(&mut b, r);
+        anger_trigger(&mut b, r);
+        assert_eq!(ai(&b, r).stun_ticks, 119);
+        assert_eq!(ai(&b, r).anger, 0);
     }
 }

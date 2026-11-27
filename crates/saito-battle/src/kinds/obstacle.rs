@@ -376,7 +376,11 @@ pub fn take_hits(b: &mut Battle, r: ObjectRef, push: Push) {
     }
     let hit_mod = b.collision.get(c).hit_mod_final;
     // (f1 0x40 marks objects that can't be pushed.)
-    if push != Push::Ignored && f1_of(b, r) & f1::MOVING == 0 && b.game_rules().push_reading.drags(hit_mod) {
+    if push != Push::Ignored
+        && f1_of(b, r) & f1::MOVING == 0
+        && b.game_rules().hit_modifier.reads_pushes()
+        && b.game_rules().push_reading.drags(hit_mod)
+    {
         set_f2(b, r, f2::PUSHED);
         clear_f2(b, r, f2::FLINCH);
         if push == Push::ForgetsDamage {

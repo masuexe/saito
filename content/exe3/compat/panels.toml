@@ -1,0 +1,48 @@
+# EXE3's 11 panel types by number, extracted from A6BE IWRAM copy table at 0x08236F84 (IWRAM 0x03006E84).
+# EXE3 has 11 panel types (0..=10); panel type 10 is Sand (unlike EXE4's pitfall/hole 10/11).
+# Panel blocks live at 0x087005A0 (66 blocks of 32 bytes: 6 * type + 3 * owner + row - 1),
+# with per-block base tile offsets at 0x0800AF60.
+
+[types.0]
+name = "missing"
+flags = 0x18000
+
+[types.1]
+name = "broken"
+flags = 0x14000
+
+[types.2]
+name = "normal"
+flags = 0x10010
+
+[types.3]
+name = "cracked"
+flags = 0x10050
+
+[types.4]
+name = "poison"
+flags = 0x10110
+
+[types.5]
+name = "metal"
+flags = 0x30010
+
+[types.6]
+name = "grass"
+flags = 0x10410
+
+[types.7]
+name = "ice"
+flags = 0x10810
+
+[types.8]
+name = "lava"
+flags = 0x11010
+
+[types.9]
+name = "holy"
+flags = 0x12010
+
+[types.10]
+name = "sand"
+flags = 0x10210

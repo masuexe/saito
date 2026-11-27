@@ -1,0 +1,42 @@
+--!strict
+-- EXE3 chips index.
+
+local merge = require("@exelib/merge")
+
+return merge {
+    require("@self/airshot"),
+    require("@self/anti"),
+    require("@self/barrier"),
+    require("@self/bomb"),
+    require("@self/cannon"),
+    require("@self/copydmg"),
+    require("@self/elec"),
+    require("@self/gauge"),
+    require("@self/geddon"),
+    require("@self/giga"),
+    require("@self/grab"),
+    require("@self/invalid"),
+    require("@self/invis"),
+    require("@self/magnum"),
+    require("@self/mega"),
+    require("@self/metagel"),
+    require("@self/navis"),
+    require("@self/pa"),
+    require("@self/panlout"),
+    require("@self/plus"),
+    require("@self/poison"),
+    require("@self/punch"),
+    require("@self/recov"),
+    require("@self/rockcube"),
+    require("@self/spreader"),
+    require("@self/stage"),
+    require("@self/stealth"),
+    require("@self/sword"),
+    require("@self/trap"),
+    require("@self/utility"),
+    require("@self/wave"),
+    require("@self/wind"),
+    require("@self/yoyo"),
+    require("@self/zapring"),
+    require("@self/zeroed"),
+}

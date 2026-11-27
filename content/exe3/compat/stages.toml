@@ -1,0 +1,11 @@
+# EXE3's 8 NetBattle stages (A6BE 0x0803EAB0, weights 8x32 at 0x0803EABC, drawn by SIO master via GetRNG2).
+# Each NetBattle stage selects one of the 8 background IDs [0, 4, 5, 6, 23, 16, 2, 10] with standard 6x3 layout.
+
+netbattle-1 = { index = 0, background = 0, name = "acdc-net" }
+netbattle-2 = { index = 1, background = 4, name = "sci-lab-net" }
+netbattle-3 = { index = 2, background = 5, name = "yoka-net" }
+netbattle-4 = { index = 3, background = 6, name = "beach-net" }
+netbattle-5 = { index = 4, background = 23, name = "secret-area" }
+netbattle-6 = { index = 5, background = 16, name = "undernet" }
+netbattle-7 = { index = 6, background = 2, name = "lan-hp" }
+netbattle-8 = { index = 7, background = 10, name = "hospital-comp" }

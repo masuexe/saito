@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1280" viewBox="0 0 120 160">
+<!-- EXE3 custom window frame (120x160, palette 9): white main panel, dark/gray chip preview frame, picked-column orb housing with gold ring, bottom housing with tab, OK button, and beveled blue outer frame. -->
+<!-- Top main white panel (x=8..87, top-right beveled 45 degrees from (81,0) to (87,6)) and its right drop shadow/rim -->
+<path d="M8 0 H81.5 L87 5.5 V98 H88 V104 H0 V80 H8 Z" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<!-- Left margin white ground beside chip slots -->
+<rect x="0" y="104" width="8" height="49" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<!-- Bottom right white ground around OK button and bottom edge -->
+<path d="M88 111 H118 V153 H5 V152 H113 V135 L117 131 V111 Z" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<rect x="88" y="111" width="30" height="25" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<!-- Chip preview frame (dark outline 9, gray border 8, transparent art hole x=8..71 y=8..79 and element hole x=8..15 y=80..95) -->
+<path fill-rule="evenodd" d="M8 7 H78 V98 H2 V80 H8 Z M8 8 H72 V80 H8 Z M8 80 H16 V96 H8 Z M24 80 H72 V96 H24 Z" fill="#282828" data-color="9" data-palette="9"/>
+<path fill-rule="evenodd" d="M3 80 H8 V96 H72 V8 H77 V97 H3 Z" fill="#d8d8e0" data-color="8" data-palette="9"/>
+<!-- Main panel right drop shadow (4) and lit rim (3) -->
+<path d="M81 0 H82.414 L87 4.586 V98 H86 V5.586 L81 0.586 Z" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="87" y="4" width="1" height="94" fill="#7898d8" data-color="3" data-palette="9"/>
+<!-- Periodic shadow notches along main panel right rim -->
+<rect x="87" y="16" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="87" y="32" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="87" y="48" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="87" y="64" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="87" y="80" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<!-- Top bridge from main panel to orb housing -->
+<path d="M83 2 H92 L90 5 H86 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<rect x="85" y="3" width="5" height="1" fill="#c8e0f8" data-color="2" data-palette="9"/>
+<!-- Picked-column top housing round the orb (x=88..120, y=0..24), top-left and top-right cut 45 degrees -->
+<path d="M93.5 0 H113.5 L120 6.5 V24 H88 V5.5 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<path d="M94.5 0 H112.5 L119 6.5 V24 H89 V6.5 L94.5 1 Z" fill="#c8e0f8" data-color="2" data-palette="9"/>
+<path d="M92.5 0 H94.5 L89.5 5 H88.5 Z" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<!-- White highlight at top-left of housing cut -->
+<rect x="93" y="0" width="2" height="1" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<rect x="112" y="0" width="1" height="1" fill="#f0f8f8" data-color="1" data-palette="9"/>
+<!-- Diagonal seams from gold ring out to housing sides -->
+<path d="M88 18 L94 12 L94 13.5 L89.5 18 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<path d="M120 18 L114 12 L114 13.5 L118.5 18 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<!-- Shadow dots on outer edges at y=16 -->
+<rect x="88" y="16" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<rect x="119" y="16" width="1" height="1" fill="#6070c0" data-color="4" data-palette="9"/>
+<!-- Slate shoulders rising under the orb -->
+<polygon points="90,24 90,22 94,18 114,18 118,22 118,24" fill="#486078" data-color="5" data-palette="9"/>
+<rect x="95" y="22" width="18" height="2" fill="#282828" data-color="9" data-palette="9"/>
+<!-- Gold ring round the orb centered at (104, 12) -->
+<circle cx="104" cy="12" r="12" fill="#c86038" data-color="13" data-palette="9"/>
+<circle cx="104" cy="12" r="11" fill="#f8a828" data-color="12" data-palette="9"/>
+<circle cx="104" cy="12" r="9" fill="#282828" data-color="9" data-palette="9"/>
+<!-- Picked-column bottom housing (y=104..113, x=88..120) -->
+<path d="M88 104 H120 V113 H91 L88 110 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<path d="M89 104 H119 V109.5 L116.5 112 H91.5 L89 109.5 Z" fill="#c8e0f8" data-color="2" data-palette="9"/>
+<path d="M90.5 104 H117.5 L114.5 107 H93.5 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<path d="M92 104 H116 L113 107 H95 Z" fill="#486078" data-color="5" data-palette="9"/>
+<rect x="95" y="104" width="18" height="2" fill="#282828" data-color="9" data-palette="9"/>
+<!-- Tab notch in bottom housing -->
+<path d="M99.5 107 V109.5 H108.5 V107" stroke-linejoin="miter" fill="none" stroke="#7898d8" stroke-width="1" data-stroke="3" data-palette="9"/>
+<!-- Bottom-left slant and outer frame bars -->
+<path d="M0 128 L5 133 V153 H113 V135 L117 131 V111 H120 V158 L118 160 H0 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<!-- White panel drop shadow on left slant, right edge, and bottom bar -->
+<path d="M0 127.5 L5 132.5" fill="none" stroke="#6070c0" stroke-width="1" data-stroke="4" data-palette="9"/>
+<path d="M117 111 H118 V131.5 L116 133.5 V155 H7 V153 H113 V134 L117 130 Z" fill="#6070c0" data-color="4" data-palette="9"/>
+<!-- Light blue fill along right and bottom outer bar -->
+<path d="M116 133.5 L118.5 131 H119 V158.5 L117.5 159 H0 V156 H116 Z" fill="#c8e0f8" data-color="2" data-palette="9"/>
+<!-- Outer right and bottom lit rims -->
+<path d="M119 104 H120 V158 L118 160 H0 V159 H117.5 L119 157.5 Z" fill="#7898d8" data-color="3" data-palette="9"/>
+<!-- OK button: dark outline, red face, orange top/left bevel, dark-red right/bottom bevel, white OK label -->
+<rect x="89" y="115" width="22" height="18" fill="#282828" data-color="9" data-palette="9"/>
+<rect x="90" y="116" width="20" height="16" fill="#f83020" data-color="14" data-palette="9"/>
+<path d="M90 116 H109 V117 H91 V131 H90 Z" fill="#f8a828" data-color="12" data-palette="9"/>
+<path d="M109 117 H110 V132 H91 V131 H109 Z" fill="#a03048" data-color="15" data-palette="9"/>
+<text data-words="window.ok" data-box="93 120 15 8" fill="#f0f8f8" data-color="1" data-palette="9" x="93" y="128" font-size="10.667" textLength="15">OK</text>
+</svg>

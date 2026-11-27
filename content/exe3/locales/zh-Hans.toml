@@ -1,0 +1,510 @@
+# Simplified Chinese localization for EXE3 (洛克人EXE3).
+
+language = "zh-Hans"
+
+[game]
+"name" = "EXE3"
+
+[chips]
+"cannon" = { name = "加农炮", description = "攻击前方1名敌人的\n加农炮" }
+"hicannon" = { name = "高能加农炮", description = "攻击前方1名敌人的\n高能加农炮" }
+"m-cannon" = { name = "百万加农炮", description = "攻击前方1名敌人的\n强力加农炮" }
+"airshot1" = { name = "空气炮1", description = "击中敌人并将其\n击退1格!" }
+"shotgun" = { name = "霰弹枪", description = "命中后会波及\n后方1格!" }
+"v-gun" = { name = "V字枪", description = "命中后会波及\n斜后方2格!" }
+"sidegun" = { name = "侧向枪", description = "命中后会波及\n上下2格!" }
+"spreader" = { name = "扩散枪", description = "命中后会向周围\n1格范围扩散爆炸!" }
+"minibomb" = { name = "迷你炸弹", description = "向前方3格处\n投掷炸弹" }
+"snglbomb" = { name = "单发炸弹", description = "向前方3格处\n投掷炸弹!" }
+"dublbomb" = { name = "双发炸弹", description = "向前方3格处\n投掷2发炸弹!" }
+"trplbomb" = { name = "三发炸弹", description = "向前方3格处\n投掷3发炸弹!" }
+"cannball" = { name = "重型炮弹", description = "向前方3格处\n投掷重型炮弹!" }
+"sword" = { name = "剑", description = "斩击面前1格的\n敌人!" }
+"wideswrd" = { name = "宽剑", description = "斩击面前纵向\n3格的敌人!" }
+"longswrd" = { name = "长剑", description = "斩击面前横向\n2格的敌人!" }
+"fireswrd" = { name = "火焰剑", description = "火焰之刃斩击\n纵向3格!" }
+"aquaswrd" = { name = "水流剑", description = "水流之刃斩击\n纵向3格!" }
+"elecswrd" = { name = "电击剑", description = "电击之刃斩击\n纵向3格!" }
+"bambswrd" = { name = "翠竹剑", description = "木属性之刃斩击\n纵向3格!" }
+"stepswrd" = { name = "踏步斩", description = "向前踏进2格并\n斩击纵向3格!" }
+"panlout1" = { name = "地面破坏1", description = "破坏面前的\n1格地面" }
+"panlout3" = { name = "地面破坏3", description = "破坏面前纵向\n3格地面" }
+"panlgrab" = { name = "地盘夺取", description = "夺取同行敌方\n1格地盘" }
+"areagrab" = { name = "区域夺取", description = "夺取敌方最前\n1列地盘" }
+"geddon1" = { name = "末日裂地1", description = "使全场所有地面\n产生裂纹!" }
+"recov10" = { name = "回复10", description = "回复10点HP" }
+"recov30" = { name = "回复30", description = "回复30点HP" }
+"recov50" = { name = "回复50", description = "回复50点HP" }
+"recov80" = { name = "回复80", description = "回复80点HP" }
+"recov120" = { name = "回复120", description = "回复120点HP" }
+"recov150" = { name = "回复150", description = "回复150点HP" }
+"recov200" = { name = "回复200", description = "回复200点HP" }
+"recov300" = { name = "回复300", description = "回复300点HP" }
+"slogauge" = { name = "减速槽", description = "减慢自定义槽的\n充能速度" }
+"fstgauge" = { name = "加速槽", description = "加快自定义槽的\n充能速度" }
+"invis" = { name = "隐身", description = "短时间内隐身并\n免疫普通攻击" }
+"barrier" = { name = "防护罩", description = "张开可抵挡10点\n伤害的防护罩" }
+"barr100" = { name = "防护罩100", description = "张开可抵挡100点\n伤害的防护罩" }
+"barr200" = { name = "防护罩200", description = "张开可抵挡200点\n伤害的防护罩" }
+"aura" = { name = "梦幻光环", description = "抵挡所有低于\n100点的伤害" }
+"lifeaura" = { name = "生命光环", description = "抵挡所有低于\n200点的伤害" }
+"atk-10" = { name = "攻击+10", description = "使前一张攻击芯片\n威力+10" }
+"atk-30" = { name = "攻击+30", description = "使前一张攻击芯片\n威力+30" }
+"z-canon1" = { name = "Z加农炮1", description = "无敌状态下\n连射加农炮!" }
+"z-canon2" = { name = "Z加农炮2", description = "无敌状态下\n连射高能加农炮!" }
+"z-canon3" = { name = "Z加农炮3", description = "无敌状态下\n连射百万加农炮!" }
+"lifeswrd" = { name = "梦幻之剑", description = "斩击前方3×2格\n造成400点伤害!" }
+"bubbler" = { name = "气泡枪", description = "命中后会向后方\n1格水属性爆炸!" }
+"bub-v" = { name = "气泡V枪", description = "命中后向斜后方\n2格水属性爆炸!" }
+"bublside" = { name = "气泡侧枪", description = "命中后向上下\n2格水属性爆炸!" }
+"heatshot" = { name = "热浪枪", description = "命中后会向后方\n1格火属性爆炸!" }
+"heat-v" = { name = "热浪V枪", description = "命中后向斜后方\n2格火属性爆炸!" }
+"heatside" = { name = "热浪侧枪", description = "命中后向上下\n2格火属性爆炸!" }
+"custswrd" = { name = "自定义之剑", description = "自定义槽越满\n斩击威力越高!" }
+"varswrd" = { name = "可变之剑", description = "按住A输入指令\n使出多种强力剑技!" }
+"stepcros" = { name = "踏步十字斩", description = "向前踏进2格并\n斩出X字剑光!" }
+"slasher" = { name = "居合斩", description = "按住A待机，斩击\n踏入我方区域的敌人!" }
+"poismask" = { name = "毒气面具", description = "向前方3格喷吐\n剧毒迷雾!" }
+"poisface" = { name = "剧毒魔面", description = "向前方大范围\n喷吐剧毒迷雾!" }
+"plasma1" = { name = "等离子球1", description = "释放雷球对目标\n造成多段电击!" }
+"plasma2" = { name = "等离子球2", description = "释放广域雷球\n连续电击敌人!" }
+"plasma3" = { name = "等离子球3", description = "高能十字雷球\n持续电击敌人!" }
+"sensor1" = { name = "感应炮1", description = "敌人进入视野即\n发射麻痹雷射!" }
+"sensor2" = { name = "感应炮2", description = "广角感应炮发射\n麻痹雷射!" }
+"sensor3" = { name = "感应炮3", description = "强力感应炮发射\n广域麻痹雷射!" }
+"metagel1" = { name = "金属凝胶1", description = "水凝胶砸击敌方\n并夺取前排地盘!" }
+"metagel2" = { name = "金属凝胶2", description = "强力水凝胶砸击\n并夺取前排地盘!" }
+"metagel3" = { name = "金属凝胶3", description = "重型水凝胶砸击\n并夺取前排地盘!" }
+"rockcube" = { name = "岩石方块", description = "在面前放置200HP\n的岩石障碍物!" }
+"wind" = { name = "强风", description = "吹退敌人并吹散\n防护罩与光环!" }
+"fan" = { name = "吸风", description = "产生吸力将敌人\n拉向我方前排!" }
+"geddon2" = { name = "末日裂地2", description = "破坏全场所有\n无人站立的面板!" }
+"geddon3" = { name = "末日裂地3", description = "将全场所有面板\n变为毒沼!" }
+"copydmg" = { name = "伤害复制", description = "标记敌人使其\n承受同步伤害!" }
+"shadow" = { name = "暗影化身", description = "化为暗影免疫\n一切非剑类攻击!" }
+"mole1" = { name = "钻地1", description = "短时间潜入地下\n躲避敌方攻击!" }
+"mole2" = { name = "钻地2", description = "中时间潜入地下\n躲避敌方攻击!" }
+"mole3" = { name = "钻地3", description = "长时间潜入地下\n躲避敌方攻击!" }
+"holypanl" = { name = "神圣面板", description = "将面前1格变为\n减伤神圣面板!" }
+"lavastge" = { name = "熔岩场地", description = "将全场面板变为\n灼热熔岩!" }
+"icestage" = { name = "寒冰场地", description = "将全场面板变为\n滑溜寒冰!" }
+"grassstg" = { name = "草丛场地", description = "将全场面板变为\n青翠草丛!" }
+"sandstge" = { name = "流沙场地", description = "将全场面板变为\n流沙陷阱!" }
+"metlstge" = { name = "金属场地", description = "将全场面板变为\n坚固金属!" }
+"snctuary" = { name = "圣域", description = "将我方全部区域\n变为神圣面板!" }
+"antidmg" = { name = "替身陷阱", description = "陷阱:闪避攻击并\n投掷手里剑反击!" }
+"antiswrd" = { name = "反剑陷阱", description = "陷阱:格挡剑击并\n三连斩反击!" }
+"antinavi" = { name = "反领航员", description = "陷阱:拦截敌方\n领航员芯片!" }
+"antirecv" = { name = "反回复", description = "陷阱:惩罚敌方的\n回复芯片!" }
+"navi-20" = { name = "领航员+20", description = "使前一张领航员\n芯片威力+20" }
+"navi-40" = { name = "领航员+40", description = "使前一张领航员\n芯片威力+40" }
+"muramasa" = { name = "妖刀村正", description = "已损失多少HP\n便造成多少伤害!" }
+"heroswrd" = { name = "英雄之剑", description = "斩击前方横向\n3格的强力之剑!" }
+"anubis" = { name = "剧毒阿努比斯", description = "放置雕像持续\n吸取敌方HP!" }
+"fullcust" = { name = "瞬间蓄满", description = "立刻将自定义槽\n充满至100%!" }
+"protoman" = { name = "布鲁斯", description = "瞬移至敌人面前\n施展宽剑斩击!" }
+"protomnv2" = { name = "布鲁斯V2", description = "瞬移至敌人面前\n施展宽剑斩击!" }
+"protomnv3" = { name = "布鲁斯V3", description = "瞬移至敌人面前\n施展宽剑斩击!" }
+"protomnv4" = { name = "布鲁斯V4", description = "瞬移至敌人面前\n施展宽剑斩击!" }
+"flashman" = { name = "闪光人", description = "全屏电击闪光\n并麻痹敌人!" }
+"flashmnv2" = { name = "闪光人V2", description = "全屏电击闪光\n并麻痹敌人!" }
+"flashmnv3" = { name = "闪光人V3", description = "全屏电击闪光\n并麻痹敌人!" }
+"flashmnv4" = { name = "闪光人V4", description = "全屏电击闪光\n并麻痹敌人!" }
+"plantman" = { name = "植物人", description = "木藤4连击并\n束缚麻痹敌人!" }
+"plantmnv2" = { name = "植物人V2", description = "木藤4连击并\n束缚麻痹敌人!" }
+"plantmnv3" = { name = "植物人V3", description = "木藤4连击并\n束缚麻痹敌人!" }
+"plantmnv4" = { name = "植物人V4", description = "木藤4连击并\n束缚麻痹敌人!" }
+"mistman" = { name = "迷雾人", description = "迷雾分身连续\n3次奇袭敌阵!" }
+"mistmanv2" = { name = "迷雾人V2", description = "迷雾分身连续\n3次奇袭敌阵!" }
+"mistmanv3" = { name = "迷雾人V3", description = "迷雾分身连续\n3次奇袭敌阵!" }
+"mistmanv4" = { name = "迷雾人V4", description = "迷雾分身连续\n3次奇袭敌阵!" }
+"bowlman" = { name = "保龄球人", description = "保龄球瓶横扫\n全部3条战线!" }
+"bowlmanv2" = { name = "保龄球人V2", description = "保龄球瓶横扫\n全部3条战线!" }
+"bowlmanv3" = { name = "保龄球人V3", description = "保龄球瓶横扫\n全部3条战线!" }
+"bowlmanv4" = { name = "保龄球人V4", description = "保龄球瓶横扫\n全部3条战线!" }
+"navrcycl" = { name = "领航员复用", description = "再次发动上一张\n领航员/百万芯片!" }
+"foldrbak" = { name = "文件夹复原", description = "恢复全部已用\n芯片并回复HP!" }
+"bass" = { name = "佛鲁迪", description = "对敌方区域倾泻\n机枪弹幕!" }
+"bass-137" = { name = "佛鲁迪+", description = "大地粉碎重击\n震碎中心面板!" }
+"serenade" = { name = "小夜曲", description = "神圣冲击波席卷\n敌方全场!" }
+"darkaura" = { name = "暗黑光环", description = "抵挡所有低于\n300点的伤害!" }
+"balance" = { name = "天平", description = "令双方领航员的\n当前HP减半!" }
+"deltaray" = { name = "三角光刃", description = "高速三角轨迹\n三连斩击!" }
+"alpharmsg" = { name = "阿尔法臂Σ", description = "阿尔法扫射光束\n连击敌方全场!" }
+"alpharmom" = { name = "阿尔法臂Ω", description = "阿尔法巨型火箭\n毁灭轰炸!" }
+"bubsprd" = { name = "气泡扩散", description = "300威力水属性\n3×3大爆炸!" }
+"heatsprd" = { name = "热浪扩散", description = "300威力火属性\n3×3大爆炸!" }
+"poisphar" = { name = "剧毒法老", description = "法老雕像高速\n吸干敌方生命!" }
+"bodygrd" = { name = "贴身护卫", description = "12枚手里剑从天\n而降轰击敌人!" }
+"500barr" = { name = "防护罩500", description = "展开超高耐久的\n500点防护罩!" }
+"2xhero" = { name = "双英雄斩", description = "8连击英雄剑舞\n瞬斩敌方!" }
+"mstrstyl" = { name = "大师形态", description = "四属性元素剑刃\n连环斩击!" }
+"invalid" = { name = " ", description = "" }
+"zeroed" = { name = "", description = "" }
+"airshot2" = { name = "空气炮2", description = "击中敌人并将其\n击退1格!" }
+"airshot3" = { name = "空气炮3", description = "击中敌人并将其\n击退1格!" }
+"lavacan1" = { name = "熔岩加农1", description = "发射熔岩炮并将\n命中格变为熔岩!" }
+"lavacan2" = { name = "熔岩加农2", description = "强力熔岩炮将\n命中格变为熔岩!" }
+"lavacan3" = { name = "熔岩加农3", description = "重型熔岩炮将\n命中格变为熔岩!" }
+"volcano" = { name = "火山喷发", description = "引爆场上所有\n熔岩面板十字喷发!" }
+"iceball" = { name = "寒冰球", description = "投掷冰球冻结敌人\n并将落点变为寒冰!" }
+"lavaball" = { name = "熔岩球", description = "投掷熔岩球灼烧\n并将落点变为熔岩!" }
+"blkbomb1" = { name = "黑炸弹1", description = "投掷黑炸弹，遇火\n引发3×3大爆炸!" }
+"blkbomb2" = { name = "黑炸弹2", description = "强力黑炸弹遇火\n引发3×3大爆炸!" }
+"blkbomb3" = { name = "黑炸弹3", description = "超强黑炸弹遇火\n引发3×3大爆炸!" }
+"airswrd" = { name = "风压剑", description = "风之利刃斩击并\n将敌人吹退1格!" }
+"shockwav" = { name = "冲击波", description = "沿地面向前传播\n的冲击波攻击!" }
+"sonicwav" = { name = "音速波", description = "高速沿地面前进的\n强力冲击波!" }
+"dynawave" = { name = "狂雷震波", description = "超高速前进的\n高威力冲击波!" }
+"bigwave" = { name = "巨浪冲击", description = "向全部3行释放\n超强冲击波!" }
+"gutpunch" = { name = "气力拳", description = "破防重拳击退敌人\n并击飞障碍物!" }
+"gutstrgt" = { name = "气力直拳", description = "贯穿前方2格的\n破防直拳!" }
+"gutimpct" = { name = "气力重击", description = "超强破防重拳击退\n2格并震裂地面!" }
+"dashatk" = { name = "冲刺突击", description = "高速冲刺贯穿整行\n敌人后返回原地!" }
+"burner" = { name = "火焰环", description = "在自身周围8格\n燃起烈焰焚烧敌人!" }
+"condor" = { name = "神鹰俯冲", description = "俯冲贯穿前方\n大片敌方区域!" }
+"burning" = { name = "炽焰冲锋", description = "缠绕烈焰灼烧\n上下与前方整行!" }
+"zapring1" = { name = "电击环1", description = "发射电击光环\n命中后麻痹敌人!" }
+"zapring2" = { name = "电击环2", description = "高速电击光环\n命中后麻痹敌人!" }
+"zapring3" = { name = "电击环3", description = "高压电击光环\n命中后麻痹敌人!" }
+"icewave1" = { name = "冰浪1", description = "向前滑动的冰浪\n将沿途变为寒冰!" }
+"icewave2" = { name = "冰浪2", description = "广域滑动冰浪\n将沿途变为寒冰!" }
+"icewave3" = { name = "冰浪3", description = "三行齐发巨型冰浪\n冻结整片战场!" }
+"yo-yo1" = { name = "悠悠球1", description = "向前飞出3格旋转\n造成多段伤害!" }
+"yo-yo2" = { name = "悠悠球2", description = "强力悠悠球飞出3格\n造成多段伤害!" }
+"yo-yo3" = { name = "悠悠球3", description = "重型悠悠球飞出3格\n造成多段伤害!" }
+"airstrm1" = { name = "空气风暴1", description = "连续发射3道强风\n横扫整行敌人!" }
+"airstrm2" = { name = "空气风暴2", description = "连续发射3道强力\n风暴横扫整行!" }
+"airstrm3" = { name = "空气风暴3", description = "连续发射3道狂暴\n飓风横扫整行!" }
+"arrow1" = { name = "雷电箭1", description = "贯穿整行的\n高压电击箭矢!" }
+"arrow2" = { name = "雷电箭2", description = "双发高压电击箭矢\n贯穿敌方阵地!" }
+"arrow3" = { name = "雷电箭3", description = "三行齐发雷电箭\n贯穿全场敌人!" }
+"ratton1" = { name = "追踪鼠1", description = "锁定敌人列自动\n转弯的追踪鼠弹!" }
+"ratton2" = { name = "追踪鼠2", description = "高速锁定敌人列\n转弯的追踪鼠弹!" }
+"ratton3" = { name = "追踪鼠3", description = "超高速自动追踪\n高爆鼠形导弹!" }
+"fireratn" = { name = "烈焰鼠", description = "命中后引发十字\n烈焰大爆炸的火鼠!" }
+"wave" = { name = "海浪", description = "向全部3行席卷的\n水属性浪潮!" }
+"redwave" = { name = "赤红熔浪", description = "席卷全部3行并将\n地面化为熔岩!" }
+"mudwave" = { name = "泥石巨浪", description = "席卷全部3行并\n破坏沿途面板!" }
+"tornado" = { name = "龙卷风", description = "在前方2格卷起\n8连击狂暴龙卷!" }
+"spice1" = { name = "香料粉1", description = "引爆全场所有\n草丛面板造成伤害!" }
+"spice2" = { name = "香料粉2", description = "强力引爆全场\n所有草丛面板!" }
+"spice3" = { name = "香料粉3", description = "超强引爆全场\n所有草丛面板!" }
+"shake1" = { name = "震地弹1", description = "投掷震地弹震击\n落点横向3格!" }
+"shake2" = { name = "震地弹2", description = "强力震地弹震击\n落点横向3格!" }
+"shake3" = { name = "震地弹3", description = "重型震地弹震击\n落点横向3格!" }
+"nobeam1" = { name = "背光射线1", description = "身后有物体时发射\n全威力贯穿激光!" }
+"nobeam2" = { name = "背光射线2", description = "身后有物体时发射\n强力贯穿激光!" }
+"nobeam3" = { name = "背光射线3", description = "身后有物体时发射\n最大威力贯穿激光!" }
+"hammer" = { name = "重锤", description = "粉碎前方障碍物\n并震裂面板!" }
+"geyser" = { name = "间歇泉", description = "在前方3格喷涌\n3×3水柱爆发!" }
+"rope1" = { name = "束缚绳1", description = "鞭击前方2格并\n束缚麻痹敌人!" }
+"rope2" = { name = "束缚绳2", description = "强力木绳鞭击并\n束缚麻痹敌人!" }
+"rope3" = { name = "束缚绳3", description = "长距离木绳鞭击\n3格并麻痹敌人!" }
+"boomer1" = { name = "回旋镖1", description = "沿战场外围盘旋\n一周的木回旋镖!" }
+"boomer2" = { name = "回旋镖2", description = "高速沿战场外围\n盘旋的木回旋镖!" }
+"boomer3" = { name = "回旋镖3", description = "超高速沿外围\n盘旋的强力回旋镖!" }
+"rockarm1" = { name = "岩石臂1", description = "破防岩臂重击前方\n2格并破坏地面!" }
+"rockarm2" = { name = "岩石臂2", description = "强力岩臂重击前方\n2格并破坏地面!" }
+"rockarm3" = { name = "岩石臂3", description = "重型岩臂重击前方\n2格并破坏地面!" }
+"crsshld1" = { name = "十字盾1", description = "格挡攻击后以破防\n十字冲击反击!" }
+"crsshld2" = { name = "十字盾2", description = "格挡攻击后以强力\n十字冲击反击!" }
+"crsshld3" = { name = "十字盾3", description = "格挡攻击后以超强\n十字冲击反击!" }
+"magnum1" = { name = "马格南1", description = "准星锁定敌阵\n轰炸并破坏纵列!" }
+"magnum2" = { name = "马格南2", description = "准星锁定敌阵\n轰炸并破坏横行!" }
+"magnum3" = { name = "马格南3", description = "准星锁定敌阵\n轰炸并破坏十字!" }
+"rndmmetr" = { name = "随机流星", description = "向敌方区域随机\n降下6发烈焰流星!" }
+"holemetr" = { name = "破洞流星", description = "降下能够破坏面板\n的烈焰流星雨!" }
+"shotmetr" = { name = "狙击流星", description = "精准锁定敌人位置\n连降6发烈焰流星!" }
+"needler1" = { name = "机枪针1", description = "连射5发高速钢针\n精准打击敌人!" }
+"needler2" = { name = "机枪针2", description = "连射5发强力钢针\n精准打击敌人!" }
+"needler3" = { name = "机枪针3", description = "连射5发重型钢针\n精准打击敌人!" }
+"totem1" = { name = "图腾1", description = "放置火焰图腾回复\nHP并喷射火焰!" }
+"totem2" = { name = "图腾2", description = "放置强力图腾回复\n更多HP并喷射火焰!" }
+"totem3" = { name = "图腾3", description = "放置顶级图腾大幅\n回血并喷射烈焰!" }
+"pawn" = { name = "兵卒", description = "放置国际象棋兵卒\n定期施展长剑斩击!" }
+"knight" = { name = "骑士", description = "骑士跃向敌人头顶\n发动破防重击!" }
+"rook" = { name = "城堡", description = "在面前放置600HP\n的坚固城堡障碍!" }
+"team1" = { name = "支援小队1", description = "召唤同伴发动援护\n冲击攻击敌人!" }
+"team2" = { name = "支援小队2", description = "召唤同伴回复HP\n并赋予短暂无敌!" }
+"timebomb" = { name = "定时炸弹", description = "倒计时归零后\n引爆整个敌方区域!" }
+"mine" = { name = "隐形地雷", description = "在敌方随机面板\n埋下300伤害地雷!" }
+"lance" = { name = "翠竹长枪", description = "从敌方最后1列\n刺出竹枪并拉前!" }
+"snake" = { name = "毒蛇群", description = "根据我方空洞数量\n释放木属性毒蛇!" }
+"guard" = { name = "防御反击", description = "举盾格挡攻击并\n反射40伤害冲击波!" }
+"grabback" = { name = "夺地反击", description = "按被夺格数×40伤害\n并夺回全部领地!" }
+"grabrvng" = { name = "夺地复仇", description = "按被夺格数×80伤害\n并夺回全部领地!" }
+"prism" = { name = "棱镜", description = "投掷棱镜将受到的\n伤害折射至周围8格!" }
+"fanfare" = { name = "凯旋号角", description = "吹响号角在短时间内\n获得无敌状态!" }
+"discord" = { name = "不协和音", description = "刺耳的乐声使敌人\n陷入混乱状态!" }
+"timpani" = { name = "定音鼓", description = "震撼鼓声使敌人\n陷入麻痹定身!" }
+"repair" = { name = "地面修复", description = "修复我方区域所有\n破损与裂纹面板!" }
+"panic" = { name = "恐慌波", description = "发射诡异波动令\n敌人陷入混乱!" }
+"airshoes" = { name = "飞行鞋", description = "赋予飞行鞋效果，\n可在空洞上自由移动!" }
+"nrthwind" = { name = "北风", description = "吹散敌我双方的\n全部防护罩与光环!" }
+"mettaur" = { name = "安全帽怪", description = "召唤安全帽怪释放\n冲击波攻击敌人!" }
+"bunny" = { name = "电击兔", description = "召唤电击兔发射\n麻痹雷环攻击!" }
+"spikey" = { name = "火焰犬", description = "召唤火焰犬喷吐\n整行烈焰冲击!" }
+"swordy" = { name = "剑士怪", description = "召唤剑士怪挥出\n宽剑斩击!" }
+"jelly" = { name = "果冻怪", description = "召唤果冻怪发动\n强力冲击攻击!" }
+"mushy" = { name = "蘑菇怪", description = "召唤蘑菇怪播撒\n混乱毒孢攻击!" }
+"momogra" = { name = "地鼠怪", description = "召唤地鼠怪从地下\n奇袭打击敌人!" }
+"killreye" = { name = "杀手之眼", description = "召唤杀手之眼发射\n贯穿电击激光!" }
+"scuttlst" = { name = "梦幻浮游炮", description = "召唤梦幻浮游炮\n发动十字强攻!" }
+"hole" = { name = "黑洞", description = "打开黑洞吞噬敌方\n空面板与障碍物!" }
+"fire-30" = { name = "火焰+30", description = "使前一张攻击芯片\n威力+30!" }
+"aqua-30" = { name = "水流+30", description = "使前一张攻击芯片\n威力+30!" }
+"elec-30" = { name = "电击+30", description = "使前一张攻击芯片\n威力+30!" }
+"wood-30" = { name = "木+30", description = "使前一张攻击芯片\n威力+30!" }
+"protomnv5" = { name = "布鲁斯V5", description = "瞬移至敌人面前\n施展宽剑斩击!" }
+"flashmnv5" = { name = "闪光人V5", description = "全屏电击闪光\n并麻痹敌人!" }
+"plantmnv5" = { name = "植物人V5", description = "木藤4连击并\n束缚麻痹敌人!" }
+"mistmanv5" = { name = "迷雾人V5", description = "迷雾分身连续\n3次奇袭敌阵!" }
+"bowlmanv5" = { name = "保龄球人V5", description = "保龄球瓶横扫\n全部3条战线!" }
+"roll" = { name = "萝露", description = "3连击攻击敌人\n并回复60点HP!" }
+"rollv2" = { name = "萝露V2", description = "3连击攻击敌人\n并回复100点HP!" }
+"rollv3" = { name = "萝露V3", description = "3连击攻击敌人\n并回复140点HP!" }
+"gutsman" = { name = "气力人", description = "重锤地面震裂\n敌方全部面板!" }
+"gutsmanv2" = { name = "气力人V2", description = "重锤地面震裂\n敌方全部面板!" }
+"gutsmanv3" = { name = "气力人V3", description = "重锤地面震裂\n敌方全部面板!" }
+"gutsmanv4" = { name = "气力人V4", description = "重锤地面震裂\n敌方全部面板!" }
+"gutsmanv5" = { name = "气力人V5", description = "重锤地面震裂\n敌方全部面板!" }
+"beastman" = { name = "野兽人", description = "利爪3连斩横扫\n敌方前排区域!" }
+"beastmnv2" = { name = "野兽人V2", description = "利爪3连斩横扫\n敌方前排区域!" }
+"beastmnv3" = { name = "野兽人V3", description = "利爪3连斩横扫\n敌方前排区域!" }
+"beastmnv4" = { name = "野兽人V4", description = "利爪3连斩横扫\n敌方前排区域!" }
+"beastmnv5" = { name = "野兽人V5", description = "利爪3连斩横扫\n敌方前排区域!" }
+"bubblman" = { name = "泡泡人", description = "HP越低数量越多的\n高速水泡连射!" }
+"bubblmnv2" = { name = "泡泡人V2", description = "HP越低数量越多的\n高速水泡连射!" }
+"bubblmnv3" = { name = "泡泡人V3", description = "HP越低数量越多的\n高速水泡连射!" }
+"bubblmnv4" = { name = "泡泡人V4", description = "HP越低数量越多的\n高速水泡连射!" }
+"bubblmnv5" = { name = "泡泡人V5", description = "HP越低数量越多的\n高速水泡连射!" }
+"desrtman" = { name = "沙漠人", description = "召唤流沙巨拳\n横扫敌方三排!" }
+"desrtmnv2" = { name = "沙漠人V2", description = "召唤流沙巨拳\n横扫敌方三排!" }
+"desrtmnv3" = { name = "沙漠人V3", description = "召唤流沙巨拳\n横扫敌方三排!" }
+"desrtmnv4" = { name = "沙漠人V4", description = "召唤流沙巨拳\n横扫敌方三排!" }
+"desrtmnv5" = { name = "沙漠人V5", description = "召唤流沙巨拳\n横扫敌方三排!" }
+"flamman" = { name = "火焰人", description = "炽热火焰席卷\n敌方全部3条战线!" }
+"flammanv2" = { name = "火焰人V2", description = "炽热火焰席卷\n敌方全部3条战线!" }
+"flammanv3" = { name = "火焰人V3", description = "炽热火焰席卷\n敌方全部3条战线!" }
+"flammanv4" = { name = "火焰人V4", description = "炽热火焰席卷\n敌方全部3条战线!" }
+"flammanv5" = { name = "火焰人V5", description = "炽热火焰席卷\n敌方全部3条战线!" }
+"drillman" = { name = "钻头人", description = "破防钻头3路\n贯穿敌方阵地!" }
+"drillmnv2" = { name = "钻头人V2", description = "破防钻头3路\n贯穿敌方阵地!" }
+"drillmnv3" = { name = "钻头人V3", description = "破防钻头3路\n贯穿敌方阵地!" }
+"drillmnv4" = { name = "钻头人V4", description = "破防钻头3路\n贯穿敌方阵地!" }
+"drillmnv5" = { name = "钻头人V5", description = "破防钻头3路\n贯穿敌方阵地!" }
+"metalman" = { name = "金属人", description = "破防金属铁拳\n砸碎前方2格!" }
+"metalmnv2" = { name = "金属人V2", description = "破防金属铁拳\n砸碎前方2格!" }
+"metalmnv3" = { name = "金属人V3", description = "破防金属铁拳\n砸碎前方2格!" }
+"metalmnv4" = { name = "金属人V4", description = "破防金属铁拳\n砸碎前方2格!" }
+"metalmnv5" = { name = "金属人V5", description = "破防金属铁拳\n砸碎前方2格!" }
+"kingman" = { name = "国王人", description = "将军飞跃重击\n目标与十字范围!" }
+"kingmanv2" = { name = "国王人V2", description = "将军飞跃重击\n目标与十字范围!" }
+"kingmanv3" = { name = "国王人V3", description = "将军飞跃重击\n目标与十字范围!" }
+"kingmanv4" = { name = "国王人V4", description = "将军飞跃重击\n目标与十字范围!" }
+"kingmanv5" = { name = "国王人V5", description = "将军飞跃重击\n目标与十字范围!" }
+"darkman" = { name = "暗黑人", description = "暗黑蝙蝠群袭\n附加随机异常!" }
+"darkmanv2" = { name = "暗黑人V2", description = "暗黑蝙蝠群袭\n附加随机异常!" }
+"darkmanv3" = { name = "暗黑人V3", description = "暗黑蝙蝠群袭\n附加随机异常!" }
+"darkmanv4" = { name = "暗黑人V4", description = "暗黑蝙蝠群袭\n附加随机异常!" }
+"darkmanv5" = { name = "暗黑人V5", description = "暗黑蝙蝠群袭\n附加随机异常!" }
+"japanman" = { name = "大和人", description = "长枪高速连刺\n贯穿敌方目标!" }
+"japanmnv2" = { name = "大和人V2", description = "长枪高速连刺\n贯穿敌方目标!" }
+"japanmnv3" = { name = "大和人V3", description = "长枪高速连刺\n贯穿敌方目标!" }
+"japanmnv4" = { name = "大和人V4", description = "长枪高速连刺\n贯穿敌方目标!" }
+"japanmnv5" = { name = "大和人V5", description = "长枪高速连刺\n贯穿敌方目标!" }
+"punk" = { name = "朋克", description = "高速旋转滚轮\n破防突击撞碎敌阵!" }
+"guardian" = { name = "守护地藏", description = "受到攻击即降下\n200伤害天罚雷击!" }
+"zeushamr" = { name = "宙斯之锤", description = "对场上所有接地\n目标造成250破防伤害!" }
+"godstone" = { name = "神石像", description = "在空洞处召唤石像\n连发破防陨石!" }
+"oldwood" = { name = "古树像", description = "在空洞处召唤古树\n降下木属性弹雨!" }
+"meteors" = { name = "流星雨", description = "灼热陨石雨连续\n轰炸敌方全场!" }
+"poltrgst" = { name = "骚灵现象", description = "将场上全部障碍物\n掷向敌人各150伤害!" }
+"jealousy" = { name = "嫉妒", description = "按对手剩余手牌数\n每张造成100伤害!" }
+"standout" = { name = "烈焰支柱", description = "前方整行喷涌出\n高威力火焰柱!" }
+"salamndr" = { name = "火蜥蜴", description = "巨型烈焰浪潮\n席卷敌方大片区域!" }
+"watrline" = { name = "水流线", description = "高压水柱沿当前行\n来回冲刷敌阵!" }
+"fountain" = { name = "喷泉洪流", description = "宽幅水柱奔腾\n来回横扫3排区域!" }
+"ligtning" = { name = "落雷", description = "高能雷电劈击目标\n并波及周围十字!" }
+"bolt" = { name = "雷霆万钧", description = "强力雷暴轰击目标\n周围3×3大片区域!" }
+"gaiaswrd" = { name = "盖亚之剑", description = "吸收后续芯片威力\n化作超强木属性宽剑!" }
+"gaiablad" = { name = "盖亚大刃", description = "吸收后续芯片威力\n化作超强木属性梦想剑!" }
+"bassgs" = { name = "佛鲁迪GS", description = "消失世界700威力\n破防毁灭冲击波!" }
+"z-punch" = { name = "Z气力拳", description = "无敌状态下高速\n连发破防气力拳!" }
+"z-strght" = { name = "Z气力直拳", description = "无敌状态下高速\n连发气力直拳!" }
+"z-impact" = { name = "Z气力重拳", description = "无敌状态下高速\n连发气力冲击拳!" }
+"z-varibl" = { name = "Z变幻剑", description = "无敌状态下高速\n连发变幻剑斩击!" }
+"z-yoyo1" = { name = "Z悠悠球1", description = "无敌状态下高速\n连发悠悠球1!" }
+"z-yoyo2" = { name = "Z悠悠球2", description = "无敌状态下高速\n连发悠悠球2!" }
+"z-yoyo3" = { name = "Z悠悠球3", description = "无敌状态下高速\n连发悠悠球3!" }
+"z-step1" = { name = "Z踏步剑1", description = "无敌状态下高速\n连发踏步斩击!" }
+"z-step2" = { name = "Z踏步十字", description = "无敌状态下高速\n连发踏步十字斩!" }
+"timebom" = { name = "定时炸弹+", description = "在敌方阵地放置\n500威力定时炸弹!" }
+"h-burst" = { name = "超级爆裂", description = "连续5次100威力\n范围扩散大爆炸!" }
+"elemswrd" = { name = "元素之剑", description = "四属性150威力剑刃\n连环横扫前方!" }
+"evilcut" = { name = "邪影三连斩", description = "3连150威力高速\n瞬步十字剑击!" }
+"hyperrat" = { name = "超级导弹鼠", description = "追踪敌人造成500\n威力爆炸的导弹鼠!" }
+"evercrse" = { name = "永恒诅咒", description = "诅咒之盾释放5连\n100威力暗影啃咬!" }
+"gelrain" = { name = "凝胶之雨", description = "3×150水属性凝胶雨\n并夺取敌方前排!" }
+"bigheart" = { name = "巨型之心", description = "全额回复自身HP并\n发动萝露6连击!" }
+"gtsshoot" = { name = "气力投射", description = "气力人掷出洛克人\n造成300破防突击!" }
+"deuxhero" = { name = "双雄剑舞", description = "洛克人与布鲁斯\n8×70英雄连斩!" }
+"momquake" = { name = "大地母震", description = "3×200破防强震并\n震裂敌方全部面板!" }
+"prixpowr" = { name = "大奖赛之力", description = "N1领航员齐聚发动\n3×300强力连击!" }
+
+[navis]
+"megaman" = { name = "洛克人", run_message = "热斗，现在可不是\n逃跑的时候!" }
+
+[forms]
+"base" = { name = "普通形态" }
+"guts" = { name = "气力形态" }
+"custom" = { name = "自定义形态" }
+"team" = { name = "兄弟形态" }
+"shield" = { name = "护盾形态" }
+"ground" = { name = "大地形态" }
+"shadow" = { name = "暗影形态" }
+"bug" = { name = "漏洞形态" }
+
+[backgrounds]
+"acdc-net" = { name = "秋原区域" }
+"acdc-net-dark" = { name = "秋原区域(暗)" }
+"lan-hp" = { name = "热斗的主页" }
+"school-comp" = { name = "学校电脑" }
+"sci-lab-net" = { name = "科学省区域" }
+"yoka-net" = { name = "余暇区域" }
+"beach-net" = { name = "海滨区域" }
+"zoo-comp" = { name = "动物园电脑" }
+"inn-comp" = { name = "旅馆电脑" }
+"yoka-net-alt" = { name = "余暇区域(变体)" }
+"hospital-comp" = { name = "医院电脑" }
+"n1-grand-prix" = { name = "N1大奖赛" }
+"n1-grand-prix-alt" = { name = "N1大奖赛决赛" }
+"hadess-isle" = { name = "地狱岛" }
+"hadess-isle-alt" = { name = "地狱岛深处" }
+"www-comp" = { name = "WWW电脑" }
+"undernet" = { name = "里网络" }
+"undernet-1" = { name = "里网络1" }
+"undernet-2" = { name = "里网络2" }
+"undernet-3" = { name = "里网络3" }
+"undernet-4" = { name = "里网络4" }
+"alpha-core" = { name = "阿尔法核心" }
+"alpha-final" = { name = "阿尔法最深部" }
+"secret-area" = { name = "秘密区域" }
+"generic-comp" = { name = "电脑空间" }
+"serenade-area" = { name = "小夜曲领域" }
+"yoka-net-2" = { name = "余暇区域2" }
+"yoka-net-3" = { name = "余暇区域3" }
+"yoka-net-4" = { name = "余暇区域4" }
+"alpha-core-fast" = { name = "阿尔法核心(高速)" }
+
+[navicust_programs]
+"sprarmor" = { name = "超级装甲", description = "受到攻击时不会\n产生硬直!" }
+"custom1" = { name = "自定义1", description = "自定义画面可选\n芯片数+1" }
+"custom2" = { name = "自定义2", description = "自定义画面可选\n芯片数+2" }
+"megfldr1" = { name = "百万文件夹1", description = "文件夹可放入的\n百万芯片上限+1" }
+"megfldr2" = { name = "百万文件夹2", description = "文件夹可放入的\n百万芯片上限+2" }
+"gigfldr1" = { name = "十亿文件夹1", description = "文件夹可放入的\n十亿芯片上限+1" }
+"shield" = { name = "护盾", description = "B+左指令展开\n护盾防御攻击" }
+"reflect" = { name = "反射护盾", description = "B+左指令反射\n敌方攻击" }
+"flotshoe" = { name = "漂浮鞋", description = "免疫负面地面\n面板效果" }
+"antidmg" = { name = "替身术", description = "B+左指令闪避并\n投掷手里剑反击" }
+"airshoes" = { name = "空气鞋", description = "可以在破损空洞\n面板上自由移动" }
+"undersht" = { name = "防身内衣", description = "受到致命伤害时\n保留1点HP" }
+"fstgauge" = { name = "快速自定义", description = "开局即进入快速\n自定义槽状态" }
+"bugstop" = { name = "漏洞抑制器", description = "完全消除领航员\n自定义器漏洞" }
+"bustrmax" = { name = "破坏炮全满", description = "破坏炮全属性\n提升至最大!" }
+"hubbatc" = { name = "彩斗批次", description = "彻底解放洛克人\n潜能的危险程序" }
+"rush" = { name = "莱西支援", description = "对战专用!解除\n对手隐身并突袭" }
+"beat" = { name = "比特支援", description = "对战专用!夺走\n对手首张百万/十亿芯片" }
+"tango" = { name = "探戈支援", description = "对战专用!濒危时\n出现回复生命" }
+"hp-100" = { name = "HP+100", description = "最大HP+100" }
+"hp-200" = { name = "HP+200", description = "最大HP+200" }
+"hp-300" = { name = "HP+300", description = "最大HP+300" }
+"hp-500" = { name = "HP+500", description = "最大HP+500" }
+"atk-1" = { name = "攻击+1", description = "破坏炮攻击力+1" }
+"speed-1" = { name = "连射+1", description = "破坏炮连射力+1" }
+"charge-1" = { name = "蓄力+1", description = "破坏炮蓄力+1" }
+"reg-5" = { name = "常规+5", description = "常规芯片容量+5MB" }
+"weaplv-1" = { name = "武器等级+1", description = "形态蓄力弹威力\n提升1级!" }
+"brakbust" = { name = "破防破坏炮", description = "破坏炮普攻附带\n破防效果!" }
+"brakchrg" = { name = "破防蓄力炮", description = "蓄力射击附带\n破防效果!" }
+"setgreen" = { name = "预设草丛", description = "开局场地自动\n变为草丛!" }
+"setice" = { name = "预设寒冰", description = "开局场地自动\n变为寒冰!" }
+"setlava" = { name = "预设熔岩", description = "开局场地自动\n变为熔岩!" }
+"setsand" = { name = "预设流沙", description = "开局场地自动\n变为流沙!" }
+"setmetal" = { name = "预设金属", description = "开局场地自动\n变为金属!" }
+"setholy" = { name = "预设圣域", description = "开局我方区域\n变为神圣面板!" }
+"block" = { name = "格挡", description = "B+左指令快速\n格挡攻击" }
+"shdwshoe" = { name = "暗影鞋", description = "踩过裂纹面板\n不会碎裂!" }
+"collect" = { name = "收集之眼", description = "提高战斗后的\n芯片掉落率" }
+"oilbody" = { name = "油体", description = "更容易遭遇\n火属性病毒" }
+"fish" = { name = "游鱼", description = "更容易遭遇\n水属性病毒" }
+"battery" = { name = "蓄电池", description = "更容易遭遇\n电属性病毒" }
+"jungle" = { name = "丛林", description = "更容易遭遇\n木属性病毒" }
+"sneakrun" = { name = "潜行冲刺", description = "避开弱小病毒的\n随机遭遇" }
+"press" = { name = "压缩程序", description = "穿过狭窄的\n电脑空间通道" }
+"engychng" = { name = "能量转换", description = "战后将剩余芯片\n转化为HP" }
+"humor" = { name = "幽默感", description = "按L键听洛克人\n讲冷笑话" }
+"blckmind" = { name = "腹黑心", description = "改变洛克人的\n对话语气" }
+"darklcns" = { name = "暗黑许可", description = "消除暗黑芯片的\n副作用漏洞" }
+"alpha" = { name = "阿尔法", description = "来自阿尔法核心\n的神秘程序" }
+
+[bugs]
+"buster" = "破坏炮空枪漏洞"
+"custom" = "自定义HP漏洞"
+"hp" = "战斗HP漏洞"
+"hub" = "彩斗批次漏洞"
+"move" = "移动漏洞"
+"panel" = "面板漏洞"
+"support" = "支援漏洞"
+
+[builds]
+"versions" = "选择版本。"
+"version.white" = "白版"
+"version.blue" = "黑版"
+
+[rulesets]
+"category.folder" = "芯片"
+"category.navicust_programs" = "领航员自定义"
+"preset.masters" = "大师组"
+"preset.senior" = "高级组"
+"theirs" = "房主规则"
+
+[battle_themes]
+"battle-net" = "普通战斗"
+"battle-boss" = "首领战"
+"netbattle-1" = "网络对战1"
+"netbattle-2" = "网络对战2"
+"netbattle-3" = "网络对战3"
+"netbattle-4" = "网络对战4"
+
+[lettering]
+"banner.battle-start" = "BATTLE START!"
+"banner.round-start" = "BATTLE {n} START!"
+"banner.turn-start" = "TURN {n} START!"
+"banner.final-turn" = "FINAL TURN!"
+"banner.enemy-deleted" = "ENEMY DELETED"
+"banner.megaman-deleted" = "MEGAMAN DELETED"
+"banner.win" = "YOU WIN!"
+"banner.lose" = "YOU LOSE"
+"banner.draw" = "DRAW!"
+"banner.hit-damage" = "HIT DAMAGE JUDGE"
+"banner.time-up" = "TIME UP!"
+"banner.flag-deleted" = "FLAG DELETED"
+"banner.program-advance" = "程序进阶"
+"pause" = "PAUSE"
+"waiting" = "自定义中…"
+"gauge.custom" = "CUSTOM"
+"gauge.l-or-r" = "L or R"
+"turn-limit" = "FINAL TURN"
+"pictures.ok.title" = "NO DATA\nSELECTED"
+"pictures.ok.words" = "尚未选择\n任何芯片"
+"pictures.ok-picked.title" = "CHIP DATA\nTRANSMISSION"
+"pictures.ok-picked.words" = "正在传送\n芯片数据"
+"pictures.add.title" = "ADD CHIP\nDATA"
+"pictures.add.words" = "弃置芯片以增加\n下回合可选张数"
+"window.chip-select" = "CHIP SELECT"
+"logo.program-advance" = "程序进阶"
+"window.ok" = "OK"
+"window.add" = "ADD"

@@ -26,7 +26,7 @@ use crate::compose::apply_fade;
 use crate::render::Frame;
 use crate::textlayer::{Align, Rect, TextItem};
 use crate::vfont::{Cut, Role};
-use saito_assets::{DialogueFont, Hud};
+use saito_assets::Hud;
 use std::collections::HashMap;
 use std::rc::Rc;
 use swash::scale::{Render, ScaleContext, Source};
@@ -166,16 +166,17 @@ impl PixelText {
         }
         let font = &hud.dialogue_font;
         let (ink, ground) = (font.ink(), font.ground());
+        let (gw, gh) = font.glyph_size();
         let mut dialogue = HashMap::new();
         for (k, name) in font.chars.iter().enumerate() {
             let (Some(c), Some(pixels), Some(&advance)) = (mark(name), font.glyph(k), font.advances.get(k)) else { continue };
-            let w = (advance as usize).clamp(8, DialogueFont::WIDTH);
+            let w = (advance as usize).max(8).min(gw);
             let px = pixels
-                .chunks(DialogueFont::WIDTH)
+                .chunks(gw)
                 .flat_map(|row| &row[..w])
                 .map(|&v| if v == ink { 1 } else if v == 0 || v == ground { 0 } else { 2 })
                 .collect();
-            dialogue.entry(c).or_insert_with(|| Rc::new(Bitmap { left: 0, top: 0, w, h: DialogueFont::HEIGHT, advance: advance as i32, px }));
+            dialogue.entry(c).or_insert_with(|| Rc::new(Bitmap { left: 0, top: 0, w, h: gh, advance: advance as i32, px }));
         }
         self.own = Own { pack, cells, dialogue };
     }

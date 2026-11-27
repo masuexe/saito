@@ -5,6 +5,36 @@ use crate::field::PanelType;
 use super::flags::serde_flags;
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_damage_mask() -> u16 {
+    u16::MAX
+}
+
+fn default_double_bit() -> Option<u16> {
+    Some(0x8000)
+}
+
+fn default_final_turn() -> Option<u8> {
+    Some(15)
+}
+
+fn deserialize_final_turn<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u8>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Spec {
+        Flag(bool),
+        Turn(u8),
+    }
+    match Option::<Spec>::deserialize(d)? {
+        None | Some(Spec::Flag(false)) | Some(Spec::Turn(0)) => Ok(None),
+        Some(Spec::Flag(true)) => Ok(Some(15)),
+        Some(Spec::Turn(n)) => Ok(Some(n)),
+    }
+}
+
 /// The rule section `flow` (docs/design/exe5-map.md §15.3 items 7 and 13,
 /// §15.4): the battle's flow where games differ, the arena's game's. A
 /// game states every one (no field has a default: the engine has no
@@ -54,6 +84,11 @@ pub struct FlowRules {
     /// counted while neither paused nor dimmed), by their periods: EXE6's
     /// and EXE5's 20 and 180 (0x08006EF6), EXE4's 10 and 2 (0x08006D08).
     pub fight_cycles: [u8; 2],
+    /// The 1-based custom screen turn at which a link battle enters Final Turn
+    /// and the Damage Judge timer (`Some(15)` by default for EXE4–6; `None`
+    /// disables the turn limit and Damage Judge, e.g., `final_turn = false`).
+    #[serde(default = "default_final_turn", deserialize_with = "deserialize_final_turn")]
+    pub final_turn: Option<u8>,
 }
 
 /// A link battle's navi body damage (the rules' `status.link_body_damage`):
@@ -628,8 +663,25 @@ pub enum ObstacleActions {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DamageWord {
+    /// Mask of raw damage bits (`0x7FF` in EXE5/6, `0x3FFF` in EXE4, `0xFFFF` in plain mode).
+    #[serde(default = "default_damage_mask")]
     pub damage: u16,
+    /// Bit that doubles the decoded damage (default: `Some(0x8000)`; `None` or `Some(0)` disables doubling).
+    #[serde(default = "default_double_bit")]
+    pub double_bit: Option<u16>,
+    /// When `true`, raw `u16` damage passes through unchanged without bitmask stripping,
+    /// bit-15 doubling, or flag-bit decoding (Generation-1 / EXE1–3).
+    #[serde(default)]
+    pub plain: bool,
+    #[serde(default)]
     pub flags: Vec<DamageFlag>,
+}
+
+impl DamageWord {
+    /// Raw `u16` damage without bitmasking, doubling, or flag decoding.
+    pub fn plain() -> DamageWord {
+        DamageWord { damage: u16::MAX, double_bit: None, plain: true, flags: Vec::new() }
+    }
 }
 
 /// A flag bit of a damage word (`DamageWord::flags`): what its hits carry
@@ -1178,9 +1230,56 @@ pub struct CustomDrainRule {
     pub status: u8,
 }
 
+/// How hit modifiers merge during hit registration (`resolve_hit`) and decode
+/// into reaction requests (`hit_modifier_requests`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HitModifierMode {
+    /// EXE4–6: merge via bitwise OR (`|=`), bit 0 = flinch, bit 1 = flash,
+    /// and `push_reading` bit-scan for slides/drags.
+    #[default]
+    Bitfield,
+    /// Generation-1 (EXE1–3): merge via `max()`, decode flinch/flash/requests
+    /// from a rule-configured lookup table indexed by `hit_mod_final`, and
+    /// skip bitfield `push_reading` unless `read_pushes` is enabled.
+    MaxIndexTable {
+        table: Vec<HitModifierEntry>,
+        #[serde(default)]
+        read_pushes: bool,
+    },
+}
+
+impl HitModifierMode {
+    /// Whether bitfield `push_reading` runs on `hit_mod_final`.
+    pub fn reads_pushes(&self) -> bool {
+        match self {
+            HitModifierMode::Bitfield => true,
+            HitModifierMode::MaxIndexTable { read_pushes, .. } => *read_pushes,
+        }
+    }
+}
+
+/// One row of [`HitModifierMode::MaxIndexTable`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HitModifierEntry {
+    /// Raises the flinch request (`f2 |= 0x4`, gated by SuperArmor/Anger unless `ignores_super_armor`).
+    #[serde(default)]
+    pub flinch: bool,
+    /// Raises the mercy-flash request (`f2 |= 0x2`).
+    #[serde(default)]
+    pub flash: bool,
+    /// If true, `flinch` triggers even through SuperArmor/Anger.
+    #[serde(default)]
+    pub ignores_super_armor: bool,
+    /// Additional `f2` request flags raised directly by this entry.
+    #[serde(default)]
+    pub requests: u32,
+}
+
 /// How a navi takes a hit's NaviCust bug, where games differ (`sub_801AC6C`,
 /// `sub_80139F6`): the status section's, each stated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IntakeRules {
     /// The bug is taken before the HP bug drains (EXE5's hit intake,
     /// 0x080178EC, calls 0x0801103E before 0x0800DFEC); EXE6's after, so a
@@ -1249,7 +1348,7 @@ pub struct AntiTraps {
 
 /// How a navi's barrier takes the tick's hits (`IntakeRules::barrier`:
 /// EXE6's `sub_801A802`, EXE5's, EXE4's 0x08012DF8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BarrierTick {
     /// It stands still while the battle is paused (EXE6's, EXE5's). EXE4's
@@ -1265,6 +1364,110 @@ pub struct BarrierTick {
     /// 150 HP). None in a game that has none.
     #[serde(default)]
     pub regrowing: Option<BarrierRegrowth>,
+    /// Data-driven per-ID barrier rules. When empty, falls back to the classic
+    /// EXE4–6 table (`4` regrowing, `8` BubbleWrap, `0xA` regenerating, `0x10` popped).
+    #[serde(default)]
+    pub types: Vec<BarrierTypeRule>,
+}
+
+/// Rule for one barrier ID (`CollisionData::barrier`) in [`BarrierTick::types`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BarrierTypeRule {
+    /// The barrier ID byte (`1..=255`).
+    pub id: u8,
+    /// Popped-by-wind state (times out even while dimmed, absorbs hits without clearing on 0 HP).
+    #[serde(default)]
+    pub popped: bool,
+    /// BubbleWrap-style bubble (reported by `CollisionField::Bubble`, paused while frozen/bubbled).
+    #[serde(default)]
+    pub bubble: bool,
+    /// Whether wind affects this barrier (default `true`).
+    #[serde(default = "default_true")]
+    pub wind_pops: bool,
+    /// Whether elec breaks this barrier and doubles elec damage (BubbleWrap).
+    #[serde(default)]
+    pub elec_pops: bool,
+    /// When HP reaches 0, stay active and regrow after `regrow_ticks` ticks with `regrow_hp` HP.
+    #[serde(default)]
+    pub regrow: bool,
+    /// Ticks before a depleted regrowing barrier returns.
+    #[serde(default)]
+    pub regrow_ticks: u16,
+    /// HP restored when a depleted regrowing barrier returns.
+    #[serde(default)]
+    pub regrow_hp: u16,
+    /// Pause regrow timer while the navi is frozen or bubbled.
+    #[serde(default)]
+    pub regrow_blocked_by_status: bool,
+    /// Regenerating barrier (EXE6 `0xA`): uses high byte of `barrier_timer` for regrow
+    /// and regenerates 1 HP every `regen_interval` ticks up to `regrow_hp`.
+    #[serde(default)]
+    pub regen_interval: u8,
+    /// Whether damage must meet `barrier_threshold` before wearing down `barrier_hp`
+    /// (`true` = aura/threshold check, `false` = pure HP barrier ignoring threshold).
+    #[serde(default = "default_true")]
+    pub threshold_aura: bool,
+}
+
+impl BarrierTypeRule {
+    /// Default plain barrier/aura rule for `id`.
+    pub fn plain(id: u8) -> BarrierTypeRule {
+        BarrierTypeRule {
+            id,
+            popped: false,
+            bubble: false,
+            wind_pops: true,
+            elec_pops: false,
+            regrow: false,
+            regrow_ticks: 0,
+            regrow_hp: 0,
+            regrow_blocked_by_status: false,
+            regen_interval: 0,
+            threshold_aura: true,
+        }
+    }
+}
+
+impl BarrierTick {
+    /// The barrier ID written when `BarrierWind::Pops` pops a barrier.
+    pub fn popped_id(&self) -> u8 {
+        self.types.iter().find(|t| t.popped).map_or(0x10, |t| t.id)
+    }
+
+    /// Resolve the rule for barrier ID `id` (`1..=255`). When `self.types` is
+    /// empty, returns the exact EXE4–6 defaults for `4`, `8`, `0xA`, and `0x10`.
+    pub fn rule_for(&self, id: u8) -> BarrierTypeRule {
+        if !self.types.is_empty() {
+            return self.types.iter().copied().find(|t| t.id == id).unwrap_or_else(|| BarrierTypeRule::plain(id));
+        }
+        match id {
+            4 => BarrierTypeRule {
+                regrow: true,
+                regrow_ticks: self.regrowing.map_or(0, |r| r.after),
+                regrow_hp: self.regrowing.map_or(0, |r| r.hp as u16),
+                ..BarrierTypeRule::plain(4)
+            },
+            8 => BarrierTypeRule {
+                bubble: true,
+                elec_pops: true,
+                regrow: true,
+                regrow_ticks: 0xF0,
+                regrow_hp: 1,
+                regrow_blocked_by_status: true,
+                ..BarrierTypeRule::plain(8)
+            },
+            0xA => BarrierTypeRule {
+                regrow: true,
+                regrow_ticks: 0x78,
+                regrow_hp: 0xC8,
+                regen_interval: 6,
+                ..BarrierTypeRule::plain(0xA)
+            },
+            0x10 => BarrierTypeRule { popped: true, ..BarrierTypeRule::plain(0x10) },
+            other => BarrierTypeRule::plain(other),
+        }
+    }
 }
 
 /// How a regrowing barrier comes back (`BarrierTick::regrowing`).
@@ -1385,6 +1588,8 @@ pub enum WeaknessMark {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "EmotionSection")]
 pub struct EmotionRules {
+    /// Whether this game has an emotion window / mood system (`false` for Generation-1 / EXE1–3).
+    pub enabled: bool,
     /// What holds a side's mood against the setter (`sub_8015BEC`, EXE5's
     /// 0x080127D6).
     pub mood_held: MoodHeld,
@@ -1605,8 +1810,28 @@ pub enum EmotionRole {
 }
 
 impl EmotionRules {
+    /// Disabled emotion system (for games without an emotion window / mood, e.g., EXE1–3).
+    pub fn disabled() -> EmotionRules {
+        EmotionRules {
+            enabled: false,
+            mood_held: MoodHeld::TiredOrExhausted,
+            anger_end: AngerEnd::ResetsMood,
+            names: Vec::new(),
+            order: Vec::new(),
+            roles: Vec::new(),
+            hit_mood: HitMood::CounterMark,
+            hitter_gain: HitterGain::None,
+            full_synchro_spent: 0x80,
+            anger_boost_sound: false,
+            anger_damage: None,
+        }
+    }
+
     /// The side's emotion for `facts`: the first case that holds.
     pub fn of(&self, facts: &EmotionFacts) -> Emotion {
+        if !self.enabled {
+            return self.fallback();
+        }
         self.order.iter().find(|c| c.when.is_empty() || c.when.iter().any(|w| w.holds(facts))).map_or(self.fallback(), |c| c.emotion)
     }
 
@@ -1624,6 +1849,9 @@ impl EmotionRules {
     }
 
     pub fn role(&self, e: Emotion) -> Option<EmotionRole> {
+        if !self.enabled {
+            return None;
+        }
         self.roles.get(e.0 as usize).copied().flatten()
     }
 
@@ -1632,6 +1860,9 @@ impl EmotionRules {
     /// alternative asking for no form and no battle mode, in the order's
     /// order, with the first such alternative (the facts holding it sets).
     pub fn holdable(&self) -> Vec<(Emotion, EmotionWhen)> {
+        if !self.enabled {
+            return Vec::new();
+        }
         let mut out: Vec<(Emotion, EmotionWhen)> = Vec::new();
         for c in &self.order {
             if c.emotion == self.fallback() || out.iter().any(|(e, _)| *e == c.emotion) {
@@ -1648,15 +1879,24 @@ impl EmotionRules {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmotionSection {
-    mood_held: MoodHeld,
-    anger_end: AngerEnd,
-    order: Vec<EmotionCaseSpec>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    mood_held: Option<MoodHeld>,
+    #[serde(default)]
+    anger_end: Option<AngerEnd>,
+    #[serde(default)]
+    order: Option<Vec<EmotionCaseSpec>>,
     #[serde(default)]
     roles: std::collections::BTreeMap<String, EmotionRole>,
-    hit_mood: HitMood,
-    hitter_gain: HitterGain,
-    full_synchro_spent: u8,
-    anger_boost_sound: bool,
+    #[serde(default)]
+    hit_mood: Option<HitMood>,
+    #[serde(default)]
+    hitter_gain: Option<HitterGain>,
+    #[serde(default)]
+    full_synchro_spent: Option<u8>,
+    #[serde(default)]
+    anger_boost_sound: Option<bool>,
     #[serde(default)]
     anger_damage: Option<u16>,
 }
@@ -1673,13 +1913,24 @@ impl TryFrom<EmotionSection> for EmotionRules {
     type Error = String;
 
     fn try_from(s: EmotionSection) -> Result<EmotionRules, String> {
-        let order = s.order.into_iter().map(|c| (c.emotion, c.when)).collect();
-        let rules = EmotionRules::new(s.mood_held, s.anger_end, order, s.roles.into_iter().collect())?;
+        if !s.enabled {
+            return Ok(EmotionRules::disabled());
+        }
+        let need = |name: &str| format!("missing field `{name}`");
+        let mood_held = s.mood_held.ok_or_else(|| need("mood_held"))?;
+        let anger_end = s.anger_end.ok_or_else(|| need("anger_end"))?;
+        let order = s.order.ok_or_else(|| need("order"))?.into_iter().map(|c| (c.emotion, c.when)).collect();
+        let hit_mood = s.hit_mood.ok_or_else(|| need("hit_mood"))?;
+        let hitter_gain = s.hitter_gain.ok_or_else(|| need("hitter_gain"))?;
+        let full_synchro_spent = s.full_synchro_spent.ok_or_else(|| need("full_synchro_spent"))?;
+        let anger_boost_sound = s.anger_boost_sound.ok_or_else(|| need("anger_boost_sound"))?;
+        let rules = EmotionRules::new(mood_held, anger_end, order, s.roles.into_iter().collect())?;
         Ok(EmotionRules {
-            hit_mood: s.hit_mood,
-            hitter_gain: s.hitter_gain,
-            full_synchro_spent: s.full_synchro_spent,
-            anger_boost_sound: s.anger_boost_sound,
+            enabled: true,
+            hit_mood,
+            hitter_gain,
+            full_synchro_spent,
+            anger_boost_sound,
             anger_damage: s.anger_damage,
             ..rules
         })
@@ -1723,6 +1974,7 @@ impl EmotionRules {
         }
         // (The section states the rest; EXE6's until then.)
         Ok(EmotionRules {
+            enabled: true,
             mood_held,
             anger_end,
             names,
@@ -1833,6 +2085,9 @@ pub struct Rules {
     /// `emotion`): how one is read off the navi, what holds a mood, how
     /// anger leaves it.
     pub emotion: EmotionRules,
+    /// Whether Counter Hits (counter windows, counter paralysis, counter
+    /// hit bookkeeping) are active (`true` by default for EXE4–6; `false` for EXE1–3).
+    pub counter_hits: bool,
     /// How the weakness request breaks a form (rule section `status`):
     /// EXE6's (`sub_8015766`: a Cross or a Beast, to what it breaks to) or
     /// EXE5's (0x080122C8: any form, to the base form; no animation 2, no
@@ -1892,6 +2147,8 @@ pub struct Rules {
     /// How a push reads the hit modifiers (docs/design/exe5-map.md §15.3
     /// item 2).
     pub push_reading: PushReading,
+    /// How hit modifiers merge (`|=` vs `max`) and decode into flinch/flash/requests.
+    pub hit_modifier: HitModifierMode,
     /// The hit test where games differ (docs/design/exe5-map.md §15.3 item
     /// 12).
     pub hit_test: HitTest,

@@ -1,0 +1,8 @@
+# EXE3's battle status byte numbers (placeholder baseline; expand as statuses are mapped).
+
+[statuses]
+"paralyze" = 0x01
+"freeze" = 0x02
+"bubble" = 0x03
+"confuse" = 0x04
+"blind" = 0x05

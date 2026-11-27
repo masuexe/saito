@@ -66,6 +66,9 @@ pub fn dispatch(b: &mut Battle, r: ObjectRef, action: super::NaviAction) {
 /// (for players, only in link battles); `object_setDefaultCounterTime`'s
 /// is 16 ticks.
 pub(crate) fn open_counter_window(b: &mut Battle, r: ObjectRef, ticks: u8) {
+    if !b.game_rules().counter_hits {
+        return;
+    }
     if super::ai(b, r).actor_type == crate::actor::ActorType::Player && !super::is_link(b) {
         return;
     }

@@ -31,9 +31,9 @@ const GAME_TOKENS: &[&str] = &[
 /// Shrink or remove entries as each site is migrated to capability-driven logic.
 const ALLOWLIST: &[(&str, usize)] = &[
     // Centralized capability & simulation-epoch registry (single source of truth)
-    ("crates/saito-match/src/capabilities.rs", 8),
-    // Extraction / HD art (DP2)
-    ("crates/saito-extract/src/hd_art.rs", 5),
+    ("crates/saito-match/src/capabilities.rs", 9),
+    // Extraction / HD art (Vol. 1 + Vol. 2 base hashes, DP2)
+    ("crates/saito-extract/src/hd_art.rs", 9),
     ("crates/saito-extract/src/lib.rs", 1),
     // Remaining game-specific rule/data tables (DP5 — Coupling C)
     ("crates/saito-match/src/abd_mode.rs", 5),

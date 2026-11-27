@@ -1,0 +1,47 @@
+# EXE3's battle backgrounds: the default stage background, the 8 NetBattle backgrounds from 0x0803EAB0
+# ([0, 4, 5, 6, 23, 16, 2, 10]), and each background's battle music.
+
+stage = "acdc-net"
+
+link_battle = [
+    "acdc-net",
+    "sci-lab-net",
+    "yoka-net",
+    "beach-net",
+    "secret-area",
+    "undernet",
+    "lan-hp",
+    "hospital-comp",
+]
+
+[backgrounds]
+acdc-net = { music = "battle-net" }
+acdc-net-dark = { music = "battle-net" }
+lan-hp = { music = "battle-net" }
+school-comp = { music = "battle-net" }
+sci-lab-net = { music = "battle-net" }
+yoka-net = { music = "battle-net" }
+beach-net = { music = "battle-net" }
+zoo-comp = { music = "battle-net" }
+inn-comp = { music = "battle-net" }
+yoka-net-alt = { music = "battle-net" }
+hospital-comp = { music = "battle-net" }
+n1-grand-prix = { music = "battle-boss" }
+n1-grand-prix-alt = { music = "battle-boss" }
+hadess-isle = { music = "battle-boss" }
+hadess-isle-alt = { music = "battle-boss" }
+www-comp = { music = "battle-boss" }
+undernet = { music = "battle-net" }
+undernet-1 = { music = "battle-net" }
+undernet-2 = { music = "battle-net" }
+undernet-3 = { music = "battle-net" }
+undernet-4 = { music = "battle-net" }
+alpha-core = { music = "battle-boss" }
+alpha-final = { music = "battle-boss" }
+secret-area = { music = "battle-boss" }
+generic-comp = { music = "battle-net" }
+serenade-area = { music = "battle-boss" }
+yoka-net-2 = { music = "battle-net" }
+yoka-net-3 = { music = "battle-net" }
+yoka-net-4 = { music = "battle-net" }
+alpha-core-fast = { music = "battle-boss" }

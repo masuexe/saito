@@ -116,7 +116,7 @@ pub struct Accumulators {
     pub inflicted_bugs: u16,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CollisionData {
     pub enabled: u8,
     /// The region it covers around its panel (or the whole field's panels
@@ -153,7 +153,10 @@ pub struct CollisionData {
     pub push_sides: u8,
     /// The status its hits carry, and the one the hits it took landed.
     pub status_base: Option<StatusHandle>,
+    /// Secondary status slot (Generation-1 / EXE3 dual status pair).
+    pub status_base2: Option<StatusHandle>,
     pub status_final: Option<StatusHandle>,
+    pub status_final2: Option<StatusHandle>,
     /// Bug code (low byte) and argument (high byte).
     pub bugs: u16,
     pub barrier_weak: u8,
@@ -182,6 +185,96 @@ pub struct CollisionData {
     pub dive_timer: u16,
     pub links: [Option<ObjectRef>; 5],
     pub acc: Accumulators,
+}
+
+impl std::hash::Hash for CollisionData {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        let CollisionData {
+            enabled,
+            region,
+            element,
+            guard_dirs,
+            alliance,
+            flip,
+            barrier,
+            counter_byte,
+            standing_count,
+            hit_effect,
+            panel,
+            direction,
+            counter_timer,
+            hit_mod_base,
+            hit_mod_final,
+            hit_mod_by_side,
+            push_sides,
+            status_base,
+            status_base2,
+            status_final,
+            status_final2,
+            bugs,
+            barrier_weak,
+            barrier_saved_hmf,
+            barrier_hp,
+            barrier_threshold,
+            secondary_weakness,
+            secondary_element,
+            barrier_timer,
+            status_timers,
+            self_damage,
+            self_flags,
+            target_flags,
+            parent,
+            f1,
+            f2,
+            bit,
+            dive_timer,
+            links,
+            acc,
+        } = self;
+        enabled.hash(h);
+        region.hash(h);
+        element.hash(h);
+        guard_dirs.hash(h);
+        alliance.hash(h);
+        flip.hash(h);
+        barrier.hash(h);
+        counter_byte.hash(h);
+        standing_count.hash(h);
+        hit_effect.hash(h);
+        panel.hash(h);
+        direction.hash(h);
+        counter_timer.hash(h);
+        hit_mod_base.hash(h);
+        hit_mod_final.hash(h);
+        hit_mod_by_side.hash(h);
+        push_sides.hash(h);
+        status_base.hash(h);
+        status_final.hash(h);
+        bugs.hash(h);
+        barrier_weak.hash(h);
+        barrier_saved_hmf.hash(h);
+        barrier_hp.hash(h);
+        barrier_threshold.hash(h);
+        secondary_weakness.hash(h);
+        secondary_element.hash(h);
+        barrier_timer.hash(h);
+        status_timers.hash(h);
+        self_damage.hash(h);
+        self_flags.hash(h);
+        target_flags.hash(h);
+        parent.hash(h);
+        f1.hash(h);
+        f2.hash(h);
+        bit.hash(h);
+        dive_timer.hash(h);
+        links.hash(h);
+        acc.hash(h);
+        if status_base2.is_some() || status_final2.is_some() {
+            1u8.hash(h);
+            status_base2.hash(h);
+            status_final2.hash(h);
+        }
+    }
 }
 
 /// Indices into `links`: the status visual objects.
@@ -463,6 +556,7 @@ impl Battle {
             s.guard_dirs = 0;
         }
         s.status_final = None;
+        s.status_final2 = None;
         s.acc = Accumulators::default();
         let (bit, self_flags) = (s.bit, s.self_flags);
         let whole_field = self.collision.covers_whole_field(&self.content, id);
@@ -630,6 +724,9 @@ impl Battle {
         rm.acc.damage_elements |= hd.secondary_element;
         if hd.status_base.is_some() {
             rm.status_final = hd.status_base;
+            rm.status_final2 = hd.status_base2;
+        } else if hd.status_base2.is_some() {
+            rm.status_final2 = hd.status_base2;
         }
         // An object that isn't a body (an attack) touching a body that
         // isn't invulnerable: the type of the panel under the body does what
@@ -645,8 +742,12 @@ impl Battle {
             self.call_panel(kind, saito_content_api::PanelCall::Hit { body, element: rd.element });
         }
         let c = hd.counter_byte;
+        let counter_hits = self.game_rules().counter_hits;
+        let emotion_enabled = self.game_rules().emotion.enabled;
+        let counter_counts = self.game_rules().emotion.hit_mood == crate::content::HitMood::CounterCounts;
+        let max_index_hit_mod = matches!(self.game_rules().hit_modifier, crate::content::HitModifierMode::MaxIndexTable { .. });
         let rm = self.collision.get_mut(r);
-        if rm.counter_timer != 0 && c & 0x7F != 0 && c & 0x80 == 0 {
+        if counter_hits && rm.counter_timer != 0 && c & 0x7F != 0 && c & 0x80 == 0 {
             rm.acc.hit_flags |= 0x40;
             rm.acc.hit_flags_by_flip[hd.flip as usize & 1] |= 0x40;
         }
@@ -654,31 +755,37 @@ impl Battle {
         // on a counter hit what the counter puts in the register they're
         // read from: none past EXE6's mark (0x8000), 0x7F of EXE4's 0xFF
         // (the rules' `emotion.hit_mood`).
-        let counter_counts = self.game_rules().emotion.hit_mood == crate::content::HitMood::CounterCounts;
-        let rm = self.collision.get_mut(r);
-        let mut mood_damage = (c & 0x7F) as u16;
-        if c & 0x80 == 0 && c & 0x7F != 0 {
-            if rm.counter_timer != 0 {
-                if counter_counts {
-                    // EXE4's 0x08012C22: the counter counts 0xFF.
-                    rm.acc.counter = rm.acc.counter.wrapping_add(0xFF);
-                    mood_damage = 0x7F;
+        if emotion_enabled {
+            let mut mood_damage = (c & 0x7F) as u16;
+            if c & 0x80 == 0 && c & 0x7F != 0 {
+                if counter_hits && rm.counter_timer != 0 {
+                    if counter_counts {
+                        // EXE4's 0x08012C22: the counter counts 0xFF.
+                        rm.acc.counter = rm.acc.counter.wrapping_add(0xFF);
+                        mood_damage = 0x7F;
+                    } else {
+                        rm.acc.counter = 0x8000;
+                        mood_damage = 0;
+                    }
                 } else {
-                    rm.acc.counter = 0x8000;
-                    mood_damage = 0;
+                    rm.acc.counter = rm.acc.counter.wrapping_add((c & 0x7F) as u16);
                 }
-            } else {
-                rm.acc.counter = rm.acc.counter.wrapping_add((c & 0x7F) as u16);
             }
+            rm.acc.mood_damage = rm.acc.mood_damage.wrapping_add(mood_damage);
         }
-        rm.acc.mood_damage = rm.acc.mood_damage.wrapping_add(mood_damage);
         if hs & 0x100 != 0 {
             rm.acc.drain_hits = rm.acc.drain_hits.wrapping_add(1);
         }
-        rm.hit_mod_final |= hd.hit_mod_base;
-        // EXE5 also keeps it by the hitter's flip (0x08016AA6: the hitter's
-        // collision's +5, not its side's +4).
-        rm.hit_mod_by_side[hd.flip as usize & 1] |= hd.hit_mod_base;
+        if max_index_hit_mod {
+            rm.hit_mod_final = rm.hit_mod_final.max(hd.hit_mod_base);
+            let slot = &mut rm.hit_mod_by_side[hd.flip as usize & 1];
+            *slot = (*slot).max(hd.hit_mod_base);
+        } else {
+            rm.hit_mod_final |= hd.hit_mod_base;
+            // EXE5 also keeps it by the hitter's flip (0x08016AA6: the hitter's
+            // collision's +5, not its side's +4).
+            rm.hit_mod_by_side[hd.flip as usize & 1] |= hd.hit_mod_base;
+        }
         if hd.bugs & 0xFF != 0 {
             rm.acc.inflicted_bugs = hd.bugs;
         }
@@ -795,9 +902,15 @@ impl Battle {
 /// the game's order; `r1` is what the caller left there, a row-offset bug
 /// code's high byte.
 fn decode_damage_word(s: &mut CollisionData, r1: u16, word: &DamageWord, roles: &crate::content::Roles) {
+    if word.plain {
+        return;
+    }
     let d = s.self_damage;
     s.self_damage = d & word.damage;
-    if d & 0x8000 != 0 {
+    if let Some(bit) = word.double_bit
+        && bit != 0
+        && d & bit != 0
+    {
         s.self_damage = s.self_damage.wrapping_mul(2);
     }
     for f in &word.flags {
@@ -970,5 +1083,144 @@ mod tests {
         assert_eq!(Absolute.of(p(200), p(0), 0), 3);
         assert_eq!(BySide.of(p(0), p(200), c), 5);
         assert_eq!(BySide.of(p(200), p(0), c), back);
+    }
+
+    #[test]
+    fn plain_damage_word_passes_raw_damage_unmasked_and_undoubled() {
+        let (mut b, [h, _r]) = fight(tests()[0]);
+        let obj = b.collision.get(h).parent.unwrap();
+
+        // Default EXE4–6 mode: 0x8000 doubles and damage is masked to 0x3FF/0x7FF.
+        let mut s = CollisionData { self_damage: 0x8032, ..CollisionData::default() };
+        decode_damage_word(&mut s, 0, &b.game_rules().effects.damage_word, b.roles());
+        assert_eq!(s.self_damage, 100);
+
+        // Plain mode: raw u16 passes unchanged without bitmask stripping or 0x8000 doubling.
+        let mut c = (*b.content).clone();
+        c.rules_mut().effects.damage_word = crate::content::DamageWord::plain();
+        b.content = Arc::new(c);
+        let mut s_plain = CollisionData { self_damage: 0x8123, ..CollisionData::default() };
+        decode_damage_word(&mut s_plain, 0, &b.game_rules().effects.damage_word, b.roles());
+        assert_eq!((s_plain.self_damage, s_plain.status_base), (0x8123, None));
+
+        let self_t = b.roles().collision(crate::content::CollisionRole::Navi);
+        let target_t = b.roles().collision(crate::content::CollisionRole::NaviTarget);
+        b.objects.get_mut(obj).damage = 0x8123;
+        b.setup_collision(obj, self_t, target_t, 0);
+        assert_eq!(b.collision.get(h).self_damage, 0x8123);
+        assert_eq!(b.collision.get(h).status_base, None);
+
+        // Also test show_used_chip with plain = true vs default doubling.
+        let chip = b
+            .content
+            .defs
+            .chips
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.record.flags.has(crate::content::ChipFlags::HAS_DAMAGE))
+            .map(|(i, _)| saito_content_api::ChipHandle(i as u16))
+            .expect("content has a damaging chip");
+        b.show_used_chip(0, chip, 0x8123, 10);
+        assert_eq!(b.used_chips[0].unwrap().damage, 0x8123);
+        assert!(!b.used_chips[0].unwrap().doubled);
+
+        // double_bit = None disables doubling while still applying the damage mask.
+        let mut c2 = (*b.content).clone();
+        c2.rules_mut().effects.damage_word.plain = false;
+        c2.rules_mut().effects.damage_word.damage = 0x0FFF;
+        c2.rules_mut().effects.damage_word.double_bit = None;
+        b.content = Arc::new(c2);
+        let mut s_nodbl = CollisionData { self_damage: 0x8123, ..CollisionData::default() };
+        decode_damage_word(&mut s_nodbl, 0, &b.game_rules().effects.damage_word, b.roles());
+        assert_eq!(s_nodbl.self_damage, 0x0123);
+    }
+
+    #[test]
+    fn max_index_table_hit_modifier_merges_by_max() {
+        use crate::content::{HitModifierEntry, HitModifierMode};
+        use saito_content_api::CoreApi;
+
+        let (mut b, [h, r]) = fight(tests()[0]);
+        let mut c = (*b.content).clone();
+        c.rules_mut().hit_modifier = HitModifierMode::MaxIndexTable {
+            table: vec![
+                HitModifierEntry::default(),
+                HitModifierEntry { flinch: true, flash: true, ..Default::default() },
+                HitModifierEntry { flinch: true, flash: true, ignores_super_armor: true, ..Default::default() },
+            ],
+            read_pushes: false,
+        };
+        b.content = Arc::new(c);
+
+        b.collision.get_mut(h).self_flags = 0x8000_0000;
+        b.collision.get_mut(h).self_damage = 10;
+        b.collision.get_mut(h).f1 = 0;
+
+        // First hit with index 2, second hit with index 5, third hit with index 3:
+        // Bitfield OR would give 2 | 5 | 3 = 7; MaxIndexTable must give max(2, 5, 3) = 5.
+        for hm in [2u8, 5, 3] {
+            b.collision.get_mut(h).hit_mod_base = hm;
+            b.resolve_hit(r, h);
+        }
+        assert_eq!(b.collision.get(r).hit_mod_final, 5);
+        assert_eq!(b.collision.get(r).hit_mod_by_side[0], 5);
+
+        // CoreApi::add_hit_mod / add_final_hit_mod also merge by max.
+        let r_obj = b.collision.get(r).parent.unwrap();
+        b.add_final_hit_mod(r_obj, 4);
+        assert_eq!(b.collision.get(r).hit_mod_final, 5);
+        b.add_hit_mod(r_obj, 6);
+        assert_eq!(b.collision.get(r).hit_mod_final, 6);
+        assert_eq!(b.collision.get(r).hit_mod_by_side, [6, 6]);
+    }
+
+    #[test]
+    fn dual_status_slots_propagate_clear_and_affect_digest() {
+        let (mut b, [h, r]) = fight(tests()[0]);
+        let base_digest = b.digest();
+
+        let s1 = b.roles().status(crate::content::StatusRole::CounterParalysis);
+        let s2 = b.roles().status(crate::content::StatusRole::DamageWordParalysis);
+        b.collision.get_mut(h).self_flags = 0x8000_0000;
+        b.collision.get_mut(h).self_damage = 10;
+        b.collision.get_mut(h).f1 = 0;
+        b.collision.get_mut(h).status_base = Some(s1);
+        b.collision.get_mut(h).status_base2 = Some(s2);
+        assert_ne!(b.digest(), base_digest, "setting status_base2 must affect battle digest");
+
+        b.resolve_hit(r, h);
+        assert_eq!(b.collision.get(r).status_final, Some(s1));
+        assert_eq!(b.collision.get(r).status_final2, Some(s2));
+
+        // Presenting clears both status_final and status_final2.
+        b.present_collision(r);
+        assert_eq!(b.collision.get(r).status_final, None);
+        assert_eq!(b.collision.get(r).status_final2, None);
+    }
+
+    #[test]
+    fn disabled_counter_hits_and_emotions_suppress_counter_and_mood() {
+        let (mut b, [h, r]) = fight(tests()[0]);
+        let mut c = (*b.content).clone();
+        c.rules_mut().counter_hits = false;
+        c.rules_mut().emotion = crate::content::EmotionRules::disabled();
+        b.content = Arc::new(c);
+
+        // open_counter_window is a no-op when counter_hits is false.
+        let r_obj = b.collision.get(r).parent.unwrap();
+        crate::kinds::player::actions::open_counter_window(&mut b, r_obj, 16);
+        assert_eq!(b.collision.get(r).counter_timer, 0);
+
+        // Even if counter_timer is manually non-zero, resolve_hit produces no 0x40 flag,
+        // no counter accumulation, and no mood damage.
+        b.collision.get_mut(r).counter_timer = 10;
+        b.collision.get_mut(h).self_flags = 0x8000_0000;
+        b.collision.get_mut(h).self_damage = 50;
+        b.collision.get_mut(h).counter_byte = 1;
+        b.collision.get_mut(h).f1 = 0;
+        b.resolve_hit(r, h);
+        assert_eq!(b.collision.get(r).acc.hit_flags & 0x40, 0);
+        assert_eq!(b.collision.get(r).acc.counter, 0);
+        assert_eq!(b.collision.get(r).acc.mood_damage, 0);
     }
 }

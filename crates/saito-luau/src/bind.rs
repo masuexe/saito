@@ -893,16 +893,32 @@ impl UserData for Object {
             with(|api, _| Ok(api.take_damage(this.0, mode)))
         });
         methods.add_method("raise_barrier", |_, this, t: mlua::Table| {
-            let behavior: mlua::LuaString = t.raw_get("behavior")?;
-            let behavior = named(&behavior, "barrier behavior", |s| {
-                saito_content_api::api::BARRIER_BEHAVIORS.iter().position(|n| *n == s)
-            })? as u8;
+            let id_v: LuaValue = t.raw_get("id")?;
+            let id = if id_v.is_nil() {
+                None
+            } else {
+                Some(u8::try_from(int(&id_v, "id")?).map_err(|_| mlua::Error::runtime("barrier `id` is not a byte"))?)
+            };
+            let behavior_v: LuaValue = t.raw_get("behavior")?;
+            let behavior = match (behavior_v, id) {
+                (LuaValue::Nil, Some(_)) => 0,
+                (LuaValue::String(s), _) => named(&s, "barrier behavior", |n| {
+                    saito_content_api::api::BARRIER_BEHAVIORS.iter().position(|b| *b == n)
+                })? as u8,
+                (other, _) => {
+                    return Err(mlua::Error::runtime(format!(
+                        "barrier `behavior`: expected string, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
             let byte = |k: &str| -> mlua::Result<u8> {
                 u8::try_from(table_int(&t, k)?).map_err(|_| mlua::Error::runtime(format!("barrier `{k}` is not a byte")))
             };
             let timer = u16::try_from(table_int(&t, "timer")?)
                 .map_err(|_| mlua::Error::runtime("barrier `timer` is not a halfword"))?;
             let spec = saito_content_api::api::BarrierSpec {
+                id,
                 behavior,
                 hp: byte("hp")?,
                 threshold: byte("threshold")?,
@@ -1987,6 +2003,27 @@ fn custom_lib(lua: &Lua) -> mlua::Result<mlua::Table> {
         let side = u8_arg(side, "side")? & 1;
         with(|api, _| api.custom_redeal(side).map_err(api_error))
     });
+    lib_fn!(lua, t, "start_add", |_, side: LuaValue| {
+        let side = u8_arg(side, "side")? & 1;
+        with(|api, _| api.custom_start_add(side).map_err(api_error))
+    });
+    lib_fn!(lua, t, "cancel_add", |_, side: LuaValue| {
+        let side = u8_arg(side, "side")? & 1;
+        with(|api, _| api.custom_cancel_add(side).map_err(api_error))
+    });
+    lib_fn!(lua, t, "is_adding", |_, side: LuaValue| {
+        let side = u8_arg(side, "side")? & 1;
+        with(|api, _| api.custom_is_adding(side).map_err(api_error))
+    });
+    lib_fn!(lua, t, "add_bonus", |_, side: LuaValue| {
+        let side = u8_arg(side, "side")? & 1;
+        with(|api, _| api.custom_add_bonus(side).map_err(api_error))
+    });
+    lib_fn!(lua, t, "set_add_bonus", |_, (side, bonus): (LuaValue, LuaValue)| {
+        let side = u8_arg(side, "side")? & 1;
+        let bonus = u8_arg(bonus, "bonus")?;
+        with(|api, _| api.custom_set_add_bonus(side, bonus).map_err(api_error))
+    });
     lib_fn!(lua, t, "last_pick_is_chip", |_, side: LuaValue| {
         let side = u8_arg(side, "side")? & 1;
         with(|api, _| api.custom_last_pick_is_chip(side).map_err(api_error))
@@ -2780,6 +2817,14 @@ fn battle_lib(lua: &Lua) -> mlua::Result<mlua::Table> {
                     (LuaValue::Nil, _) => Ok(None),
                     (_, Some((Registry::Status, h))) => Ok(Some(saito_content_api::StatusHandle(h))),
                     _ => Err(mlua::Error::runtime("battle.hitbox: `status` is a status definition (rules/status) or nil")),
+                })?
+            },
+            status2: {
+                let v: LuaValue = spec.raw_get("status2")?;
+                bound(|b| match (&v, b.def(&v)) {
+                    (LuaValue::Nil, _) => Ok(None),
+                    (_, Some((Registry::Status, h))) => Ok(Some(saito_content_api::StatusHandle(h))),
+                    _ => Err(mlua::Error::runtime("battle.hitbox: `status2` is a status definition (rules/status) or nil")),
                 })?
             },
             bug: table_int(&spec, "bug")? as u8,

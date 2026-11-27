@@ -125,7 +125,7 @@ pub fn layer_line(sink: &mut TextSink, plane: Plane, layer: &mut Layer, hud: &Hu
 /// original masks only the glyph row's second word). Pixels past the
 /// image's edge are dropped. Returns the pen's place after the line.
 pub fn dialogue_text(font: &DialogueFont, glyphs: &[u16], image: &mut [u8], stride: usize, row: usize) -> usize {
-    let (w, h) = (DialogueFont::WIDTH, DialogueFont::HEIGHT);
+    let (w, h) = font.glyph_size();
     let mut pen = 0;
     for &g in glyphs {
         let (Some(pixels), Some(&advance)) = (font.glyph(g as usize), font.advances.get(g as usize)) else { continue };
@@ -217,5 +217,21 @@ mod tests {
         want.extend([0; 16]);
         assert_eq!(row(1), want);
         assert_eq!(row(12), want);
+    }
+
+    #[test]
+    fn dialogue_text_renders_8x16_tiled_glyphs_without_clipping() {
+        let n = DialogueFont::TILED_WIDTH * DialogueFont::TILED_HEIGHT;
+        let mut g0 = vec![0u8; n];
+        // Mark top row (0) and bottom row (15) to verify full 16px height renders unclipped.
+        g0[0..8].fill(1);
+        g0[15 * 8..16 * 8].fill(2);
+        let font = DialogueFont { pixels: g0, advances: vec![8], chars: vec!["A".into()] };
+        assert_eq!(font.glyph_size(), (8, 16));
+        let mut image = vec![0u8; 16 * 16];
+        assert_eq!(dialogue_text(&font, &[0], &mut image, 16, 0), 8);
+        assert_eq!(&image[0..8], &[1; 8]);
+        assert_eq!(&image[8..16], &[0; 8]);
+        assert_eq!(&image[15 * 16..15 * 16 + 8], &[2; 8]);
     }
 }

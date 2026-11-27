@@ -286,11 +286,26 @@ mod native {
         let rom_mount = match roms {
             None => None,
             Some(RomSource::Collection(install)) => {
-                if let Some(vol2) = install.vol2_dat()
-                    && let Some(vol2_dir) = vol2.parent()
-                {
+                let vol1_dir = install.vol1_dat().and_then(|p| p.parent().map(Path::to_path_buf));
+                let vol2_dir = install.vol2_dat().and_then(|p| p.parent().map(Path::to_path_buf));
+                if vol1_dir.is_some() || vol2_dir.is_some() {
                     mounts.push((install.data.clone(), format!("{VFS_ROMS}/exe/data")));
-                    mounts.push((vol2_dir.to_path_buf(), format!("{VFS_ROMS}/launcher/data")));
+                    match (vol2_dir, vol1_dir) {
+                        (Some(v2), Some(v1)) if v1 == v2 => {
+                            mounts.push((v2, format!("{VFS_ROMS}/launcher/data")));
+                        }
+                        (Some(v2), Some(v1)) => {
+                            mounts.push((v2, format!("{VFS_ROMS}/launcher/data")));
+                            mounts.push((v1, format!("{VFS_ROMS}/exe")));
+                        }
+                        (Some(v2), None) => {
+                            mounts.push((v2, format!("{VFS_ROMS}/launcher/data")));
+                        }
+                        (None, Some(v1)) => {
+                            mounts.push((v1, format!("{VFS_ROMS}/launcher/data")));
+                        }
+                        (None, None) => unreachable!(),
+                    }
                 } else {
                     mounts.push((install.data.clone(), VFS_ROMS.to_string()));
                 }

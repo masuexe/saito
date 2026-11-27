@@ -1976,10 +1976,11 @@ impl Battle {
         }
     }
 
-    /// From the 15th custom screen on, netbattles use a turn timer and the
-    /// gauge stops arming.
+    /// From the configured `flow.final_turn` custom screen on (15 in EXE4–6,
+    /// disabled when `None`), netbattles use a turn timer and the gauge stops arming.
     pub fn late_turns(&self) -> bool {
-        self.setup.settings.effects & effects::LINK != 0 && self.round.turn >= 15
+        self.setup.settings.effects & effects::LINK != 0
+            && self.game_rules().flow.final_turn.is_some_and(|turn| self.round.turn >= turn)
     }
 
     fn fight_fighting(&mut self) {
@@ -2472,11 +2473,18 @@ impl Battle {
         if self.game_rules().effects.telops == crate::content::Telops::Apart && self.is_remote(side & 1) {
             self.remote_telop = Banner::default();
         }
+        let word = &self.game_rules().effects.damage_word;
+        let (shown_damage, doubled, shown_bonus) = if word.plain {
+            (damage, false, bonus)
+        } else {
+            let doubled = word.double_bit.is_some_and(|bit| bit != 0 && damage & bit != 0);
+            (damage & 0x7FF, doubled, bonus & !0x7800)
+        };
         self.used_chips[side as usize & 1] = Some(crate::hud::UsedChip {
             chip,
-            damage: damage & 0x7FF,
-            doubled: damage & 0x8000 != 0,
-            bonus: bonus & !0x7800,
+            damage: shown_damage,
+            doubled,
+            bonus: shown_bonus,
             ticks: self.game_rules().effects.used_chip_ticks,
         });
     }
@@ -3128,5 +3136,34 @@ mod tests {
             b.low_hp_sound();
         }
         assert_eq!(heard(&b, 0), 1);
+    }
+
+    #[test]
+    fn configurable_final_turn_controls_late_turns() {
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(500)), testing::content());
+        // Default: Some(15).
+        assert_eq!(b.game_rules().flow.final_turn, Some(15));
+        b.round.turn = 14;
+        assert!(!b.late_turns());
+        b.round.turn = 15;
+        assert!(b.late_turns());
+
+        // Custom turn limit: Some(5).
+        let mut c = (*b.content).clone();
+        c.rules_mut().flow.final_turn = Some(5);
+        b.content = Arc::new(c);
+        b.round.turn = 4;
+        assert!(!b.late_turns());
+        b.round.turn = 5;
+        assert!(b.late_turns());
+
+        // Disabled: None (never enters late_turns / Damage Judge).
+        let mut c = (*b.content).clone();
+        c.rules_mut().flow.final_turn = None;
+        b.content = Arc::new(c);
+        b.round.turn = 15;
+        assert!(!b.late_turns());
+        b.round.turn = 99;
+        assert!(!b.late_turns());
     }
 }

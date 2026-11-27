@@ -31,6 +31,8 @@ pub const OK_SLOT: u8 = 10;
 pub const SPECIAL_SLOT: u8 = 11;
 /// Chips (and Beast Out) a player can pick per screen.
 pub const MAX_SELECTIONS: usize = 5;
+/// Maximum hand size reachable through EXE3's ADD mode expansion.
+pub const MAX_ADD_HAND_SIZE: u8 = 10;
 /// The entries a form list's window shows at most (EXE6's Cross window:
 /// a version's five Crosses).
 pub const FORM_LIST_ENTRIES: usize = 5;
@@ -189,6 +191,10 @@ pub enum Phase {
     /// screen fades to white, takes the member's navi and lays its slots out
     /// again, and fades back.
     Switching { stage: SwitchStage, member: u8 },
+    /// ADD mode (EXE3): the player may freely pick up to 5 chips regardless of
+    /// code or name; confirming discards those chips, closes with an empty
+    /// turn hand, and expands future custom-screen hand capacity for the round.
+    Adding { button: Option<u8> },
 }
 
 /// A switch's steps on the custom screen (EXE5 DS's state 0x40's sub-states).
@@ -214,7 +220,20 @@ impl Phase {
     /// state 4, 0x0801E3D8, whatever its selection's state), not sliding,
     /// playing the Program Advance or sending.
     pub fn chooses(&self) -> bool {
-        matches!(self, Phase::Settling | Phase::Choosing | Phase::Window { .. } | Phase::Scrapping { .. } | Phase::Redealing { .. })
+        matches!(
+            self,
+            Phase::Settling
+                | Phase::Choosing
+                | Phase::Adding { .. }
+                | Phase::Window { .. }
+                | Phase::Scrapping { .. }
+                | Phase::Redealing { .. }
+        )
+    }
+
+    /// The screen is actively accepting chip picks (normal choosing or ADD mode).
+    pub fn is_picking(&self) -> bool {
+        matches!(self, Phase::Choosing | Phase::Adding { .. })
     }
 }
 
@@ -296,6 +315,9 @@ const FADE_IN_FRAMES: u8 = 1 + 0x40 / 8;
 pub enum Request {
     /// OK: build the hand and the transform request, and close.
     Confirm,
+    /// ADD confirm: discard picked chips, close with an empty turn hand, and
+    /// increment the round's ADD hand-size bonus.
+    ConfirmAdd,
     /// Send the result (the first tick of `Sending`).
     Send,
     /// The screen took a switch to this member of the party (EXE5 DS's
@@ -429,11 +451,25 @@ pub struct PlayerView<'a> {
 
 /// What a player's screens remember through a round (`dword_20349A0`,
 /// cleared on the round's first screen).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RoundMemory {
     /// The link navis whose own chips were put in a hand this round (a bit
     /// each: the original's by the chip's place among them).
     pub navi_chips_used: u32,
+    /// Persistent custom-screen hand-size bonus accumulated via ADD mode this
+    /// round (capped at [`MAX_ADD_HAND_SIZE`]).
+    pub add_bonus: u8,
+}
+
+impl std::hash::Hash for RoundMemory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.navi_chips_used.hash(state);
+        // Preserve exact EXE4–6 battle digests when ADD mode is unused.
+        if self.add_bonus != 0 {
+            1u8.hash(state);
+            self.add_bonus.hash(state);
+        }
+    }
 }
 
 impl Screen {
@@ -944,6 +980,18 @@ impl Screen {
                     choice.and_then(|c| self.choose(c, view, folder, console, extras))
                 }
             }
+            Phase::Adding { .. } => {
+                if time_up {
+                    if self.selected > 0 {
+                        self.press_ok_add(view)
+                    } else {
+                        self.cancel_add();
+                        self.press_ok(view)
+                    }
+                } else {
+                    choice.and_then(|c| self.choose_adding(c, view, folder, console, extras))
+                }
+            }
             Phase::Window { window, tick } => {
                 // The rules' window (EXE6's Beast Out, `sub_802770C`): its
                 // update, then back to choosing when it is done (unless it
@@ -1165,6 +1213,35 @@ impl Screen {
         None
     }
 
+    /// ADD mode choices: free-pick up to 5 chips regardless of code/name,
+    /// take back picks (or exit ADD mode when 0 picks remain), or confirm ADD
+    /// to discard picks and expand future hand capacity.
+    fn choose_adding(
+        &mut self,
+        choice: ScreenChoice,
+        view: &PlayerView,
+        folder: &mut BattleFolder,
+        console: &mut Console,
+        extras: &mut dyn super::Extras,
+    ) -> Option<Request> {
+        match choice {
+            ScreenChoice::Pick(slot) => self.pick(slot, view, folder, extras),
+            ScreenChoice::Press(slot) => self.press(slot, folder, console, extras),
+            ScreenChoice::Ok => return self.press_ok_add(view),
+            ScreenChoice::TakeBack => {
+                if self.selected == 0 {
+                    self.cancel_add();
+                    self.after_taking_back(view, folder, extras);
+                } else {
+                    self.deselect(view, folder, extras);
+                }
+            }
+            ScreenChoice::Unpick(place) => self.unpick(place, view, folder, extras),
+            _ => self.look.play(ScreenSound::Refused),
+        }
+        None
+    }
+
     /// A on a chip slot (`sub_8028CCC`; EXE4's 0x0801F73C refuses a chip that
     /// counts as the invalid chip too). A slot of another kind (the choice
     /// came for a slot laid out since) does nothing, as A on an empty slot.
@@ -1218,7 +1295,7 @@ impl Screen {
         if matches!(self.phase, Phase::Settling | Phase::Window { .. }) {
             self.phase = Phase::Choosing;
         }
-        if self.phase == Phase::Choosing && hover.runs == HoverRuns::WhileChoosing {
+        if self.phase.is_picking() && hover.runs == HoverRuns::WhileChoosing {
             self.look.draw(Draw::HoverCleared);
         }
     }
@@ -1232,6 +1309,53 @@ impl Screen {
             self.clear_fades();
         }
         Some(Request::Confirm)
+    }
+
+    /// Confirm ADD mode: discard picked chips, close with an empty turn hand,
+    /// and expand the side's ADD hand capacity for the rest of the round.
+    fn press_ok_add(&mut self, view: &PlayerView) -> Option<Request> {
+        self.phase = Phase::Closing { tick: 0 };
+        self.look.play(ScreenSound::Ok);
+        if view.library.layout().fades_clear_at_ok {
+            self.clear_fades();
+        }
+        Some(Request::ConfirmAdd)
+    }
+
+    /// `custom.start_add`: enter ADD mode (EXE3), optionally highlighting the
+    /// ADD button slot `button` as selected and unlocking unpicked chip slots.
+    pub fn start_add(&mut self, button: Option<u8>) {
+        if let Some(slot) = button {
+            self.slots[slot as usize].state = SlotState::Selected;
+        }
+        self.phase = Phase::Adding { button };
+        self.look.play(ScreenSound::Pick);
+        let full = self.selected as usize >= MAX_SELECTIONS;
+        if !full {
+            for s in 0..10usize {
+                if matches!(self.slots[s].kind, SlotKind::Chip { .. } | SlotKind::Offered(_))
+                    && self.slots[s].state == SlotState::Unavailable
+                {
+                    self.slots[s].state = SlotState::Selectable;
+                }
+            }
+        }
+    }
+
+    /// `custom.cancel_add`: exit ADD mode back to normal choosing. Returns
+    /// true when the screen was in ADD mode.
+    pub fn cancel_add(&mut self) -> bool {
+        let Phase::Adding { button } = self.phase else { return false };
+        self.phase = Phase::Choosing;
+        if let Some(slot) = button {
+            self.slots[slot as usize].state = SlotState::Selectable;
+        }
+        true
+    }
+
+    /// Whether the screen is currently in ADD mode.
+    pub fn is_adding(&self) -> bool {
+        matches!(self.phase, Phase::Adding { .. })
     }
 
     /// The rules' buttons that say (EXE6's Beast Out, `sub_8028F48`; its
@@ -1833,6 +1957,7 @@ impl Screen {
 
     /// `sub_8028E32`: gray out what doesn't go with the selection.
     pub(crate) fn update_availability(&mut self, view: &PlayerView, folder: &BattleFolder, extras: &mut dyn super::Extras) {
+        let adding = self.is_adding();
         let together = self.together(None, view, folder);
         // updateCustomScreen_WhenUnselectingChip_8028EC8
         let full = self.selected as usize >= MAX_SELECTIONS;
@@ -1841,7 +1966,7 @@ impl Screen {
             if self.slots[s as usize].state == SlotState::Selected {
                 continue;
             }
-            let ok = !full && together.goes_with(c, view);
+            let ok = !full && (adding || together.goes_with(c, view));
             self.slots[s as usize].state = if ok { SlotState::Selectable } else { SlotState::Unavailable };
         }
         self.refresh_buttons(extras);
@@ -1853,7 +1978,7 @@ impl Screen {
     /// place `without`), as the availability counts them: a chip given up
     /// for a button, or a button's held chip, may go back among them.
     pub fn fits(&self, slot: u8, without: Option<u8>, view: &PlayerView, folder: &BattleFolder) -> bool {
-        self.chip_in(slot, folder).is_some_and(|c| self.together(without, view, folder).goes_with(c, view))
+        self.chip_in(slot, folder).is_some_and(|c| self.is_adding() || self.together(without, view, folder).goes_with(c, view))
     }
 
     /// `sub_8028E4C`: what the picked chips (but the one in place
@@ -2061,7 +2186,12 @@ fn hand_size(view: &PlayerView, turn: u8) -> u8 {
             n = (n + extra).max(2);
         }
     }
-    n as u8
+    let n = n as u8;
+    if view.round.add_bonus > 0 {
+        n.saturating_add(view.round.add_bonus).min(MAX_ADD_HAND_SIZE)
+    } else {
+        n
+    }
 }
 
 impl PlayerView<'_> {

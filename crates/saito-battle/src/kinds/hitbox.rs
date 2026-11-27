@@ -8,7 +8,7 @@ use crate::kinds::player::panel_coordinates;
 use crate::object::{ObjectRef, PanelPos, Vec3, state};
 use saito_content_api::{CollisionHandle, RegionHandle, SparkHandle};
 
-#[derive(Clone, Debug, Default, Hash)]
+#[derive(Clone, Debug, Default)]
 pub struct Vars {
     /// The region it covers, the spark its hits show, and its collision
     /// types (what it reaches, what it is): the original's four spawn
@@ -19,11 +19,30 @@ pub struct Vars {
     pub self_type: CollisionHandle,
     pub hit_mod: u8,
     pub status: Option<saito_content_api::StatusHandle>,
+    pub status2: Option<saito_content_api::StatusHandle>,
     pub bug: u8,
     pub bug_arg: u8,
     // The game also lets the spawner pass a slot that receives which bodies
     // were hit (`hit_flags & 0x0C000000`). Added as a typed field on the
     // spawner's action state when the first attack that reads it is ported.
+}
+
+impl std::hash::Hash for Vars {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        let Vars { region, hit_effect, target, self_type, hit_mod, status, status2, bug, bug_arg } = self;
+        region.hash(h);
+        hit_effect.hash(h);
+        target.hash(h);
+        self_type.hash(h);
+        hit_mod.hash(h);
+        status.hash(h);
+        bug.hash(h);
+        bug_arg.hash(h);
+        if status2.is_some() {
+            1u8.hash(h);
+            status2.hash(h);
+        }
+    }
 }
 
 /// What a hitbox does.
@@ -43,6 +62,7 @@ pub struct HitboxSpec {
     pub stamina: u16,
     pub hit_mod: u8,
     pub status: Option<saito_content_api::StatusHandle>,
+    pub status2: Option<saito_content_api::StatusHandle>,
     pub bug: u8,
     pub bug_arg: u8,
 }
@@ -71,6 +91,7 @@ pub fn spawn(b: &mut Battle, owner: ObjectRef, s: &HitboxSpec) -> Option<ObjectR
         self_type: s.self_type,
         hit_mod: s.hit_mod,
         status: s.status,
+        status2: s.status2,
         bug: s.bug,
         bug_arg: s.bug_arg,
     });
@@ -116,6 +137,9 @@ fn init(b: &mut Battle, r: ObjectRef) {
     s.hit_effect = v.hit_effect;
     if v.status.is_some() {
         s.status_base = v.status;
+    }
+    if v.status2.is_some() {
+        s.status_base2 = v.status2;
     }
     if v.bug != 0 {
         s.bugs = (v.bug_arg as u16) << 8 | v.bug as u16;

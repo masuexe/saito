@@ -773,6 +773,8 @@ pub struct DialogueFont {
 impl DialogueFont {
     pub const WIDTH: usize = 16;
     pub const HEIGHT: usize = 12;
+    pub const TILED_WIDTH: usize = 8;
+    pub const TILED_HEIGHT: usize = 16;
 
     pub fn len(&self) -> usize {
         self.advances.len()
@@ -782,9 +784,21 @@ impl DialogueFont {
         self.advances.is_empty()
     }
 
-    /// Glyph `i`'s pixels (16x12).
+    /// Dimensions `(width, height)` in pixels of each glyph in `pixels`:
+    /// `8x16` (128 bytes/glyph, EXE3 tiled font) or `16x12` (192 bytes/glyph, EXE4–6 linear font).
+    pub fn glyph_size(&self) -> (usize, usize) {
+        let n = self.advances.len();
+        if n > 0 && self.pixels.len() == n * Self::TILED_WIDTH * Self::TILED_HEIGHT {
+            (Self::TILED_WIDTH, Self::TILED_HEIGHT)
+        } else {
+            (Self::WIDTH, Self::HEIGHT)
+        }
+    }
+
+    /// Glyph `i`'s pixels (`w * h`, row-major, where `(w, h) = self.glyph_size()`).
     pub fn glyph(&self, i: usize) -> Option<&[u8]> {
-        let n = Self::WIDTH * Self::HEIGHT;
+        let (w, h) = self.glyph_size();
+        let n = w * h;
         self.pixels.get(n * i..n * (i + 1))
     }
 
@@ -807,7 +821,8 @@ impl DialogueFont {
     /// commonest in their top left corners (0, clear, in EXE6's and EXE5's
     /// fonts; 1, the box's white, in EXE4's).
     pub fn ground(&self) -> u8 {
-        let n = Self::WIDTH * Self::HEIGHT;
+        let (w, h) = self.glyph_size();
+        let n = w * h;
         let mut corners = [0usize; 16];
         for glyph in self.pixels.chunks(n) {
             corners[glyph[0] as usize & 15] += 1;

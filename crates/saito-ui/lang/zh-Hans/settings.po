@@ -115,8 +115,8 @@ msgstr "可用时使用合集版高清芯片卡图、属性图标及交错选择
 msgid "HD art archive"
 msgstr "高清体验文件"
 
-msgid "Select launcher/data/vol2.dat, exe/data/exe6.dat, or exe/data/exe6f.dat from Battle Network Legacy Collection Vol. 2."
-msgstr "选择《洛克人EXE 合集 Vol.2》中的 launcher/data/vol2.dat、exe/data/exe6.dat 或 exe/data/exe6f.dat 文件。"
+msgid "Select launcher/data/vol1.dat (Vol. 1) or launcher/data/vol2.dat, exe/data/exe6.dat, or exe/data/exe6f.dat (Vol. 2) from Battle Network Legacy Collection."
+msgstr "选择《洛克人EXE 合集》中的 launcher/data/vol1.dat（Vol.1）或 launcher/data/vol2.dat、exe/data/exe6.dat、exe/data/exe6f.dat（Vol.2）文件。"
 
 msgid "Choose file"
 msgstr "选择文件"

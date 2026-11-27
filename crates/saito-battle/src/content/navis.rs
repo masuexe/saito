@@ -549,6 +549,9 @@ impl Faces {
 /// of its own has one to show.
 pub(crate) fn check_faces(content: &super::Content) -> Result<(), saito_content_api::ContentError> {
     let Some(rules) = &content.rules else { return Ok(()) };
+    if !rules.emotion.enabled {
+        return Ok(());
+    }
     for d in &content.defs.forms {
         let Some(faces) = &d.record.mugshot else { continue };
         for (set, at) in [

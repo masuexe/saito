@@ -392,6 +392,7 @@ impl Side {
         };
         match request {
             Some(Request::Confirm) => self.confirm(ctx, &mut screen, &mut folder, console, damage, extras),
+            Some(Request::ConfirmAdd) => self.confirm_add(ctx, &mut screen, &mut folder, console, extras),
             Some(Request::Send) => {
                 // sub_8026DC4's first tick: sub_802A4FC counts the classes,
                 // sub_800B3A2 sends the hand, the navi's stats as they are
@@ -423,7 +424,7 @@ impl Side {
             if settling {
                 self.selecting = true;
             }
-            if request == Some(Request::Confirm) {
+            if matches!(request, Some(Request::Confirm | Request::ConfirmAdd)) {
                 self.selecting = false;
             }
         }
@@ -530,6 +531,45 @@ impl Side {
         screen.program_advance = built.program_advance;
         let hand = (!screen.selection().is_empty()).then_some(built.hand);
         self.built = Some((hand, transform));
+    }
+
+    /// ADD confirm: discard every picked chip from the folder, expand the
+    /// persistent per-side ADD hand-size bonus for the rest of the round, and
+    /// close with an explicit empty turn hand so any unspent chips from the
+    /// previous turn are cleared.
+    fn confirm_add(
+        &mut self,
+        ctx: &Context,
+        screen: &mut Screen,
+        folder: &mut BattleFolder,
+        console: &mut Console,
+        extras: &mut dyn Extras,
+    ) {
+        let mut discarded: u8 = 0;
+        for &slot in screen.selection() {
+            match screen.slots[slot as usize].kind {
+                SlotKind::Chip { index, regular } => {
+                    folder.take(index as usize);
+                    if regular {
+                        folder.regular_pending = false;
+                    }
+                    if let Some(t) = &mut console.tag_pair {
+                        *t = t.wrapping_sub(1);
+                    }
+                    discarded = discarded.saturating_add(1);
+                }
+                SlotKind::Offered(_) => {
+                    discarded = discarded.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        self.round.add_bonus = self.round.add_bonus.saturating_add(discarded).min(screen::MAX_ADD_HAND_SIZE);
+        extras.confirmed(screen, folder);
+        screen.program_advance = None;
+        let mut pa_used = self.program_advances;
+        let empty = builder::build(&[], ctx.turn, &mut pa_used, ctx.library, ctx.own_gauges, |_| 0).hand;
+        self.built = Some((Some(empty), TransformRequest::NONE));
     }
 }
 

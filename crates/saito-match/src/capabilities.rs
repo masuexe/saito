@@ -30,6 +30,19 @@ pub struct GameCapabilities {
     pub ds_shout_toggle: bool,
 }
 
+const EXE3: GameCapabilities = GameCapabilities {
+    mb_tier_copy_limits: false,
+    flat_standard_copy_limit: true,
+    patch_card_mb_limit: false,
+    all_guard_toggle: false,
+    dark_cut_in_fix: false,
+    ruleset_sub_modes: false,
+    random_battle: false,
+    practice_dark_invs: false,
+    ds_sun_toggle: false,
+    ds_shout_toggle: false,
+};
+
 const EXE4: GameCapabilities = GameCapabilities {
     mb_tier_copy_limits: false,
     flat_standard_copy_limit: true,
@@ -123,6 +136,7 @@ pub fn same_sim(a: &str, b: &str, game: &str) -> bool {
 /// Capabilities for the given game ID.
 pub fn for_game(game: &str) -> GameCapabilities {
     match game {
+        "exe3" => EXE3,
         "exe4" => EXE4,
         "exe5" => EXE5,
         "exe6" => EXE6,
@@ -136,6 +150,18 @@ mod tests {
 
     #[test]
     fn known_games_match_expected_capabilities() {
+        let e3 = for_game("exe3");
+        assert!(e3.flat_standard_copy_limit);
+        assert!(!e3.mb_tier_copy_limits);
+        assert!(!e3.patch_card_mb_limit);
+        assert!(!e3.all_guard_toggle);
+        assert!(!e3.dark_cut_in_fix);
+        assert!(!e3.ruleset_sub_modes);
+        assert!(!e3.random_battle);
+        assert!(!e3.practice_dark_invs);
+        assert!(!e3.ds_sun_toggle);
+        assert!(!e3.ds_shout_toggle);
+
         let e4 = for_game("exe4");
         assert!(e4.flat_standard_copy_limit);
         assert!(!e4.mb_tier_copy_limits);
@@ -166,7 +192,7 @@ mod tests {
         assert!(e6.random_battle);
         assert!(!e6.practice_dark_invs);
 
-        assert_eq!(for_game("exe3"), GameCapabilities::default());
+        assert_eq!(for_game("unknown"), GameCapabilities::default());
     }
 
     #[test]

@@ -614,7 +614,7 @@ pub(crate) fn mood_is_held(b: &Battle, side: u8) -> bool {
 /// `sub_8015BEC` (EXE5's 0x080127D6): set a side's mood, unless it is held
 /// ([`mood_is_held`]).
 pub(crate) fn set_mood(b: &mut Battle, side: u8, mood: u8) {
-    if b.player(side).is_none() || mood_is_held(b, side) {
+    if !b.game_rules().emotion.enabled || b.player(side).is_none() || mood_is_held(b, side) {
         return;
     }
     b.stats[side as usize].mood = mood;
@@ -624,6 +624,9 @@ pub(crate) fn set_mood(b: &mut Battle, side: u8, mood: u8) {
 /// of 0 or 0xFF (Full Synchro) stays. (A recovery's raise, and what EXE5's
 /// hits counted give the hitter: `HitterGain::ShortOfFull`.)
 pub(crate) fn gain_mood(b: &mut Battle, side: u8, n: u16) {
+    if !b.game_rules().emotion.enabled {
+        return;
+    }
     let s = &mut b.stats[side as usize & 1];
     if s.mood != 0 && s.mood != 0xFF {
         s.mood = (s.mood as u32 + n as u32).min(254) as u8;
@@ -633,6 +636,9 @@ pub(crate) fn gain_mood(b: &mut Battle, side: u8, n: u16) {
 /// EXE4's 0x0800F4FA: a side's mood rises by `n`, to 0xFF (Full Synchro)
 /// at most; a mood of 0 stays.
 pub(crate) fn raise_mood(b: &mut Battle, side: u8, n: u16) {
+    if !b.game_rules().emotion.enabled {
+        return;
+    }
     let s = &mut b.stats[side as usize & 1];
     if s.mood != 0 {
         s.mood = (s.mood as u32 + n as u32).min(0xFF) as u8;
@@ -642,6 +648,9 @@ pub(crate) fn raise_mood(b: &mut Battle, side: u8, n: u16) {
 /// `sub_8015C12` (EXE5's 0x08012820): a side's mood falls by `n`, to 1 at
 /// least; a mood of 0 stays.
 pub(crate) fn lose_mood(b: &mut Battle, side: u8, n: u16) {
+    if !b.game_rules().emotion.enabled {
+        return;
+    }
     let s = &mut b.stats[side as usize & 1];
     if s.mood != 0 {
         s.mood = (s.mood as i32 - n as i32).max(1) as u8;

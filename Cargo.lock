@@ -1879,6 +1879,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "exe3-compat"
+version = "0.1.0"
+dependencies = [
+ "exe3-compat",
+ "saito-battle",
+ "saito-content-api",
+ "saito-files",
+ "saito-match",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "exe4-compat"
 version = "0.1.0"
 dependencies = [
@@ -5731,6 +5745,7 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "console_log",
+ "exe3-compat",
  "exe4-compat",
  "exe5-compat",
  "exe6-compat",

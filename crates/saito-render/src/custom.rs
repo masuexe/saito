@@ -203,8 +203,6 @@ const ROWS: usize = 20;
 /// (`CustomScreen::layout`: EXE6's `CustomLayout::EXE6`, the chip window's
 /// name from 0x9B, EXE5's from 0x59).
 const WINDOW_TILE: u16 = CustomScreen::WINDOW_TILE;
-/// A chip picture's tiles (7x6).
-const PICTURE_TILES: u16 = CustomScreen::PICTURE_TILES as u16;
 /// The forms' names in the form list's window (9x2 each, EXE6's Cross
 /// window's, `byte_8029DF8`, from the layout's `form_names`).
 pub(crate) const FORM_NAME_TILES: usize = CustomScreen::FORM_NAME_TILES;
@@ -935,6 +933,8 @@ struct Window {
     form_name_tiles: Vec<(u16, FormHandle, usize)>,
     /// Where the blocks go among the layer's tile numbers (the game's).
     layout: saito_assets::CustomLayout,
+    /// Tile count of the chip window's picture (42 for 7x6 in EXE4–6, 56 for 8x7 in EXE3).
+    picture_tiles: u16,
     /// With the sharp HUD, the frames drawn as shapes (`shape_frames`):
     /// each one's cells (their first column, row and how many columns) and
     /// its item from the cells' top left; and the cells they stand in for,
@@ -1143,6 +1143,7 @@ impl Window {
             codes: Vec::new(),
             form_name_tiles: Vec::new(),
             layout: a.layout,
+            picture_tiles: a.picture_tiles() as u16,
             shapes: Vec::new(),
             drawn_cells: vec![false; COLUMNS * ROWS],
             empty_icons: Vec::new(),
@@ -1706,6 +1707,20 @@ impl Window {
         }
     }
 
+    /// Tile range occupied by the chip window's picture (42 tiles for 7x6, 56 for 8x7).
+    fn art_tiles(&self) -> std::ops::Range<u16> {
+        self.layout.art..self.layout.art + self.picture_tiles
+    }
+
+    /// Blit a chip-window `Picture` into the layer's art tile block and record its tile count
+    /// (supporting both 7x6 = 42 tiles and 8x7 = 56 tiles without clipping).
+    fn put_picture(&mut self, picture: &Picture) {
+        if !picture.tiles.is_empty() {
+            self.picture_tiles = picture.tile_count() as u16;
+        }
+        self.tiles.put(self.layout.art, &picture.tiles);
+    }
+
     /// `sub_8028476`: the chip window shows what it was last drawn for: a
     /// chip's name, picture, code, element and damage (`sub_80284E2`), or
     /// a button's picture (`sub_80286D4`, `sub_802871C`, `sub_80287A4`,
@@ -1727,7 +1742,7 @@ impl Window {
             // sub_80287D2: the name's cells and the window's colors.
             w.tiles.fill(w.layout.name, 2 * NAME_CELLS, BLANK_8);
             w.palettes[9] = a.frame_palettes.first().copied().unwrap_or([0; 16]);
-            w.tiles.put(w.layout.art, &picture.tiles);
+            w.put_picture(picture);
             w.palettes[10] = picture.palette;
             // sub_802869E
             w.tiles.fill(w.layout.code, 2, w.layout.detail_blank);
@@ -1738,7 +1753,8 @@ impl Window {
         // in the standard colors, its ground where the picture goes.)
         if cw.empty {
             let standard = a.frame_palettes.first().copied().unwrap_or([0; 16]);
-            let ground = Picture { tiles: Tiles { pixels: vec![BLANK_8; a.pictures.ok.tiles.pixels.len()] }, palette: standard };
+            let len = if a.pictures.ok.tiles.is_empty() { a.picture_tiles() * Tiles::TILE } else { a.pictures.ok.tiles.pixels.len() };
+            let ground = Picture { tiles: Tiles { pixels: vec![BLANK_8; len] }, palette: standard };
             blank_details(self, &ground);
             return;
         }
@@ -1924,7 +1940,7 @@ impl Window {
             crate::lookups::chip_art(&v.graphics, &v.b.content, c, problems).map(|art| (&art.picture, Some(art)))
         };
         if let Some((p, art)) = art {
-            self.tiles.put(self.layout.art, &p.tiles);
+            self.put_picture(p);
             self.palettes[10] = if beast_out { p.palette } else { data.art_palette.unwrap_or(p.palette) };
             let console_version = console_version(v.b, &v.graphics, v.side);
             self.picture_known = match art {
@@ -2244,7 +2260,7 @@ impl Window {
 
     /// The chip window's picture, where it shows, as a known difference.
     fn known_picture(&self, place: Placement, why: &'static str, problems: &mut Problems) {
-        self.known_tiles(place, self.layout.art..self.layout.art + PICTURE_TILES, why, problems);
+        self.known_tiles(place, self.art_tiles(), why, problems);
     }
 
     /// The icons of the other version's chips (`lookups::other_versions_icon`)
@@ -2432,7 +2448,7 @@ impl Window {
             return;
         }
         let Some(found) = crate::lookups::letters(letters.as_ref(), what, problems) else { return };
-        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let Some(block) = self.block(self.art_tiles()) else { return };
         let palette = self.palettes[block.palette as usize & 15];
         let wanted: Vec<(&str, bool)> = title.lines().map(|l| (l, true)).chain(words.lines().map(|l| (l, false))).collect();
         if found.lines.len() != wanted.len() {
@@ -2478,7 +2494,7 @@ impl Window {
         if self.help_lines.is_empty() {
             return;
         }
-        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let Some(block) = self.block(self.art_tiles()) else { return };
         let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
         let past_ranged = block.palette & 15 >= 14;
         for item in &self.help_lines {
@@ -2490,7 +2506,7 @@ impl Window {
     /// The Legacy Collection HD chip artwork overlaid on the chip picture box when enabled and present.
     fn hd_art_item(&self, text: &mut TextSink, place: Placement) {
         let Some(img) = &self.hd_art else { return };
-        let Some(block) = self.block(self.layout.art..self.layout.art + PICTURE_TILES) else { return };
+        let Some(block) = self.block(self.art_tiles()) else { return };
         let Some((x, clip)) = self.columns_at(block.col, block.w, place) else { return };
         let past_ranged = block.palette & 15 >= 14;
         let rect = Rect::new(x, 8 * block.row as i32, 8 * block.w as i32, 8 * block.h as i32);
@@ -3252,7 +3268,7 @@ pub fn draw<'a>(
         }
     }
     if let Some(what) = w.picture_mark.take() {
-        let tiles = w.layout.art..w.layout.art + PICTURE_TILES;
+        let tiles = w.art_tiles();
         if let Some([x0, y0, x1, y1]) = w.tiles_rect(place, tiles) {
             // (Where the layer's shake leaves it: a button's window shakes
             // the layer, `hud_jitter`.)
@@ -3525,5 +3541,71 @@ mod tests {
         assert_eq!(ins, [2, 3, 5, 6, 8, 9, 11, 12, 14, 15]);
         let outs: Vec<usize> = (1..=10).map(cleared_out).collect();
         assert_eq!(outs, [1, 3, 4, 6, 7, 9, 10, 12, 13, 15]);
+    }
+
+    #[test]
+    fn custom_window_blits_7x6_and_8x7_pictures_without_clipping() {
+        for (cols, rows, tile_count) in [(7usize, 6usize, 42usize), (8usize, 7usize, 56usize)] {
+            let mut palette = [0u16; 16];
+            palette[1] = 0x001F;
+            palette[2] = 0x03E0;
+            // Distinct corner pixels so we confirm the very last tile at (cols - 1, rows - 1) blits.
+            let mut pixels = vec![1u8; tile_count * Tiles::TILE];
+            pixels[(tile_count - 1) * Tiles::TILE + 63] = 2;
+            let picture = Picture { tiles: Tiles { pixels }, palette };
+            assert_eq!(picture.tile_dims(), (cols, rows));
+            assert_eq!(picture.tile_count(), tile_count);
+
+            let art_base = 0x80u16;
+            let mut map = [MapEntry::default(); COLUMNS * ROWS];
+            let (ox, oy) = (2usize, 3usize);
+            for r in 0..rows {
+                for c in 0..cols {
+                    let t = art_base + (r * cols + c) as u16;
+                    map[(oy + r) * COLUMNS + (ox + c)] = MapEntry { tile: t, hflip: false, vflip: false, palette: 10 };
+                }
+            }
+            let mut w = Window {
+                map,
+                tiles: LayerTiles::new(),
+                palettes: [[0; 16]; 16],
+                picture_known: None,
+                picture_mark: None,
+                record_mark: None,
+                name: None,
+                advance_names: Vec::new(),
+                help: None,
+                help_lines: Vec::new(),
+                hd_art: None,
+                hd_element: None,
+                hd_form_names: Vec::new(),
+                damage: None,
+                labels: Vec::new(),
+                codes: Vec::new(),
+                form_name_tiles: Vec::new(),
+                layout: saito_assets::CustomLayout { art: art_base, ..Default::default() },
+                picture_tiles: CustomScreen::PICTURE_TILES as u16,
+                shapes: Vec::new(),
+                drawn_cells: vec![false; COLUMNS * ROWS],
+                empty_icons: Vec::new(),
+                blank_plates: Vec::new(),
+                buttons_laid: Vec::new(),
+                buttons: Vec::new(),
+                element_framed: None,
+                form_list: None,
+            };
+            w.palettes[10] = palette;
+            w.put_picture(&picture);
+            assert_eq!(w.picture_tiles as usize, tile_count);
+            let block = w.block(w.art_tiles()).expect("picture block on map");
+            assert_eq!((block.col, block.row, block.w, block.h), (ox, oy, cols, rows));
+
+            let mut layer = Layer::new(1, 3);
+            w.draw(&mut layer, Placement::IN);
+            let first_px = (oy * 8) * crate::compose::WIDTH + (ox * 8);
+            let last_px = (oy * 8 + rows * 8 - 1) * crate::compose::WIDTH + (ox * 8 + cols * 8 - 1);
+            assert_eq!(layer.pixels[first_px], 0x001F);
+            assert_eq!(layer.pixels[last_px], 0x03E0);
+        }
     }
 }
