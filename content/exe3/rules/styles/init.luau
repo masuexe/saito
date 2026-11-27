@@ -95,4 +95,33 @@ function styles.round_setup(side: number)
     end
 end
 
+-- Battle MegaMan (00-00) palette indices (stride 3: +0 normal, +1 dimmed/no-charge, +2 white flash).
+local ELEMENT_PALETTE: { [string]: number } = {
+    elec = 3,
+    heat = 6,
+    aqua = 9,
+    wood = 12,
+}
+
+local STYLE_PALETTE: { [string]: number } = {
+    normal = 0,
+    guts = 6,
+    custom = 9,
+    team = 27,
+    shield = 24,
+    ground = 18,
+    shadow = 15,
+    bug = 21,
+}
+
+function styles.navi_palette(side: number, _navi: Object): number?
+    local setup = rules.setup_of(side)
+    local st: string = setup.style_type or "normal"
+    local el: string = setup.style_element or "null"
+    if st == "normal" then
+        return 0
+    end
+    return ELEMENT_PALETTE[el] or STYLE_PALETTE[st] or 0
+end
+
 return styles

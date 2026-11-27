@@ -250,6 +250,7 @@ local rules: Rules = {
 
             return false
         end,
+        navi_palette = styles.navi_palette,
         chip_substitute = function(side: number, _navi: Object, chip: Chip): Chip?
             if chip.id == "navrcycl" then
                 local last = api.last_navi_chip(side)

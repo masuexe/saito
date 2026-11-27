@@ -1,16 +1,10 @@
 # EXE3's asset names, verified against the Legacy Collection Vol. 1 ROMs (A6BE/A3XE/A6BJ/A3XJ).
 # Sprites: "cc-ii" (category byte offset in SpritePointersList 0x0802477C and slot index).
-# Battle sprites live in categories 0x04..=0x1C (Battle MegaMan is 04-00); portraits in 0x20.
+# Battle MegaMan (Normal + all Style palette swaps) lives at 00-00 (0x08237820, 63 anims, 58 palettes);
+# viruses/bosses/attacks/effects live in 04..1C; dialogue portraits live in 20.
 
 [sprites]
-megaman = "04-00"
-megaman-guts = "04-01"
-megaman-custom = "04-02"
-megaman-team = "04-03"
-megaman-shield = "04-04"
-megaman-ground = "04-05"
-megaman-shadow = "04-06"
-megaman-bug = "04-07"
+megaman = "00-00"
 sword = "0c-00"
 cannon = "0c-01"
 bomb = "0c-02"
