@@ -99,6 +99,59 @@ pub const NEAR_EVERY: u32 = 16;
 /// ([`Viewer::previous_round`]), as a music player's "previous" does.
 pub const ROUND_START_GRACE: u32 = 60;
 
+/// Lookahead margin (ticks) kept ahead of live playback while a set is still
+/// running so custom screen cursor layers stay exact.
+pub const LIVE_LOOKAHEAD_MARGIN: u32 = 6;
+
+/// Default client-side live playout buffer target (ticks, ~0.6s at 59.73 Hz)
+/// used to absorb host batching, rollback settle jitter, and network stalls.
+pub const LIVE_BUFFER_BASE_TARGET: u32 = 36;
+
+/// Maximum adaptive live playout buffer target (ticks, ~1.5s) after repeated
+/// underruns on a choppy connection.
+pub const LIVE_BUFFER_MAX_TARGET: u32 = 90;
+
+/// Adaptive buffer bump (ticks, ~0.3s) applied when live playback hits an underrun.
+const LIVE_BUFFER_ADAPT_STEP: u32 = 18;
+
+/// Adaptive buffer step-down (ticks, ~0.1s) after a sustained smooth stretch.
+const LIVE_BUFFER_RELAX_STEP: u32 = 6;
+
+/// Consecutive smooth ticks (~30s) required before relaxing an elevated target.
+const LIVE_BUFFER_RELAX_TICKS: u32 = 1800;
+
+/// Hysteresis above `target`: start gentle catch-up above `target + ENTER`,
+/// return to 1.0x once back down to `target + EXIT`.
+const LIVE_SPEEDUP_ENTER_SLACK: u32 = 36;
+const LIVE_SPEEDUP_EXIT_SLACK: u32 = 12;
+
+/// Gentle playback speedup factor while draining excess live buffer.
+const LIVE_SPEEDUP_FACTOR: f64 = 1.08;
+
+/// Client-side jitter buffer state for live spectating (`Viewer::advance_live`).
+#[derive(Clone, Copy, Debug)]
+struct LiveBuffer {
+    target: u32,
+    buffering: bool,
+    started: bool,
+    speeding_up: bool,
+    smooth_ticks: u32,
+    ended: bool,
+}
+
+impl Default for LiveBuffer {
+    fn default() -> Self {
+        Self {
+            target: LIVE_BUFFER_BASE_TARGET,
+            buffering: true,
+            started: false,
+            speeding_up: false,
+            smooth_ticks: 0,
+            ended: false,
+        }
+    }
+}
+
 /// A speed a replay is watched at, as a multiple of the original's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Speed {
@@ -364,6 +417,7 @@ pub struct Viewer {
     paused: bool,
     speed: Speed,
     clock: Clock,
+    live: LiveBuffer,
     /// The sound of the ticks played since the host last took it: each
     /// console's, by side, then both consoles' on one screen's (`BOTH`).
     samples: [Vec<[f32; 2]>; 3],
@@ -582,6 +636,7 @@ impl Viewer {
             paused: false,
             speed: Speed::Normal,
             clock: Clock::new(),
+            live: LiveBuffer::default(),
             samples: Default::default(),
             ticks: Default::default(),
             cues: Vec::new(),
@@ -807,12 +862,42 @@ impl Viewer {
         self.length.saturating_sub(self.position())
     }
 
+    /// Whether live spectating is currently pre-buffering or re-buffering to reach
+    /// its target playout cushion before resuming playback.
+    pub fn live_buffering(&self) -> bool {
+        self.live.buffering && !self.live_ended()
+    }
+
+    /// Current client-side live playout buffer target (in playable ticks above
+    /// [`LIVE_LOOKAHEAD_MARGIN`]).
+    pub fn live_target_ticks(&self) -> u32 {
+        self.live.target
+    }
+
+    /// Total ticks kept behind the live edge when exiting silent catch-up
+    /// (`LIVE_LOOKAHEAD_MARGIN + live_target_ticks()`).
+    pub fn live_catchup_margin(&self) -> u32 {
+        LIVE_LOOKAHEAD_MARGIN + self.live.target
+    }
+
+    /// Mark the live stream as remotely ended (e.g. `SetEnd` received) so any
+    /// remaining buffered ticks drain immediately down to `lag_ticks() == 0`.
+    pub fn mark_live_ended(&mut self) {
+        self.live.ended = true;
+        self.live.buffering = false;
+    }
+
+    fn live_ended(&self) -> bool {
+        self.end == End::Set || self.live.ended
+    }
+
     /// Silently advance up to `max_ticks` toward the live edge (keeping `margin`
-    /// ticks of lookahead for custom screen cursor layers). Returns `true` if
-    /// more catch-up ticks remain.
+    /// ticks behind the end of the buffer). Returns `true` if more catch-up ticks
+    /// remain.
     pub fn catch_up_step(&mut self, max_ticks: u32, margin: u32) -> bool {
-        let limit = if self.end == End::Set { self.length } else { self.length.saturating_sub(margin) };
+        let limit = if self.live_ended() { self.length } else { self.length.saturating_sub(margin) };
         if self.position() >= limit || self.session.stopped.is_some() {
+            self.live.speeding_up = false;
             return false;
         }
         let mut ran = 0;
@@ -821,29 +906,69 @@ impl Viewer {
         }
         if ran > 0 {
             self.settle();
+            self.live.speeding_up = false;
+            self.live.smooth_ticks = 0;
         }
         self.position() < limit && self.session.stopped.is_none()
     }
 
-    /// Advance a live-spectated match in real time:
-    /// - Keeps a 6-tick lookahead margin while the set is still in progress so
-    ///   custom screen cursor layers stay exact.
-    /// - Gently speeds up (`1.15x`) when slightly behind (> 24 ticks).
-    /// - Waits cleanly without marking finished when caught up to the buffer edge.
+    /// Advance a live-spectated match smoothly using a client-side jitter buffer:
+    /// - Keeps [`LIVE_LOOKAHEAD_MARGIN`] ticks of lookahead while the set is still
+    ///   in progress so custom screen cursor layers stay exact.
+    /// - Pre-buffers (and re-buffers after a stall) up to `live.target` playable
+    ///   ticks (~0.6s initially, adapting up to ~1.5s on underruns and relaxing
+    ///   back down after sustained smooth playback) unless the stream has ended.
+    /// - Plays at strict `1.0x` inside the cruise deadband, and gently speeds up
+    ///   (`1.08x`) with hysteresis only when excess lag builds up above target.
     pub fn advance_live(&mut self, elapsed: Duration) -> u32 {
         if self.paused || self.session.stopped.is_some() {
             self.clock.rest();
             return 0;
         }
-        let limit = if self.end == End::Set { self.length } else { self.length.saturating_sub(6) };
+        let ended = self.live_ended();
+        let limit = if ended { self.length } else { self.length.saturating_sub(LIVE_LOOKAHEAD_MARGIN) };
         let ahead = limit.saturating_sub(self.position());
         if ahead == 0 {
             self.clock.rest();
+            if !ended && !self.live.buffering {
+                self.live.buffering = true;
+                self.live.speeding_up = false;
+                self.live.smooth_ticks = 0;
+                if self.live.started {
+                    self.live.target = (self.live.target + LIVE_BUFFER_ADAPT_STEP).min(LIVE_BUFFER_MAX_TARGET);
+                }
+            }
             return 0;
         }
-        let factor = if ahead > 24 { 1.15 } else { 1.0 };
+        if self.live.buffering {
+            if !ended && ahead < self.live.target {
+                self.clock.rest();
+                return 0;
+            }
+            self.live.buffering = false;
+            self.live.speeding_up = false;
+        }
+        if ended {
+            self.live.speeding_up = false;
+        } else if self.live.speeding_up {
+            if ahead <= self.live.target + LIVE_SPEEDUP_EXIT_SLACK {
+                self.live.speeding_up = false;
+            }
+        } else if ahead > self.live.target + LIVE_SPEEDUP_ENTER_SLACK {
+            self.live.speeding_up = true;
+        }
+        let factor = if self.live.speeding_up { LIVE_SPEEDUP_FACTOR } else { 1.0 };
         let due = self.clock.due(elapsed, factor).min(ahead);
-        (0..due).take_while(|_| self.run(true)).count() as u32
+        let ran = (0..due).take_while(|_| self.run(true)).count() as u32;
+        if ran > 0 {
+            self.live.started = true;
+            self.live.smooth_ticks = self.live.smooth_ticks.saturating_add(ran);
+            if self.live.target > LIVE_BUFFER_BASE_TARGET && self.live.smooth_ticks >= LIVE_BUFFER_RELAX_TICKS {
+                self.live.target = self.live.target.saturating_sub(LIVE_BUFFER_RELAX_STEP).max(LIVE_BUFFER_BASE_TARGET);
+                self.live.smooth_ticks = 0;
+            }
+        }
+        ran
     }
 
     /// Pause, or go on.

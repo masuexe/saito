@@ -35,17 +35,13 @@ use crate::stage::Surface;
 
 /// How often the host flushes pending ticks to the relay (even if fewer than
 /// `BATCH_TICKS` accumulated).
-const FLUSH_INTERVAL: Duration = Duration::from_millis(200);
-/// Batch size before flushing immediately.
-const BATCH_TICKS: u32 = 12;
+const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// Batch size before flushing immediately (~100ms at 59.73 Hz).
+const BATCH_TICKS: u32 = 6;
 /// How many silent ticks a mid-match spectator runs per UI frame while catching up.
 const CATCHUP_TICKS_PER_FRAME: u32 = 60;
-/// Lookahead margin (ticks) kept during catch-up so custom screen cursor layers stay exact.
-const CATCHUP_MARGIN: u32 = 6;
-/// Enter silent catch-up mode when more than this many ticks behind live.
-const CATCHUP_START_LAG: u32 = 90;
-/// Exit silent catch-up mode once within this many ticks of live.
-const CATCHUP_END_LAG: u32 = 18;
+/// Enter silent catch-up mode when lag exceeds `viewer.live_catchup_margin()` by more than this many ticks (~2s).
+const CATCHUP_START_EXTRA: u32 = 120;
 /// Supported anti-ghosting delay presets (seconds).
 pub const DELAY_PRESETS: [u16; 4] = [0, 5, 10, 15];
 
@@ -613,8 +609,8 @@ impl WatchSession {
                     if self.active_set_id == Some(set_id) {
                         self.flush_saved_replay();
                         self.set_ended_remote = true;
-                        if self.set_end_since.is_none() {
-                            self.set_end_since = Some(now);
+                        if let Some(viewer) = &mut self.viewer {
+                            viewer.mark_live_ended();
                         }
                     }
                 }
@@ -654,8 +650,8 @@ impl WatchSession {
 
             let mut played = 0;
             if self.catching_up {
-                let still_behind = viewer.catch_up_step(CATCHUP_TICKS_PER_FRAME, CATCHUP_MARGIN);
-                if !still_behind || viewer.lag_ticks() <= CATCHUP_END_LAG {
+                let still_behind = viewer.catch_up_step(CATCHUP_TICKS_PER_FRAME, viewer.live_catchup_margin());
+                if !still_behind {
                     self.catching_up = false;
                     self.last_frame = Some(now);
                 }
@@ -669,7 +665,7 @@ impl WatchSession {
                     played = ran;
                     self.surface.stale = true;
                 }
-                if viewer.lag_ticks() > CATCHUP_START_LAG {
+                if !self.set_ended_remote && viewer.lag_ticks() > viewer.live_catchup_margin() + CATCHUP_START_EXTRA {
                     self.catching_up = true;
                 }
             }
@@ -873,7 +869,10 @@ impl WatchSession {
                     let ticks = std::mem::take(&mut self.pending_ticks);
                     viewer.push_ticks(&ticks);
                 }
-                self.catching_up = viewer.lag_ticks() > CATCHUP_START_LAG;
+                if self.set_ended_remote {
+                    viewer.mark_live_ended();
+                }
+                self.catching_up = !self.set_ended_remote && viewer.lag_ticks() > viewer.live_catchup_margin() + CATCHUP_START_EXTRA;
                 self.surface = Surface::new();
                 self.surface.stale = true;
                 self.viewer = Some(viewer);

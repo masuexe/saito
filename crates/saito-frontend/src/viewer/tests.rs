@@ -792,3 +792,129 @@ fn viewer_updates_language_and_enhancements() {
     let mut buf = vec![0u32; 240 * 160];
     v.present(&mut buf, 240, 160);
 }
+
+fn live_viewer(content: &Arc<Content>, replay: &Replay) -> Viewer {
+    let empty = Replay { ticks: Vec::new(), end: End::Open, ..replay.clone() };
+    let renderer = graphics(content, 0x001F).renderer(Enhancements::NONE, None);
+    Viewer::with(content, &empty, Some(0), renderer, None, None).unwrap()
+}
+
+/// Live spectating pre-buffers up to `LIVE_BUFFER_BASE_TARGET`, absorbs network jitter
+/// without stalling, adapts target upward on an underrun, relaxes back after sustained
+/// smooth playback, and drains completely once `mark_live_ended` is called.
+#[test]
+fn live_jitter_buffer_prebuffers_adapts_and_drains_on_end() {
+    let content = saito_match::testing::exe6_content();
+    let (replay, _) = recorded(&content, "exe6", 7);
+    let stream: Vec<saito_replay::Tick> = replay
+        .ticks
+        .iter()
+        .take(400)
+        .map(|t| saito_replay::Tick { set_ended: false, ..*t })
+        .collect();
+    let one_tick = time_of(1) + Duration::from_nanos(1);
+
+    let mut v = live_viewer(&content, &replay);
+    assert!(v.live_buffering());
+    assert_eq!(v.live_target_ticks(), LIVE_BUFFER_BASE_TARGET);
+    assert_eq!(v.live_catchup_margin(), LIVE_LOOKAHEAD_MARGIN + LIVE_BUFFER_BASE_TARGET);
+
+    // Push less than lookahead + target: stays in pre-buffer and does not advance.
+    let mut cursor = 0usize;
+    let partial = (LIVE_LOOKAHEAD_MARGIN + LIVE_BUFFER_BASE_TARGET - 6) as usize;
+    v.push_ticks(&stream[cursor..cursor + partial]);
+    cursor += partial;
+    assert_eq!(v.advance_live(one_tick), 0);
+    assert!(v.live_buffering());
+    assert_eq!(v.position(), 0);
+
+    // Reaching lookahead + target exits pre-buffer and plays smoothly at 1.0x.
+    v.push_ticks(&stream[cursor..cursor + 6]);
+    cursor += 6;
+    assert_eq!(v.advance_live(one_tick), 1);
+    assert!(!v.live_buffering());
+    assert_eq!(v.position(), 1);
+
+    // Even with zero new ticks arriving for 30 frames (~500ms jitter), playback stays continuous.
+    for _ in 0..30 {
+        assert_eq!(v.advance_live(one_tick), 1);
+    }
+    assert!(!v.live_buffering());
+    assert_eq!(v.position(), 31);
+
+    // Drain the remaining 5 playable ticks, then hit underrun: re-buffers and adapts target up.
+    for _ in 0..5 {
+        assert_eq!(v.advance_live(one_tick), 1);
+    }
+    assert_eq!(v.advance_live(one_tick), 0);
+    assert!(v.live_buffering());
+    let bumped = LIVE_BUFFER_BASE_TARGET + LIVE_BUFFER_ADAPT_STEP;
+    assert_eq!(v.live_target_ticks(), bumped);
+
+    // Small single batch does not cause micro-stutter playback; stays re-buffering until `bumped`.
+    v.push_ticks(&stream[cursor..cursor + 12]);
+    cursor += 12;
+    assert_eq!(v.advance_live(one_tick), 0);
+    assert!(v.live_buffering());
+
+    // Once `bumped` playable ticks accumulate, playback resumes smoothly.
+    let need = (bumped - 12) as usize;
+    v.push_ticks(&stream[cursor..cursor + need]);
+    cursor += need;
+    assert_eq!(v.advance_live(one_tick), 1);
+    assert!(!v.live_buffering());
+
+    // Marking the remote stream ended drains every remaining tick including the lookahead margin.
+    v.push_ticks(&stream[cursor..cursor + 10]);
+    v.mark_live_ended();
+    assert!(!v.live_buffering());
+    while v.lag_ticks() > 0 {
+        let ran = v.advance_live(one_tick);
+        assert!(ran > 0, "must drain remaining ticks after mark_live_ended");
+    }
+    assert_eq!(v.lag_ticks(), 0);
+}
+
+/// Live catch-up lands at `live_catchup_margin()` (lookahead + target buffer), and excess
+/// lag engages gentle 1.08x speedup with hysteresis without oscillating in the cruise band.
+#[test]
+fn live_catchup_and_speedup_hysteresis_preserve_buffer() {
+    let content = saito_match::testing::exe6_content();
+    let (replay, _) = recorded(&content, "exe6", 7);
+    let stream: Vec<saito_replay::Tick> = replay
+        .ticks
+        .iter()
+        .take(300)
+        .map(|t| saito_replay::Tick { set_ended: false, ..*t })
+        .collect();
+    let one_tick = time_of(1) + Duration::from_nanos(1);
+
+    let mut v = live_viewer(&content, &replay);
+    v.push_ticks(&stream[..200]);
+
+    // Catch up silently toward `live_catchup_margin()` — must stop with full target cushion intact.
+    let margin = v.live_catchup_margin();
+    while v.catch_up_step(60, margin) {}
+    assert_eq!(v.lag_ticks(), margin);
+    assert_eq!(v.advance_live(one_tick), 1);
+    assert!(!v.live_buffering());
+
+    // Push excess ticks past `target + LIVE_SPEEDUP_ENTER_SLACK`: engages gentle speedup.
+    v.push_ticks(&stream[200..280]);
+    let pos_before = v.position();
+    // Run 50 frames at 1.0x wall time -> 1.08x should advance > 50 ticks (54 ticks).
+    let mut ran_total = 0;
+    for _ in 0..50 {
+        ran_total += v.advance_live(one_tick);
+    }
+    assert!(ran_total > 50 && v.position() == pos_before + ran_total, "expected gentle speedup > 50 ticks, got {ran_total}");
+    assert!(v.live.speeding_up, "should still be draining until back within exit slack");
+
+    // Once back inside `target + LIVE_SPEEDUP_EXIT_SLACK`, speedup turns off cleanly.
+    while v.live.speeding_up {
+        assert!(v.advance_live(one_tick) > 0);
+    }
+    let playable_ahead = v.length.saturating_sub(LIVE_LOOKAHEAD_MARGIN).saturating_sub(v.position());
+    assert!(playable_ahead <= v.live_target_ticks() + LIVE_SPEEDUP_EXIT_SLACK);
+    assert!(playable_ahead >= v.live_target_ticks());
+}

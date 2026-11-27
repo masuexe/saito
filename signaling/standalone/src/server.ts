@@ -133,7 +133,7 @@ const SPECTATE_HOST_GRACE_MS = 30 * 1000;
 const MAX_DELAY_SECS = 60;
 const MAX_HEADER_B64_BYTES = 128 * 1024;
 const MAX_CHUNK_B64_BYTES = 32 * 1024;
-const MAX_CHUNKS_PER_SET = 10_000;
+const MAX_CHUNKS_PER_SET = 20_000;
 
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -538,7 +538,7 @@ setInterval(() => {
 			flushDelayedSet(room, now);
 		}
 	}
-}, 100).unref();
+}, 50).unref();
 
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
