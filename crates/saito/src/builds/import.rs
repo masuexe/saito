@@ -1,6 +1,6 @@
 //! A build from a save file: each game's compat crate reads its own game's saves (`exe6_compat::import`,
-//! `exe5_compat::import`, `exe4_compat::import`: the original's bytes into the game's facts, by field name),
-//! and the build's game picks which. A save of another game is refused, not switched to.
+//! `exe5_compat::import`, `exe4_compat::import`, `exe3_compat::import`: the original's bytes into the game's
+//! facts, by field name), and the build's game picks which. A save of another game is refused, not switched to.
 //!
 //! What a save gives is then made a build, as the game's builds data says one is (`saito_match::build`): the
 //! save's version with all that version sets (its whole form list, its Giga chips), each choice on the preset
@@ -19,6 +19,7 @@ use saito_match::build::{Builds, Taken};
 /// imported by, and the numbers its patch cards are printed with.
 #[derive(Clone, Debug)]
 pub enum Compat {
+    Exe3(Box<exe3_compat::Compat>),
     Exe4(Box<exe4_compat::Compat>),
     Exe5(Box<exe5_compat::Compat>),
     Exe6(Box<exe6_compat::Compat>),
@@ -30,6 +31,7 @@ impl Compat {
     pub fn of_content(game: &str, content: &std::path::Path) -> Option<Result<Compat, String>> {
         let said = |e: String| format!("{game}'s compat tables in {}: {e}", content.display());
         Some(match game {
+            exe3_compat::ROOT => exe3_compat::Compat::of_content(content).map(|c| Compat::Exe3(Box::new(c))).map_err(said),
             exe4_compat::ROOT => exe4_compat::Compat::of_content(content).map(|c| Compat::Exe4(Box::new(c))).map_err(said),
             exe5_compat::ROOT => exe5_compat::Compat::of_content(content).map(|c| Compat::Exe5(Box::new(c))).map_err(said),
             exe6_compat::ROOT => exe6_compat::Compat::of_content(content).map(|c| Compat::Exe6(Box::new(c))).map_err(said),
@@ -79,6 +81,10 @@ pub fn side_of_save(compat: &Compat, content: &Content, builds: &Builds, file: &
             let save = read(game, file, exe4_compat::import::read)?;
             exe4_compat::import::import(compat, content, game, &mut side, &save)
         }
+        Compat::Exe3(compat) if game == exe3_compat::ROOT => {
+            let save = read(game, file, exe3_compat::import::read)?;
+            exe3_compat::import::import(compat, content, game, &mut side, &save)
+        }
         _ => return Err(failed(format!("{game} has no save import"))),
     };
     for note in notes {
@@ -123,6 +129,7 @@ pub fn card_number(compat: &Compat, id: &str) -> Option<u8> {
         Compat::Exe6(compat) => compat.patch_card_number(id),
         Compat::Exe5(compat) => compat.patch_card_number(id),
         Compat::Exe4(compat) => compat.patch_card_number(id),
+        Compat::Exe3(_) => None,
     }
 }
 
@@ -194,5 +201,77 @@ pub(crate) mod tests {
         assert!(checked.problems.iter().all(|p| p.field.as_deref() == Some("folder")), "{:?}", checked.problems);
         let six = exe6_content();
         assert_eq!(side_of_save(&compat("exe6"), &six, &Builds::of(&six, "exe6").unwrap(), &image), Err(Refused::NotThisGames));
+    }
+
+    /// EXE3 White and Blue saves import into valid `exe3` builds, while another game's save is refused for `exe3`
+    /// and an EXE3 save is refused for `exe6`.
+    #[test]
+    fn exe3_white_and_blue_saves_give_valid_builds_and_cross_game_saves_are_refused() {
+        let three = std::sync::Arc::new(saito_match::testing::defined(&["exe3"]).unwrap());
+        let builds = Builds::of(&three, "exe3").unwrap();
+        let exe3_compat_tables = compat("exe3");
+        assert_eq!(card_number(&exe3_compat_tables, "canodumb"), None);
+
+        let make_exe3_save = |version: exe3_compat::Version, style: exe3_compat::Style| {
+            let mut img = vec![0u8; exe3_compat::save::IMAGE_SIZE];
+            img[0x1E00..0x1E00 + 20].copy_from_slice(exe3_compat::save::NAME);
+            img[0x1881] = style.pack();
+            img[0x1882] = 0;
+            img[0x1898] = 20;
+            img[0x189C] = 0;
+            img[0x189D] = 0;
+            img[0x1A20] = 45; // base HP = 1000
+
+            // Build a valid 30-chip folder from EXE3's starter build folder.
+            let starter = builds.new_folder.clone();
+            let c = exe3_compat::Compat::exe3();
+            for (slot, entry) in starter.chips.iter().enumerate() {
+                let chip = entry.expect("starter chip");
+                let key = saito_match::ids::local(&three.defs.chip(chip.id).key);
+                let id = c.chip_entry(key).unwrap().id;
+                let at = 0x1410 + 4 * slot;
+                img[at..at + 2].copy_from_slice(&id.to_le_bytes());
+                img[at + 2] = chip.code.0;
+            }
+
+            // Place UnderSht (program 30, white => id 120) at col 2, row 2.
+            img[0x1300..0x1300 + 8].copy_from_slice(&[30 * 4, 0, 2, 2, 0, 0, 0, 0]);
+            img[0x1D90 + 5 * 2 + 2] = 1;
+
+            let csum = exe3_compat::save::compute_checksum(&img, version);
+            img[0x1DD8..0x1DDC].copy_from_slice(&csum.to_le_bytes());
+            img
+        };
+
+        let white = make_exe3_save(
+            exe3_compat::Version::White,
+            exe3_compat::Style { kind: exe3_compat::StyleType::Ground, element: exe3_compat::Element::Heat },
+        );
+        let imported_white = side_of_save(&exe3_compat_tables, &three, &builds, &white).unwrap();
+        assert_eq!(imported_white.side.facts.get(&three, "style_type"), Some(Stated::Variant(Some("ground".into()))));
+        assert_eq!(imported_white.side.facts.get(&three, "style_element"), Some(Stated::Variant(Some("heat".into()))));
+        assert_eq!(imported_white.side.facts.get(&three, "hp"), Some(Stated::Number(1000)));
+        // `reg_up` is in `at_defaults`, so `as_built` resets it to 50.
+        assert_eq!(imported_white.side.facts.get(&three, "reg_up"), Some(Stated::Number(50)));
+        let checked_white = Checked::of(&three, "exe3", &imported_white.side);
+        assert!(checked_white.problems.is_empty(), "{:?}", checked_white.problems);
+
+        let blue = make_exe3_save(
+            exe3_compat::Version::Blue,
+            exe3_compat::Style { kind: exe3_compat::StyleType::Shadow, element: exe3_compat::Element::Aqua },
+        );
+        let imported_blue = side_of_save(&exe3_compat_tables, &three, &builds, &blue).unwrap();
+        assert_eq!(imported_blue.side.facts.get(&three, "style_type"), Some(Stated::Variant(Some("shadow".into()))));
+        assert_eq!(imported_blue.side.facts.get(&three, "style_element"), Some(Stated::Variant(Some("aqua".into()))));
+        let checked_blue = Checked::of(&three, "exe3", &imported_blue.side);
+        assert!(checked_blue.problems.is_empty(), "{:?}", checked_blue.problems);
+
+        // Cross-game refusal: EXE5 save refused for EXE3, EXE3 save refused for EXE6.
+        let mut exe5_img = vec![0u8; exe5_compat::save::IMAGE_SIZE];
+        exe5_img[0x29E0..0x29E0 + 20].copy_from_slice(b"REXE5TOB 20041006 US");
+        assert_eq!(side_of_save(&exe3_compat_tables, &three, &builds, &exe5_img), Err(Refused::NotThisGames));
+
+        let six = exe6_content();
+        assert_eq!(side_of_save(&compat("exe6"), &six, &Builds::of(&six, "exe6").unwrap(), &white), Err(Refused::NotThisGames));
     }
 }

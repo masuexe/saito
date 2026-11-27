@@ -1886,7 +1886,9 @@ dependencies = [
  "saito-battle",
  "saito-content-api",
  "saito-files",
+ "saito-match",
  "serde",
+ "serde_json",
  "toml 0.8.23",
 ]
 
@@ -5743,6 +5745,7 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "console_log",
+ "exe3-compat",
  "exe4-compat",
  "exe5-compat",
  "exe6-compat",

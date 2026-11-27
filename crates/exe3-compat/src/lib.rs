@@ -17,12 +17,17 @@
 //!   flags.
 //! - [`setup`]: translating save/link NaviCust parts and Style into engine
 //!   setup facts.
+//! - [`import`]: importing an EXE3 `.sav` file into a [`saito_match::Side`].
+//! - [`trace`]: parsing and replaying EXE3 mGBA differential traces against
+//!   [`saito_battle::Battle`].
 
 #![forbid(unsafe_code)]
 
 pub mod codec;
+pub mod import;
 pub mod save;
 pub mod setup;
+pub mod trace;
 
 use saito_battle::field::PanelType;
 use saito_content_api::Pool;
@@ -590,6 +595,12 @@ impl Compat {
         Ok(Some((key, color as u8)))
     }
 
+    /// NaviCust program key by save part id (`4 * program + variant`).
+    /// Returns `None` for empty part `0` or unknown part ids.
+    pub fn navicust_key(&self, id: u8) -> Option<&str> {
+        self.navicust_part(id).ok().flatten().map(|(k, _)| k)
+    }
+
     /// Chip key (`cannon`) by chip table id (`0..=384`).
     pub fn chip_key(&self, id: u16) -> Option<&str> {
         self.chip_keys.get(&id).map(String::as_str)
@@ -678,6 +689,27 @@ impl Compat {
     pub fn kind(&self, key: &str) -> Option<(Pool, u8)> {
         let e = self.kinds.get(key)?;
         Some((parse_pool(&e.pool)?, e.index))
+    }
+
+    /// EXE3's action number for object `o` in battle `b`: for non-actor
+    /// objects this is `x.action`; for player actors, maps through
+    /// `actions.toml` when present, falling back to `x.action`.
+    pub fn navi_action(&self, b: &saito_battle::Battle, o: saito_battle::object::ObjectRef) -> u8 {
+        use saito_battle::kinds::player::{NaviAction, navi_action};
+        let x = b.objects.get(o);
+        if x.actor.is_none() {
+            return x.action;
+        }
+        let key = match navi_action(b, o) {
+            NaviAction::Engine(e) => e.key(),
+            NaviAction::Content(h) => b.content.defs.action(h).key.as_str(),
+            _ => return x.action,
+        };
+        self.actions
+            .get(key)
+            .or_else(|| self.actions.get(saito_content_api::keys::local(key)))
+            .copied()
+            .unwrap_or(x.action)
     }
 }
 
