@@ -915,14 +915,30 @@ mod tests {
         assert!(resolve_preview(&all, "exe6/winner-1").is_some());
         assert!(resolve_menu_bgm(&all, "exe6/winner-1").is_none());
 
-        // Localized track titles exist in all four languages.
+        // Localized Legacy Collection track titles exist for every catalog track in all four languages,
+        // preserving untranslated English titles (e.g. Theme of ROCKMAN EXE4, Invisible Wing, Battle Field).
         for lang in ["en", "ja", "zh-Hans", "ko"] {
             crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], lang);
-            assert_ne!(track_title("exe6", "acdc-town"), "acdc-town");
-            assert_ne!(track_title("exe5", "oran-island"), "oran-island");
-            assert_ne!(track_title("exe4", "asteroid-comp"), "asteroid-comp");
-            assert_ne!(track_title("exe5", "ds-liberate"), "ds-liberate");
+            for game in ["exe4", "exe5", "exe6"] {
+                for track in saito_extract::gba_bgm_tracks(game) {
+                    let title = track_title(game, track.key);
+                    assert!(!title.is_empty(), "{lang} {game}/{} empty", track.key);
+                    assert_ne!(title, track.key, "{lang} {game}/{} fell back to raw key", track.key);
+                }
+            }
+            for track in saito_extract::EXE5DS_BGM_TRACKS {
+                let title = track_title("exe5", track.key);
+                assert!(!title.is_empty(), "{lang} exe5/{} empty", track.key);
+                assert_ne!(title, track.key, "{lang} exe5/{} fell back to raw key", track.key);
+            }
         }
+        crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], "zh-Hans");
+        assert_eq!(track_title("exe4", "title-screen"), "Theme of ROCKMAN EXE4");
+        assert_eq!(track_title("exe4", "elec-tower-comp"), "Invisible Wing");
+        assert_eq!(track_title("exe5", "main-comp"), "Seek a Cord");
+        assert_eq!(track_title("exe6", "virus-battle"), "Battle Field");
+        assert_eq!(track_title("exe6", "pavilion-comp"), "Two of Braves");
+        assert_eq!(track_title("exe6", "school"), "才叶学园");
 
         // Sequential rotation advances round-by-round wrapping cleanly.
         reset_favorite_cursor();
