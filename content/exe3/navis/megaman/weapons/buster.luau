@@ -1,5 +1,6 @@
 --!strict
--- MegaMan's buster in EXE3: Attack + 1 damage (x2 in Guts Style via `stats.buster_mult`).
+-- MegaMan's buster in EXE3: Attack + 1 damage (x2 in Guts Style via `stats.buster_mult`),
+-- plus BrakBust breaking-guard support.
 
 local attachment = require("../../../objects/attachment")
 local collision = require("../../../rules/collision")
@@ -20,6 +21,14 @@ local SHOT = shot.variant {
     spark = sparks.plain,
 }
 
+local BREAK_SHOT = shot.variant {
+    id = "megaman/buster/break-shot",
+    collision = { is = collision.breaking, hits = collision.hits_navis },
+    hit_mod = 0,
+    element = "null",
+    spark = sparks.breaking,
+}
+
 local NAVI_NUMBER = 0
 local SHOT_SOUND = asset.sound("buster-shot")
 local BLANK_SOUND = asset.sound("buster-blank")
@@ -34,11 +43,13 @@ local function shoot(me: Object, s: State, variant: ProjectileVariant)
         s.timer = 0
     end
     if s.timer == 1 then
-        local blanks = battle.navi(me.alliance).buster_blanks
+        local stats = battle.navi(me.alliance)
+        local blanks = stats.buster_blanks
         if bit32.band(battle.rng(), 0xF) + 1 > blanks then
             battle.play_sound(SHOT_SOUND)
             local damage = me.attack_damage
-            me.attack_count = projectile.fire(me, { variant = variant, damage = damage, z = SHOT_Z })
+            local used = if stats.brake_buster then BREAK_SHOT else variant
+            me.attack_count = projectile.fire(me, { variant = used, damage = damage, z = SHOT_Z })
             attachment.attach(me, attachment.muzzle_flash, "related", NAVI_NUMBER)
         else
             battle.play_sound(BLANK_SOUND)

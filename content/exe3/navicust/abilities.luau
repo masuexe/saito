@@ -230,7 +230,7 @@ local bustrmax: NaviCustProgram = {
 }
 
 local hubbatc: NaviCustProgram = {
-    colors = { "white" },
+    colors = { "orange", "white" },
     shape = {
         ".......",
         ".......",
@@ -299,6 +299,339 @@ local tango: NaviCustProgram = {
     effects = { programs.tango() },
 }
 
+-- Stage-setting NaviCust programs (SetGreen, SetIce, SetLava, SetSand, SetMetal, SetHoly)
+local setgreen: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(1) },
+}
+
+local setice: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "...#...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(2) },
+}
+
+local setlava: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "...#...",
+        "..###..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(3) },
+}
+
+local setsand: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "...##..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(4) },
+}
+
+local setmetal: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(5) },
+}
+
+local setholy: NaviCustProgram = {
+    colors = { "green" },
+    shape = {
+        ".......",
+        ".......",
+        "...#...",
+        "..###..",
+        "...#...",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.set_stage(6) },
+}
+
+-- Combat / Guard / Movement abilities
+local brakbust: NaviCustProgram = {
+    colors = { "red" },
+    shape = {
+        ".......",
+        ".......",
+        "..#....",
+        "..###..",
+        "....#..",
+        ".......",
+        ".......",
+    },
+    bug = "buster",
+    effects = { programs.brake_buster() },
+}
+
+local brakchrg: NaviCustProgram = {
+    colors = { "orange", "red" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "..#....",
+        "..###..",
+        ".......",
+        ".......",
+    },
+    bug = "buster",
+    effects = { programs.brake_charge() },
+}
+
+local shdwshoe: NaviCustProgram = {
+    colors = { "red" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "...#...",
+        "...##..",
+        ".......",
+        ".......",
+    },
+    bug = "panel",
+    effects = { programs.shadow_shoes() },
+}
+
+local block: NaviCustProgram = {
+    colors = { "blue" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "..#....",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.back_special(guards.block) },
+}
+
+-- Utility & Overworld programs from compat/navicust.toml
+local collect: NaviCustProgram = {
+    colors = { "pink" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "..#.#..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "custom",
+    effects = { programs.outside("collect") },
+}
+
+local oilbody: NaviCustProgram = {
+    colors = { "yellow" },
+    shape = {
+        ".......",
+        ".......",
+        "...#...",
+        "..##...",
+        "...#...",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("oil-body") },
+}
+
+local fish: NaviCustProgram = {
+    colors = { "pink" },
+    shape = {
+        ".......",
+        ".......",
+        "..#....",
+        "..##...",
+        "..#....",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("fish") },
+}
+
+local battery: NaviCustProgram = {
+    colors = { "yellow" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        ".......",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("battery") },
+}
+
+local jungle: NaviCustProgram = {
+    colors = { "white" },
+    shape = {
+        ".......",
+        ".......",
+        "...#...",
+        "..###..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("jungle") },
+}
+
+local sneakrun: NaviCustProgram = {
+    colors = { "yellow" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("sneak-run") },
+}
+
+local press: NaviCustProgram = {
+    colors = { "white" },
+    shape = {
+        ".......",
+        ".......",
+        "..#.#..",
+        "..###..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("press") },
+}
+
+local engychng: NaviCustProgram = {
+    colors = { "white" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "...#...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "custom",
+    effects = { programs.outside("energy-change") },
+}
+
+local humor: NaviCustProgram = {
+    colors = { "pink" },
+    shape = {
+        ".......",
+        ".......",
+        "..#....",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("humor") },
+}
+
+local blckmind: NaviCustProgram = {
+    colors = { "white" },
+    shape = {
+        ".......",
+        ".......",
+        "...#...",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "move",
+    effects = { programs.outside("black-mind") },
+}
+
+local darklcns: NaviCustProgram = {
+    colors = { "dark" },
+    shape = {
+        ".......",
+        ".......",
+        "..###..",
+        "..###..",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "hp",
+    effects = { programs.outside("dark-license") },
+}
+
+local alpha: NaviCustProgram = {
+    colors = { "pink" },
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "..##...",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "hp",
+    effects = { programs.outside("alpha") },
+}
+
 return {
     sprarmor = sprarmor,
     custom1 = custom1,
@@ -307,8 +640,10 @@ return {
     megfldr2 = megfldr2,
     gigfldr1 = gigfldr1,
     shield = shield,
+    block = block,
     reflect = reflect,
     flotshoe = flotshoe,
+    shdwshoe = shdwshoe,
     antidmg = antidmg,
     airshoes = airshoes,
     undersht = undersht,
@@ -319,4 +654,24 @@ return {
     rush = rush,
     beat = beat,
     tango = tango,
+    setgreen = setgreen,
+    setice = setice,
+    setlava = setlava,
+    setsand = setsand,
+    setmetal = setmetal,
+    setholy = setholy,
+    brakbust = brakbust,
+    brakchrg = brakchrg,
+    collect = collect,
+    oilbody = oilbody,
+    fish = fish,
+    battery = battery,
+    jungle = jungle,
+    sneakrun = sneakrun,
+    press = press,
+    engychng = engychng,
+    humor = humor,
+    blckmind = blckmind,
+    darklcns = darklcns,
+    alpha = alpha,
 }

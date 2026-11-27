@@ -2,7 +2,9 @@
 -- EXE3 NaviCust compiler: compiles placed programs on the 5x5 grid into MegaMan's NaviStats,
 -- enforces command-line / plus-part / adjacency / color-bar / style-color bug rules, and validates placement.
 
+local api = require("./api")
 local board = require("@self/board")
+local bug_style = require("./styles/bug_style")
 local programs = require("@self/programs")
 local styles = require("./styles")
 
@@ -12,7 +14,7 @@ local COMMAND_LINE: number = board.COMMAND_LINE
 local COLOR_BAR: number = board.COLOR_BAR
 local BOARD: { string } = board.boards[1]
 
-export type Work = { hp: number, bug_stop: boolean }
+export type Work = { hp: number, bug_stop: boolean, support: string? }
 type State = { bug_counts: { [string]: number } }
 type Placed = { program: NaviCustProgram, color: string, x: number, y: number, rotation: number, compressed: boolean }
 
@@ -109,9 +111,22 @@ local function apply(stats: Navi, e: NaviCustEffect, work: Work)
     elseif k == "bug_stop" then
         work.bug_stop = true
     elseif k == "rush" or k == "beat" or k == "tango" then
-        stats.rush, stats.beat, stats.tango, stats.support_bug = k == "rush", k == "beat", k == "tango", false
+        -- Tracked in EXE3 rules.state so our Luau support hooks execute directly without requiring roles.kinds.support.
+        work.support = k
+        stats.rush, stats.beat, stats.tango, stats.support_bug = false, false, false, false
     elseif k == "hp" then
         work.hp += n
+    elseif k == "set_stage" then
+        stats.stage_panel = n
+    elseif k == "brake_buster" then
+        stats.brake_buster = true
+    elseif k == "brake_charge" then
+        stats.brake_charge = true
+    elseif k == "weapon_level" then
+        local cur: number = stats.weapon_level or 0
+        stats.weapon_level = math.min(cur + n, 5)
+    elseif k == "shadow_shoes" then
+        stats.shadow_shoes = true
     elseif k == "outside" then
         -- Non-battle effect
     else
@@ -241,7 +256,7 @@ local function compile(side: number)
         count("custom", 2)
     end
 
-    local work: Work = { hp = 0, bug_stop = false }
+    local work: Work = { hp = 0, bug_stop = false, support = nil }
     local function run_program(def: NaviCustProgram)
         for _, e in def.effects or {} do
             apply(stats, e, work)
@@ -288,6 +303,45 @@ local function compile(side: number)
     local kept = (rules.state() :: State).bug_counts
     for _, bug in programs.BUGS do
         kept[bug] = math.min(counts[bug] or 0, 0xFF)
+    end
+    local st = api.state(side)
+    local has_support_bug = stats.support_bug
+    st.rush_armed = (not has_support_bug) and (work.support == "rush")
+    st.beat_armed = (not has_support_bug) and (work.support == "beat")
+    st.tango_armed = (not has_support_bug) and (work.support == "tango")
+    bug_style.snapshot(side, work.bug_stop)
+end
+
+local STAGE_PANEL_NAME: { [number]: PanelType } = {
+    [1] = "grass",
+    [2] = "ice",
+    [3] = "lava",
+    [4] = "sand",
+    [5] = "metal",
+    [6] = "holy",
+}
+
+-- Applies SetGreen / SetIce / SetLava / SetSand / SetMetal / SetHoly NaviCust stage programs at round start.
+local function round_start(side: number)
+    local stats = battle.navi(side)
+    local sp: number = stats.stage_panel or 0
+    local kind: PanelType? = STAGE_PANEL_NAME[sp]
+    if kind == nil then
+        return
+    end
+    for y = 1, 3 do
+        for x = 1, 6 do
+            local p = field.panel(x, y)
+            if p and p.kind ~= "missing" and p.kind ~= "broken" then
+                if kind == "holy" then
+                    if p.alliance == side then
+                        field.set_type(x, y, "holy")
+                    end
+                else
+                    field.set_type(x, y, kind)
+                end
+            end
+        end
     end
 end
 
@@ -421,6 +475,7 @@ end
 
 return {
     run = compile,
+    round_start = round_start,
     validate = validate,
     overview = overview,
     state = {

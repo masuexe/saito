@@ -64,8 +64,10 @@ local status = {
                 { id = 1, wind_pops = true, threshold_aura = false },
                 { id = 2, wind_pops = true, threshold_aura = false },
                 { id = 3, wind_pops = true, threshold_aura = false },
+                { id = 4, wind_pops = true, threshold_aura = false },
                 { id = 6, wind_pops = true, threshold_aura = true },
                 { id = 7, wind_pops = true, threshold_aura = true },
+                { id = 10, wind_pops = true, threshold_aura = true },
                 { id = 8, wind_pops = true, bubble = false, elec_pops = false, regrow = false, threshold_aura = false },
                 {
                     id = 9,

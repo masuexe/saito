@@ -131,6 +131,22 @@ local reg_5: NaviCustProgram = {
     effects = { programs.reg_up(5) },
 }
 
+local weaplv_1: NaviCustProgram = {
+    colors = { "white", "pink", "yellow" },
+    plus = true,
+    shape = {
+        ".......",
+        ".......",
+        "..##...",
+        "..#....",
+        ".......",
+        ".......",
+        ".......",
+    },
+    bug = "buster",
+    effects = { programs.weapon_level(1) },
+}
+
 return {
     ["hp-100"] = hp_100,
     ["hp-200"] = hp_200,
@@ -140,4 +156,5 @@ return {
     ["speed-1"] = speed_1,
     ["charge-1"] = charge_1,
     ["reg-5"] = reg_5,
+    ["weaplv-1"] = weaplv_1,
 }

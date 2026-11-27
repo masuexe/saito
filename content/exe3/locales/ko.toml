@@ -50,8 +50,95 @@ language = "ko"
 "lifeaura" = { name = "라이프오라", description = "200 미만의 공격을\n모두 막는다" }
 "atk-10" = { name = "어택+10", description = "앞선 공격 칩의\n위력을 +10" }
 "atk-30" = { name = "어택+30", description = "앞선 공격 칩의\n위력을 +30" }
-"z-canon1" = { name = "제타캐논1", description = "프로그램 어드밴스!\n고위력 캐논" }
+"z-canon1" = { name = "제타캐논1", description = "무적 상태로 캐논을\n연사한다!" }
+"z-canon2" = { name = "제타캐논2", description = "무적 상태로 하이\n캐논을 연사한다!" }
+"z-canon3" = { name = "제타캐논3", description = "무적 상태로 메가\n캐논을 연사한다!" }
 "lifeswrd" = { name = "드림소드", description = "전방 3×2칸을 베어\n400 대미지!" }
+"bubbler" = { name = "버블샷", description = "명중 시 뒤 1칸에\n물 폭발!" }
+"bub-v" = { name = "버블브이", description = "명중 시 대각선 뒤\n2칸에 물 폭발!" }
+"bublside" = { name = "버블사이드", description = "명중 시 위아래\n2칸에 물 폭발!" }
+"heatshot" = { name = "히트샷", description = "명중 시 뒤 1칸에\n불꽃 폭발!" }
+"heat-v" = { name = "히트브이", description = "명중 시 대각선 뒤\n2칸에 불꽃 폭발!" }
+"heatside" = { name = "히트사이드", description = "명중 시 위아래\n2칸에 불꽃 폭발!" }
+"custswrd" = { name = "커스텀소드", description = "커스텀 게이지가\n찰수록 위력 상승!" }
+"varswrd" = { name = "배리어블소드", description = "A를 누르고 커맨드로\n다양한 검기 발동!" }
+"stepcros" = { name = "스텝크로스", description = "앞으로 2칸 진입해\nX자로 베어낸다!" }
+"slasher" = { name = "이아이폼", description = "A를 유지해 진입한\n적을 단칼에 벤다!" }
+"poismask" = { name = "포이즌마스크", description = "전방 3칸에 독안개를\n뿜어낸다!" }
+"poisface" = { name = "포이즌페이스", description = "넓은 범위에 독안개를\n뿜어낸다!" }
+"plasma1" = { name = "플라스마볼1", description = "전기 구체로 적을\n연속 공격!" }
+"plasma2" = { name = "플라스마볼2", description = "넓은 전기 구체로\n연속 공격!" }
+"plasma3" = { name = "플라스마볼3", description = "고출력 십자 전기\n구체로 연속 공격!" }
+"sensor1" = { name = "센서1", description = "적을 감지하면 마비\n레이저를 발사!" }
+"sensor2" = { name = "센서2", description = "광각 센서로 마비\n레이저를 발사!" }
+"sensor3" = { name = "센서3", description = "강력 센서로 광역\n마비 레이저 발사!" }
+"metagel1" = { name = "메타겔1", description = "물 겔로 공격하고\n패널을 빼앗는다!" }
+"metagel2" = { name = "메타겔2", description = "강한 물 겔로\n패널을 빼앗는다!" }
+"metagel3" = { name = "메타겔3", description = "중량 물 겔로\n패널을 빼앗는다!" }
+"rockcube" = { name = "스톤큐브", description = "눈앞에 HP 200의\n돌 큐브를 설치!" }
+"wind" = { name = "돌풍", description = "적을 밀어내고\n배리어를 날린다!" }
+"fan" = { name = "흡입", description = "적을 앞쪽으로\n끌어당긴다!" }
+"geddon2" = { name = "데스매치2", description = "빈 패널을 모두\n구멍으로 만든다!" }
+"geddon3" = { name = "데스매치3", description = "모든 패널을\n독늪으로 바꾼다!" }
+"copydmg" = { name = "카피대미지", description = "적에게 표식을 남겨\n대미지를 복사한다!" }
+"shadow" = { name = "섀도우", description = "그림자가 되어 검 외의\n공격을 무효화!" }
+"mole1" = { name = "두더지1", description = "잠시 땅속에 숨어\n공격을 회피한다!" }
+"mole2" = { name = "두더지2", description = "적당히 땅속에 숨어\n공격을 회피한다!" }
+"mole3" = { name = "두더지3", description = "오래 땅속에 숨어\n공격을 회피한다!" }
+"holypanl" = { name = "홀리패널", description = "눈앞 1칸을 홀리\n패널로 바꾼다!" }
+"lavastge" = { name = "마그마스테이지", description = "필드 전체를 용암\n패널로 바꾼다!" }
+"icestage" = { name = "아이스스테이지", description = "필드 전체를 얼음\n패널로 바꾼다!" }
+"grassstg" = { name = "풀숲스테이지", description = "필드 전체를 풀숲\n패널로 바꾼다!" }
+"sandstge" = { name = "샌드스테이지", description = "필드 전체를 모래\n패널로 바꾼다!" }
+"metlstge" = { name = "메탈스테이지", description = "필드 전체를 메탈\n패널로 바꾼다!" }
+"snctuary" = { name = "생츄어리", description = "아군 에어리어 전체를\n홀리 패널로!" }
+"antidmg" = { name = "카와리미", description = "함정: 공격을 피하고\n수리검으로 반격!" }
+"antiswrd" = { name = "안티소드", description = "함정: 검 공격을\n3연참으로 반격!" }
+"antinavi" = { name = "내비스카우트", description = "함정: 상대의 내비\n칩을 빼앗는다!" }
+"antirecv" = { name = "안티리커버리", description = "함정: 상대의 회복을\n응징한다!" }
+"navi-20" = { name = "내비+20", description = "앞선 내비 칩의\n위력을 +20" }
+"navi-40" = { name = "내비+40", description = "앞선 내비 칩의\n위력을 +40" }
+"muramasa" = { name = "무라마사", description = "잃은 HP만큼의\n대미지를 준다!" }
+"heroswrd" = { name = "히어로소드", description = "전방 가로 3칸을\n베어내는 명검!" }
+"anubis" = { name = "아누비스", description = "석상이 적의 HP를\n지속 흡수한다!" }
+"fullcust" = { name = "풀커스텀", description = "커스텀 게이지를\n즉시 가득 채운다!" }
+"protoman" = { name = "블루스", description = "적 앞으로 이동해\n와이드소드 참격!" }
+"protomnv2" = { name = "블루스V2", description = "적 앞으로 이동해\n와이드소드 참격!" }
+"protomnv3" = { name = "블루스V3", description = "적 앞으로 이동해\n와이드소드 참격!" }
+"protomnv4" = { name = "블루스V4", description = "적 앞으로 이동해\n와이드소드 참격!" }
+"flashman" = { name = "플래시맨", description = "화면 전체 섬광으로\n전기 공격과 마비!" }
+"flashmnv2" = { name = "플래시맨V2", description = "화면 전체 섬광으로\n전기 공격과 마비!" }
+"flashmnv3" = { name = "플래시맨V3", description = "화면 전체 섬광으로\n전기 공격과 마비!" }
+"flashmnv4" = { name = "플래시맨V4", description = "화면 전체 섬광으로\n전기 공격과 마비!" }
+"plantman" = { name = "플랜트맨", description = "덩굴 4연타로 적을\n속박하고 마비!" }
+"plantmnv2" = { name = "플랜트맨V2", description = "덩굴 4연타로 적을\n속박하고 마비!" }
+"plantmnv3" = { name = "플랜트맨V3", description = "덩굴 4연타로 적을\n속박하고 마비!" }
+"plantmnv4" = { name = "플랜트맨V4", description = "덩굴 4연타로 적을\n속박하고 마비!" }
+"mistman" = { name = "미스트맨", description = "안개 분신이 적진을\n3회 연속 타격!" }
+"mistmanv2" = { name = "미스트맨V2", description = "안개 분신이 적진을\n3회 연속 타격!" }
+"mistmanv3" = { name = "미스트맨V3", description = "안개 분신이 적진을\n3회 연속 타격!" }
+"mistmanv4" = { name = "미스트맨V4", description = "안개 분신이 적진을\n3회 연속 타격!" }
+"bowlman" = { name = "보울맨", description = "볼링 핀이 모든\n3열을 휩쓴다!" }
+"bowlmanv2" = { name = "보울맨V2", description = "볼링 핀이 모든\n3열을 휩쓴다!" }
+"bowlmanv3" = { name = "보울맨V3", description = "볼링 핀이 모든\n3열을 휩쓴다!" }
+"bowlmanv4" = { name = "보울맨V4", description = "볼링 핀이 모든\n3열을 휩쓴다!" }
+"navrcycl" = { name = "내비리사이클", description = "마지막에 쓴 내비/\n메가 칩을 재발동!" }
+"foldrbak" = { name = "폴더리턴", description = "모든 칩을 폴더에\n복원하고 HP 회복!" }
+"bass" = { name = "포르테", description = "적 에어리어에\n기관총 탄막 발사!" }
+"bass-137" = { name = "포르테+", description = "어스브레이커로\n패널을 분쇄!" }
+"serenade" = { name = "세레나데", description = "홀리쇼크 충격파로\n적진 전체 타격!" }
+"darkaura" = { name = "다크오라", description = "300 미만의 공격을\n모두 막아낸다!" }
+"balance" = { name = "밸런스", description = "양쪽 내비의 남은\nHP를 절반으로!" }
+"deltaray" = { name = "델타레이에지", description = "삼각 궤적의 3연속\n초고속 참격!" }
+"alpharmsg" = { name = "프로토암Σ", description = "프로토 빔으로 적진\n전체를 휩쓴다!" }
+"alpharmom" = { name = "프로토암Ω", description = "프로토 로켓으로\n대폭발 공격!" }
+"bubsprd" = { name = "버블스프레드", description = "300 위력 물속성\n3×3 대폭발!" }
+"heatsprd" = { name = "히트스프레드", description = "300 위력 불속성\n3×3 대폭발!" }
+"poisphar" = { name = "포이즌파라오", description = "파라오가 적 HP를\n초고속 흡수!" }
+"bodygrd" = { name = "보디가드", description = "수리검 12발이 적을\n향해 쏟아진다!" }
+"500barr" = { name = "배리어500", description = "HP 500의 강력한\n배리어를 전개!" }
+"2xhero" = { name = "더블히어로", description = "8연타 히어로 검무\n연속 참격!" }
+"mstrstyl" = { name = "마스터스타일", description = "4속성 원소 검기로\n연속 참격!" }
 "invalid" = { name = " ", description = "" }
 "zeroed" = { name = "", description = "" }
 
@@ -128,6 +215,29 @@ language = "ko"
 "speed-1" = { name = "래피드+1", description = "버스터 연사력 +1" }
 "charge-1" = { name = "차지+1", description = "버스터 차지 +1" }
 "reg-5" = { name = "레귤러+5", description = "레귤러 메모리 +5MB" }
+"weaplv-1" = { name = "웨폰LV+1", description = "스타일 차지샷\n위력 +1 LV!" }
+"brakbust" = { name = "브레이크버스터", description = "버스터에 가드 파괴\n성능을 부여!" }
+"brakchrg" = { name = "브레이크차지", description = "차지샷에 가드 파괴\n성능을 부여!" }
+"setgreen" = { name = "세트그린", description = "풀숲 스테이지로\n배틀을 시작!" }
+"setice" = { name = "세트아이스", description = "얼음 스테이지로\n배틀을 시작!" }
+"setlava" = { name = "세트마그마", description = "용암 스테이지로\n배틀을 시작!" }
+"setsand" = { name = "세트샌드", description = "모래 스테이지로\n배틀을 시작!" }
+"setmetal" = { name = "세트메탈", description = "메탈 스테이지로\n배틀을 시작!" }
+"setholy" = { name = "세트홀리", description = "아군 에어리어 홀리\n상태로 시작!" }
+"block" = { name = "블록", description = "B+좌 입력으로\n빠르게 가드!" }
+"shdwshoe" = { name = "섀도우슈즈", description = "금 간 패널을 밟아도\n부서지지 않는다!" }
+"collect" = { name = "콜렉터즈아이", description = "배틀 후 칩 획득\n확률이 증가!" }
+"oilbody" = { name = "오일바디", description = "불속성 바이러스와\n조우율 상승!" }
+"fish" = { name = "피시", description = "물속성 바이러스와\n조우율 상승!" }
+"battery" = { name = "배터리", description = "전기속성 바이러스와\n조우율 상승!" }
+"jungle" = { name = "정글", description = "풀속성 바이러스와\n조우율 상승!" }
+"sneakrun" = { name = "스니크런", description = "약한 바이러스와의\n조우를 회피!" }
+"press" = { name = "프레스", description = "좁은 전뇌 통로를\n통과할 수 있다!" }
+"engychng" = { name = "에너지체인지", description = "배틀 후 칩을 HP로\n변환한다!" }
+"humor" = { name = "유머센스", description = "L 버튼으로 재미있는\n대사를 듣는다!" }
+"blckmind" = { name = "블랙마인드", description = "록맨의 말투가\n바뀐다!" }
+"darklcns" = { name = "다크라이선스", description = "다크 칩의 부작용을\n방지한다!" }
+"alpha" = { name = "프로토", description = "프로토 코어의\n신비한 프로그램!" }
 
 [bugs]
 "buster" = "버스터 공포탄 버그"

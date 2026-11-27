@@ -37,6 +37,26 @@ function programs.reg_up(n: number): Effect
     return { kind = "reg_up", amount = n }
 end
 
+function programs.set_stage(panel: number): Effect
+    return { kind = "set_stage", amount = panel }
+end
+
+function programs.brake_buster(): Effect
+    return { kind = "brake_buster" }
+end
+
+function programs.brake_charge(): Effect
+    return { kind = "brake_charge" }
+end
+
+function programs.weapon_level(n: number): Effect
+    return { kind = "weapon_level", amount = n }
+end
+
+function programs.shadow_shoes(): Effect
+    return { kind = "shadow_shoes" }
+end
+
 programs.BUGS = {
     "move",
     "hp",

@@ -50,8 +50,95 @@ language = "en"
 "lifeaura" = { name = "LifeAura", description = "Repels attacks\nunder 200 damage" }
 "atk-10" = { name = "Atk+10", description = "+10 power for\nselected atk chip" }
 "atk-30" = { name = "Atk+30", description = "+30 power for\nselected atk chip" }
-"z-canon1" = { name = "Z-Canon1", description = "Program Advance!\nHigh-power cannon" }
+"z-canon1" = { name = "Z-Canon1", description = "Invincible & fires\nrapid Cannons!" }
+"z-canon2" = { name = "Z-Canon2", description = "Invincible & fires\nrapid HiCannons!" }
+"z-canon3" = { name = "Z-Canon3", description = "Invincible & fires\nrapid M-Cannons!" }
 "lifeswrd" = { name = "LifeSwrd", description = "Cuts a 3x2 area\nin front for 400!" }
+"bubbler" = { name = "Bubbler", description = "Water shot bursts\n1 square behind!" }
+"bub-v" = { name = "Bub-V", description = "Water shot bursts\n2 diagonals behind!" }
+"bublside" = { name = "BublSide", description = "Water shot bursts\nabove & below!" }
+"heatshot" = { name = "HeatShot", description = "Fire shot bursts\n1 square behind!" }
+"heat-v" = { name = "Heat-V", description = "Fire shot bursts\n2 diagonals behind!" }
+"heatside" = { name = "HeatSide", description = "Fire shot bursts\nabove & below!" }
+"custswrd" = { name = "CustSwrd", description = "Power rises with\nCustom Gauge!" }
+"varswrd" = { name = "VarSwrd", description = "Hold A + command\nfor special blade!" }
+"stepcros" = { name = "StepCros", description = "Steps 2 ahead &\ncuts an X pattern!" }
+"slasher" = { name = "Slasher", description = "Hold A to slash\nintruders in area!" }
+"poismask" = { name = "PoisMask", description = "Spreads poison\ncloud 3 ahead!" }
+"poisface" = { name = "PoisFace", description = "Spreads wide\npoison cloud!" }
+"plasma1" = { name = "Plasma1", description = "Electric orb hits\nmultiple times!" }
+"plasma2" = { name = "Plasma2", description = "Wide electric orb\nstrikes repeatedly!" }
+"plasma3" = { name = "Plasma3", description = "High-power orb\nshocks cross area!" }
+"sensor1" = { name = "Sensor1", description = "Turret fires elec\nbeam on sight!" }
+"sensor2" = { name = "Sensor2", description = "Wide turret zaps\n& paralyzes foes!" }
+"sensor3" = { name = "Sensor3", description = "Deep turret zaps\n& paralyzes foes!" }
+"metagel1" = { name = "MetaGel1", description = "Aqua gel damages\n& steals panels!" }
+"metagel2" = { name = "MetaGel2", description = "Strong aqua gel\nsteals front row!" }
+"metagel3" = { name = "MetaGel3", description = "Heavy aqua gel\nsteals front row!" }
+"rockcube" = { name = "RockCube", description = "Places a 200 HP\nrock cube ahead!" }
+"wind" = { name = "Wind", description = "Blows foes back &\nstrips barriers!" }
+"fan" = { name = "Fan", description = "Pulls foes toward\nyour front row!" }
+"geddon2" = { name = "Geddon2", description = "Breaks all empty\npanels on field!" }
+"geddon3" = { name = "Geddon3", description = "Turns every panel\ninto poison!" }
+"copydmg" = { name = "CopyDmg", description = "Marks foe to copy\ntaken damage!" }
+"shadow" = { name = "Shadow", description = "Shadow form blocks\nnon-sword hits!" }
+"mole1" = { name = "Mole1", description = "Hides underground\nfor a short time!" }
+"mole2" = { name = "Mole2", description = "Hides underground\nfor a medium time!" }
+"mole3" = { name = "Mole3", description = "Hides underground\nfor a long time!" }
+"holypanl" = { name = "HolyPanl", description = "Turns panel ahead\ninto Holy panel!" }
+"lavastge" = { name = "LavaStge", description = "Turns entire stage\ninto Lava panels!" }
+"icestage" = { name = "IceStage", description = "Turns entire stage\ninto Ice panels!" }
+"grassstg" = { name = "GrassStg", description = "Turns entire stage\ninto Grass panels!" }
+"sandstge" = { name = "SandStge", description = "Turns entire stage\ninto Sand panels!" }
+"metlstge" = { name = "MetlStge", description = "Turns entire stage\ninto Metal panels!" }
+"snctuary" = { name = "Snctuary", description = "Turns your entire\narea to Holy!" }
+"antidmg" = { name = "AntiDmg", description = "Trap: dodges hit &\nthrows a star!" }
+"antiswrd" = { name = "AntiSwrd", description = "Trap: counters\nsword with 3 cuts!" }
+"antinavi" = { name = "AntiNavi", description = "Trap: intercepts\nenemy Navi chip!" }
+"antirecv" = { name = "AntiRecv", description = "Trap: punishes\nenemy recovery!" }
+"navi-20" = { name = "Navi+20", description = "+20 power for\nselected Navi chip" }
+"navi-40" = { name = "Navi+40", description = "+40 power for\nselected Navi chip" }
+"muramasa" = { name = "Muramasa", description = "Blade deals damage\nequal to HP lost!" }
+"heroswrd" = { name = "HeroSwrd", description = "Hero blade cuts\n3 squares ahead!" }
+"anubis" = { name = "Anubis", description = "Statue drains\nenemy HP steadily!" }
+"fullcust" = { name = "FullCust", description = "Instantly fills\nthe Custom Gauge!" }
+"protoman" = { name = "ProtoMan", description = "Steps in & slashes\n3 vertical panels!" }
+"protomnv2" = { name = "ProtoMnV2", description = "Steps in & slashes\n3 vertical panels!" }
+"protomnv3" = { name = "ProtoMnV3", description = "Steps in & slashes\n3 vertical panels!" }
+"protomnv4" = { name = "ProtoMnV4", description = "Steps in & slashes\n3 vertical panels!" }
+"flashman" = { name = "FlashMan", description = "Blinding elec flash\nparalyzes foes!" }
+"flashmnv2" = { name = "FlashMnV2", description = "Blinding elec flash\nparalyzes foes!" }
+"flashmnv3" = { name = "FlashMnV3", description = "Blinding elec flash\nparalyzes foes!" }
+"flashmnv4" = { name = "FlashMnV4", description = "Blinding elec flash\nparalyzes foes!" }
+"plantman" = { name = "PlantMan", description = "Wood vines strike\n4x & bind target!" }
+"plantmnv2" = { name = "PlantMnV2", description = "Wood vines strike\n4x & bind target!" }
+"plantmnv3" = { name = "PlantMnV3", description = "Wood vines strike\n4x & bind target!" }
+"plantmnv4" = { name = "PlantMnV4", description = "Wood vines strike\n4x & bind target!" }
+"mistman" = { name = "MistMan", description = "Mist apparitions\nstrike 3 times!" }
+"mistmanv2" = { name = "MistMnV2", description = "Mist apparitions\nstrike 3 times!" }
+"mistmanv3" = { name = "MistMnV3", description = "Mist apparitions\nstrike 3 times!" }
+"mistmanv4" = { name = "MistMnV4", description = "Mist apparitions\nstrike 3 times!" }
+"bowlman" = { name = "BowlMan", description = "Bowling pins sweep\nall 3 rows!" }
+"bowlmanv2" = { name = "BowlMnV2", description = "Bowling pins sweep\nall 3 rows!" }
+"bowlmanv3" = { name = "BowlMnV3", description = "Bowling pins sweep\nall 3 rows!" }
+"bowlmanv4" = { name = "BowlMnV4", description = "Bowling pins sweep\nall 3 rows!" }
+"navrcycl" = { name = "NavRcycl", description = "Replays the last\nNavi/Mega chip!" }
+"foldrbak" = { name = "FoldrBak", description = "Restores all chips\nto folder & heals!" }
+"bass" = { name = "Bass", description = "Fires machine-gun\nbarrage at enemy!" }
+"bass-137" = { name = "Bass+", description = "EarthBreaker smash\nshatters panels!" }
+"serenade" = { name = "Serenade", description = "HolyShock waves\nblast enemy area!" }
+"darkaura" = { name = "DarkAura", description = "Repels all attacks\nunder 300 damage!" }
+"balance" = { name = "Balance", description = "Halves both Navis'\nremaining HP!" }
+"deltaray" = { name = "DeltaRay", description = "Triple DeltaRay\nblade strike!" }
+"alpharmsg" = { name = "AlphArmΣ", description = "Sweeping Alpha\nbeam barrage!" }
+"alpharmom" = { name = "AlphArmΩ", description = "Massive Alpha\nrocket impact!" }
+"bubsprd" = { name = "BubSprd", description = "300-dmg Aqua 3x3\nexplosion!" }
+"heatsprd" = { name = "HeatSprd", description = "300-dmg Fire 3x3\nexplosion!" }
+"poisphar" = { name = "PoisPhar", description = "Pharaoh rapidly\ndrains enemy HP!" }
+"bodygrd" = { name = "BodyGrd", description = "12 diving stars\nrain on the foe!" }
+"500barr" = { name = "500Barr", description = "Raises a massive\n500 HP barrier!" }
+"2xhero" = { name = "2xHero", description = "Rapid 8-hit Hero\nblade combo!" }
+"mstrstyl" = { name = "MstrStyl", description = "4-element Master\nblade onslaught!" }
 "invalid" = { name = " ", description = "" }
 "zeroed" = { name = "", description = "" }
 
@@ -128,6 +215,29 @@ language = "en"
 "speed-1" = { name = "Speed+1", description = "Increases Buster\nSpeed by 1" }
 "charge-1" = { name = "Charge+1", description = "Increases Buster\nCharge by 1" }
 "reg-5" = { name = "Reg+5", description = "Increases Regular\nMemory by 5 MB" }
+"weaplv-1" = { name = "WeapLV+1", description = "Raises Style charge\nshot power +1 LV" }
+"brakbust" = { name = "BrakBust", description = "MegaBuster shots\nbreak enemy guards" }
+"brakchrg" = { name = "BrakChrg", description = "Charged shots\nbreak enemy guards" }
+"setgreen" = { name = "SetGreen", description = "Starts battle on\na Grass stage" }
+"setice" = { name = "SetIce", description = "Starts battle on\nan Ice stage" }
+"setlava" = { name = "SetLava", description = "Starts battle on\na Lava stage" }
+"setsand" = { name = "SetSand", description = "Starts battle on\na Sand stage" }
+"setmetal" = { name = "SetMetal", description = "Starts battle on\na Metal stage" }
+"setholy" = { name = "SetHoly", description = "Starts battle with\nHoly own area" }
+"block" = { name = "Block", description = "Press B+Left for\na quick guard" }
+"shdwshoe" = { name = "ShdwShoe", description = "Cracked panels\nnever break!" }
+"collect" = { name = "Collect", description = "Increases chip\ndrop chances" }
+"oilbody" = { name = "OilBody", description = "Attracts Fire\nviruses on net" }
+"fish" = { name = "Fish", description = "Attracts Aqua\nviruses on net" }
+"battery" = { name = "Battery", description = "Attracts Elec\nviruses on net" }
+"jungle" = { name = "Jungle", description = "Attracts Wood\nviruses on net" }
+"sneakrun" = { name = "SneakRun", description = "Avoids weak virus\nencounters" }
+"press" = { name = "Press", description = "Pass through tight\ncyber paths" }
+"engychng" = { name = "EngyChng", description = "Convert chips to\nHP after battle" }
+"humor" = { name = "Humor", description = "Press L to hear\nfunny comments" }
+"blckmind" = { name = "BlckMind", description = "Changes MegaMan's\ntalking style" }
+"darklcns" = { name = "DarkLcns", description = "Permits dark chip\nusage without bug" }
+"alpha" = { name = "Alpha", description = "Mysterious program\nfrom Alpha core" }
 
 [bugs]
 "buster" = "Buster misfire bug"
