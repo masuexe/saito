@@ -1316,7 +1316,8 @@ pub fn draw<'a>(
     }
     // The banner block's banner, where no telop lays on it. (The banner's
     // own game's HUD draws it, by its number there.) On a screen of both the
-    // round's result's is each player's own, over its own half.
+    // round's result banner is drawn once in the center from the left player's
+    // perspective (S-137).
     let banner = banner_of(b, seat);
     let block = b.banner_block_for(seat.side);
     let telops = telops_of(b, seat);
@@ -1359,13 +1360,7 @@ pub fn draw<'a>(
                     group.iter_mut().for_each(|part| part.palette = p);
                 }
             }
-            if seat.shows == Shows::Own && b.result_banner_for(local) == Some(id) {
-                // (Its picture's columns that show, centered on the middle
-                // of its player's half.)
-                let (from, to) = banner_ink(layout);
-                let (x, w) = (layout.x as i32 + from, to - from);
-                crate::seat::move_parts(&mut group, &mut words, seat.x(HALF_MIDDLE - w / 2, w) - x);
-            } else if seat.mirrored() && is_program_advance_banner(b, id) {
+            if seat.mirrored() && is_program_advance_banner(b, id) {
                 // A Program Advance banner mirrors alongside the mirrored PA chip names.
                 let (from, to) = banner_ink(layout);
                 let (x, w) = (layout.x as i32 + from, to - from);
@@ -1459,10 +1454,6 @@ pub(crate) fn keep_to(seat: Seat, anchor: Anchor, (layer, scratch): (&mut Layer,
     text.anchor = anchor;
 }
 
-/// The middle of the left half of the screen, where a result banner goes on
-/// a screen of both (R1); the right's at its mirrored place.
-const HALF_MIDDLE: i32 = crate::compose::WIDTH as i32 / 4;
-
 /// The columns of a banner's picture that show (its twenty 8x16 glyphs,
 /// `banner_parts`), from its left: the first, one past the last (all of
 /// them where none shows).
@@ -1497,12 +1488,13 @@ fn is_program_advance_banner(b: &Battle, id: BannerId) -> bool {
 }
 
 /// The banner `seat` draws: its console's ([`Battle::banner_for`]); on the
-/// right of a screen of both, its own result's or Program Advance's alone
-/// (the others are the left's).
+/// right of a screen of both, its own Program Advance's alone (all other
+/// banners, including the round's result banner, are drawn once in the center
+/// from the left seat's perspective: S-137).
 fn banner_of(b: &Battle, seat: Seat) -> Option<BannerId> {
     match (seat.shows, seat.at) {
-        (Shows::Own, At::Right) => b.result_banner_for(seat.side),
-        (Shows::Half, At::Right) => b.banner_for(seat.side).filter(|&id| b.result_banner_for(seat.side) == Some(id) || is_program_advance_banner(b, id)),
+        (Shows::Own, At::Right) => None,
+        (Shows::Half, At::Right) => b.banner_for(seat.side).filter(|&id| is_program_advance_banner(b, id)),
         _ => b.banner_for(seat.side),
     }
 }
@@ -3791,5 +3783,68 @@ mod tests {
         let tinted_r = out[0].palette[1] & 31;
         let tinted_g = (out[0].palette[1] >> 5) & 31;
         assert!(tinted_r > tinted_g, "Danger fallback tint must be strongly red-shifted (r={tinted_r}, g={tinted_g})");
+    }
+
+    /// S-137: In dual-view (`Consoles::Both`), the round-end result banner is drawn once
+    /// in the center of the screen from the left (primary) player's perspective, rather than
+    /// drawing two side-by-side result banners that collide in the middle.
+    #[test]
+    fn dual_view_draws_only_left_result_banner_centered() {
+        let mut b = battle();
+        b.round.mode = mode::FIGHTING;
+        b.fight.state = fight::WIN;
+        b.round.winner = b.setup.local_side;
+        let win_id = b.result_banner(b.setup.local_side, true);
+        let lose_id = b.result_banner(b.setup.local_side ^ 1, false);
+        assert_ne!(win_id, lose_id, "left and right players have distinct win/lose banners");
+        assert!(b.start_banner(win_id));
+
+        let seats = Seat::of(crate::seat::Consoles::Both, &b);
+        assert_eq!(seats.len(), 2);
+        let (left, right) = (seats[0], seats[1]);
+        assert_eq!((left.at, left.shows), (At::Left, Shows::Own));
+        assert_eq!((right.at, right.shows), (At::Right, Shows::Own));
+
+        // Left draws its own result banner; right draws none.
+        assert_eq!(banner_of(&b, left), Some(win_id));
+        assert_eq!(banner_of(&b, right), None);
+
+        // Build a simple banner layout at x = 40 (centered on the 240px screen) and verify
+        // `draw` keeps it centered at x = 40 without shifting it into the left half.
+        let mut pixels = vec![0u8; 40 * Tiles::TILE];
+        for g in 0..16 {
+            pixels[(2 * g) * Tiles::TILE..((2 * g) + 1) * Tiles::TILE].fill(1);
+        }
+        let mut h = hud();
+        h.tiles = Tiles { pixels: vec![1; 4 * Tiles::TILE] };
+        let numbers = testing::asset_numbers(&b.content);
+        let win_num = numbers.number(saito_content_api::AssetKind::Banner, win_id.0).unwrap() as usize;
+        let win_idx = win_num / 4;
+        if h.banners.len() <= win_idx {
+            h.banners.resize_with(win_idx + 1, BannerLayout::default);
+        }
+        h.banners[win_idx] = BannerLayout { x: 40, y: 64, kind: 0, glyphs: Tiles { pixels }, number_at: None, bar: None, logo: None };
+        let assets = saito_assets::Bundle { hud: h, ..saito_assets::Bundle::default() };
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+
+        let draw_seat = |seat: Seat| -> Vec<(i32, i32)> {
+            let (mut layer, mut scratch) = (Layer::new(1, 3), Layer::new(1, 3));
+            let mut list = SpriteList::default();
+            let mut text = TextSink::original();
+            let mut problems = Problems::default();
+            let state = HudState::default();
+            let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
+            let view = crate::render::Renderer::view(&b);
+            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None, 0), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
+            list.into_parts().into_iter().map(|p| (p.x, p.y)).collect()
+        };
+
+        let left_parts = draw_seat(left);
+        let banner_xs: Vec<i32> = left_parts.iter().filter(|&&(_, y)| y == 64).map(|&(x, _)| x).collect();
+        assert!(!banner_xs.is_empty(), "left seat must draw the result banner");
+        assert_eq!(banner_xs.iter().copied().min(), Some(40), "result banner must stay centered at layout.x");
+
+        let right_parts = draw_seat(right);
+        assert!(right_parts.iter().all(|&(_, y)| y != 64), "right seat must not draw a second result banner");
     }
 }

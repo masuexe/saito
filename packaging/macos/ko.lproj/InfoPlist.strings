@@ -1,0 +1,2 @@
+/* Why microphone access is requested (Info.plist's NSMicrophoneUsageDescription), in this language. */
+"NSMicrophoneUsageDescription" = "saito는 EXE5DS 위기 상태에서 외치기를 감지하기 위해 마이크를 사용합니다.";

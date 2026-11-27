@@ -393,6 +393,8 @@ pub struct Settings {
     test_mic: saito_audio::MicMonitor,
     /// Last peak shout tier detected during live mic test (`0..=3`).
     test_last_tier: u8,
+    /// Diagnostic error from probing/requesting microphone permission when enabling Danger mic.
+    mic_probe_error: Option<String>,
 }
 
 impl Settings {
@@ -447,7 +449,20 @@ impl Settings {
     }
 
     fn set_mic_shout_enabled(&mut self, shell: &mut Shell, on: bool) {
-        shell.settings.mic_shout_enabled = on && saito_audio::MicMonitor::is_supported();
+        let enabled = on && saito_audio::MicMonitor::is_supported();
+        shell.settings.mic_shout_enabled = enabled;
+        if enabled {
+            crate::mic_permission::reset_attempt();
+            match saito_audio::MicMonitor::probe_access() {
+                Ok(_) => self.mic_probe_error = None,
+                Err(why) => {
+                    crate::errors::log("probing microphone permission", &why);
+                    self.mic_probe_error = Some(why);
+                }
+            }
+        } else {
+            self.mic_probe_error = None;
+        }
         shell.save_settings();
         self.show(shell);
     }
@@ -468,10 +483,18 @@ impl Settings {
     fn toggle_mic_test(&mut self, shell: &mut Shell) {
         let next = !self.test_mic.is_armed();
         self.test_last_tier = 0;
+        self.mic_probe_error = None;
+        if next {
+            crate::mic_permission::reset_attempt();
+        }
         self.test_mic.set_armed(next);
-        if next && !self.test_mic.is_active() {
+        if next && !self.test_mic.is_active() && !self.test_mic.is_pending_permission() {
             // Keep error visible, but disarm so the button returns to idle state.
             let err = self.test_mic.error().unwrap_or_default().to_string();
+            if !err.is_empty() {
+                crate::errors::log("starting microphone test", &err);
+                self.mic_probe_error = Some(err.clone());
+            }
             self.test_mic.set_armed(false);
             let ui = shell.ui();
             let view = ui.global::<SettingsView>();
@@ -496,13 +519,15 @@ impl Settings {
         let ui = shell.ui();
         let view = ui.global::<SettingsView>();
         let active = self.test_mic.is_active();
+        let testing = active || self.test_mic.is_pending_permission();
         let sens = shell.settings.mic_sensitivity;
         let scaled = if active { (self.test_mic.level() * sens).clamp(0.0, 1.0) } else { 0.0 };
-        view.set_mic_testing(active);
+        view.set_mic_testing(testing);
         view.set_mic_level(scaled);
         view.set_mic_tier(if active { self.test_mic.current_tier(sens) as i32 } else { 0 });
         view.set_mic_last_tier(self.test_last_tier as i32);
-        view.set_mic_error(self.test_mic.error().unwrap_or_default().into());
+        let err = self.test_mic.error().or(self.mic_probe_error.as_deref()).unwrap_or_default();
+        view.set_mic_error(err.into());
     }
 
     fn show_abd_stats(&self, shell: &Shell) {
@@ -985,11 +1010,29 @@ impl Screen for Settings {
             if !shown {
                 self.stop_mic_test(shell);
             } else {
-                let tier = self.test_mic.poll_tier(shell.settings.mic_sensitivity);
-                if tier > 0 {
-                    self.test_last_tier = tier;
+                self.test_mic.refresh();
+                if !self.test_mic.is_active() && !self.test_mic.is_pending_permission() {
+                    let err = self.test_mic.error().unwrap_or_default().to_string();
+                    if !err.is_empty() {
+                        crate::errors::log("starting microphone test", &err);
+                        self.mic_probe_error = Some(err.clone());
+                    }
+                    self.test_mic.set_armed(false);
+                    let ui = shell.ui();
+                    let view = ui.global::<SettingsView>();
+                    view.set_mic_testing(false);
+                    view.set_mic_level(0.0);
+                    view.set_mic_tier(0);
+                    view.set_mic_last_tier(0);
+                    view.set_mic_error(err.into());
+                    shell.sound.play(Cue::Refused);
+                } else {
+                    let tier = self.test_mic.poll_tier(shell.settings.mic_sensitivity);
+                    if tier > 0 {
+                        self.test_last_tier = tier;
+                    }
+                    self.sync_mic_test_ui(shell);
                 }
-                self.sync_mic_test_ui(shell);
             }
         }
         let Some(rx) = &self.importing_hd_art else { return };

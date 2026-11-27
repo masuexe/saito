@@ -141,6 +141,31 @@ pub(crate) fn move_to_background() {
     }
 }
 
+/// Whether Android's runtime `RECORD_AUDIO` permission is currently granted.
+pub(crate) fn has_microphone_permission() -> bool {
+    match java(|env, activity| {
+        env.call_method(activity, jni_str!("hasMicrophonePermission"), jni_sig!("()Z"), &[])?.z()
+    }) {
+        Ok(granted) => granted,
+        Err(why) => {
+            crate::errors::log("checking Android microphone permission", &why);
+            false
+        }
+    }
+}
+
+/// Trigger Android's runtime `RECORD_AUDIO` permission dialog.
+pub(crate) fn request_microphone_permission() {
+    let result = java(|env, activity| {
+        env.call_method(activity, jni_str!("requestMicrophonePermission"), jni_sig!("()V"), &[])?;
+        Ok(())
+    });
+    if let Err(why) = result {
+        crate::errors::log("requesting Android microphone permission", &why);
+        crate::mic_permission::on_android_result(false);
+    }
+}
+
 /// Slint's winit backend on the activity's event loop.
 pub(crate) fn select_backend() -> Result<(), slint::PlatformError> {
     let activity = activity().map_err(slint::PlatformError::Other)?.clone();
@@ -207,6 +232,12 @@ extern "system" fn Java_saito_app_SaitoActivity_systemBack<'local>(_env: EnvUnow
     }) {
         crate::errors::log("handling Android system back", &why);
     }
+}
+
+/// `SaitoActivity.microphonePermissionResult`: Android's runtime `RECORD_AUDIO` dialog outcome.
+#[unsafe(no_mangle)]
+extern "system" fn Java_saito_app_SaitoActivity_microphonePermissionResult<'local>(_env: EnvUnowned<'local>, _activity: JObject<'local>, granted: jni::sys::jboolean) {
+    crate::mic_permission::on_android_result(granted);
 }
 
 /// `SaitoActivity.typed`: the soft keyboard's edit, kept for the app's thread, which this wakes.

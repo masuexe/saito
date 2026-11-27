@@ -210,7 +210,7 @@ pub mod mic;
 mod output;
 pub mod wav;
 
-pub use mic::MicMonitor;
+pub use mic::{MicMonitor, MicPermission, PermissionHooks};
 #[cfg(feature = "playback")]
 pub use output::{AudioOut, MAX_RATE_SHIFT, Output, OutputError, OutputStats, RESUME_FILL, TARGET_FILL};
 

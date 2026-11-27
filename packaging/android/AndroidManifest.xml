@@ -17,10 +17,13 @@
          apps"), and after that, on Android 12 and later, asks nothing, as the app updates itself. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Optional microphone input for EXE5DS Danger-state Crisis Shout (requested at runtime only when enabled). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <!-- (A touch screen isn't required: a TV or a box with a pad plays too.) -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- Package visibility for anti-nettai launch guard (targetSdk 34 requires explicit <queries>). -->
     <queries>

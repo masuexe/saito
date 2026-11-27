@@ -1,2 +1,3 @@
 /* Why the local network is asked for (Info.plist's NSLocalNetworkUsageDescription), in this language. */
 "NSLocalNetworkUsageDescription" = "saito は、アドバンスドコレクションがあり saito を開いているパソコンをネットワーク上で探し、そこから受け取ります。";
+"NSMicrophoneUsageDescription" = "saito は EXE5DS のピンチ状態での叫び検出にマイクを使用します。";

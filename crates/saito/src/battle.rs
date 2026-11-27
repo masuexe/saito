@@ -164,6 +164,8 @@ pub struct Battle {
     party: party::PartyState,
     /// Danger-gated microphone input monitor for EXE5DS Crisis Shout (idle & closed outside Danger state).
     mic: saito_audio::MicMonitor,
+    /// Whether the current Danger window's microphone open/permission error has already been logged.
+    mic_error_logged: bool,
     /// Whether the Quick-Shout key/pad binding was held on the previous frame (for rising-edge detection).
     shout_held: bool,
     /// Persistent ABD usage logging context (Online & Practice EXE4/EXE5 battles).
@@ -513,7 +515,7 @@ impl Shell {
         shell.set_shout_available(false);
         shell.set_mic_listening(false);
         self.keys.pressed.clear();
-        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), mic: saito_audio::MicMonitor::new(), shout_held: false, abd_log: start.abd_log, abd_records: Vec::new() });
+        self.battle = Some(Battle { stage, owner: start.owner, kind: start.kind, game: start.game, full: start.full, music: start.music, viewer: start.viewer, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), mic: saito_audio::MicMonitor::new(), mic_error_logged: false, shout_held: false, abd_log: start.abd_log, abd_records: Vec::new() });
         self.apply_orientation();
         Some((start.owner, BattleEvent::Started))
     }
@@ -692,8 +694,13 @@ impl Shell {
             if tier > 0 {
                 b.stage.player.ask_shout(tier);
             }
+            if let Some(err) = b.mic.error() && !b.mic_error_logged {
+                b.mic_error_logged = true;
+                crate::errors::log("arming crisis microphone", &err);
+            }
         } else {
             b.mic.set_armed(false);
+            b.mic_error_logged = false;
         }
         // (A party battle's switches and Quick-Shout are asked of the player; the battle's buttons alone go on.)
         let buttons = b.party.take_switches(&mut b.stage.player, b.viewer, held & !crate::input::SHOUT);
@@ -723,6 +730,9 @@ impl Shell {
         // Refresh Danger mic arming & HUD state after advancing the frame so leaving Danger disarms immediately.
         let can_shout = live_play && !b.over && b.stage.player.can_shout();
         b.mic.set_armed(can_shout && self.settings.mic_shout_enabled);
+        if !can_shout {
+            b.mic_error_logged = false;
+        }
         shell.set_shout_available(can_shout);
         shell.set_mic_listening(b.mic.is_active());
         if can_shout {
@@ -955,7 +965,7 @@ mod tests {
         let m = short_set::of(&content, "exe6", 7);
         let driver = LivePlayer::new(Set::of(&content, &m, 7));
         let player = Player::with(graphics(&content, 0x7FFF).renderer(Enhancements::NONE, None), None, None, Box::new(driver));
-        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), shout_held: false };
+        let mut b = Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: "exe6".into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), mic_error_logged: false, shout_held: false };
         let play_out = |b: &mut Battle| {
             while {
                 let input = short_set::shooter(b.stage.player.battle(), 0, b.stage.player.ticks() as u32);
@@ -1218,7 +1228,7 @@ mod tests {
         saito_frontend::testing::scrolling_background(&mut graphics);
         let audio = saito_frontend::testing::audio(content);
         let player = Player::with(graphics.renderer(Enhancements::NONE, None), None, Some(audio), Box::new(driver));
-        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), shout_held: false }
+        Battle { stage: Stage::new(player), owner: ScreenId::Practice, kind: BattleKind::Practice, game: content.game().into(), full: true, music: BattleMusic::Picked, viewer: 0, menu: false, covered: false, over: false, kept: false, hold: Default::default(), link: Default::default(), party: Default::default(), abd_log: None, abd_records: Vec::new(), mic: saito_audio::MicMonitor::new(), mic_error_logged: false, shout_held: false }
     }
 
     /// A practice session of Practice's own, as the editor's PRACTICE starts one: the menu open before the battle's

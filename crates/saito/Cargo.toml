@@ -110,20 +110,22 @@ ndk-context = "0.1"
 # Kotlin component in the APK through JNI: it is given the VM and the activity first (`android_main`).
 rustls-platform-verifier = "0.7"
 
-# macOS: the activity that keeps the app's time while a battle runs in a covered window (`lifecycle::Awake`). (In the
-# tree already, for the window.)
+# macOS: the activity that keeps the app's time while a battle runs in a covered window (`lifecycle::Awake`) and
+# microphone permission queries (`mic_permission.rs`). (In the tree already, for the window.)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString"] }
 
 # iOS: the idle timer (`lifecycle::Awake`); the app made active and its sound given back (`lifecycle::resumed`); the
-# pad's taps (`haptics.rs`: an impact feedback generator). (In the tree already, for the window.)
+# pad's taps (`haptics.rs`: an impact feedback generator); microphone permission & audio session (`mic_permission.rs`).
+# (In the tree already, for the window.)
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSObject", "NSOperation", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSError", "NSNotification", "NSObject", "NSOperation", "NSString"] }
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIApplication", "UIFeedbackGenerator", "UIImpactFeedbackGenerator", "UIResponder"] }
-objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVAudioSessionTypes"] }
+objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "block2", "AVAudioSession", "AVAudioSessionTypes"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The program runs under tokio (main.rs: `#[tokio::main]`, Slint's loop in `block_in_place`), so the futures the

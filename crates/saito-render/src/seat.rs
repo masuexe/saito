@@ -45,7 +45,7 @@ pub enum At {
     Alone,
     /// The left of a screen of both: its own pieces where it draws them,
     /// and the pieces both consoles show alike (the custom gauge, the
-    /// banners but the round's result, the turn timer, the field's pieces).
+    /// banners including the round's result, the turn timer, the field's pieces).
     Left,
     /// The right of a screen of both: its own pieces alone, mirrored.
     Right,

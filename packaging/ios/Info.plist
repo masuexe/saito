@@ -106,6 +106,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>saito looks on your network for a computer running saito with the Legacy Collection, which can send it here.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>saito uses your microphone during EXE5DS Danger state to detect Crisis Shout.</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>zh-Hans</string>

@@ -63,6 +63,9 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$program" "$app/Contents/MacOS/saito"
 # (CFBundleShortVersionString is numbers alone: a tag's "-beta.1" is left out of it.)
 sed -e "s/@VERSION@/$version/" -e "s/@SHORT_VERSION@/${version%%-*}/" "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
+for strings in "$root"/packaging/macos/*.lproj; do
+    cp -R "$strings" "$app/Contents/Resources/"
+done
 printf 'APPL????' > "$app/Contents/PkgInfo"
 iconutil -c icns -o "$app/Contents/Resources/saito.icns" "$icons/saito.iconset"
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
@@ -89,11 +92,12 @@ pack=(pack --packId saito --packVersion "$version" --packTitle saito --packAutho
     --runtime "$runtime" --icon "$app/Contents/Resources/saito.icns" --noInst --outputDir "$out/releases")
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
     pack+=(--signAppIdentity "$MACOS_SIGN_IDENTITY")
+    pack+=(--signEntitlements "$root/packaging/macos/entitlements.plist")
     [ -n "${MACOS_NOTARY_PROFILE:-}" ] && pack+=(--notaryProfile "$MACOS_NOTARY_PROFILE")
     [ -n "${MACOS_KEYCHAIN:-}" ] && pack+=(--keychain "$MACOS_KEYCHAIN")
 else
     codesign --force --sign - "$ffmpeg"
-    codesign --force --sign - "$app"
+    codesign --force --sign - --entitlements "$root/packaging/macos/entitlements.plist" "$app"
 fi
 "${VPK:-vpk}" "${pack[@]}" --channel "$channel"
 

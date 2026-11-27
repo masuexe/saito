@@ -1,5 +1,6 @@
 package saito.app
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.ActivityInfo
@@ -40,6 +41,7 @@ import saito.gamepad.SaitoGamepads
 class SaitoActivity : GameActivity() {
     companion object {
         const val NETTAI_PACKAGE = "net.n1gp.nettai"
+        private const val REQ_RECORD_AUDIO = 1001
 
         @JvmStatic
         fun isNettaiInstalled(context: Context): Boolean =
@@ -178,6 +180,31 @@ class SaitoActivity : GameActivity() {
     fun moveToBackground() {
         runOnUiThread { moveTaskToBack(true) }
     }
+
+    /** Whether Android's runtime RECORD_AUDIO permission is currently granted. */
+    fun hasMicrophonePermission(): Boolean =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /** Request Android's runtime RECORD_AUDIO permission (delivering the outcome via [microphonePermissionResult]). */
+    fun requestMicrophonePermission() {
+        runOnUiThread {
+            if (hasMicrophonePermission()) {
+                microphonePermissionResult(true)
+            } else {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_RECORD_AUDIO) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            microphonePermissionResult(granted)
+        }
+    }
+
+    private external fun microphonePermissionResult(granted: Boolean)
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (SaitoGamepads.take(event)) return true

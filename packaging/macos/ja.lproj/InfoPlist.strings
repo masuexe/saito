@@ -1,0 +1,2 @@
+/* Why microphone access is requested (Info.plist's NSMicrophoneUsageDescription), in this language. */
+"NSMicrophoneUsageDescription" = "saito は EXE5DS のピンチ状態での叫び検出にマイクを使用します。";

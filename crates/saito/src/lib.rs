@@ -28,6 +28,7 @@ mod kernels;
 mod lang;
 mod lifecycle;
 mod look;
+mod mic_permission;
 mod music;
 mod nav;
 mod nearby;
@@ -107,6 +108,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     // (An engine stop is the session's to report, as a value: kept off stderr.)
     saito_frontend::session::quiet_engine_panics();
     errors::catch_library_logs();
+    mic_permission::init();
     let tour = std::env::var_os("SAITO_TOUR").map(std::path::PathBuf::from);
     if cfg!(not(feature = "tour")) && tour.is_some() {
         eprintln!("saito: this build has no screenshot pass (SAITO_TOUR): build it with `--features tour`");
