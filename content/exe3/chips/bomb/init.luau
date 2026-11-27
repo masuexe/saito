@@ -7,10 +7,13 @@ local regions = require("@exelib/regions")
 
 local function bomb_variant(region: Region, palette: number, breaking: boolean?): BombVariant
     return bombs.variant {
-        is = if breaking then collision.thrown_break else collision.thrown,
-        hits = collision.hits_navis,
+        collision = {
+            is = if breaking then collision.thrown_break else collision.thrown,
+            hits = collision.hits_navis,
+        },
         hit_mod = 3,
         palette = palette,
+        anim = 1,
         blast = region,
     }
 end
@@ -22,7 +25,7 @@ local TRPL = bomb_variant(regions.line, 3, false)
 local CANNBALL = bomb_variant(regions.single, 0, true)
 
 local minibomb: Chip = {
-    action = bombs.throw { id = "minibomb/action", held = bombs.held, held_anim = 0, throw = bombs.thrower(MINI) },
+    action = bombs.throw { id = "minibomb/action", held = bombs.held, held_anim = 0, thrower = bombs.thrower(MINI) },
     codes = { "B", "G", "L", "O", "S", "*" },
     element = "null",
     family = "null",
@@ -36,7 +39,7 @@ local minibomb: Chip = {
 }
 
 local snglbomb: Chip = {
-    action = bombs.throw { id = "snglbomb/action", held = bombs.held, held_anim = 0, throw = bombs.thrower(SNGL) },
+    action = bombs.throw { id = "snglbomb/action", held = bombs.held, held_anim = 0, thrower = bombs.thrower(SNGL) },
     codes = { "D", "F", "H", "J", "T", "*" },
     element = "null",
     family = "null",
@@ -50,7 +53,7 @@ local snglbomb: Chip = {
 }
 
 local dublbomb: Chip = {
-    action = bombs.throw { id = "dublbomb/action", held = bombs.held, held_anim = 0, throw = bombs.thrower(DUBL) },
+    action = bombs.throw { id = "dublbomb/action", held = bombs.held, held_anim = 0, thrower = bombs.thrower(DUBL) },
     codes = { "A", "C", "H", "K", "Q", "*" },
     element = "null",
     family = "null",
@@ -64,7 +67,7 @@ local dublbomb: Chip = {
 }
 
 local trplbomb: Chip = {
-    action = bombs.throw { id = "trplbomb/action", held = bombs.held, held_anim = 0, throw = bombs.thrower(TRPL) },
+    action = bombs.throw { id = "trplbomb/action", held = bombs.held, held_anim = 0, thrower = bombs.thrower(TRPL) },
     codes = { "E", "I", "N", "P", "W" },
     element = "null",
     family = "null",
@@ -78,7 +81,7 @@ local trplbomb: Chip = {
 }
 
 local cannball: Chip = {
-    action = bombs.throw { id = "cannball/action", held = bombs.held, held_anim = 0, throw = bombs.thrower(CANNBALL) },
+    action = bombs.throw { id = "cannball/action", held = bombs.held, held_anim = 0, thrower = bombs.thrower(CANNBALL) },
     codes = { "A", "D", "F", "L", "P", "*" },
     element = "null",
     family = "break",
