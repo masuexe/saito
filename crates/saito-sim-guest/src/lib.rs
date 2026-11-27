@@ -112,6 +112,7 @@ fn enhancements_of(cfg: EnhancementsConfig) -> Enhancements {
         fill: cfg.fill,
         reduce_flashes: cfg.reduce_flashes,
         hide_aura_number: cfg.hide_aura_number,
+        sync_dark_buster_arm: cfg.sync_dark_buster_arm,
         hd_chip_art: cfg.hd_chip_art,
     }
 }
@@ -159,8 +160,8 @@ fn load_game(
         game.to_string(),
         content_dir.to_string(),
         format!(
-            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{want_sound}",
-            enhancements.text, enhancements.hud, enhancements.motion, enhancements.fill, enhancements.reduce_flashes, enhancements.hide_aura_number
+            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{}|{want_sound}",
+            enhancements.text, enhancements.hud, enhancements.motion, enhancements.fill, enhancements.reduce_flashes, enhancements.hide_aura_number, enhancements.sync_dark_buster_arm
         ),
     );
     if let Some(cached) = STATE.with(|s| s.borrow().game_cache.get(&cache_key).cloned()) {

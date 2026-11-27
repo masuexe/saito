@@ -47,17 +47,19 @@ pub struct Enhancements {
     pub fill: bool,
     /// Soften sudden full-screen white flashes in battle.
     pub reduce_flashes: bool,
-    /// Hide the "200" number part drawn on LifeAura barriers.
+    /// Hide the "200" number part drawn on LifeAura barriers (EXE4–6).
     pub hide_aura_number: bool,
+    /// Sync EXE5 Dark/Light MegaMan's buster arm palette with his body palette (Normal, Sol Cross, Bass Cross).
+    pub sync_dark_buster_arm: bool,
     /// Use Legacy Collection Vol. 2 high-resolution chip artwork where available.
     pub hd_chip_art: bool,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, hd_chip_art: false };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, hd_chip_art: false };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
@@ -96,6 +98,7 @@ impl std::str::FromStr for Enhancements {
                 "fill" => e.fill = true,
                 "reduce-flashes" | "reduce_flashes" => e.reduce_flashes = true,
                 "hide-aura-number" | "hide_aura_number" => e.hide_aura_number = true,
+                "sync-dark-buster-arm" | "sync_dark_buster_arm" => e.sync_dark_buster_arm = true,
                 "hd-chip-art" | "hd_chip_art" => e.hd_chip_art = true,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
@@ -685,7 +688,17 @@ impl Renderer {
         let mut list = SpriteList::default();
         // (On a screen of both, what either player sees.)
         let viewers: Vec<u8> = seats.iter().map(|s| s.side).collect();
-        self.sprite_drawn = objects::queue_objects(b, &graphics, &view, &viewers, &mut list, &mut self.problems, !draw, self.enhancements.hide_aura_number);
+        self.sprite_drawn = objects::queue_objects(
+            b,
+            &graphics,
+            &view,
+            &viewers,
+            &mut list,
+            &mut self.problems,
+            !draw,
+            self.enhancements.hide_aura_number,
+            self.enhancements.sync_dark_buster_arm,
+        );
         let mut targets = Vec::new();
         let mut raw_column: Option<(u8, Rect)> = None;
         for (k, &seat) in seats.iter().enumerate() {
@@ -1216,7 +1229,7 @@ mod tests {
             b.objects.sprite_mut(r).load(sprite_id);
             let mut list = SpriteList::default();
             let mut problems = Problems::default();
-            objects::queue_objects(&b, &graphics, &View::default(), &[0], &mut list, &mut problems, false, hide);
+            objects::queue_objects(&b, &graphics, &View::default(), &[0], &mut list, &mut problems, false, hide, false);
             list.into_parts()
         };
 
@@ -1228,5 +1241,125 @@ mod tests {
         assert!(!aura_hidden.iter().any(|p| p.x == 120 + 77), "part 6 hidden on aura when hide_aura_number is true");
         assert_eq!(aura_hidden.len() + 1, aura_shown.len());
         assert!(barrier_hidden.iter().any(|p| p.x == 120 + 77), "non-aura barriers keep all parts");
+    }
+
+    #[test]
+    fn sync_dark_buster_arm_parses_and_matches_owner_karma_palette() {
+        use saito_assets::{SpriteFrame, SpriteSheet, Tiles};
+        use saito_content_api::{AssetKind, AssetNames, PackKind, PackManifest};
+
+        assert!(!Enhancements::NONE.sync_dark_buster_arm);
+        assert!(!Enhancements::ALL.sync_dark_buster_arm);
+        assert_eq!("sync-dark-buster-arm".parse::<Enhancements>(), Ok(Enhancements { sync_dark_buster_arm: true, ..Enhancements::NONE }));
+        assert_eq!("sync_dark_buster_arm".parse::<Enhancements>(), Ok(Enhancements { sync_dark_buster_arm: true, ..Enhancements::NONE }));
+
+        let clean_content = testing::content();
+        let with_pack = |game_id: &str| -> Arc<saito_battle::content::Content> {
+            let mut c = (*clean_content).clone();
+            let mut entries: Vec<(AssetKind, String)> = c.assets.all().map(|(k, n)| (k, n.to_string())).collect();
+            for name in ["megaman", "solcross-megaman", "buster-arm"] {
+                entries.push((AssetKind::Sprite, name.to_string()));
+            }
+            c.assets = AssetNames::of(entries);
+            c.scripts.packs = vec![PackManifest { id: game_id.to_string(), kind: PackKind::Game, depends: Vec::new() }];
+            Arc::new(c)
+        };
+        let exe5 = with_pack("exe5");
+        let exe6 = with_pack("exe6");
+        let megaman_id = testing::sprite_named(&exe5, "megaman");
+        let sol_id = testing::sprite_named(&exe5, "solcross-megaman");
+        let arm_id = testing::sprite_named(&exe5, "buster-arm");
+        let mut numbers = testing::asset_numbers(&clean_content);
+        numbers.sprites = exe5
+            .assets
+            .list(AssetKind::Sprite)
+            .iter()
+            .enumerate()
+            .map(|(i, name)| match name.as_str() {
+                "megaman" => saito_content_api::SpriteNumber { category: 0x00, index: 0x00 },
+                "solcross-megaman" => saito_content_api::SpriteNumber { category: 0x00, index: 0x0d },
+                "buster-arm" => saito_content_api::SpriteNumber { category: 0x0c, index: 0x03 },
+                _ => saito_content_api::SpriteNumber { category: 0x70, index: i as u8 },
+            })
+            .collect();
+        let megaman_num = numbers.sprite(megaman_id.0).unwrap();
+        let sol_num = numbers.sprite(sol_id.0).unwrap();
+        let arm_num = numbers.sprite(arm_id.0).unwrap();
+        let attach_kind = (0..clean_content.defs.kinds.len() as u16)
+            .map(saito_content_api::KindHandle)
+            .find(|&k| saito_content_api::keys::local(&clean_content.defs.kind(k).key) == "attachment")
+            .unwrap_or(saito_content_api::KindHandle(0));
+
+        let pal_light = [0x1111u16; 16];
+        let pal_no_charge = [0x2222u16; 16];
+        let pal_dark = [0x3333u16; 16];
+        let pal_half_dark = [0x4444u16; 16];
+        let pal_fs = [0x5555u16; 16];
+        let pal_sol_dark = [0x7777u16; 16];
+        let pal_arm_default = [0x6666u16; 16];
+
+        let megaman_sheet = SpriteSheet {
+            category: megaman_num.category,
+            index: megaman_num.index,
+            tilesets: vec![Tiles { pixels: vec![1; Tiles::TILE] }],
+            palette_sets: vec![vec![pal_light, pal_no_charge, pal_dark, pal_half_dark, pal_fs]],
+            part_lists: vec![vec![saito_assets::SpritePart { width: 8, height: 8, ..Default::default() }]],
+            animations: vec![vec![SpriteFrame::default()]],
+        };
+        let sol_sheet = SpriteSheet {
+            category: sol_num.category,
+            index: sol_num.index,
+            tilesets: vec![Tiles { pixels: vec![1; Tiles::TILE] }],
+            palette_sets: vec![vec![pal_light, pal_no_charge, pal_sol_dark, pal_half_dark, pal_fs]],
+            part_lists: vec![vec![saito_assets::SpritePart { width: 8, height: 8, ..Default::default() }]],
+            animations: vec![vec![SpriteFrame::default()]],
+        };
+        let arm_sheet = SpriteSheet {
+            category: arm_num.category,
+            index: arm_num.index,
+            tilesets: vec![Tiles { pixels: vec![1; Tiles::TILE] }],
+            palette_sets: vec![vec![pal_arm_default]],
+            part_lists: vec![vec![
+                saito_assets::SpritePart { width: 8, height: 8, ..Default::default() },
+                saito_assets::SpritePart { x: 42, y: 0, width: 8, height: 8, ..Default::default() },
+            ]],
+            animations: vec![vec![SpriteFrame::default()]; 15],
+        };
+        let mut sprites = vec![megaman_sheet, sol_sheet, arm_sheet];
+        sprites.sort_by_key(|s| (s.category, s.index));
+        let assets = Arc::new(Bundle { sprites, ..Bundle::default() });
+        let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+
+        let run = |tagged: &Arc<saito_battle::content::Content>, owner_sprite: saito_battle::content::SpriteId, arm_anim: u8, owner_pal: u8, sync: bool| -> [u16; 16] {
+            let mut s = testing::round_setup(testing::LINK_BATTLE, testing::megaman_on(&clean_content));
+            testing::on(&mut s, &clean_content);
+            let mut b = Battle::new(s, Arc::clone(&clean_content));
+            b.content = Arc::clone(tagged);
+            let owner = saito_battle::kinds::spawn(&mut b, attach_kind, saito_content_api::SpawnAt::AfterCurrent, Default::default(), [0; 4]).unwrap();
+            let owner_obj = b.objects.get_mut(owner);
+            owner_obj.flags = (owner_obj.flags & !saito_battle::object::flags::NO_SPRITE_UPDATE) | saito_battle::object::flags::VISIBLE;
+            b.objects.sprite_mut(owner).load(owner_sprite);
+            b.objects.sprite_mut(owner).look.palette = owner_pal;
+            let arm = saito_battle::kinds::spawn(&mut b, attach_kind, saito_content_api::SpawnAt::AfterCurrent, Default::default(), [0; 4]).unwrap();
+            let o = b.objects.get_mut(arm);
+            o.flags = (o.flags & !saito_battle::object::flags::NO_SPRITE_UPDATE) | saito_battle::object::flags::VISIBLE;
+            o.related[0] = Some(owner);
+            let sp = b.objects.sprite_mut(arm);
+            sp.load(arm_id);
+            sp.anim = arm_anim;
+            let mut list = SpriteList::default();
+            let mut problems = Problems::default();
+            objects::queue_objects(&b, &graphics, &View::default(), &[0], &mut list, &mut problems, false, false, sync);
+            list.into_parts().into_iter().find(|p| p.x == 120 + 42).expect("buster-arm queued").palette
+        };
+
+        assert_eq!(run(&exe5, megaman_id, 0, 2, false), pal_arm_default, "off keeps original buster-arm palette");
+        assert_eq!(run(&exe5, megaman_id, 0, 2, true), pal_dark, "dark MegaMan syncs buster-arm to dark body palette");
+        assert_eq!(run(&exe5, megaman_id, 13, 2, true), pal_dark, "FCR dark MegaMan (anim 13) syncs buster-arm");
+        assert_eq!(run(&exe5, megaman_id, 0, 3, true), pal_half_dark, "half-dark MegaMan syncs buster-arm");
+        assert_eq!(run(&exe5, megaman_id, 0, 4, true), pal_fs, "full-synchro/max-light MegaMan syncs buster-arm");
+        assert_eq!(run(&exe5, megaman_id, 0, 0, true), pal_arm_default, "normal MegaMan keeps original buster-arm palette");
+        assert_eq!(run(&exe5, sol_id, 14, 2, true), pal_sol_dark, "dark Sol Cross MegaMan (anim 14) syncs buster-arm");
+        assert_eq!(run(&exe6, megaman_id, 0, 2, true), pal_arm_default, "non-EXE5 games never rewrite buster-arm palette");
     }
 }

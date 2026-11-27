@@ -245,8 +245,10 @@ pub struct Settings {
     pub fill_window: bool,
     /// Soften sudden full-screen white flashes in battle (photosensitive accessibility).
     pub reduce_flashes: bool,
-    /// Hide the "200" number on LifeAura barriers.
+    /// Hide the "200" number on LifeAura barriers (EXE4–6).
     pub hide_aura_number: bool,
+    /// Sync EXE5 Dark/Light MegaMan's buster arm palette with his body palette (Normal, Sol Cross, Bass Cross).
+    pub sync_dark_buster_arm: bool,
     /// Use Legacy Collection high-resolution chip artwork when available.
     pub hd_chip_art: bool,
     /// 0 to 100.
@@ -305,6 +307,7 @@ impl Default for Settings {
             fill_window: true,
             reduce_flashes: false,
             hide_aura_number: false,
+            sync_dark_buster_arm: false,
             hd_chip_art: false,
             music: 80,
             effects: 100,
@@ -336,13 +339,14 @@ impl Settings {
             fill: self.fill_window,
             reduce_flashes: self.reduce_flashes,
             hide_aura_number: self.hide_aura_number,
+            sync_dark_buster_arm: self.sync_dark_buster_arm,
             hd_chip_art: self.hd_chip_art,
         }
     }
 
     pub fn set_enhancements(&mut self, e: saito_frontend::game::Enhancements) {
-        (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number, self.hd_chip_art) =
-            (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number, e.hd_chip_art);
+        (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number, self.sync_dark_buster_arm, self.hd_chip_art) =
+            (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number, e.sync_dark_buster_arm, e.hd_chip_art);
     }
 }
 
@@ -481,14 +485,17 @@ mod tests {
         assert!(!other.hide_landscape_status_bar, "default landscape status bar visible");
         assert!(!other.keyboard_only_custom, "default mouse custom selection enabled");
         assert!(!other.hide_aura_number, "default LifeAura number visible");
+        assert!(!other.sync_dark_buster_arm, "default EXE5 dark buster arm sync off");
         assert!(!other.hd_chip_art, "default HD chip art off");
-        let mut toggled = Settings { hide_aura_number: true, hd_chip_art: true, ..Settings::default() };
+        let mut toggled = Settings { hide_aura_number: true, sync_dark_buster_arm: true, hd_chip_art: true, ..Settings::default() };
         assert!(toggled.enhancements().hide_aura_number);
+        assert!(toggled.enhancements().sync_dark_buster_arm);
         assert!(toggled.enhancements().hd_chip_art);
         let toggled_toml = toml::to_string(&toggled).unwrap();
         assert_eq!(toml::from_str::<Settings>(&toggled_toml).unwrap(), toggled);
         toggled.set_enhancements(saito_frontend::game::Enhancements::NONE);
         assert!(!toggled.hide_aura_number);
+        assert!(!toggled.sync_dark_buster_arm);
         assert!(!toggled.hd_chip_art);
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");

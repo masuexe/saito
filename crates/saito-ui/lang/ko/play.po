@@ -307,8 +307,11 @@ msgstr "관전으로 돌아가기"
 msgid "Reduce flashes"
 msgstr "깜빡임 감소"
 
-msgid "Hide aura number"
-msgstr "드림오라 숫자 숨기기"
+msgid "Hide aura number (EXE4-6)"
+msgstr "드림오라 숫자 숨기기 (EXE4-6)"
+
+msgid "Dark buster arm (EXE5)"
+msgstr "다크 록맨 버스터 색상 동기화 (EXE5)"
 
 msgid "HD chip art"
 msgstr "HD 칩 일러스트"

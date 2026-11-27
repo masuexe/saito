@@ -80,6 +80,8 @@ pub struct EnhancementsConfig {
     #[serde(default)]
     pub hide_aura_number: bool,
     #[serde(default)]
+    pub sync_dark_buster_arm: bool,
+    #[serde(default)]
     pub hd_chip_art: bool,
 }
 

@@ -76,7 +76,7 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
+        "set.picture" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
         "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
@@ -94,6 +94,7 @@ fn enhancement<'a>(e: &'a mut Enhancements, id: &str) -> Option<&'a mut bool> {
         "fill" => &mut e.fill,
         "reduce-flashes" => &mut e.reduce_flashes,
         "hide-aura-number" => &mut e.hide_aura_number,
+        "sync-dark-buster-arm" => &mut e.sync_dark_buster_arm,
         "hd-chip-art" => &mut e.hd_chip_art,
         _ => return None,
     })
@@ -129,6 +130,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_reduce_motion(shell.reduces_motion());
     view.set_reduce_flashes(s.reduce_flashes);
     view.set_hide_aura_number(s.hide_aura_number);
+    view.set_sync_dark_buster_arm(s.sync_dark_buster_arm);
     view.set_check_updates(s.check_updates);
     view.set_can_update(saito_updater::supported());
     view.set_keyboard_only_custom(s.keyboard_only_custom);
@@ -586,7 +588,7 @@ impl Screen for Settings {
                 shell.games.download(true);
                 shell.check_updates_now(true);
             }
-            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, None),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, None),
             "set.hd-chip-art-import" => {
                 if self.importing_hd_art.is_none() {
                     shell.choose_files("vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
@@ -596,7 +598,11 @@ impl Screen for Settings {
                 shell.choose_files("EXE5DS ROM (*.nds)", &["nds"], "exe5ds-rom");
             }
             "set.exe5ds-rom-clear" => {
-                shell.settings.exe5ds_rom = None;
+                if let Some(prev) = shell.settings.exe5ds_rom.take() {
+                    if prev.starts_with(crate::games::copies()) {
+                        let _ = std::fs::remove_file(&prev);
+                    }
+                }
                 shell.save_settings();
                 saito_extract::nds::set_exe5ds_rom_path(None);
                 shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
@@ -670,7 +676,7 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
-            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(by > 0)),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(by > 0)),
             "set.music" => self.set_levels(shell, (shell.settings.music as i32 + 5 * by).clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => {
                 self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32);
@@ -745,7 +751,7 @@ impl Screen for Settings {
                 shell.save_settings();
                 self.show(shell);
             }
-            "set.reduce-flashes" | "set.hide-aura-number" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(choice == 1)),
+            "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => self.set_levels(shell, shell.settings.music, choice.clamp(0, 100) as u32),
             "set.exe5ds-music" => {
@@ -875,14 +881,38 @@ impl Screen for Settings {
     fn chosen(&mut self, shell: &mut Shell, purpose: &str, paths: &[std::path::PathBuf]) {
         if purpose == "exe5ds-rom" {
             let Some(path) = paths.first().cloned() else { return };
+            let cleanup_picked = !saito_dialogs::FOLDERS_READ_AGAIN;
             if !saito_extract::nds::is_exe5ds_rom(&path) {
                 crate::errors::log("selecting EXE5DS ROM", &format!("{} is not a Mega Man Battle Network 5 Double Team DS ROM", path.display()));
+                if cleanup_picked {
+                    let _ = std::fs::remove_file(&path);
+                }
                 shell.sound.play(Cue::Refused);
                 self.show(shell);
                 return;
             }
-            saito_extract::nds::set_exe5ds_rom_path(Some(path.clone()));
-            shell.settings.exe5ds_rom = Some(path);
+            // On mobile platforms where picker paths live in ephemeral cache, stow a persistent copy
+            // inside `games::copies()` so the ROM survives app restarts and cache eviction.
+            let stored = if cleanup_picked {
+                let copies_dir = crate::games::copies();
+                let dst = copies_dir.join("exe5ds.nds");
+                if let Err(e) = std::fs::create_dir_all(&copies_dir).and_then(|()| std::fs::copy(&path, &dst).map(|_| ())) {
+                    crate::errors::log("storing EXE5DS ROM copy", &e);
+                    let _ = std::fs::remove_file(&path);
+                    shell.sound.play(Cue::Refused);
+                    self.show(shell);
+                    return;
+                }
+                let _ = std::fs::remove_file(&path);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::remove_dir(parent);
+                }
+                dst
+            } else {
+                path
+            };
+            saito_extract::nds::set_exe5ds_rom_path(Some(stored.clone()));
+            shell.settings.exe5ds_rom = Some(stored);
             shell.save_settings();
             shell.games.reload_where(|id| saito_match::capabilities::for_game(id).ds_shout_toggle);
             shell.sound.play(Cue::Pick);

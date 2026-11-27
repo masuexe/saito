@@ -91,11 +91,17 @@ msgstr "防爆闪模式"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "减弱战斗中的瞬间白屏闪烁，降低光敏不适。"
 
-msgid "Hide aura number"
-msgstr "隐藏梦之灵数字"
+msgid "Hide aura number (EXE4-6)"
+msgstr "隐藏梦之灵数字（EXE4-6）"
 
-msgid "Hide the 200 number on LifeAura."
-msgstr "隐藏梦之灵上的 200 数字。"
+msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
+msgstr "隐藏梦之灵上的 200 数字（仅限 EXE4-6）。"
+
+msgid "Dark buster arm (EXE5)"
+msgstr "恶洛克人手炮同步配色（EXE5）"
+
+msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
+msgstr "在 EXE5 中使洛克人手炮颜色与本体善恶配色同步（含普通、太阳交错与佛鲁迪交错）。"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"
@@ -303,8 +309,8 @@ msgstr "一键呐喊"
 msgid "EXE5DS ROM"
 msgstr "EXE5DS ROM"
 
-msgid "Not set (using GBA fallback)"
-msgstr "未设置（使用 GBA 替代素材）"
+msgid "Not set (using GBA fallback; choose a .nds ROM for authentic Sol Cross, Danger art & DS audio)"
+msgstr "未设置（当前使用 GBA 替代素材；导入 .nds ROM 可显示原版太阳交错、危机头像及 DS 音画）"
 
 msgid "EXE5DS battle music"
 msgstr "EXE5DS 战斗音乐"

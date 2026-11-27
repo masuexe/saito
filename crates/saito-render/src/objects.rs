@@ -485,6 +485,60 @@ fn drawn_at(b: &Battle, graphics: &crate::graphics::Graphics<'_>, r: ObjectRef) 
 ///
 /// An object drawn with a sprite the caller names (`sprite:NAME`,
 /// `Problems::marking`) is marked where it is drawn.
+/// When `sync_dark_buster_arm` is enabled in EXE5, resolve the owning MegaMan's
+/// current body palette for `buster-arm` attachments (Normal, Bass Cross, Sol
+/// Cross) whenever his karma/emotion palette is non-default (`% 5` in `2..=4`),
+/// matching EXE4's synchronized light/dark buster coloring.
+fn synced_buster_arm_palette<'a>(
+    b: &Battle,
+    graphics: &crate::graphics::Graphics<'a>,
+    view: &View,
+    o: &saito_battle::object::Object,
+    s: &saito_battle::object::sprite::Sprite,
+    id: saito_battle::content::SpriteId,
+    game_id: Option<&str>,
+) -> Option<Palette> {
+    if !game_id.is_none_or(|g| g == "exe5") {
+        return None;
+    }
+    if !matches!(s.anim, 0 | 13 | 14) {
+        return None;
+    }
+    if crate::graphics::name(&b.content, saito_content_api::AssetKind::Sprite, id.0) != Some("buster-arm") {
+        return None;
+    }
+    let owner_ref = o.related[0]?;
+    let owner_sprite = b.objects.sprite(owner_ref);
+    let owner_id = owner_sprite.id?;
+    let owner_name = crate::graphics::name(&b.content, saito_content_api::AssetKind::Sprite, owner_id.0)?;
+    if owner_name != "megaman" && owner_name != "solcross-megaman" {
+        return None;
+    }
+    let owner_sheet = graphics.sprite(owner_id)?;
+    let owner_frames = owner_sheet.animations.get(owner_sprite.anim as usize)?;
+    let owner_frame = owner_frames
+        .get(owner_sheet.frame_index(owner_sprite.anim, owner_sprite.steps, owner_sprite.started))
+        .or(owner_frames.last())?;
+    let owner_set = owner_sheet.palette_sets.get(owner_frame.palette_set as usize)?;
+    let owner_look = b.look_for(owner_ref, view.side());
+    let owner_first_palette = owner_look.part_palette.map_or(0, |at| {
+        owner_sheet
+            .animations
+            .get(at.anim as usize)
+            .and_then(|frames| frames.get(owner_sheet.frame_index(at.anim, at.steps, at.started)).or(frames.last()))
+            .and_then(|f| owner_sheet.part_lists.get(f.parts as usize))
+            .and_then(|parts| parts.first())
+            .map_or(0, |p| p.palette)
+    });
+    let owner_palette_index = owner_look.palette.wrapping_add(owner_first_palette) as usize;
+    // EXE5 MegaMan / FCR / SolCross palettes are grouped in 5-entry rows:
+    // +0 normal, +1 no_charge, +2 dark (evil), +3 half-dark, +4 full-synchro/max-light.
+    if !matches!(owner_palette_index % 5, 2 | 3 | 4) {
+        return None;
+    }
+    owner_set.get(owner_palette_index).copied()
+}
+
 pub fn queue_objects<'a>(
     b: &Battle,
     graphics: &crate::graphics::Graphics<'a>,
@@ -494,7 +548,10 @@ pub fn queue_objects<'a>(
     problems: &mut Problems,
     lookups_only: bool,
     hide_aura_number: bool,
+    sync_dark_buster_arm: bool,
 ) -> SpriteDrawn {
+    let game_id = b.content.scripts.packs.iter().find(|p| p.kind == saito_content_api::PackKind::Game).map(|p| p.id.as_str());
+    let allow_hide_aura_number = hide_aura_number && !matches!(game_id, Some("exe1" | "exe2" | "exe3"));
     let mut draw = SpriteDraw::new(b.game_rules().effects.sprite_budget, b.round.mode_copy);
     for pool in Pool::ALL {
         for r in draw_order(b, pool) {
@@ -538,10 +595,16 @@ pub fn queue_objects<'a>(
                     .map_or(0, |p| p.palette)
             });
             let palette_index = look.palette.wrapping_add(first_palette) as usize;
+            let synced_palette = (sync_dark_buster_arm && !look.white)
+                .then(|| synced_buster_arm_palette(b, graphics, view, o, s, id, game_id))
+                .flatten();
             // The frame's sprite draw, before any culling: a sprite it has
             // no room for isn't drawn.
             if !lookups_only {
-                let shown = (!look.white).then(|| shade(set.get(palette_index).copied().unwrap_or([0; 16]), look.color_shader));
+                let shown = (!look.white).then(|| {
+                    let base = synced_palette.unwrap_or_else(|| set.get(palette_index).copied().unwrap_or([0; 16]));
+                    shade(base, look.color_shader)
+                });
                 if !draw.take(tiles, shown.as_ref()) {
                     draw.left_out.push(format!("{:?} {} {}", r.pool, r.slot, b.content.defs.kind(o.kind).key));
                     continue;
@@ -575,7 +638,7 @@ pub fn queue_objects<'a>(
                 continue;
             }
             mask &= !look.hidden_parts;
-            if hide_aura_number
+            if allow_hide_aura_number
                 && b.local_kind_key(r) == "barrier-visual"
                 && crate::graphics::name(&b.content, saito_content_api::AssetKind::Sprite, id.0) == Some("aura")
             {
@@ -585,8 +648,13 @@ pub fn queue_objects<'a>(
             let palette = if look.white {
                 WHITE
             } else {
-                let what = || format!("{} asks for {} on animation {}", kind(), look.palette, s.anim);
-                let p = crate::lookups::palette(set, &b.content, id, frame, palette_index, &what, problems).unwrap_or([0; 16]);
+                let p = match synced_palette {
+                    Some(p) => p,
+                    None => {
+                        let what = || format!("{} asks for {} on animation {}", kind(), look.palette, s.anim);
+                        crate::lookups::palette(set, &b.content, id, frame, palette_index, &what, problems).unwrap_or([0; 16])
+                    }
+                };
                 shade(p, look.color_shader)
             };
             if lookups_only {

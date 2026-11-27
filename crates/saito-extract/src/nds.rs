@@ -481,7 +481,7 @@ fn merge_ds_assets(graphics: &mut Bundle, ds: Exe5DsAssets) {
 // ---- GBA Fallback Synthesis -------------------------------------------------
 
 /// Remap a GBA BGR555 palette into a warm Sol Cross palette (gold/amber/crimson
-/// armor highlights while keeping skin tones and dark outlines crisp).
+/// armor highlights while keeping skin tones, dark karma shading, and outlines crisp).
 fn remap_solar_palette(pal: Palette) -> Palette {
     let mut out = [0u16; 16];
     for (i, &c) in pal.iter().enumerate() {
@@ -493,17 +493,26 @@ fn remap_solar_palette(pal: Palette) -> Palette {
         let g = (c >> 5) & 31;
         let b = (c >> 10) & 31;
         let (nr, ng, nb) = if b > r && b >= g {
-            // Blue/cyan armor -> solar gold/amber/crimson.
-            let nr = (b + 8).min(31);
-            let ng = ((b * 3) / 5 + g / 2).min(29);
-            let nb = (r / 2 + 2).min(14);
-            (nr, ng, nb)
+            // Blue/cyan armor -> layered Sol Cross gold (bright) to crimson-bronze (shadow).
+            if b >= 18 {
+                // Bright armor highlights -> sunlit gold.
+                let nr = (b + 6).min(31);
+                let ng = ((b * 3) / 4 + g / 4).min(28);
+                let nb = (r / 2 + 3).min(12);
+                (nr, ng, nb)
+            } else {
+                // Deep blue shadows & dark karma tones -> deep amber/crimson without washing out.
+                let nr = (b + 5).min(24);
+                let ng = ((b * 2) / 5 + g / 3).min(16);
+                let nb = (r / 3 + 1).min(8);
+                (nr, ng, nb)
+            }
         } else if r >= 22 && g >= 22 && b >= 22 {
             // Bright white highlights -> warm sunlit cream/white.
             (31, g.min(30), b.saturating_sub(4))
         } else {
             // Skin/outlines/accents -> subtle warm shift.
-            ((r + 3).min(31), (g + 1).min(31), b.saturating_sub(2))
+            ((r + 2).min(31), (g + 1).min(31), b.saturating_sub(1))
         };
         out[i] = nr | (ng << 5) | (nb << 10);
     }
@@ -531,34 +540,45 @@ fn remap_danger_palette(pal: Palette) -> Palette {
     out
 }
 
-/// Synthesize a clean 32x32 golden corner sun sprite sheet (`10-00`) anchored
-/// at `(x = -32, y = 0)` matching EXE5DS `shl00.bin`'s top-right corner anchor.
+/// Synthesize a clean 64x32 golden corner sun sprite sheet (`10-00`) anchored
+/// at `(x = -32, y = 0)` + `(x = -64, y = 0)` matching EXE5DS `shl00.bin`'s top-right corner layout.
 fn synthesize_sol_sun_sprite() -> SpriteSheet {
-    // 4x4 tiles (32x32 pixels) drawing a stylized golden sun & rays in the top-right corner.
-    let mut tiles = Tiles { pixels: vec![0u8; 16 * Tiles::TILE] };
+    // Two 4x4 tile (32x32) parts side by side: right part (tiles 0..16) holds the sun core near the
+    // top-right corner, left part (tiles 16..32) extends soft diagonal rays inward.
+    let mut tiles = Tiles { pixels: vec![0u8; 32 * Tiles::TILE] };
     let mut set_px = |x: usize, y: usize, color: u8| {
-        if x < 32 && y < 32 {
-            let tile_idx = (y / 8) * 4 + (x / 8);
-            tiles.pixels[tile_idx * Tiles::TILE + (y % 8) * 8 + (x % 8)] = color;
+        if x < 64 && y < 32 {
+            let (part_tile_base, lx) = if x >= 32 { (0usize, x - 32) } else { (16usize, x) };
+            let tile_idx = part_tile_base + (y / 8) * 4 + (lx / 8);
+            tiles.pixels[tile_idx * Tiles::TILE + (y % 8) * 8 + (lx % 8)] = color;
         }
     };
-    let cx: i32 = 24;
-    let cy: i32 = 7;
+    let cx: i32 = 52;
+    let cy: i32 = 10;
     for y in 0..32usize {
-        for x in 0..32usize {
+        for x in 0..64usize {
             let dx = x as i32 - cx;
             let dy = y as i32 - cy;
             let d2 = dx * dx + dy * dy;
-            let color = if d2 <= 16 {
+            let color = if d2 <= 20 {
                 5 // white-hot core
-            } else if d2 <= 42 {
+            } else if d2 <= 52 {
                 4 // bright sun yellow
-            } else if d2 <= 76 {
+            } else if d2 <= 96 {
                 3 // rich solar gold
-            } else if d2 <= 110 {
+            } else if d2 <= 148 {
                 2 // warm orange corona
-            } else if d2 <= 220 && ((dx.abs() <= 1 && dy > 0) || (dy.abs() <= 1 && dx < 0) || (dx + dy).abs() <= 2) {
-                1 // soft golden rays extending inward
+            } else if d2 <= 620
+                && dx <= 8
+                && dy >= -6
+                && ((dx.abs() <= 1 && dy > 0)
+                    || (dy.abs() <= 1 && dx < 0)
+                    || (dx + dy).abs() <= 2
+                    || (dx + 2 * dy).abs() <= 2
+                    || (2 * dx + dy).abs() <= 2)
+            {
+                // Alternating soft rays extending down and left into the arena.
+                if (x + y) % 2 == 0 || d2 <= 280 { 1 } else { 0 }
             } else {
                 0
             };
@@ -585,16 +605,28 @@ fn synthesize_sol_sun_sprite() -> SpriteSheet {
         saito_assets::bgr555([0xFF, 0xFF, 0xF0]),
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    let parts = vec![SpritePart {
-        tile: 0,
-        x: -32,
-        y: 0,
-        width: 32,
-        height: 32,
-        hflip: false,
-        vflip: false,
-        palette: 0,
-    }];
+    let parts = vec![
+        SpritePart {
+            tile: 0,
+            x: -32,
+            y: 0,
+            width: 32,
+            height: 32,
+            hflip: false,
+            vflip: false,
+            palette: 0,
+        },
+        SpritePart {
+            tile: 16,
+            x: -64,
+            y: 0,
+            width: 32,
+            height: 32,
+            hflip: false,
+            vflip: false,
+            palette: 0,
+        },
+    ];
     SpriteSheet {
         category: SOL_SUN_SPRITE.0,
         index: SOL_SUN_SPRITE.1,
@@ -647,13 +679,17 @@ pub fn apply_gba_fallback(graphics: &mut Bundle) {
     // 2. `sol-sun` (`10-00`): dedicated synthesized corner solar icon.
     upsert_sprite(&mut graphics.sprites, synthesize_sol_sun_sprite());
 
-    // 3. `buster-arm` (`0c-03`): ensure animation `0x0E` exists and its palette set
-    //    has EXE5DS Sol Cross palette slots `0x21` (normal) and `0x22` (no_charge).
+    // 3. `buster-arm` (`0c-03`): ensure animation `0x0E` exists with zeroed part palette
+    //    offsets (matching EXE5DS `pshl03.bin` anim `0x0E`) and palette slots `0x21` (normal)
+    //    and `0x22` (no_charge). Without zeroing `part.palette`, cloning GBA anim `0x0D`
+    //    (whose `parts[0].palette == 13`) causes `0x21 + 13 = 46` to index out of bounds and
+    //    render as a solid black silhouette.
     if let Some(arm) = graphics.sprites.iter_mut().find(|s| (s.category, s.index) == BUSTER_ARM_SPRITE) {
         if arm.animations.len() <= SOLCROSS_BUSTER_ARM_ANIM {
             let src_anim_idx = arm.animations.len().saturating_sub(1);
             let template_anim = arm.animations.get(src_anim_idx).cloned().unwrap_or_default();
             let mut remapped_sets = std::collections::HashMap::<u16, u16>::new();
+            let mut zeroed_parts = std::collections::HashMap::<u16, u16>::new();
             let mut sol_anim = template_anim.clone();
             for frame in &mut sol_anim {
                 let new_ps = *remapped_sets.entry(frame.palette_set).or_insert_with(|| {
@@ -673,7 +709,20 @@ pub fn apply_gba_fallback(graphics: &mut Bundle) {
                     arm.palette_sets.push(cloned);
                     (arm.palette_sets.len() - 1) as u16
                 });
+                let new_parts = *zeroed_parts.entry(frame.parts).or_insert_with(|| {
+                    let mut cloned_parts = arm
+                        .part_lists
+                        .get(frame.parts as usize)
+                        .cloned()
+                        .unwrap_or_default();
+                    for part in &mut cloned_parts {
+                        part.palette = 0;
+                    }
+                    arm.part_lists.push(cloned_parts);
+                    (arm.part_lists.len() - 1) as u16
+                });
                 frame.palette_set = new_ps;
+                frame.parts = new_parts;
             }
             while arm.animations.len() < SOLCROSS_BUSTER_ARM_ANIM {
                 arm.animations.push(template_anim.clone());
@@ -750,16 +799,20 @@ mod tests {
             part_lists: vec![vec![SpritePart { tile: 0, x: -8, y: -16, width: 16, height: 16, ..Default::default() }]],
             animations: vec![vec![SpriteFrame { duration: 4, flags: FRAME_LAST, ..Default::default() }]],
         });
-        // Buster arm `0c-03` with 14 animations (`0x00..=0x0D`)
+        // Buster arm `0c-03` with 14 animations (`0x00..=0x0D`); anim 0x0D mirrors real GBA
+        // EXE5 by carrying a non-zero `part.palette` (13) on its part list.
         let arm_anims = (0..14)
-            .map(|_| vec![SpriteFrame { tileset: 0, palette_set: 0, parts: 0, duration: 2, flags: FRAME_LAST }])
+            .map(|i| vec![SpriteFrame { tileset: 0, palette_set: 0, parts: if i == 13 { 1 } else { 0 }, duration: 2, flags: FRAME_LAST }])
             .collect();
         b.sprites.push(SpriteSheet {
             category: BUSTER_ARM_SPRITE.0,
             index: BUSTER_ARM_SPRITE.1,
             tilesets: vec![Tiles { pixels: vec![2; Tiles::TILE] }],
             palette_sets: vec![vec![blue_pal]],
-            part_lists: vec![vec![SpritePart { tile: 0, x: 0, y: 0, width: 8, height: 8, ..Default::default() }]],
+            part_lists: vec![
+                vec![SpritePart { tile: 0, x: 0, y: 0, width: 8, height: 8, palette: 0, ..Default::default() }],
+                vec![SpritePart { tile: 0, x: 0, y: 0, width: 8, height: 8, palette: 13, ..Default::default() }],
+            ],
             animations: arm_anims,
         });
         // 39 GBA mugshots (`0x00..=0x26`) + boxes
@@ -816,10 +869,17 @@ mod tests {
         let arm = bundle.sprite(0x0c, 0x03).expect("buster-arm present");
         assert_eq!(arm.animations.len(), 15, "buster-arm must have anim 0x0E");
         assert!(!arm.animations[SOLCROSS_BUSTER_ARM_ANIM].is_empty());
-        let sol_arm_ps = arm.animations[SOLCROSS_BUSTER_ARM_ANIM][0].palette_set as usize;
-        assert!(arm.palette_sets[sol_arm_ps].len() > 0x22, "buster-arm must have SolCross palettes 0x21/0x22");
+        let sol_arm_frame = arm.animations[SOLCROSS_BUSTER_ARM_ANIM][0];
+        let sol_arm_ps = sol_arm_frame.palette_set as usize;
+        let sol_arm_first_pal = arm.part_lists[sol_arm_frame.parts as usize][0].palette as usize;
+        assert_eq!(sol_arm_first_pal, 0, "SolCross buster-arm anim 0x0E must zero part.palette so 0x21/0x22 stay in bounds");
+        assert!(arm.palette_sets[sol_arm_ps].len() > 0x22 + sol_arm_first_pal, "buster-arm must have SolCross palettes 0x21/0x22 in bounds");
+        assert_ne!(arm.palette_sets[sol_arm_ps][0x21 + sol_arm_first_pal], [0u16; 16]);
         assert_ne!(arm.palette_sets[sol_arm_ps][0x21], arm.palette_sets[0][0]);
         assert_ne!(arm.palette_sets[sol_arm_ps][0x22], arm.palette_sets[sol_arm_ps][0x21]);
+        // Template anim 0x0D must keep its original non-zero part.palette untouched.
+        let hub_arm_parts = arm.animations[13][0].parts as usize;
+        assert_eq!(arm.part_lists[hub_arm_parts][0].palette, 13);
 
         // Mugshots `0x27..=0x2F` and boxes
         assert_eq!(bundle.hud.mugshots.len(), 0x30);

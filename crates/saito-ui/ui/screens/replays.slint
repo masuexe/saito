@@ -540,11 +540,48 @@ component Fact inherits Rectangle {
 }
 
 // What is said of the selected replay under its still: who played, when, how it went, how long it was; or why
-// it can't be played. (`stacked`: beside the still, each fact's word over its value.)
+// it can't be played. (`stacked`: beside the still, each fact's word over its value; `show-room`: include the room
+// settings summary and compatibility notice below the basic facts.)
 component Facts inherits Rectangle {
     in property <bool> stacked;
+    in property <bool> show-room: true;
     property <length> pitch: root.stacked ? 34px : 28px;
     property <length> first: root.stacked ? 28px : 36px;
+    property <bool> has-settings: root.show-room && ReplaysView.reason == "" && ReplaysView.settings != "";
+    property <bool> has-notice: root.show-room && ReplaysView.reason == "" && ReplaysView.notice != "";
+    property <length> settings-value-x: root.stacked ? 0px : 120px;
+    property <length> settings-value-w: max(40px, root.width - root.settings-value-x);
+    property <length> settings-value-h: root.has-settings ? max(20px, settings-measure.preferred-height) : 0px;
+    property <length> settings-block-h: root.has-settings ? (root.stacked ? 14px + root.settings-value-h : max(20px, root.settings-value-h + 2px)) : 0px;
+    property <length> notice-h: root.has-notice ? max(20px, notice-measure.preferred-height) : 0px;
+    property <length> base-end: root.first + 3 * root.pitch;
+    property <length> notice-y: root.base-end + (root.has-settings ? root.settings-block-h + 8px : 0px);
+    out property <length> natural-height: ReplaysView.reason != ""
+        ? (root.stacked ? root.first + 48px : 112px)
+        : root.base-end
+            + (root.has-settings ? root.settings-block-h + 8px : 0px)
+            + (root.has-notice ? root.notice-h + 4px : 0px);
+
+    // Hidden measurements for wrapped room settings & compatibility notice heights.
+    settings-measure := Text {
+        visible: false;
+        width: root.settings-value-w;
+        text: ReplaysView.settings;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: 500;
+        wrap: word-wrap;
+    }
+
+    notice-measure := Text {
+        visible: false;
+        width: max(40px, root.width);
+        text: ReplaysView.notice;
+        font-family: Theme.body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
     HorizontalLayout {
         x: 0;
         y: 0;
@@ -599,13 +636,13 @@ component Facts inherits Rectangle {
         stacked: root.stacked;
     }
 
-    // Room settings summary (shown when available and playable).
+    // Room settings summary (shown when available and playable, wrapped cleanly with no elision).
     Rectangle {
         x: 0;
-        y: root.first + 3 * root.pitch;
+        y: root.base-end;
         width: root.width;
-        height: root.stacked ? 46px : 38px;
-        visible: ReplaysView.reason == "" && ReplaysView.settings != "";
+        height: root.settings-block-h;
+        visible: root.has-settings;
 
         Text {
             x: 0;
@@ -621,17 +658,16 @@ component Facts inherits Rectangle {
         }
 
         Text {
-            x: root.stacked ? 0px : 120px;
+            x: root.settings-value-x;
             y: root.stacked ? 14px : 2px;
-            width: parent.width - self.x;
-            height: root.stacked ? 32px : 36px;
+            width: root.settings-value-w;
+            height: root.settings-value-h;
             text: ReplaysView.settings;
             color: Theme.text;
             font-family: Theme.body;
             font-size: 12px;
             font-weight: 500;
             wrap: word-wrap;
-            overflow: elide;
             vertical-alignment: top;
         }
     }
@@ -640,7 +676,7 @@ component Facts inherits Rectangle {
         x: 0;
         y: root.stacked ? root.first : 64px;
         width: root.width;
-        height: root.stacked ? root.height - root.first : 48px;
+        height: root.stacked ? max(48px, root.height - root.first) : 48px;
         text: ReplaysView.reason;
         color: Theme.bad;
         vertical-alignment: top;
@@ -648,12 +684,10 @@ component Facts inherits Rectangle {
 
     Note {
         x: 0;
-        y: root.stacked
-            ? root.first + 3 * root.pitch + (ReplaysView.settings != "" ? 48px : 0px)
-            : 122px + (ReplaysView.settings != "" ? 42px : 0px);
+        y: root.notice-y;
         width: root.width;
-        height: root.stacked ? max(0px, root.height - self.y) : 36px;
-        visible: ReplaysView.reason == "" && ReplaysView.notice != "";
+        height: root.notice-h;
+        visible: root.has-notice;
         text: ReplaysView.notice;
         color: ReplaysView.notice-exact ? Theme.cursor : Theme.code;
         vertical-alignment: top;
@@ -666,170 +700,282 @@ global Signs {
 }
 
 // The selected replay, beside the list: its still, what is said of it, and what can be done with it. On a phone held
-// sideways (docs/design/app-ui.md §2.103) the still is smaller with the facts beside it, and the buttons are rows under
-// them, each its row's width or half of it: WATCH and its arrow, EXPORT VIDEO, then SHOW FILE and DELETE (a queue
-// entry's WATCH FROM HERE with MOVE UP and MOVE DOWN, then REMOVE).
+// sideways (docs/design/app-ui.md §2.103) the still is smaller with the basic facts beside it, the wrapped room
+// settings & notice span the full panel width underneath, and the buttons follow in rows inside a scrollable pane so
+// long room summaries are never clipped or covered by buttons.
 component DetailPanel inherits Rectangle {
     property <bool> beside: Theme.sideways;
     property <length> pad: root.beside ? 14px : 16px;
-    property <length> inner: root.width - 2 * root.pad;
+    property <length> inner: max(80px, root.width - 2 * root.pad);
     property <length> still-width: root.beside ? floor(root.inner * 0.6 / 1px) * 1px : 480px;
     property <length> still-height: root.beside ? root.still-width * 2 / 3 : 320px;
-    // (Sideways: the buttons' rows, from the still's foot.)
-    property <length> row-1: root.pad + root.still-height + 12px;
+    // (Sideways: full-width room settings & notice below the still + basic facts.)
+    property <length> top-end: root.pad + max(root.still-height, 130px);
+    property <bool> beside-has-settings: root.beside && ReplaysView.selected && ReplaysView.reason == "" && ReplaysView.settings != "";
+    property <bool> beside-has-notice: root.beside && ReplaysView.selected && ReplaysView.reason == "" && ReplaysView.notice != "";
+    property <length> beside-settings-val-h: root.beside-has-settings ? max(18px, beside-settings-measure.preferred-height) : 0px;
+    property <length> beside-settings-h: root.beside-has-settings ? 16px + root.beside-settings-val-h : 0px;
+    property <length> beside-notice-h: root.beside-has-notice ? max(18px, beside-notice-measure.preferred-height) : 0px;
+    property <length> beside-settings-y: root.top-end + 10px;
+    property <length> beside-notice-y: root.beside-settings-y + (root.beside-has-settings ? root.beside-settings-h + 8px : 0px);
+    property <length> beside-extra-h: (root.beside-has-settings ? root.beside-settings-h + 8px : 0px) + (root.beside-has-notice ? root.beside-notice-h + 8px : 0px);
+    // (Sideways: the buttons' rows, after the full-width room settings / notice.)
+    property <length> row-1: root.top-end + 10px + root.beside-extra-h;
     property <length> row-2: root.row-1 + 44px + 8px;
     property <length> row-3: root.row-2 + 40px + 8px;
+    property <length> beside-content-height: (ReplaysView.tab == 0 ? root.row-3 + 40px : root.row-2 + 40px) + root.pad;
     property <length> half: (root.inner - 8px) / 2;
     // (The desktop's: a row of them over DELETE at the foot.)
     property <length> buttons-y: root.height - 108px;
     PanelBack { }
 
-    Picture {
-        x: root.pad;
-        y: root.pad;
-        width: root.still-width;
-        height: root.still-height;
-        ground: Theme.inset;
+    // Hidden measurements for sideways full-width room settings & notice heights.
+    beside-settings-measure := Text {
+        visible: false;
+        width: root.inner;
+        text: ReplaysView.settings;
+        font-family: Theme.body;
+        font-size: 12px;
+        font-weight: 500;
+        wrap: word-wrap;
     }
 
-    // (No still of it, yet or at all: the box alone.)
-    Rectangle {
-        x: root.pad;
-        y: root.pad;
-        width: root.still-width;
-        height: root.still-height;
-        visible: !ReplaysView.still;
-        background: Theme.inset;
+    beside-notice-measure := Text {
+        visible: false;
+        width: root.inner;
+        text: ReplaysView.notice;
+        font-family: Theme.body;
+        font-size: 12px;
+        wrap: word-wrap;
     }
 
-    Facts {
-        x: root.beside ? root.pad + root.still-width + 12px : 16px;
-        y: root.beside ? root.pad - 4px : 352px;
-        width: root.beside ? root.inner - root.still-width - 12px : parent.width - 32px;
-        height: root.beside ? root.still-height + 4px : 204px;
-        visible: ReplaysView.selected;
-        stacked: root.beside;
-    }
+    Flickable {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.width;
+        content-height: root.beside ? max(self.height, root.beside-content-height) : self.height;
+        interactive: root.beside && root.beside-content-height > self.height;
 
-    // (A replay's: WATCH and its arrow, the other ways to watch it (a split button: ADD TO QUEUE, PLAY NEXT), EXPORT VIDEO, SHOW FILE; apart, DELETE. Hidden in the Queue tab, and passed by.)
-    watch := Button {
-        x: root.pad;
-        y: root.beside ? root.row-1 : root.buttons-y;
-        width: root.beside ? root.inner - 2px - watch-more.width : self.natural-width;
-        height: root.beside ? 44px : 40px;
-        visible: ReplaysView.tab == 0;
-        nav: "watch";
-        text: I18n.upper(@tr("Watch"));
-        kind: ButtonKind.main;
-        square: true;
-        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
-    }
+        Picture {
+            x: root.pad;
+            y: root.pad;
+            width: root.still-width;
+            height: root.still-height;
+            ground: Theme.inset;
+        }
 
-    watch-more := IconButton {
-        x: watch.x + watch.width + 2px;
-        y: watch.y;
-        visible: ReplaysView.tab == 0;
-        nav: "watch-more";
-        icon: Signs.arrow;
-        main: true;
-        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
-    }
+        // (No still of it, yet or at all: the box alone.)
+        Rectangle {
+            x: root.pad;
+            y: root.pad;
+            width: root.still-width;
+            height: root.still-height;
+            visible: !ReplaysView.still;
+            background: Theme.inset;
+        }
 
-    export := Button {
-        x: root.beside ? root.pad : watch-more.x + watch-more.width + 12px;
-        y: root.beside ? root.row-2 : root.buttons-y;
-        width: root.beside ? root.inner : self.natural-width;
-        visible: ReplaysView.tab == 0;
-        nav: "export";
-        text: I18n.upper(@tr("verb" => "Export video"));
-        enabled: ReplaysView.tab == 0 && ReplaysView.playable;
-    }
+        // Sideways: basic facts beside the still (room settings & notice sit full-width below).
+        if root.beside: Facts {
+            x: root.pad + root.still-width + 12px;
+            y: root.pad - 4px;
+            width: root.inner - root.still-width - 12px;
+            height: max(root.still-height + 4px, 132px);
+            visible: ReplaysView.selected;
+            stacked: true;
+            show-room: false;
+        }
 
-    Button {
-        x: root.beside ? root.pad : export.x + export.width + 12px;
-        y: root.beside ? root.row-3 : root.buttons-y;
-        width: root.beside ? root.half : self.natural-width;
-        visible: ReplaysView.tab == 0;
-        nav: "file";
-        text: ReplaysView.file-word;
-        enabled: ReplaysView.tab == 0 && ReplaysView.selected;
-    }
+        // Sideways: full-width room settings summary below the still.
+        Rectangle {
+            x: root.pad;
+            y: root.beside-settings-y;
+            width: root.inner;
+            height: root.beside-settings-h;
+            visible: root.beside-has-settings;
 
-    Button {
-        x: root.beside ? root.pad + root.half + 8px : parent.width - 16px - self.width;
-        y: root.beside ? root.row-3 : parent.height - 56px;
-        width: root.beside ? root.half : self.natural-width;
-        visible: ReplaysView.tab == 0;
-        nav: "delete";
-        text: I18n.upper(@tr("Delete"));
-        kind: ButtonKind.ghost;
-        danger: true;
-        enabled: ReplaysView.tab == 0 && ReplaysView.selected;
-    }
+            Text {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 14px;
+                text: @tr("Room");
+                color: Theme.muted;
+                font-family: Theme.body;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
 
-    // (A recent feed replay's: WATCH (downloads if needed), and SAVE LOCALLY.)
-    feed-watch := Button {
-        x: root.pad;
-        y: root.beside ? root.row-1 : root.buttons-y;
-        width: root.beside ? root.inner : self.natural-width;
-        height: root.beside ? 44px : 40px;
-        visible: ReplaysView.tab == 1;
-        nav: "feed-watch";
-        text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
-        kind: ButtonKind.main;
-        enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading;
-    }
+            Text {
+                x: 0;
+                y: 16px;
+                width: parent.width;
+                height: root.beside-settings-val-h;
+                text: ReplaysView.settings;
+                color: Theme.text;
+                font-family: Theme.body;
+                font-size: 12px;
+                font-weight: 500;
+                wrap: word-wrap;
+                vertical-alignment: top;
+            }
+        }
 
-    Button {
-        x: root.beside ? root.pad : feed-watch.x + feed-watch.width + 12px;
-        y: root.beside ? root.row-2 : root.buttons-y;
-        width: root.beside ? root.inner : self.natural-width;
-        visible: ReplaysView.tab == 1;
-        nav: "feed-save";
-        text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
-        enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
-    }
+        // Sideways: full-width compatibility notice below the room settings.
+        Note {
+            x: root.pad;
+            y: root.beside-notice-y;
+            width: root.inner;
+            height: root.beside-notice-h;
+            visible: root.beside-has-notice;
+            text: ReplaysView.notice;
+            color: ReplaysView.notice-exact ? Theme.cursor : Theme.code;
+            vertical-alignment: top;
+        }
 
-    // (A queue entry's: WATCH FROM HERE, MOVE UP and MOVE DOWN; apart, REMOVE, which leaves its file be.)
-    watch-from := Button {
-        x: root.pad;
-        y: root.beside ? root.row-1 : root.buttons-y;
-        width: root.beside ? root.inner - 2 * (40px + 12px) : self.natural-width;
-        height: root.beside ? 44px : 40px;
-        visible: ReplaysView.tab == 2;
-        nav: "watch-from";
-        text: I18n.upper(@tr("Watch from here"));
-        kind: ButtonKind.main;
-        enabled: ReplaysView.tab == 2 && ReplaysView.playable;
-    }
+        // Desktop: scrollable facts region under the still so long room settings never collide with buttons.
+        if !root.beside: Flickable {
+            x: 16px;
+            y: 352px;
+            width: parent.width - 32px;
+            height: max(120px, root.buttons-y - 364px);
+            visible: ReplaysView.selected;
+            content-width: self.width;
+            content-height: max(self.height, desktop-facts.natural-height);
+            interactive: desktop-facts.natural-height > self.height;
 
-    move-up := IconButton {
-        x: watch-from.x + watch-from.width + 12px;
-        y: watch-from.y;
-        visible: ReplaysView.tab == 2;
-        nav: "move-up";
-        icon: "M 8 3 L 13.5 11 L 2.5 11 Z";
-        enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen > 0;
-    }
+            desktop-facts := Facts {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: max(parent.height, self.natural-height);
+                stacked: false;
+                show-room: true;
+            }
+        }
 
-    IconButton {
-        x: move-up.x + move-up.width + 12px;
-        y: watch-from.y;
-        visible: ReplaysView.tab == 2;
-        nav: "move-down";
-        icon: "M 2.5 5 L 13.5 5 L 8 13 Z";
-        enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen >= 0 && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
-    }
+        // (A replay's: WATCH and its arrow, the other ways to watch it (a split button: ADD TO QUEUE, PLAY NEXT), EXPORT VIDEO, SHOW FILE; apart, DELETE. Hidden in the Queue tab, and passed by.)
+        watch := Button {
+            x: root.pad;
+            y: root.beside ? root.row-1 : root.buttons-y;
+            width: root.beside ? root.inner - 2px - watch-more.width : self.natural-width;
+            height: root.beside ? 44px : 40px;
+            visible: ReplaysView.tab == 0;
+            nav: "watch";
+            text: I18n.upper(@tr("Watch"));
+            kind: ButtonKind.main;
+            square: true;
+            enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+        }
 
-    Button {
-        x: root.beside ? root.pad : parent.width - 16px - self.width;
-        y: root.beside ? root.row-2 : parent.height - 56px;
-        width: root.beside ? root.inner : self.natural-width;
-        visible: ReplaysView.tab == 2;
-        nav: "remove";
-        text: I18n.upper(@tr("Remove"));
-        kind: ButtonKind.ghost;
-        enabled: ReplaysView.tab == 2 && ReplaysView.selected;
+        watch-more := IconButton {
+            x: watch.x + watch.width + 2px;
+            y: watch.y;
+            visible: ReplaysView.tab == 0;
+            nav: "watch-more";
+            icon: Signs.arrow;
+            main: true;
+            enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+        }
+
+        export := Button {
+            x: root.beside ? root.pad : watch-more.x + watch-more.width + 12px;
+            y: root.beside ? root.row-2 : root.buttons-y;
+            width: root.beside ? root.inner : self.natural-width;
+            visible: ReplaysView.tab == 0;
+            nav: "export";
+            text: I18n.upper(@tr("verb" => "Export video"));
+            enabled: ReplaysView.tab == 0 && ReplaysView.playable;
+        }
+
+        Button {
+            x: root.beside ? root.pad : export.x + export.width + 12px;
+            y: root.beside ? root.row-3 : root.buttons-y;
+            width: root.beside ? root.half : self.natural-width;
+            visible: ReplaysView.tab == 0;
+            nav: "file";
+            text: ReplaysView.file-word;
+            enabled: ReplaysView.tab == 0 && ReplaysView.selected;
+        }
+
+        Button {
+            x: root.beside ? root.pad + root.half + 8px : parent.width - 16px - self.width;
+            y: root.beside ? root.row-3 : parent.height - 56px;
+            width: root.beside ? root.half : self.natural-width;
+            visible: ReplaysView.tab == 0;
+            nav: "delete";
+            text: I18n.upper(@tr("Delete"));
+            kind: ButtonKind.ghost;
+            danger: true;
+            enabled: ReplaysView.tab == 0 && ReplaysView.selected;
+        }
+
+        // (A recent feed replay's: WATCH (downloads if needed), and SAVE LOCALLY.)
+        feed-watch := Button {
+            x: root.pad;
+            y: root.beside ? root.row-1 : root.buttons-y;
+            width: root.beside ? root.inner : self.natural-width;
+            height: root.beside ? 44px : 40px;
+            visible: ReplaysView.tab == 1;
+            nav: "feed-watch";
+            text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
+            kind: ButtonKind.main;
+            enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading;
+        }
+
+        Button {
+            x: root.beside ? root.pad : feed-watch.x + feed-watch.width + 12px;
+            y: root.beside ? root.row-2 : root.buttons-y;
+            width: root.beside ? root.inner : self.natural-width;
+            visible: ReplaysView.tab == 1;
+            nav: "feed-save";
+            text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
+            enabled: ReplaysView.tab == 1 && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
+        }
+
+        // (A queue entry's: WATCH FROM HERE, MOVE UP and MOVE DOWN; apart, REMOVE, which leaves its file be.)
+        watch-from := Button {
+            x: root.pad;
+            y: root.beside ? root.row-1 : root.buttons-y;
+            width: root.beside ? root.inner - 2 * (40px + 12px) : self.natural-width;
+            height: root.beside ? 44px : 40px;
+            visible: ReplaysView.tab == 2;
+            nav: "watch-from";
+            text: I18n.upper(@tr("Watch from here"));
+            kind: ButtonKind.main;
+            enabled: ReplaysView.tab == 2 && ReplaysView.playable;
+        }
+
+        move-up := IconButton {
+            x: watch-from.x + watch-from.width + 12px;
+            y: watch-from.y;
+            visible: ReplaysView.tab == 2;
+            nav: "move-up";
+            icon: "M 8 3 L 13.5 11 L 2.5 11 Z";
+            enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen > 0;
+        }
+
+        IconButton {
+            x: move-up.x + move-up.width + 12px;
+            y: watch-from.y;
+            visible: ReplaysView.tab == 2;
+            nav: "move-down";
+            icon: "M 2.5 5 L 13.5 5 L 8 13 Z";
+            enabled: ReplaysView.tab == 2 && ReplaysView.queue-chosen >= 0 && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
+        }
+
+        Button {
+            x: root.beside ? root.pad : parent.width - 16px - self.width;
+            y: root.beside ? root.row-2 : parent.height - 56px;
+            width: root.beside ? root.inner : self.natural-width;
+            visible: ReplaysView.tab == 2;
+            nav: "remove";
+            text: I18n.upper(@tr("Remove"));
+            kind: ButtonKind.ghost;
+            enabled: ReplaysView.tab == 2 && ReplaysView.selected;
+        }
     }
 }
 
@@ -838,9 +984,12 @@ component DetailSheet inherits Rectangle {
     property <bool> local: ReplaysView.tab == 0;
     property <bool> recent: ReplaysView.tab == 1;
     property <bool> queue: ReplaysView.tab == 2;
-    property <length> inner: self.width - 32px;
+    property <length> inner: max(80px, self.width - 32px);
     property <length> still-height: self.inner * 2 / 3;
-    property <length> notice-room: (ReplaysView.reason == "" && ReplaysView.notice != "" ? 36px : 0px) + (ReplaysView.reason == "" && ReplaysView.settings != "" ? 42px : 0px);
+    property <length> facts-y: root.still-height + 28px;
+    property <length> actions-y: root.facts-y + sheet-facts.natural-height + 12px;
+    property <length> actions-h: root.recent ? 92px : 188px;
+    property <length> content-h: root.actions-y + root.actions-h + 16px;
     arrive := Tween {
         duration: Theme.quick;
     }
@@ -859,153 +1008,164 @@ component DetailSheet inherits Rectangle {
     Rectangle {
         x: 0;
         y: parent.height - self.height + (1 - arrive.t) * 24px;
-        height: root.still-height + 344px + root.notice-room;
+        height: min(root.content-h, max(160px, parent.height - 24px));
         opacity: arrive.t;
         background: Theme.panel;
         border-width: 1px;
         border-color: Theme.line;
         TouchArea { }
 
-        Picture {
-            x: 16px;
-            y: 16px;
-            width: root.inner;
-            height: root.still-height;
-            ground: Theme.inset;
-        }
+        Flickable {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            content-width: self.width;
+            content-height: max(self.height, root.content-h);
+            interactive: root.content-h > self.height;
 
-        Rectangle {
-            x: 16px;
-            y: 16px;
-            width: root.inner;
-            height: root.still-height;
-            visible: !ReplaysView.still;
-            background: Theme.inset;
-        }
+            Picture {
+                x: 16px;
+                y: 16px;
+                width: root.inner;
+                height: root.still-height;
+                ground: Theme.inset;
+            }
 
-        Facts {
-            x: 16px;
-            y: root.still-height + 28px;
-            width: root.inner;
-            height: 112px + root.notice-room;
-        }
+            Rectangle {
+                x: 16px;
+                y: 16px;
+                width: root.inner;
+                height: root.still-height;
+                visible: !ReplaysView.still;
+                background: Theme.inset;
+            }
 
-        // (A replay's actions, or in the Recent / Queue tab their own: the others are hidden and passed by.)
-        Button {
-            x: 16px;
-            y: root.still-height + 148px + root.notice-room;
-            width: root.inner - 42px;
-            visible: root.local;
-            nav: "sheet.watch";
-            text: I18n.upper(@tr("Watch"));
-            kind: ButtonKind.main;
-            square: true;
-            enabled: root.local && ReplaysView.playable;
-        }
+            sheet-facts := Facts {
+                x: 16px;
+                y: root.facts-y;
+                width: root.inner;
+                height: self.natural-height;
+                show-room: true;
+            }
 
-        IconButton {
-            x: 16px + root.inner - self.width;
-            y: root.still-height + 148px + root.notice-room;
-            visible: root.local;
-            nav: "sheet.watch-more";
-            icon: Signs.arrow;
-            main: true;
-            enabled: root.local && ReplaysView.playable;
-        }
+            // (A replay's actions, or in the Recent / Queue tab their own: the others are hidden and passed by.)
+            Button {
+                x: 16px;
+                y: root.actions-y;
+                width: root.inner - 42px;
+                visible: root.local;
+                nav: "sheet.watch";
+                text: I18n.upper(@tr("Watch"));
+                kind: ButtonKind.main;
+                square: true;
+                enabled: root.local && ReplaysView.playable;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 196px + root.notice-room;
-            width: root.inner;
-            visible: root.local;
-            nav: "sheet.export";
-            text: I18n.upper(@tr("verb" => "Export video"));
-            enabled: root.local && ReplaysView.playable;
-        }
+            IconButton {
+                x: 16px + root.inner - self.width;
+                y: root.actions-y;
+                visible: root.local;
+                nav: "sheet.watch-more";
+                icon: Signs.arrow;
+                main: true;
+                enabled: root.local && ReplaysView.playable;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 244px + root.notice-room;
-            width: root.inner;
-            visible: root.local;
-            nav: "sheet.file";
-            text: ReplaysView.file-word;
-            enabled: root.local;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y + 48px;
+                width: root.inner;
+                visible: root.local;
+                nav: "sheet.export";
+                text: I18n.upper(@tr("verb" => "Export video"));
+                enabled: root.local && ReplaysView.playable;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 292px + root.notice-room;
-            width: root.inner;
-            visible: root.local;
-            nav: "sheet.delete";
-            text: I18n.upper(@tr("Delete"));
-            kind: ButtonKind.ghost;
-            danger: true;
-            enabled: root.local;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y + 96px;
+                width: root.inner;
+                visible: root.local;
+                nav: "sheet.file";
+                text: ReplaysView.file-word;
+                enabled: root.local;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 148px + root.notice-room;
-            width: root.inner;
-            visible: root.recent;
-            nav: "sheet.feed-watch";
-            text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
-            kind: ButtonKind.main;
-            enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y + 144px;
+                width: root.inner;
+                visible: root.local;
+                nav: "sheet.delete";
+                text: I18n.upper(@tr("Delete"));
+                kind: ButtonKind.ghost;
+                danger: true;
+                enabled: root.local;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 196px + root.notice-room;
-            width: root.inner;
-            visible: root.recent;
-            nav: "sheet.feed-save";
-            text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
-            enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y;
+                width: root.inner;
+                visible: root.recent;
+                nav: "sheet.feed-watch";
+                text: ReplaysView.feed-downloading ? I18n.upper(@tr("Downloading...")) : I18n.upper(@tr("Watch"));
+                kind: ButtonKind.main;
+                enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 148px + root.notice-room;
-            width: root.inner;
-            visible: root.queue;
-            nav: "sheet.watch-from";
-            text: I18n.upper(@tr("Watch from here"));
-            kind: ButtonKind.main;
-            enabled: root.queue && ReplaysView.playable;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y + 48px;
+                width: root.inner;
+                visible: root.recent;
+                nav: "sheet.feed-save";
+                text: ReplaysView.feed-saved ? I18n.upper(@tr("Saved")) : I18n.upper(@tr("Save locally"));
+                enabled: root.recent && ReplaysView.selected && !ReplaysView.feed-downloading && !ReplaysView.feed-saved;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 196px + root.notice-room;
-            width: root.inner;
-            visible: root.queue;
-            nav: "sheet.move-up";
-            text: I18n.upper(@tr("Move up"));
-            enabled: root.queue && ReplaysView.queue-chosen > 0;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y;
+                width: root.inner;
+                visible: root.queue;
+                nav: "sheet.watch-from";
+                text: I18n.upper(@tr("Watch from here"));
+                kind: ButtonKind.main;
+                enabled: root.queue && ReplaysView.playable;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 244px + root.notice-room;
-            width: root.inner;
-            visible: root.queue;
-            nav: "sheet.move-down";
-            text: I18n.upper(@tr("Move down"));
-            enabled: root.queue && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
-        }
+            Button {
+                x: 16px;
+                y: root.actions-y + 48px;
+                width: root.inner;
+                visible: root.queue;
+                nav: "sheet.move-up";
+                text: I18n.upper(@tr("Move up"));
+                enabled: root.queue && ReplaysView.queue-chosen > 0;
+            }
 
-        Button {
-            x: 16px;
-            y: root.still-height + 292px + root.notice-room;
-            width: root.inner;
-            visible: root.queue;
-            nav: "sheet.remove";
-            text: I18n.upper(@tr("Remove"));
-            kind: ButtonKind.ghost;
-            enabled: root.queue;
+            Button {
+                x: 16px;
+                y: root.actions-y + 96px;
+                width: root.inner;
+                visible: root.queue;
+                nav: "sheet.move-down";
+                text: I18n.upper(@tr("Move down"));
+                enabled: root.queue && ReplaysView.queue-chosen < ReplaysView.queue.length - 1;
+            }
+
+            Button {
+                x: 16px;
+                y: root.actions-y + 144px;
+                width: root.inner;
+                visible: root.queue;
+                nav: "sheet.remove";
+                text: I18n.upper(@tr("Remove"));
+                kind: ButtonKind.ghost;
+                enabled: root.queue;
+            }
         }
     }
 }

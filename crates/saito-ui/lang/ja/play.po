@@ -307,8 +307,11 @@ msgstr "観戦にもどる"
 msgid "Reduce flashes"
 msgstr "フラッシュ軽減"
 
-msgid "Hide aura number"
-msgstr "ドリームオーラの数値非表示"
+msgid "Hide aura number (EXE4-6)"
+msgstr "ドリームオーラの数値非表示（EXE4-6）"
+
+msgid "Dark buster arm (EXE5)"
+msgstr "悪ロックマンのバスター配色同期（EXE5）"
 
 msgid "HD chip art"
 msgstr "高解像度チップ画像"

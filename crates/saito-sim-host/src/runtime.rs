@@ -22,6 +22,7 @@ fn enhancements_config(e: Enhancements) -> EnhancementsConfig {
         fill: e.fill,
         reduce_flashes: e.reduce_flashes,
         hide_aura_number: e.hide_aura_number,
+        sync_dark_buster_arm: e.sync_dark_buster_arm,
         hd_chip_art: e.hd_chip_art,
     }
 }

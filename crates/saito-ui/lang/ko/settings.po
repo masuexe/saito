@@ -91,11 +91,17 @@ msgstr "깜빡임 감소"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "전투 중 갑작스러운 흰 화면 번쩍임을 줄입니다."
 
-msgid "Hide aura number"
-msgstr "드림오라 숫자 숨기기"
+msgid "Hide aura number (EXE4-6)"
+msgstr "드림오라 숫자 숨기기 (EXE4-6)"
 
-msgid "Hide the 200 number on LifeAura."
-msgstr "드림오라의 200 숫자를 숨깁니다."
+msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
+msgstr "드림오라의 200 숫자를 숨깁니다 (EXE4-6 전용)."
+
+msgid "Dark buster arm (EXE5)"
+msgstr "다크 록맨 버스터 색상 동기화 (EXE5)"
+
+msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
+msgstr "EXE5 록맨의 버스터 색상을 본체의 선악 색상과 맞춥니다 (일반, 솔 크로스, 포르테 크로스 지원)."
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
@@ -303,8 +309,8 @@ msgstr "빠른 외치기"
 msgid "EXE5DS ROM"
 msgstr "EXE5DS ROM"
 
-msgid "Not set (using GBA fallback)"
-msgstr "미설정 (GBA 대체 리소스 사용)"
+msgid "Not set (using GBA fallback; choose a .nds ROM for authentic Sol Cross, Danger art & DS audio)"
+msgstr "미설정 (GBA 대체 리소스 사용 중; .nds ROM을 선택하면 원본 솔 크로스, 위기 일러스트 및 DS 사운드를 사용합니다)"
 
 msgid "EXE5DS battle music"
 msgstr "EXE5DS 배틀 BGM"

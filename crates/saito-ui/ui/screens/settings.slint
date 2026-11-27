@@ -45,6 +45,7 @@ export global SettingsView {
     in property <bool> reduce-motion;
     in property <bool> reduce-flashes;
     in property <bool> hide-aura-number;
+    in property <bool> sync-dark-buster-arm;
     in property <bool> check-updates;
     in property <bool> can-update;
     in property <string> update-note;
@@ -495,8 +496,8 @@ component SettingsPage inherits Page {
                 Rectangle {
                     height: aura-number-row.height;
                     aura-number-row := SettingLabel {
-                        label: @tr("Hide aura number");
-                        note: @tr("Hide the 200 number on LifeAura.");
+                        label: @tr("Hide aura number (EXE4-6)");
+                        note: @tr("Hide the 200 number on LifeAura (EXE4-6 only).");
                         control-x: root.control-x;
                         control-width: root.control-width;
                     }
@@ -508,6 +509,25 @@ component SettingsPage inherits Page {
                         first: I18n.upper(@tr("Off"));
                         second: I18n.upper(@tr("On"));
                         chosen: SettingsView.hide-aura-number ? 1 : 0;
+                    }
+                }
+
+                Rectangle {
+                    height: dark-arm-row.height;
+                    dark-arm-row := SettingLabel {
+                        label: @tr("Dark buster arm (EXE5)");
+                        note: @tr("Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross).");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.sync-dark-buster-arm";
+                        first: I18n.upper(@tr("Off"));
+                        second: I18n.upper(@tr("On"));
+                        chosen: SettingsView.sync-dark-buster-arm ? 1 : 0;
                     }
                 }
 
@@ -633,7 +653,7 @@ component SettingsPage inherits Page {
                     height: exe5ds-rom-row.height;
                     exe5ds-rom-row := SettingLabel {
                         label: @tr("EXE5DS ROM");
-                        note: SettingsView.exe5ds-rom == "" ? @tr("Not set (using GBA fallback)") : SettingsView.exe5ds-rom;
+                        note: SettingsView.exe5ds-rom == "" ? @tr("Not set (using GBA fallback; choose a .nds ROM for authentic Sol Cross, Danger art & DS audio)") : SettingsView.exe5ds-rom;
                         cut: SettingsView.exe5ds-rom != "";
                         control-x: root.control-x;
                         control-width: root.control-width;

@@ -307,8 +307,11 @@ msgstr "返回观战"
 msgid "Reduce flashes"
 msgstr "防爆闪模式"
 
-msgid "Hide aura number"
-msgstr "隐藏梦之灵数字"
+msgid "Hide aura number (EXE4-6)"
+msgstr "隐藏梦之灵数字（EXE4-6）"
+
+msgid "Dark buster arm (EXE5)"
+msgstr "恶洛克人手炮同步配色（EXE5）"
 
 msgid "HD chip art"
 msgstr "高清体验"

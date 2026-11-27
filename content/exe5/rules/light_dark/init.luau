@@ -133,7 +133,8 @@ local function palette(side: number, navi: Object): number?
     if hub and stats.hub_style ~= 0 and stats.hub_style ~= 3 then
         return p + stats.hub_style * 5 + 20
     end
-    return p + (if in_soul then 0 else stats.element) * 5
+    -- Sol Cross (`pl0d.bin`) has only the 5 karma/emotion palettes (0..=4), with no elemental body rows.
+    return p + (if in_soul or stats.hub_style == 3 then 0 else stats.element) * 5
 end
 
 -- 0x08010030: a dark chip's use; false when it fizzles.

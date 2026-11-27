@@ -90,11 +90,17 @@ msgstr "フラッシュ軽減"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "バトル中の激しい白画面フラッシュを抑えます。"
 
-msgid "Hide aura number"
-msgstr "ドリームオーラの数値非表示"
+msgid "Hide aura number (EXE4-6)"
+msgstr "ドリームオーラの数値非表示（EXE4-6）"
 
-msgid "Hide the 200 number on LifeAura."
-msgstr "ドリームオーラの「200」表示を隠します。"
+msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
+msgstr "ドリームオーラの「200」表示を隠します（EXE4-6限定）。"
+
+msgid "Dark buster arm (EXE5)"
+msgstr "悪ロックマンのバスター配色同期（EXE5）"
+
+msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
+msgstr "EXE5のロックマンのバスター色を本体の善悪カラーに同期します（通常・ソルクロス・フォルテクロス対応）。"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せます。"
@@ -304,8 +310,8 @@ msgstr "クイック叫び"
 msgid "EXE5DS ROM"
 msgstr "EXE5DS ROM"
 
-msgid "Not set (using GBA fallback)"
-msgstr "未設定（GBA 代替素材を使用）"
+msgid "Not set (using GBA fallback; choose a .nds ROM for authentic Sol Cross, Danger art & DS audio)"
+msgstr "未設定（GBA 代替素材を使用中；.nds ROM を指定すると本来のソルクロス・ピンチ絵・DS音声が使用できます）"
 
 msgid "EXE5DS battle music"
 msgstr "EXE5DS バトルBGM"
