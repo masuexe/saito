@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="128" viewBox="0 0 64 16">
+<!-- EXE3 banner bar (64x16): left end upright 3 rows then slanting 45 degrees, right end slanting 45 degrees then upright; light top/left rim, dark bottom/right rim, body between. -->
+<path d="M7 3 L64.5 3 L57 10.5 L57 13 L-0.5 13 L7 5.5 Z" fill="#78a0f0" data-color="3"/>
+<path d="M8 4 L63.5 4 L57 10.5 L57 13 L0.914 13 L8 5.914 Z" fill="#303878" data-color="5"/>
+<path d="M8 4 L62.086 4 L56 10.086 L56 12 L1.914 12 L8 5.914 Z" fill="#4858a8" data-color="4"/>
+</svg>

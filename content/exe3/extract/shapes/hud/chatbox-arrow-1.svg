@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 16 16">
+<!-- EXE3 chatbox key-wait arrow, frame 2 of 3 (y=4): downward-pointing 45-degree beveled green triangle with drop shadow and highlight. -->
+<defs>
+<path id="tri" d="M1 0 L14 0 L14 1.5 L7.5 8 L1 1.5 Z"/>
+</defs>
+<g transform="translate(0 4)">
+<path d="M13 1 L15 1 L15 2.5 L8.5 9 L7.5 9 L7.5 7.5 Z" fill="#486078" data-color="6"/>
+<use href="#tri" fill="#18a800" data-color="11"/>
+<path d="M2 1 L13 1 L7.5 6.5 Z" fill="#88f870" data-color="9"/>
+<path d="M3.5 2 L12 2 L7.75 6.25 Z" fill="#18e800" data-color="10"/>
+<rect x="3" y="1" width="2" height="1" fill="#f0f8f8" data-color="8"/>
+</g>
+</svg>

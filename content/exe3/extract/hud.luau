@@ -48,9 +48,17 @@ end
 -- Battle init DMA list (0x08005FEC US / 0x08005F80 JP):
 local HUD_OBJ_TILES = pointer(0x0800_5FF8, 0x0800_5F8C) -- 0x4C0 bytes -> 0x06017000 (enemy HP digits etc.)
 local ENEMY_PALETTE = pointer(0x0800_6010, 0x0800_5FA4) -- 0x20 bytes  -> 0x020090E0
-local GAUGE_TILES = pointer(0x0800_601C, 0x0800_5FB0)   -- 0x6C0 bytes -> 0x06008600 (first_tile 0x30)
-local GAUGE_BYTES = 0x6C0
+local GAUGE_TILES = pointer(0x0800_601C, 0x0800_5FB0)   -- 0x380 B gauge + 0x340 B damage digits -> 0x06008600 (first_tile 0x30)
+local GAUGE_BYTES = 0x380
 local GAUGE_FIRST_TILE = 0x30
+-- EXE3 places full-gauge shimmer frame 0 at tile 9, frame tiles (CUSTOM/caps/top) at 10..16, "L or R" at 17..24,
+-- and shimmer frames 1..3 at 25..27. Remap into canonical `Hud` order (0..8 fill, 9..15 frame, 16..19 full, 20..27 L or R).
+local GAUGE_TILE_ORDER = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    10, 11, 12, 13, 14, 15, 16,
+    9, 25, 26, 27,
+    17, 18, 19, 20, 21, 22, 23, 24,
+}
 local HUD_TILES = pointer(0x0800_6028, 0x0800_5FBC)     -- 0x300 bytes -> 0x0600A000 (first_tile 0x100)
 local HUD_BYTES = 0x300
 local HUD_FIRST_TILE = 0x100
@@ -132,6 +140,19 @@ local function chip_icons(
     return out
 end
 
+local function remap_gauge_frame(rom: Rom, addr: number): Map
+    local hex_parts: { string } = {}
+    for i = 0, 35 do
+        local entry = rom:u16(addr + 2 * i)
+        local tile = bit32.band(entry, 0x3FF)
+        if tile >= 0x3A and tile <= 0x40 then
+            entry -= 1
+        end
+        table.insert(hex_parts, string.format("%02x%02x", bit32.band(entry, 0xFF), bit32.rshift(entry, 8)))
+    end
+    return gba.map(bytes.hex(table.concat(hex_parts)), 0, 36)
+end
+
 local function drawn(rom: Rom, h: Hud)
     -- EXE3's HUD DMA[5] (`HUD_TILES`, 0x300 B) holds the 12 HP-box glyphs (0..9, blank, edge); its battle damage
     -- digits (0..9, '+', '?', ':') sit right after the Custom Gauge tiles at `GAUGE_TILES + 0x380` (0x08010F12 uses
@@ -150,7 +171,7 @@ local function drawn(rom: Rom, h: Hud)
         gba.tiles(rom, font_at + 0x40 * 0x03, 0x40), -- '2' (26)
     })
     h.first_tile = HUD_FIRST_TILE
-    h.gauge_tiles = gba.tiles(rom, gauge_at, GAUGE_BYTES)
+    h.gauge_tiles = gba.tiles(rom, gauge_at, GAUGE_BYTES):pick(GAUGE_TILE_ORDER)
     h.gauge_first_tile = GAUGE_FIRST_TILE
     local hp_pals: { Palette } = {}
     for i = 0, 2 do
@@ -159,7 +180,7 @@ local function drawn(rom: Rom, h: Hud)
     h.hp_palettes = hp_pals
     h.gauge_palette = hp_pals[1]
     h.hp_box = gba.map(rom, at(rom, HP_BOX), 12)
-    h.gauge_frame = gba.map(rom, at(rom, GAUGE_FRAME), 36)
+    h.gauge_frame = remap_gauge_frame(rom, at(rom, GAUGE_FRAME))
     -- Enemy HP digits live at the start of the HUD OBJ DMA block (10 x 0x40 B = 0x280 B).
     local enemy_digits = gba.tiles(rom, at(rom, HUD_OBJ_TILES), 0x40 * 10)
     h.enemy_digits = { enemy_digits, enemy_digits, enemy_digits }

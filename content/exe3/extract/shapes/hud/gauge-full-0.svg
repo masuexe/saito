@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 8 8">
+<!-- EXE3 full custom gauge pulse, frame 1 of 4: compact glowing bar inside dark trough. -->
+<rect x="0" y="0" width="8" height="7" fill="#282828" data-color="2"/>
+<rect x="0" y="7" width="8" height="1" fill="#486078" data-color="12"/>
+<rect x="2" y="2" width="4" height="1" fill="#b0f868" data-color="13"/>
+<rect x="2" y="3" width="4" height="1" fill="#f8d800" data-color="9"/>
+</svg>

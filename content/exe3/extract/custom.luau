@@ -170,10 +170,15 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         picture = add_picture,
     }
 
+    -- Pad each 4x3 Regular chip frame (0x180 B = 12 tiles) with 4 blank tiles to canonical 4x4 (32x32) layout.
+    local blank4 = gba.tiles(bytes.hex(string.rep("00", 0x80)), 0, 0x80)
+
     return {
         layout = {
             ok_cursor = { x = 0x58, y = 0x70, corners = ok_corners },
         },
+        -- The window's label: CHIP SELECT over the slots (tiles 0x0F to 0x15, color 4 on 1).
+        labels = { { name = "chip-select", first = 0x0F, last = 0x15, top = 3, bottom = 6, letters = { 4 } } },
         buttons = { { name = custom.ADD_BUTTON, value = add_button } },
         window_tiles = custom.tiles(rom, WINDOW_TILES),
         window_maps = { gba.map(rom, at(rom, WINDOW_MAP), MAP_CELLS) },
@@ -186,7 +191,8 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
             ok_picked = custom.picture(rom, custom.OK_PICKED),
         },
         codes = gba.tiles(rom, at(rom, CODES), 0x40 * CODE_GLYPHS),
-        elements = gba.tiles(rom, at(rom, ELEMENTS), 0x80 * ELEMENT_COUNT),
+        -- The 5 transparent sprite element icons (null, elec, heat, aqua, wood) start 0x1E0 B past the menu-icon base.
+        elements = gba.tiles(rom, at(rom, ELEMENTS) + 0x1E0, 0x80 * ELEMENT_COUNT),
         -- Custom screen chip-power digits (0..9 at AUX_TILES + 0x20, '?' at AUX_TILES + 0x2E0; 0x0800EE58 tile 0x81).
         digits = gba.join({
             gba.tiles(rom, at(rom, AUX_TILES.place) + 0x20, 0x40 * 10),
@@ -197,7 +203,7 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         versioned = { base_version = versions.WHITE, base = {} },
         cursor = custom.tiles(rom, CURSOR),
         cursor_palette = palette(rom, at(rom, CURSOR_PALETTE)),
-        regular = gba.join({ custom.tiles(rom, REGULAR_0), custom.tiles(rom, REGULAR_1) }),
+        regular = gba.join({ custom.tiles(rom, REGULAR_0), blank4, custom.tiles(rom, REGULAR_1), blank4 }),
         element_sprite = {
             x = 24,
             y = 80,
