@@ -251,18 +251,38 @@ pub fn extract_cross_art_with_fallback(roms: &crate::RomSource, fallback_dir: Op
     Some(HdCrossArt { sheets, lang: saito_assets::BASE_LANGUAGE.to_string() })
 }
 
+/// File name of the Legacy Collection Vol. 1 art archive (both the original `launcher/data/vol1.dat`
+/// and the compacted chip-only copy stowed on phones/browsers).
+pub const VOL1_FILE: &str = "vol1.dat";
+
 /// File name of the Legacy Collection Vol. 2 art archive (both the original `launcher/data/vol2.dat`
 /// and the compacted chip-only copy stowed on phones/browsers).
 pub const VOL2_FILE: &str = "vol2.dat";
 
+/// Games in Battle Network Legacy Collection Vol. 1 with HD chip artwork.
+const VOL1_GAMES: [&str; 3] = ["exe1", "exe2", "exe3"];
 /// Games in Battle Network Legacy Collection Vol. 2 with HD chip artwork.
 const VOL2_GAMES: [&str; 3] = ["exe4", "exe5", "exe6"];
-/// Upper bound (inclusive) on ROM chip IDs to scan when compacting `vol2.dat`.
+/// Upper bound (inclusive) on ROM chip IDs to scan when compacting `vol1.dat` / `vol2.dat`.
 const MAX_ROM_CHIP_ID: u16 = 512;
 
-/// Known `000.png` ("NO DATA") CRC32 base hashes for Vol. 2 games inside `launcher/data/vol2.dat`.
+/// Archive filename (`vol1.dat` or `vol2.dat`) that holds HD chip artwork for `game`.
+pub fn vol_file_for_game(game: &str) -> Option<&'static str> {
+    if VOL1_GAMES.contains(&game) {
+        Some(VOL1_FILE)
+    } else if VOL2_GAMES.contains(&game) {
+        Some(VOL2_FILE)
+    } else {
+        None
+    }
+}
+
+/// Known `000.png` ("NO DATA") CRC32 base hashes inside Legacy Collection `vol1.dat` and `vol2.dat`.
 fn base_hash(game: &str) -> Option<u32> {
     match game {
+        "exe1" => Some(0xdf7e_f9a9),
+        "exe2" => Some(0xe6f3_c56c),
+        "exe3" => Some(0xf188_d12f),
         "exe4" => Some(0x95e9_bce6),
         "exe5" => Some(0x8292_a8a5),
         "exe6" => Some(0xbb1f_9460),
@@ -270,10 +290,10 @@ fn base_hash(game: &str) -> Option<u32> {
     }
 }
 
-/// Set of all chip artwork hashes across EXE4, EXE5, and EXE6 (IDs `1..=512`).
-fn all_chip_hashes() -> HashSet<u32> {
-    let mut set = HashSet::with_capacity(VOL2_GAMES.len() * MAX_ROM_CHIP_ID as usize);
-    for game in VOL2_GAMES {
+/// Set of all chip artwork hashes for `games` (IDs `1..=512`).
+fn chip_hashes_for(games: &[&str]) -> HashSet<u32> {
+    let mut set = HashSet::with_capacity(games.len() * MAX_ROM_CHIP_ID as usize);
+    for &game in games {
         for id in 1..=MAX_ROM_CHIP_ID {
             if let Some(h) = chip_hash(game, id) {
                 set.insert(h);
@@ -283,12 +303,27 @@ fn all_chip_hashes() -> HashSet<u32> {
     set
 }
 
+/// Check whether `path` is a readable `vol1.dat` archive containing at least one Vol. 1 chip entry.
+pub fn is_valid_vol1(path: &Path) -> bool {
+    is_valid_vol(path, &VOL1_GAMES)
+}
+
 /// Check whether `path` is a readable `vol2.dat` archive containing at least one Vol. 2 chip entry.
 pub fn is_valid_vol2(path: &Path) -> bool {
+    is_valid_vol(path, &VOL2_GAMES)
+}
+
+fn is_valid_vol(path: &Path, games: &[&str]) -> bool {
     let Ok(file) = File::open(path) else { return false };
     let Ok(table) = read_table(file) else { return false };
-    let wanted = all_chip_hashes();
+    let wanted = chip_hashes_for(games);
     table.keys().any(|h| wanted.contains(h))
+}
+
+/// Compact a full Legacy Collection `vol1.dat` into a chip-art-only `vol1.dat` at `dst`,
+/// preserving the exact archive binary format so [`index_from_vol_dat`] reads both identically.
+pub fn compact_vol1(src: &Path, dst: &Path) -> std::io::Result<usize> {
+    compact_vol(src, dst, &VOL1_GAMES, "vol1.dat", "Vol. 1")
 }
 
 /// Compact a full Legacy Collection `vol2.dat` (~1.2 GB) into a chip-art-only `vol2.dat` (~163 MB)
@@ -296,9 +331,13 @@ pub fn is_valid_vol2(path: &Path) -> bool {
 /// identically. Streams entry payloads without loading the archive into RAM.
 /// Returns the number of chip entries written.
 pub fn compact_vol2(src: &Path, dst: &Path) -> std::io::Result<usize> {
+    compact_vol(src, dst, &VOL2_GAMES, "vol2.dat", "Vol. 2")
+}
+
+fn compact_vol(src: &Path, dst: &Path, games: &[&str], file_label: &str, vol_label: &str) -> std::io::Result<usize> {
     let mut reader = File::open(src)?;
     let table = read_table(&mut reader)?;
-    let wanted = all_chip_hashes();
+    let wanted = chip_hashes_for(games);
     let mut keep: Vec<(u32, u64, u32)> = table
         .into_iter()
         .filter(|(h, (_, sz))| wanted.contains(h) && *sz > 0)
@@ -307,7 +346,10 @@ pub fn compact_vol2(src: &Path, dst: &Path) -> std::io::Result<usize> {
     // Sort by source offset so reads are sequential.
     keep.sort_by_key(|&(_, off, _)| off);
     if keep.is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "vol2.dat contains no Vol. 2 chip artwork entries"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{file_label} contains no {vol_label} chip artwork entries"),
+        ));
     }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
@@ -390,12 +432,12 @@ fn read_table(mut reader: impl Read) -> std::io::Result<HashMap<u32, (u64, u32)>
     Ok(map)
 }
 
-/// Build an on-demand [`HdChipArtIndex`] for `game` from `vol2_dat`, mapping local chip keys to
-/// `(offset, size)` in `vol2_dat`. Returns `None` if the game has no Vol. 2 mapping, the archive
-/// cannot be read, or no chip entries match.
-pub fn index_from_vol2(vol2_dat: &Path, game: &str, chips: &BTreeMap<u16, String>) -> Option<HdChipArtIndex> {
+/// Build an on-demand [`HdChipArtIndex`] for `game` from a Legacy Collection `vol1.dat` or
+/// `vol2.dat` archive, mapping local chip keys to `(offset, size)`. Returns `None` if the game
+/// has no mapping, the archive cannot be read, or no chip entries match.
+pub fn index_from_vol_dat(vol_dat: &Path, game: &str, chips: &BTreeMap<u16, String>) -> Option<HdChipArtIndex> {
     base_hash(game)?;
-    let file = File::open(vol2_dat).ok()?;
+    let file = File::open(vol_dat).ok()?;
     let table = read_table(file).ok()?;
     let mut entries = BTreeMap::new();
     for (&rom_id, key) in chips {
@@ -412,7 +454,12 @@ pub fn index_from_vol2(vol2_dat: &Path, game: &str, chips: &BTreeMap<u16, String
     if entries.is_empty() {
         return None;
     }
-    Some(HdChipArtIndex { archive: vol2_dat.to_path_buf(), entries, elements: BTreeMap::new() })
+    Some(HdChipArtIndex { archive: vol_dat.to_path_buf(), entries, elements: BTreeMap::new() })
+}
+
+/// Alias for [`index_from_vol_dat`] kept for existing Vol. 2 callers.
+pub fn index_from_vol2(vol2_dat: &Path, game: &str, chips: &BTreeMap<u16, String>) -> Option<HdChipArtIndex> {
+    index_from_vol_dat(vol2_dat, game, chips)
 }
 
 #[cfg(test)]
@@ -433,7 +480,14 @@ mod tests {
         // EXE6: 000 = 0xbb1f9460, 313 (Falzar) = 0x060b2788.
         assert_eq!(chip_hash("exe6", 0), Some(0xbb1f_9460));
         assert_eq!(chip_hash("exe6", 313), Some(0x060b_2788));
-        assert_eq!(chip_hash("exe1", 1), None);
+        // Verified against Steam MMBN Legacy Collection Vol. 1 launcher/data/vol1.dat:
+        assert_eq!(chip_hash("exe1", 0), Some(0xdf7e_f9a9));
+        assert_eq!(chip_hash("exe2", 0), Some(0xe6f3_c56c));
+        assert_eq!(chip_hash("exe3", 0), Some(0xf188_d12f));
+        assert_eq!(chip_hash("exe3", 1), Some(0xcce8_f89f));
+        assert_eq!(vol_file_for_game("exe3"), Some(VOL1_FILE));
+        assert_eq!(vol_file_for_game("exe6"), Some(VOL2_FILE));
+        assert_eq!(chip_hash("unknown", 1), None);
     }
 
     #[test]
@@ -484,6 +538,7 @@ mod tests {
         std::fs::write(&src, buf).unwrap();
 
         assert!(is_valid_vol2(&src));
+        assert!(!is_valid_vol1(&src));
         let count = compact_vol2(&src, &dst).unwrap();
         assert_eq!(count, 1);
         assert!(is_valid_vol2(&dst));
@@ -494,6 +549,41 @@ mod tests {
         let &(off, sz) = idx.entries.get("cannon").unwrap();
         let out_bytes = std::fs::read(&dst).unwrap();
         assert_eq!(&out_bytes[off as usize..off as usize + sz as usize], payload_chip);
+    }
+
+    #[test]
+    fn compact_vol1_keeps_only_vol1_chip_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("vol1.dat");
+        let dst = dir.path().join("vol1_compact.dat");
+        let h_exe3 = chip_hash("exe3", 1).unwrap();
+        let h_exe6 = chip_hash("exe6", 1).unwrap();
+        let payload_exe6 = b"vol2-chip";
+        let payload_exe3 = b"exe3-cannon-png";
+        let header_len = 4 + 2 * 12;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(&h_exe6.to_le_bytes());
+        buf.extend_from_slice(&(header_len as u32).to_le_bytes());
+        buf.extend_from_slice(&(payload_exe6.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&h_exe3.to_le_bytes());
+        buf.extend_from_slice(&((header_len + payload_exe6.len()) as u32).to_le_bytes());
+        buf.extend_from_slice(&(payload_exe3.len() as u32).to_le_bytes());
+        buf.extend_from_slice(payload_exe6);
+        buf.extend_from_slice(payload_exe3);
+        std::fs::write(&src, buf).unwrap();
+
+        assert!(is_valid_vol1(&src));
+        assert_eq!(compact_vol1(&src, &dst).unwrap(), 1);
+        assert!(is_valid_vol1(&dst));
+        assert!(!is_valid_vol2(&dst));
+
+        let mut chips = BTreeMap::new();
+        chips.insert(1, "exe3:cannon".to_string());
+        let idx = index_from_vol_dat(&dst, "exe3", &chips).unwrap();
+        let &(off, sz) = idx.entries.get("cannon").unwrap();
+        let out_bytes = std::fs::read(&dst).unwrap();
+        assert_eq!(&out_bytes[off as usize..off as usize + sz as usize], payload_exe3);
     }
 
     #[test]

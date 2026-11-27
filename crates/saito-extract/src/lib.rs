@@ -138,11 +138,20 @@ impl Extraction {
         self.attach_hd_chip_art_with_fallback(roms, None);
     }
 
-    /// Like [`Extraction::attach_hd_chip_art`], falling back to `fallback` if `roms` has no `vol2.dat`.
+    /// Like [`Extraction::attach_hd_chip_art`], falling back to `fallback` (or a sibling `vol1.dat`
+    /// in the same directory for Vol. 1 games) if `roms` does not provide the volume's art archive.
     pub fn attach_hd_chip_art_with_fallback(&mut self, roms: &RomSource, fallback: Option<&std::path::Path>) {
-        let vol2 = roms.vol2_dat().or_else(|| fallback.filter(|p| saito_files::is_file(p)).map(std::path::Path::to_path_buf));
-        if let Some(vol2) = vol2 {
-            self.graphics.custom.hd_chip_art = hd_art::index_from_vol2(&vol2, &self.game, &self.names.chips);
+        let vol_dat = roms.vol_dat_for_game(&self.game).or_else(|| {
+            let wanted = hd_art::vol_file_for_game(&self.game)?;
+            let fb = fallback?;
+            if fb.file_name().and_then(|n| n.to_str()) == Some(wanted) && saito_files::is_file(fb) {
+                return Some(fb.to_path_buf());
+            }
+            let sibling = fb.parent()?.join(wanted);
+            saito_files::is_file(&sibling).then_some(sibling)
+        });
+        if let Some(vol_dat) = vol_dat {
+            self.graphics.custom.hd_chip_art = hd_art::index_from_vol_dat(&vol_dat, &self.game, &self.names.chips);
         }
         if self.game == "exe6" {
             self.graphics.custom.hd_cross_art = hd_art::extract_cross_art_with_fallback(roms, fallback.and_then(std::path::Path::parent));

@@ -37,35 +37,58 @@ use std::path::{Path, PathBuf};
 /// The environment variable that names the ROMs for the tools and development ([`RomSource::from_env`]).
 pub const ROMS: &str = "SAITO_ROMS";
 
-/// The per-game archives and optional HD chip art archive (`vol2.dat`) of a folder chosen as the install:
-/// the phone and browser pickers read only these from the folder chosen (`saito_dialogs::open_folder`).
+/// The per-game archives and optional HD chip art archives (`vol1.dat` / `vol2.dat`) of a folder chosen as
+/// the install: the phone and browser pickers read only these from the folder chosen (`saito_dialogs::open_folder`).
 /// (`exe?*`: not the shared `exe.dat`, which holds no ROM and is large.)
-pub const ARCHIVES: [&str; 6] = [
+pub const ARCHIVES: [&str; 9] = [
     "exe/data/exe?*.dat",
     "data/exe?*.dat",
     "exe?*.dat",
+    "launcher/data/vol1.dat",
+    "data/vol1.dat",
+    "vol1.dat",
     "launcher/data/vol2.dat",
     "data/vol2.dat",
     "vol2.dat",
 ];
 
-/// Vol. 2's Steam app id (reference `Volume::Vol2`).
+/// Vol. 1 and Vol. 2 Steam app IDs (`1798010` = BN1–3, `1798020` = BN4–6).
 #[cfg(not(target_arch = "wasm32"))]
-const STEAM_APP_ID: u32 = 1798020;
+const STEAM_APP_IDS: [u32; 2] = [1798020, 1798010];
 
-/// An install of the collection: the folder its archives are in, and the per-game archives.
+/// An install of the collection: the primary folder its archives are in, and all per-game archives
+/// discovered across Vol. 2 and/or Vol. 1.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Install {
-    /// `<install>/exe/data`.
+    /// Primary `<install>/exe/data`.
     pub data: PathBuf,
     pub archives: Vec<PathBuf>,
 }
 
 impl Install {
-    /// The install: in `chosen` (a folder the player chose) if it holds one, else where Steam has it. None:
-    /// neither has.
+    /// The install: in `chosen` (a folder the player chose) if it holds one, else where Steam has
+    /// Legacy Collection Vol. 2 and/or Vol. 1 installed. When multiple Steam volumes are installed,
+    /// their archives are merged into one [`Install`] so games from both volumes are available together.
     pub fn find(chosen: Option<&Path>) -> Option<Install> {
-        chosen.and_then(Install::at).or_else(|| steam().and_then(|dir| Install::at(&dir)))
+        let mut installs: Vec<Install> = Vec::new();
+        if let Some(chosen) = chosen.and_then(Install::at) {
+            installs.push(chosen);
+        }
+        for dir in steam_all() {
+            if let Some(inst) = Install::at(&dir) {
+                installs.push(inst);
+            }
+        }
+        let mut iter = installs.into_iter();
+        let mut merged = iter.next()?;
+        for other in iter {
+            for archive in other.archives {
+                if !merged.archives.contains(&archive) {
+                    merged.archives.push(archive);
+                }
+            }
+        }
+        Some(merged)
     }
 
     /// The install in `folder`: the collection's own folder (the one with `exe/` in it), or its `exe` or
@@ -77,18 +100,42 @@ impl Install {
         })
     }
 
+    /// Locate a launcher art archive (`vol1.dat` or `vol2.dat`) beside any volume directory represented
+    /// in this install (`self.data` plus any merged volume's archive parent directories).
+    fn vol_dat_file(&self, file_name: &str) -> Option<PathBuf> {
+        let mut data_dirs: Vec<&Path> = vec![self.data.as_path()];
+        for archive in &self.archives {
+            if let Some(parent) = archive.parent()
+                && !data_dirs.contains(&parent)
+            {
+                data_dirs.push(parent);
+            }
+        }
+        for data in data_dirs {
+            let mut candidates = Vec::with_capacity(3);
+            if let Some(root) = data.parent().and_then(Path::parent) {
+                candidates.push(root.join("launcher").join("data").join(file_name));
+            }
+            candidates.push(data.join(file_name));
+            if let Some(parent) = data.parent() {
+                candidates.push(parent.join(file_name));
+            }
+            if let Some(found) = candidates.into_iter().find(|p| saito_files::is_file(p)) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Path to Legacy Collection Vol. 1's `vol1.dat` if present.
+    pub fn vol1_dat(&self) -> Option<PathBuf> {
+        self.vol_dat_file(crate::hd_art::VOL1_FILE)
+    }
+
     /// Path to Legacy Collection Vol. 2's `vol2.dat` if present: checks `<install>/launcher/data/vol2.dat`
     /// beside `<install>/exe/data`, as well as `vol2.dat` placed directly in `exe/data/` or `exe/`.
     pub fn vol2_dat(&self) -> Option<PathBuf> {
-        let mut candidates = Vec::with_capacity(3);
-        if let Some(root) = self.data.parent().and_then(Path::parent) {
-            candidates.push(root.join("launcher").join("data").join(crate::hd_art::VOL2_FILE));
-        }
-        candidates.push(self.data.join(crate::hd_art::VOL2_FILE));
-        if let Some(parent) = self.data.parent() {
-            candidates.push(parent.join(crate::hd_art::VOL2_FILE));
-        }
-        candidates.into_iter().find(|p| saito_files::is_file(p))
+        self.vol_dat_file(crate::hd_art::VOL2_FILE)
     }
 }
 
@@ -175,13 +222,13 @@ impl RomSource {
     }
 
     /// The ROMs the tools and development read: `$SAITO_ROMS` ([`ROMS`]), a folder as [`RomSource::at`] takes
-    /// it; unset, the Legacy Collection where Steam installed it. An error says how to name them.
+    /// it; unset, the Legacy Collection (Vol. 2 and/or Vol. 1) where Steam installed it. An error says how to name them.
     pub fn from_env() -> Result<RomSource, Error> {
         match std::env::var_os(ROMS) {
             Some(dir) => RomSource::at(Path::new(&dir)).map_err(|e| Error(format!("${ROMS}: {e}"))),
-            None => steam().and_then(|dir| Install::at(&dir)).map(RomSource::Collection).ok_or_else(|| {
+            None => Install::find(None).map(RomSource::Collection).ok_or_else(|| {
                 Error(format!(
-                    "no ROMs: ${ROMS} isn't set, and Steam has no Battle Network Legacy Collection Vol. 2 installed; set ${ROMS} to the collection's folder, or to a folder of its ROMs"
+                    "no ROMs: ${ROMS} isn't set, and Steam has no Battle Network Legacy Collection installed; set ${ROMS} to the collection's folder, or to a folder of its ROMs"
                 ))
             }),
         }
@@ -243,6 +290,13 @@ impl RomSource {
             crate::hd_art::stow_cross_sheets(&install.data, dir);
         }
         #[cfg(not(target_arch = "wasm32"))]
+        if let Some(vol1) = self.vol1_dat() {
+            let dst = dir.join(crate::hd_art::VOL1_FILE);
+            if let Err(e) = crate::hd_art::compact_vol1(&vol1, &dst) {
+                log::warn!("compacting {} for HD chip art: {e}", vol1.display());
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(vol2) = self.vol2_dat() {
             let dst = dir.join(crate::hd_art::VOL2_FILE);
             if let Err(e) = crate::hd_art::compact_vol2(&vol2, &dst) {
@@ -262,6 +316,19 @@ impl RomSource {
         Ok(copies)
     }
 
+    /// Path to Legacy Collection Vol. 1's `vol1.dat` if this source has one (either a full install's
+    /// `launcher/data/vol1.dat` or a compacted copy stowed alongside [`RomSource::Copies`]).
+    pub fn vol1_dat(&self) -> Option<PathBuf> {
+        match self {
+            RomSource::Collection(install) => install.vol1_dat(),
+            RomSource::Copies(dir) => {
+                let candidate = dir.join(crate::hd_art::VOL1_FILE);
+                saito_files::is_file(&candidate).then_some(candidate)
+            }
+            RomSource::Files(_) => None,
+        }
+    }
+
     /// Path to Legacy Collection Vol. 2's `vol2.dat` if this source has one (either a full install's
     /// `launcher/data/vol2.dat` or a compacted copy stowed alongside [`RomSource::Copies`]).
     pub fn vol2_dat(&self) -> Option<PathBuf> {
@@ -272,6 +339,15 @@ impl RomSource {
                 saito_files::is_file(&candidate).then_some(candidate)
             }
             RomSource::Files(_) => None,
+        }
+    }
+
+    /// Path to the HD chip art archive (`vol1.dat` or `vol2.dat`) for `game`, if this source has it.
+    pub fn vol_dat_for_game(&self, game: &str) -> Option<PathBuf> {
+        match crate::hd_art::vol_file_for_game(game)? {
+            crate::hd_art::VOL1_FILE => self.vol1_dat(),
+            crate::hd_art::VOL2_FILE => self.vol2_dat(),
+            _ => None,
         }
     }
 
@@ -360,17 +436,30 @@ pub fn check_copy(name: &str, bytes: &[u8], codes: &[String]) -> Result<String, 
     Ok(code.to_string())
 }
 
-/// The collection's folder as Steam has it installed, if it is: in the first Steam found that has it. (No Steam
-/// is nothing gone wrong.)
-fn steam() -> Option<PathBuf> {
+/// All Legacy Collection folders (Vol. 2 and Vol. 1) found in Steam libraries.
+fn steam_all() -> Vec<PathBuf> {
     // (The browser can't look for Steam: the player chooses the folder.)
     #[cfg(target_arch = "wasm32")]
-    return None;
+    return Vec::new();
     #[cfg(not(target_arch = "wasm32"))]
-    steamlocate::locate_all().ok()?.into_iter().find_map(|steam| {
-        let (app, library) = steam.find_app(STEAM_APP_ID).map_err(|e| log::warn!("finding the Legacy Collection in Steam: {e}")).ok().flatten()?;
-        Some(library.resolve_app_dir(&app))
-    })
+    {
+        let Ok(steams) = steamlocate::locate_all() else { return Vec::new() };
+        let mut out = Vec::new();
+        for app_id in STEAM_APP_IDS {
+            if let Some(dir) = steams.iter().find_map(|steam| {
+                let (app, library) = steam
+                    .find_app(app_id)
+                    .map_err(|e| log::warn!("finding Legacy Collection ({app_id}) in Steam: {e}"))
+                    .ok()
+                    .flatten()?;
+                Some(library.resolve_app_dir(&app))
+            }) && !out.contains(&dir)
+            {
+                out.push(dir);
+            }
+        }
+        out
+    }
 }
 
 /// The per-game archives in an install's data folder: each `exe*.dat` but the shared `exe.dat`.
@@ -588,5 +677,70 @@ mod tests {
         ]);
         assert_eq!(roms[0].read().unwrap(), us);
         assert_eq!(source.find(&codes(&["BR6E", "BR5E"])).unwrap_err().0, codes(&["BR5E"]));
+    }
+
+    /// A merged Vol. 1 + Vol. 2 install resolves ROMs and launcher `vol1.dat` / `vol2.dat` archives from both roots.
+    #[test]
+    fn merged_vol1_and_vol2_install_resolves_both_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1_root = dir.path().join("vol1");
+        let v2_root = dir.path().join("vol2");
+        let v1_data = v1_root.join("exe").join("data");
+        let v2_data = v2_root.join("exe").join("data");
+        let exe3_w = fake_rom("A6BE", 0x1000);
+        let exe6_f = fake_rom("BR6E", 0x1000);
+        archive(&v1_data.join("exe3.dat"), &[("exe3/rom_e.srl", &exe3_w)]);
+        archive(&v2_data.join("exe6f.dat"), &[("exe6f/rom_e.srl", &exe6_f)]);
+        let v1_art = v1_root.join("launcher").join("data").join("vol1.dat");
+        let v2_art = v2_root.join("launcher").join("data").join("vol2.dat");
+        saito_files::create_dir_all(v1_art.parent().unwrap()).unwrap();
+        saito_files::create_dir_all(v2_art.parent().unwrap()).unwrap();
+        saito_files::write(&v1_art, b"v1").unwrap();
+        saito_files::write(&v2_art, b"v2").unwrap();
+
+        let install = Install {
+            data: v2_data.clone(),
+            archives: vec![v2_data.join("exe6f.dat"), v1_data.join("exe3.dat")],
+        };
+        let source = RomSource::Collection(install);
+        let found = source.find(&codes(&["A6BE", "BR6E"])).unwrap();
+        assert_eq!(found[0].read().unwrap(), exe3_w);
+        assert_eq!(found[1].read().unwrap(), exe6_f);
+        assert_eq!(source.vol_dat_for_game("exe3"), Some(v1_art));
+        assert_eq!(source.vol_dat_for_game("exe6"), Some(v2_art));
+        assert_eq!(source.vol_dat_for_game("unknown"), None);
+    }
+
+    /// Smoke test against a real Legacy Collection Vol. 1 install pointed to by `$SAITO_ROMS`:
+    /// verifies all four EXE3 ROMs load, `m4a::rom::extract` parses the sound bank, `sprite::sheet`
+    /// decodes Battle MegaMan, and `vol1.dat` indexes EXE3 HD chip artwork.
+    #[test]
+    #[ignore]
+    fn vol1_exe3_smoke_from_env() {
+        let source = RomSource::from_env().expect("set SAITO_ROMS to Legacy Collection Vol. 1");
+        let roms = source.find(&codes(&["A6BE", "A3XE", "A6BJ", "A3XJ"])).expect("all 4 EXE3 ROMs");
+        assert_eq!(roms.len(), 4);
+        let a6be = roms[0].read().expect("read A6BE");
+        let (bank, errors) = m4a::rom::extract(&a6be).expect("extract A6BE M4A sound bank");
+        eprintln!("EXE3 A6BE M4A: songs={}, voicegroups={}, errors={}", bank.songs.len(), bank.voicegroups.len(), errors.len());
+        assert!(bank.songs.len() >= 300, "expected >= 300 M4A songs, got {}", bank.songs.len());
+        // Decode category 1 slot 0 (Battle MegaMan) via existing sprite.rs decoder!
+        let rom = crate::rom::Rom(a6be);
+        let list = rom.u32(0x0800_2704);
+        let cat1 = rom.u32(list + 4);
+        let mega_ptr = rom.u32(cat1);
+        let arch = crate::sprite::archive(&rom, mega_ptr).expect("decode MegaMan sprite archive");
+        let sheet = crate::sprite::sheet(&arch, 4, 0).expect("parse MegaMan sprite sheet");
+        eprintln!("EXE3 A6BE MegaMan sprite: animations={}, tilesets={}, palette_sets={}", sheet.animations.len(), sheet.tilesets.len(), sheet.palette_sets.len());
+        assert!(!sheet.animations.is_empty());
+        // Verify vol1.dat HD chip art indexing for EXE3!
+        let vol1 = source.vol_dat_for_game("exe3").expect("vol1.dat beside Vol. 1 install");
+        let mut chips = std::collections::BTreeMap::new();
+        for id in 1..=312u16 {
+            chips.insert(id, format!("exe3:chip_{id}"));
+        }
+        let hd = crate::hd_art::index_from_vol_dat(&vol1, "exe3", &chips).expect("index EXE3 HD chip art");
+        eprintln!("EXE3 vol1.dat HD chip art entries matched: {}", hd.entries.len());
+        assert!(hd.entries.len() >= 280);
     }
 }
