@@ -1,0 +1,3 @@
+# EXE3's core object pool kinds (Pool 1: 8 actors @ 0x0800369C, Pool 3: 32 attacks @ 0x08003980, Pool 4: 32 effects @ 0x08003EBC).
+
+"engine/player" = { pool = "actor", index = 0 }

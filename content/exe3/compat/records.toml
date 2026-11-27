@@ -1,0 +1,27 @@
+# EXE3's record numbers (styles, elements, navis, barriers).
+
+[navis]
+"megaman" = 0
+
+# Style types (packed in byte as (style_type << 3) | element, 0x080072B8 / 0x0804736C).
+[styles]
+"normal" = 0
+"guts" = 1
+"custom" = 2
+"team" = 3
+"shield" = 4
+"ground" = 5
+"shadow" = 6
+"bug" = 7
+
+# Elements (low 3 bits of style byte, and chip record +0x06).
+[elements]
+"null" = 0
+"elec" = 1
+"heat" = 2
+"aqua" = 3
+"wood" = 4
+
+# Starting barriers/auras (BattleMegaManInit 0x080B048C sets FirstBarrier = id 8, 100 HP).
+[barriers]
+"barrier/first-barrier" = 8

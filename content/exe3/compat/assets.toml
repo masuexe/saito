@@ -1,0 +1,82 @@
+# EXE3's asset names, verified against the Legacy Collection Vol. 1 ROMs (A6BE/A3XE/A6BJ/A3XJ).
+# Sprites: "cc-ii" (category byte offset in SpritePointersList 0x0802477C and slot index).
+# Battle sprites live in categories 0x04..=0x1C (Battle MegaMan is 04-00); portraits in 0x20.
+
+[sprites]
+megaman = "04-00"
+megaman-guts = "04-01"
+megaman-custom = "04-02"
+megaman-team = "04-03"
+megaman-shield = "04-04"
+megaman-ground = "04-05"
+megaman-shadow = "04-06"
+megaman-bug = "04-07"
+portrait-megaman = "20-00"
+portrait-lan = "20-01"
+
+# Battle & menu sounds (M4A gSongTable at A6BE 0x08148B6C, 331 entries).
+[sounds]
+battle-net = 0x1e       # Virus Busting / NetBattle (0x08006AFA)
+battle-win = 0x1f       # Victory fanfare (0x08015946)
+battle-boss = 0x20      # Boss / Match-point NetBattle (0x08006ADA, 0x080096B8)
+netbattle-1 = 0x19      # NetBattle round BGM table (0x080076C9)
+netbattle-2 = 0x1a
+netbattle-3 = 0x1c
+netbattle-4 = 0x05
+sfx-cursor = 0x67
+sfx-confirm = 0x68
+sfx-cancel = 0x69
+sfx-error = 0x6a
+sfx-custom-open = 0x6c
+sfx-recover = 0x72
+sfx-chip-select = 0xc7
+
+# Battle backgrounds (area 0xF0 table at A6BE 0x080250EC -> 0x080257C8, 30 entries 0..=29).
+# NetBattle stages use [0, 4, 5, 6, 23, 16, 2, 10] (0x0803EAB0).
+[backgrounds]
+acdc-net = 0
+acdc-net-dark = 1
+lan-hp = 2
+school-comp = 3
+sci-lab-net = 4
+yoka-net = 5
+beach-net = 6
+zoo-comp = 7
+inn-comp = 8
+yoka-net-alt = 9
+hospital-comp = 10
+n1-grand-prix = 11
+n1-grand-prix-alt = 12
+hadess-isle = 13
+hadess-isle-alt = 14
+www-comp = 15
+undernet = 16
+undernet-1 = 17
+undernet-2 = 18
+undernet-3 = 19
+undernet-4 = 20
+alpha-core = 21
+alpha-final = 22
+secret-area = 23
+generic-comp = 24
+serenade-area = 25
+yoka-net-2 = 26
+yoka-net-3 = 27
+yoka-net-4 = 28
+alpha-core-fast = 29
+
+# Battle banners (0x08010820, 13 entries 0..=12).
+[banners]
+battle-start = 0
+enemy-deleted = 1
+megaman-deleted = 2
+turn-start = 3
+hit-damage = 4
+final-turn = 5
+time-up = 6
+program-advance = 7
+win = 8
+lose = 9
+draw = 10
+flag-deleted = 11
+round-start = 12

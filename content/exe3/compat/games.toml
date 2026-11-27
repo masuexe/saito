@@ -1,0 +1,21 @@
+# EXE3's ROMs other than White US (A6BE), whose addresses compat's other files give.
+# Verified across all four Legacy Collection Vol. 1 ROMs:
+#   A6BE: Mega Man Battle Network 3 White (US) - base
+#   A3XE: Mega Man Battle Network 3 Blue (US)
+#   A6BJ: Rockman EXE 3 (White, Japan)
+#   A3XJ: Rockman EXE 3 Black (Japan)
+
+[blue]
+# Battle code (0x08000000..0x08016000) has shift 0; system/menu code from 0x08022000 on shifts -0x18.
+settings = 0
+code_upper = -24  # -0x18
+
+[jp-white]
+# Battle core routines shift -0x6C..-0x9C; system/menu code from 0x08022000 on shifts +0x160.
+settings = -108  # -0x6C
+code_upper = 352  # +0x160
+
+[jp-black]
+# Battle core routines shift -0x6C..-0x9C; system/menu code from 0x08022000 on shifts +0x148.
+settings = -108  # -0x6C
+code_upper = 328  # +0x148

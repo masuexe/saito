@@ -1879,6 +1879,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exe3-compat"
+version = "0.1.0"
+dependencies = [
+ "exe3-compat",
+ "saito-battle",
+ "saito-content-api",
+ "saito-files",
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "exe4-compat"
 version = "0.1.0"
 dependencies = [

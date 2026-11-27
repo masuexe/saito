@@ -1,0 +1,5 @@
+# EXE3's manifest (docs/design/exe3-map.md, docs/design/exe3-extract-map.md): a game pack for Battle Network 3.
+# Currently in bring-up: compat tables and extraction recipe first, followed by vertical-slice rules/content.
+id = "exe3"
+kind = "game"
+depends = ["exelib"]
