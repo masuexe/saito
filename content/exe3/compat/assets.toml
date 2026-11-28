@@ -76,14 +76,12 @@ portrait-lan = "20-01"
 # Battle & menu sounds (M4A gSongTable at A6BE 0x08148B6C, 331 entries; verified against A6BE PlaySoundEffect 0x080005B8).
 [sounds]
 title-screen = 0x00     # Title screen BGM
-netbattle-4 = 0x05      # NetBattle round BGM table (0x080076C9)
-netbattle-1 = 0x19      # NetBattle round BGM table (0x080076C9)
-netbattle-2 = 0x1a
-netbattle-3 = 0x1c
-battle-net = 0x1e       # Virus Busting / NetBattle (0x08006AFA)
-battle-win = 0x1f       # Victory fanfare (0x08015946)
-battle-boss = 0x20      # Boss / Match-point NetBattle (0x08006ADA, 0x080096B8)
-battle-lose = 0x21      # Defeat / Game Over fanfare
+netbattle-1 = 0x19      # Shooting Enemy (normal / virus battle)
+netbattle-2 = 0x1a      # Boss Battle!
+final-battle = 0x1b     # VS. Alpha (final boss battle)
+netbattle-3 = 0x1c      # Great Battlers (N1 Grand Prix / tournament battle)
+winner = 0x1e           # Victory fanfare (Winner!)
+loser = 0x20            # Defeat music (Loser)
 description-open = 0x66 # Custom screen chip description open/close (0x0800E43A, 0x0800E458)
 pause = 0x67            # Battle pause on START (0x08022274)
 sfx-cancel = 0x68       # Menu cancel / unpause on B (0x080222C4)

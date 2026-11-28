@@ -472,12 +472,10 @@ language = "en"
 "theirs" = "Host Rules"
 
 [battle_themes]
-"battle-net" = "Shooting Enemy"
-"battle-boss" = "Boss Battle"
-"netbattle-1" = "NetBattle 1"
-"netbattle-2" = "NetBattle 2"
-"netbattle-3" = "NetBattle 3"
-"netbattle-4" = "NetBattle 4"
+"netbattle-1" = "Shooting Enemy"
+"netbattle-2" = "Boss Battle!"
+"final-battle" = "VS. Alpha"
+"netbattle-3" = "Great Battlers"
 
 [lettering]
 "banner.battle-start" = "BATTLE START!"

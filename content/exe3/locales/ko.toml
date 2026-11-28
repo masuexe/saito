@@ -472,12 +472,10 @@ language = "ko"
 "theirs" = "호스트 규칙"
 
 [battle_themes]
-"battle-net" = "슈팅 에너미"
-"battle-boss" = "보스 배틀"
-"netbattle-1" = "넷배틀 1"
-"netbattle-2" = "넷배틀 2"
-"netbattle-3" = "넷배틀 3"
-"netbattle-4" = "넷배틀 4"
+"netbattle-1" = "슈팅 에너미"
+"netbattle-2" = "보스 배틀!"
+"final-battle" = "VS. 프로토"
+"netbattle-3" = "그레이트 배틀러즈"
 
 [lettering]
 "banner.battle-start" = "BATTLE START!"

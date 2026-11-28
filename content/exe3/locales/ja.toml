@@ -472,12 +472,10 @@ language = "ja"
 "theirs" = "ホストのルール"
 
 [battle_themes]
-"battle-net" = "シューティングエネミー"
-"battle-boss" = "ボスバトル"
-"netbattle-1" = "ネットバトル1"
-"netbattle-2" = "ネットバトル2"
-"netbattle-3" = "ネットバトル3"
-"netbattle-4" = "ネットバトル4"
+"netbattle-1" = "シューティングエネミー"
+"netbattle-2" = "ボスバトル!"
+"final-battle" = "VS.プロト"
+"netbattle-3" = "グレイトバトラーズ"
 
 [lettering]
 "banner.battle-start" = "BATTLE START!"

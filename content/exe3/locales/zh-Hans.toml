@@ -472,12 +472,10 @@ language = "zh-Hans"
 "theirs" = "房主规则"
 
 [battle_themes]
-"battle-net" = "普通战斗"
-"battle-boss" = "首领战"
-"netbattle-1" = "网络对战1"
-"netbattle-2" = "网络对战2"
-"netbattle-3" = "网络对战3"
-"netbattle-4" = "网络对战4"
+"netbattle-1" = "迎击敌人"
+"netbattle-2" = "头目对决!"
+"final-battle" = "原型之役"
+"netbattle-3" = "大显身手"
 
 [lettering]
 "banner.battle-start" = "BATTLE START!"

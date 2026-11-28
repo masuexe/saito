@@ -1,2 +1,2 @@
 # EXE3's battle themes (from compat/assets.toml M4A song names).
-themes = ["battle-net", "battle-boss", "netbattle-1", "netbattle-2", "netbattle-3", "netbattle-4"]
+themes = ["netbattle-1", "netbattle-2", "final-battle", "netbattle-3"]

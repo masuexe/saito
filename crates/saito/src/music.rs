@@ -324,17 +324,10 @@ pub fn name(music: &Music, own: &str) -> String {
             if let Some(ds_label) = NAMES_LANG.with(|l| ds_theme_name(song, &l.borrow())) {
                 return ds_label.to_string();
             }
-            let lang = NAMES_LANG.with(|l| l.borrow().clone());
-            // Vol. 1 games (EXE1/EXE2/EXE3) use official Legacy Collection titles directly
-            // (EXE3's content locales still contain placeholder names like "网络对战1").
-            if matches!(game.as_str(), "exe1" | "exe2" | "exe3")
-                && let Some(title) = titles::track_title(game, song, &lang)
-            {
-                return format!("{} {title}", game_badge(game, false));
-            }
             if let Some(theme) = NAMES.with(|n| n.borrow().get(&(game.clone(), song.clone())).cloned()) {
                 return format!("{} {theme}", Shell::game_name(game));
             }
+            let lang = NAMES_LANG.with(|l| l.borrow().clone());
             if let Some(title) = titles::track_title(game, song, &lang) {
                 return format!("{} {title}", game_badge(game, song.starts_with("ds-")));
             }
@@ -512,40 +505,6 @@ pub fn practice_favorites_presentation(
     })
 }
 
-/// Default battle music override for [`Music::Background`] when a game's own fallback needs
-/// substitution (EXE5DS arranged Virus Battle when DS music is preferred; EXE3's verified
-/// Shooting Enemy `netbattle-1` instead of `content/exe3`'s mis-mapped `battle-net` = `Winner!`).
-fn default_background_theme(ready: &Ready) -> Option<saito_audio::Theme> {
-    if prefer_ds_music()
-        && let Some(ds) = ready.loaded.ds_counterpart("virus-battle")
-        && let Some(theme) = ready.loaded.theme(ds)
-    {
-        return Some(theme);
-    }
-    if ready.content().game() == "exe3" {
-        return ready.loaded.theme("netbattle-1");
-    }
-    None
-}
-
-/// Normalize a background's declared music key: `content/exe3/backgrounds.toml` still references
-/// mis-mapped `battle-net` (`0x1E` Winner!) and `battle-boss` (`0x20` Loser), so remap EXE3
-/// backgrounds to their true ROM battle themes without modifying content hashes.
-fn resolve_background_song<'a>(game: &str, bg_name: &str, raw_song: &'a str) -> &'a str {
-    if game == "exe3" {
-        return match bg_name {
-            "alpha-core" | "alpha-core-fast" | "alpha-final" => "final-battle",
-            "n1-grand-prix" | "n1-grand-prix-alt" => "netbattle-3",
-            _ => match raw_song {
-                "battle-net" => "netbattle-1",
-                "battle-boss" => "netbattle-2",
-                other => other,
-            },
-        };
-    }
-    raw_song
-}
-
 /// The sound of a battle of game `ready` with `music` (as the battle's preload takes it): a theme's song, with
 /// its own game's bank, in place of the game's own music where the theme's game is read and has it; else the
 /// game's own (which the backgrounds' music, [`round_music`], plays in place of round by round). None: the game
@@ -553,7 +512,10 @@ fn resolve_background_song<'a>(game: &str, bg_name: &str, raw_song: &'a str) -> 
 pub fn sound(games: &Games, ready: &Ready, music: &Music) -> Option<SoundParts> {
     let sound = ready.loaded.sound.as_ref()?;
     let theme = match music {
-        Music::Background => default_background_theme(ready),
+        Music::Background => prefer_ds_music()
+            .then(|| ready.loaded.ds_counterpart("virus-battle"))
+            .flatten()
+            .and_then(|ds| ready.loaded.theme(ds)),
         Music::Theme { game, song } => games
             .read(game)
             .and_then(|of| of.loaded.theme(song))
@@ -574,7 +536,10 @@ pub fn round_music(games: &Games, ready: &Ready, music: &Music) -> Option<Arc<Ro
     let sound = ready.loaded.sound.as_ref()?;
     let content = ready.content();
     let use_ds = prefer_ds_music();
-    let own_theme = default_background_theme(ready);
+    let own_theme = use_ds
+        .then(|| ready.loaded.ds_counterpart("virus-battle"))
+        .flatten()
+        .and_then(|ds| ready.loaded.theme(ds));
     let own = sound.parts(content, own_theme.as_ref());
     // (Each theme's parts once, by its game and song.)
     let mut made: HashMap<(String, String), SoundParts> = HashMap::new();
@@ -589,8 +554,7 @@ pub fn round_music(games: &Games, ready: &Ready, music: &Music) -> Option<Arc<Ro
             None => continue,
         };
         let Some(raw_song) = of.game.content.music_of_background(name) else { continue };
-        let resolved = resolve_background_song(game, name, raw_song);
-        let song = if use_ds { of.ds_counterpart(resolved).unwrap_or(resolved) } else { resolved };
+        let song = if use_ds { of.ds_counterpart(raw_song).unwrap_or(raw_song) } else { raw_song };
         let key = (game.to_string(), song.to_string());
         if !made.contains_key(&key) {
             let Some(theme) = of.theme(song) else { continue };
@@ -1093,14 +1057,6 @@ mod tests {
         assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "netbattle-2".into() }, ""), "EXE3 头目对决!");
         assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "final-battle".into() }, ""), "EXE3 原型之役");
         assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "netbattle-3".into() }, ""), "EXE3 大显身手");
-
-        // EXE3 background music remaps mis-mapped `battle-net` (Winner!) and `battle-boss` (Loser)
-        // to the verified EXE3 ROM battle themes without altering content hashes.
-        assert_eq!(resolve_background_song("exe3", "acdc-net", "battle-net"), "netbattle-1");
-        assert_eq!(resolve_background_song("exe3", "www-comp", "battle-boss"), "netbattle-2");
-        assert_eq!(resolve_background_song("exe3", "n1-grand-prix", "battle-boss"), "netbattle-3");
-        assert_eq!(resolve_background_song("exe3", "alpha-final", "battle-boss"), "final-battle");
-        assert_eq!(resolve_background_song("exe6", "graveyard", "crossover-battle"), "crossover-battle");
 
         // Localized Legacy Collection track titles exist for every catalog track in all four languages,
         // preserving untranslated English titles.

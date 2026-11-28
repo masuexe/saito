@@ -124,11 +124,11 @@ local roles: RolesSpec = {
         target_marker = target_marker_sprite,
     },
     music = {
-        link_battle = asset.sound("battle-boss"),
-        link_battle_single = asset.sound("battle-net"),
-        winner = asset.sound("battle-win"),
-        winner_special = asset.sound("battle-win"),
-        loser = asset.sound("battle-lose"),
+        link_battle = asset.sound("netbattle-2"),
+        link_battle_single = asset.sound("netbattle-1"),
+        winner = asset.sound("winner"),
+        winner_special = asset.sound("winner"),
+        loser = asset.sound("loser"),
         title_screen = asset.sound("title-screen"),
     },
     banners = {
