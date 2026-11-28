@@ -19,7 +19,9 @@ export type State = {
     timer: number,
 }
 
-local SHIELD_X, SHIELD_Z = 16, 0
+-- A6BE Action 5 (0x080B1308..0x080B1318) spawns the 0c-03 shield at the owner's exact position;
+-- 0c-03's OAM parts already bake the +9..+25px forward offset.
+local SHIELD_X, SHIELD_Z = 0, 0
 local DROPS = 0x2
 
 local function drop_shield(me: Object)

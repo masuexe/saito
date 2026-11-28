@@ -469,6 +469,7 @@ component MemberCell inherits Rectangle {
         height: 16px;
         visible: root.there;
         source: root.member.face;
+        image-fit: contain;
         image-rendering: pixelated;
         opacity: root.member.hp > 0 ? 1 : 0.4;
     }
@@ -541,6 +542,7 @@ component SwitchUnit inherits Rectangle {
         width: 48px;
         height: 24px;
         source: root.member.face;
+        image-fit: contain;
         image-rendering: pixelated;
         opacity: root.member.hp > 0 ? 1 : 0.4;
     }

@@ -804,6 +804,14 @@ impl FormTraits {
     /// Its side's emotion is found as out of a form (EXE4's dark soul,
     /// which the emotion's routine reads as no soul, 0x0800F4BA).
     pub const EMOTIONS_AS_BASE: u16 = 0x800;
+    /// Its body element comes from `NaviStats.element` instead of the form's
+    /// fixed `element` (pre-battle elemental Styles whose element is chosen
+    /// independently of the style form).
+    pub const STATS_ELEMENT: u16 = 0x1000;
+    /// Its charged shot comes from `NaviStats.weapons.charge_shot` instead of
+    /// the form's fixed `weapons.charge_shot` (falling back to the form's when
+    /// stats hold none).
+    pub const STATS_CHARGE_SHOT: u16 = 0x2000;
     pub(crate) const NAMES: &[(u32, &str)] = &[
         (0x001, "status_immune"),
         (0x002, "erases"),
@@ -817,6 +825,8 @@ impl FormTraits {
         (0x200, "mood_palette"),
         (0x400, "ignores_b"),
         (0x800, "emotions_as_base"),
+        (0x1000, "stats_element"),
+        (0x2000, "stats_charge_shot"),
     ];
 
     pub fn has(self, bit: u16) -> bool {

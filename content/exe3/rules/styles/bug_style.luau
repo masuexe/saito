@@ -71,6 +71,7 @@ function bug_style.roll_turn(side: number)
     -- Battle bug/perk roll (8 outcomes).
     local b_roll = battle.rng_positive() % 8
     local navi = battle.player(side)
+    local navi_ready = navi ~= nil and navi.lifecycle ~= "init"
     if b_roll == 0 then
         -- Max Buster perk
         stats.attack = 4
@@ -79,12 +80,14 @@ function bug_style.roll_turn(side: number)
         stats.buster_blanks = 0
     elseif b_roll == 1 then
         -- Auto 100-HP Barrier perk
-        if navi then
+        if navi_ready and navi then
             barriers.raise(navi, barriers.barrier_100)
+        elseif stats.first_barrier == nil then
+            stats.first_barrier = barriers.barrier_100
         end
     elseif b_roll == 2 then
         -- Brief opening Invis perk
-        if navi then
+        if navi_ready and navi then
             navi:set_status_timer("flash", 180)
             navi:set_status("invisible", true)
         end

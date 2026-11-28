@@ -193,9 +193,11 @@ impl Tab for Navi {
                 .filter(|(_, c)| offered.iter().any(|o| o.id == c.id))
                 .filter_map(|(i, c)| {
                     let now = kit.builds.preset_of(&content, draft.side(), &c.id)?;
+                    let label = crate::builds::choice_label(names, c).unwrap_or_default();
                     let presets: Vec<slint::SharedString> = c.presets.iter().map(|p| crate::builds::preset_name(names, c, p).into()).collect();
                     let chosen = c.presets.iter().position(|p| p.id == now.id).unwrap_or(0) as i32;
-                    Some(NaviChoice { presets: ModelRc::new(VecModel::from(presets)), chosen, index: i as i32 })
+                    let columns = if c.presets.len() >= 4 { 4 } else { 0 };
+                    Some(NaviChoice { label: label.into(), presets: ModelRc::new(VecModel::from(presets)), chosen, index: i as i32, columns })
                 })
                 .collect();
             view.set_choices(ModelRc::new(VecModel::from(choices)));
@@ -322,7 +324,19 @@ impl Tab for Navi {
         view.set_ruleset(ruleset.into());
         view.set_ruleset_missing(missing);
         view.set_face(face);
-        view.set_element(kit.pictures.element(family(&content, content.navi(chosen).element), shell.settings.hd_chip_art));
+        let element = draft
+            .checked
+            .stats()
+            .and_then(|s| match s.element & 0x0F {
+                0 => Some(Element::Null),
+                1 => Some(Element::Fire),
+                2 => Some(Element::Aqua),
+                3 => Some(Element::Elec),
+                4 => Some(Element::Wood),
+                _ => None,
+            })
+            .unwrap_or(content.navi(chosen).element);
+        view.set_element(kit.pictures.element(family(&content, element), shell.settings.hd_chip_art));
         // (The focus starts on the build's navi's card: in the grid, or on a phone the one that opens its sheet.)
         let known = ["navi", "navi-pick", "form", "forms-all", "forms-none", "choice", "base-hp", "base-hp-step", "tab", "ruleset", "ruleset-edit", "practice"];
         if shell.nav.focused().is_none_or(|k| (!known.contains(&k.id.as_str()) && !k.id.starts_with(SHEET)) || (!phone && k.id == "navi-pick")) {
@@ -519,6 +533,7 @@ fn take(tab: &mut Navi, shell: &mut Shell, draft: &mut Draft, index: i32, preset
         }
     });
     if changed {
+        shell.sound.play(crate::sound::Cue::Pick);
         tab.show(shell, draft);
     }
 }

@@ -68,6 +68,11 @@ local function recover(me: Object, s: State)
         s.timer = me.attack_count
         me.step_init = 4
     end
+    if me:request("forced_charged_shot") then
+        me.related1 = nil
+        me:exit_attack(true)
+        return
+    end
     s.timer -= 1
     if s.timer < 0 then
         me.related1 = nil

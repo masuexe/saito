@@ -224,6 +224,7 @@ component ProgramLine inherits Rectangle {
             width: 32px;
             height: 16px;
             source: root.row-data.face;
+            image-fit: contain;
             image-rendering: pixelated;
             opacity: root.row-data.why != "" ? 0.4 : 1;
         }
@@ -310,6 +311,7 @@ component HeadLine inherits Rectangle {
         width: 32px;
         height: 16px;
         source: root.slot.face;
+        image-fit: contain;
         image-rendering: pixelated;
     }
 
@@ -462,6 +464,7 @@ export component PartyTab inherits Rectangle {
         height: 42px;
         visible: !root.bare && PartyView.detail.there && PartyView.detail.blocks == 0;
         source: PartyView.detail.face;
+        image-fit: contain;
         image-rendering: pixelated;
     }
 

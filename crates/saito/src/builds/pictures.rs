@@ -119,25 +119,30 @@ impl Pictures {
         kept(&self.faces, form, || pictures::form_face(&self.graphics.view(), self.ready.content(), form))
     }
 
-    /// A navi's 32x16 face: its own, else its starting form's.
+    /// A navi's 32x16 face: its own, else its starting form's mugshot, else its
+    /// starting form's battle sprite frame (for games without emotion-window mugshots).
     pub fn navi(&self, navi: NaviHandle) -> slint::Image {
         let content = self.ready.content();
         kept(&self.navis, navi, || {
             let graphics = self.graphics.view();
             let own = saito_render::lookups::navi_face(&graphics, content, navi, &mut Default::default());
             own.and_then(|(tiles, palettes, _)| pictures::image(tiles, 4, 2, palettes.first()?)).or_else(|| {
-                let form = saito_match::Side::fresh_stats(content, navi).starting_form;
-                pictures::form_face(&graphics, content, form)
+                let form_handle = saito_match::Side::fresh_stats(content, navi).starting_form;
+                pictures::form_face(&graphics, content, form_handle).or_else(|| {
+                    let form = content.form(form_handle);
+                    pictures::sprite_frame(&graphics, content, form.sprite, form.idle_anim, form.palette)
+                })
             })
         })
     }
 
     /// The face the emotion window shows as a round starts (`saito_match::build::Checked::face`): a form's
-    /// for an emotion, or a navi's own.
+    /// for an emotion, a navi's own, or its battle sprite preview.
     pub fn shown(&self, face: &Face) -> slint::Image {
         match face {
             Face::Navi(n) => self.navi(*n),
             Face::Form(form, emotion, variant) => kept(&self.shown, face.clone(), || pictures::face(&self.graphics.view(), self.ready.content(), *form, emotion, *variant)),
+            Face::Sprite(sprite, anim, palette) => kept(&self.shown, face.clone(), || pictures::sprite_frame(&self.graphics.view(), self.ready.content(), *sprite, *anim, *palette)),
         }
     }
 }

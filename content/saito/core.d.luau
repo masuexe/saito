@@ -2649,6 +2649,8 @@ export type FormTrait =
     | "mood_palette"
     | "ignores_b"
     | "emotions_as_base"
+    | "stats_element"
+    | "stats_charge_shot"
 -- One of MegaMan's forms (§3.2).
 export type FormDef = {
     -- Its id, its key in the game's root (`chips.cannon`): the loader's to

@@ -5,7 +5,6 @@
 local barriers = require("../lib/barriers")
 local base_form = require("../navis/megaman/forms/base").base
 local charged_shot = require("../navis/megaman/weapons/charged_shot")
-local guards = require("../navis/megaman/weapons/guards")
 local style_forms = require("../navis/megaman/forms/styles")
 
 local styles = {}
@@ -63,7 +62,7 @@ function styles.round_setup(side: number)
     end
     local setup = rules.setup()
     local st: string = setup.style_type or "normal"
-    local el: string = setup.style_element or "null"
+    local el: string = if st == "normal" then "null" else (setup.style_element or "null")
 
     local form = FORM_BY_TYPE[st] or base_form
     stats.form = form
@@ -78,18 +77,17 @@ function styles.round_setup(side: number)
         stats.charge_shot_weapon = charged_shot.ground
     end
 
+    -- Authentic EXE3 Style passives (A6BE NaviStatsInit 0x0804735E & battle init 0x080B04A2):
+    -- Unlike EXE2, Guts does NOT grant innate SuperArmor (requires SprArmor NCP), and Shield/Shadow do NOT grant
+    -- innate B+Left Shield/AntiDmg (require installing Shield/Block/Reflect/AntiDmg NCPs).
     if st == "guts" then
         stats.buster_mult = 2
-        stats.super_armor = true
     elseif st == "custom" then
         stats.custom_level = math.min(stats.custom_level + 1, 8)
     elseif st == "team" then
         stats.mega_level = math.min(stats.mega_level + 1, 10)
     elseif st == "shield" then
         stats.first_barrier = barriers.first_barrier
-        stats.back_special_weapon = guards.shield
-    elseif st == "shadow" then
-        stats.back_special_weapon = guards.anti_dmg
     elseif st == "bug" then
         stats.bug_style = true
     end

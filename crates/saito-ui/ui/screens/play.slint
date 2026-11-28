@@ -461,6 +461,7 @@ component BuildCard inherits Rectangle {
         height: 32px;
         visible: root.usable;
         source: root.sheet.face;
+        image-fit: contain;
         image-rendering: pixelated;
     }
 
@@ -500,6 +501,7 @@ component BuildCard inherits Rectangle {
             width: 32px;
             height: 16px;
             source: form.face;
+            image-fit: contain;
             image-rendering: pixelated;
         }
 
@@ -3636,6 +3638,7 @@ export component PlayOverlay inherits Rectangle {
                 width: prep.narrow || prep.sideways ? 36px : 48px;
                 height: prep.narrow || prep.sideways ? 36px : 48px;
                 source: PlayView.prep-sheet.face;
+                image-fit: contain;
                 image-rendering: pixelated;
             }
 

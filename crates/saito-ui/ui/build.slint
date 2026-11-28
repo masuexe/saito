@@ -850,6 +850,7 @@ export component BuildOverview inherits Rectangle {
         width: root.narrow ? 0px : 64px;
         height: 32px;
         source: root.build.face;
+        image-fit: contain;
         image-rendering: pixelated;
     }
 
@@ -913,6 +914,7 @@ export component BuildOverview inherits Rectangle {
                     width: 32px;
                     height: 16px;
                     source: form.face;
+                    image-fit: contain;
                     image-rendering: pixelated;
                 }
 
@@ -940,6 +942,7 @@ export component BuildOverview inherits Rectangle {
                         width: 32px;
                         height: 16px;
                         source: partner.face;
+                        image-fit: contain;
                         image-rendering: pixelated;
                     }
 

@@ -28,12 +28,15 @@ export struct NaviCard {
     banned: bool,
 }
 
-// One of the build's choices the build's navi has: its presets by name, in capitals ("LIGHT", "DARK"), the one the
-// build is on, and the choice's place among the game's (its focus key's index).
+// One of the build's choices the build's navi has: an optional heading ("STYLE", "ELEMENT"), its presets by name, in
+// capitals ("LIGHT", "DARK"), the one the build is on, the choice's place among the game's (its focus key's index),
+// and the number of equal-width grid columns (0: single auto-sized row).
 export struct NaviChoice {
+    label: string,
     presets: [string],
     chosen: int,
     index: int,
+    columns: int,
 }
 
 // One of the forms the selector offers: its face, its name, whether the build has it, whether the build's problems are
@@ -147,6 +150,7 @@ component NaviCardView inherits Rectangle {
         width: root.face-width;
         height: root.face-width / 2;
         source: root.navi.face;
+        image-fit: contain;
         image-rendering: pixelated;
         opacity: root.navi.banned && !root.navi.chosen ? 0.5 : 1;
     }
@@ -228,6 +232,7 @@ component FormRow inherits Rectangle {
         width: 2 * root.face-height;
         height: root.face-height;
         source: root.form.face;
+        image-fit: contain;
         image-rendering: pixelated;
         opacity: root.form.chosen ? 1 : 0.45;
     }
@@ -264,36 +269,133 @@ component FormRow inherits Rectangle {
 }
 
 // A choice's segmented control, as the app's two-way one (`Seg`) but of as many presets as the choice has, and as
-// tall as the editor's lists' rows (a phone's a tap's, `Theme.row`): each preset a segment as wide as its name, the
-// build's tinted and underlined in the cursor's color. Left and Right step it, Enter takes the next, a click or a tap
-// on a segment takes its preset (the user: "the light/dark switcher also takes up too much space").
+// tall as the editor's lists' rows (a phone's a tap's, `Theme.row`): single auto-sized row when `columns == 0`, or an
+// equal-width multi-column grid (e.g. EXE3's 4×2 Style selector and 4×1 Element selector) with an optional section
+// heading. Left and Right step it, Enter takes the next, a click or a tap on a segment takes its preset.
 component ChoiceSeg inherits Rectangle {
     in property <NaviChoice> choice;
-    height: Theme.phone ? Theme.row : Theme.list-row;
-    width: segments.preferred-width;
-    Rectangle {
-        background: Theme.inset;
-        border-width: 1px;
-        border-color: Theme.line;
+    property <bool> has-label: root.choice.label != "";
+    property <length> label-h: root.has-label ? 22px : 0px;
+    property <bool> grid: root.choice.columns > 0;
+    property <int> cols: root.grid ? root.choice.columns : max(1, root.choice.presets.length);
+    property <int> rows: root.grid ? max(1, ceil(root.choice.presets.length / root.cols)) : 1;
+    property <length> row-h: Theme.phone ? Theme.row : Theme.list-row;
+    property <length> box-h: root.rows * root.row-h;
+    height: root.label-h + root.box-h;
+
+    if root.has-label: Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 16px;
+        text: I18n.upper(root.choice.label);
+        color: Theme.muted;
+        font-family: Theme.body;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        vertical-alignment: center;
+        overflow: elide;
     }
 
-    Focusable {
-        nav: "choice";
-        nav-index: root.choice.index;
-        kind: NavKind.stepper;
+    if !root.grid: Rectangle {
+        x: 0;
+        y: root.label-h;
+        width: min(parent.width, segments.preferred-width);
+        height: root.row-h;
+        Rectangle {
+            background: Theme.inset;
+            border-width: 1px;
+            border-color: Theme.line;
+        }
+
+        Focusable {
+            nav: "choice";
+            nav-index: root.choice.index;
+            kind: NavKind.stepper;
+        }
+
+        segments := HorizontalLayout {
+            for preset[i] in root.choice.presets: Rectangle {
+                property <bool> chosen: i == root.choice.chosen;
+                min-width: max(Theme.row, word.preferred-width + 24px);
+                horizontal-stretch: 0;
+                background: self.chosen ? Theme.tint : touch.has-hover ? Theme.tint-hover : transparent;
+                // (The line between it and the one before.)
+                Rectangle {
+                    x: 0;
+                    width: 1px;
+                    visible: i > 0;
+                    background: Theme.line;
+                }
+
+                Rectangle {
+                    y: parent.height - 2px;
+                    height: 2px;
+                    visible: parent.chosen;
+                    background: Theme.cursor;
+                }
+
+                word := Text {
+                    text: I18n.upper(preset);
+                    color: parent.chosen ? Theme.cursor : Theme.muted;
+                    font-family: Theme.display;
+                    font-size: 13px;
+                    font-weight: Theme.display-bold;
+                    letter-spacing: 0.5px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                touch := TouchArea {
+                    mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
+                    clicked => {
+                        Nav.point("choice", root.choice.index);
+                        Nav.choose("choice", root.choice.index, i);
+                    }
+                }
+            }
+        }
     }
 
-    segments := HorizontalLayout {
+    if root.grid: Rectangle {
+        x: 0;
+        y: root.label-h;
+        width: parent.width;
+        height: root.box-h;
+        property <length> cell-w: self.width / root.cols;
+        Rectangle {
+            background: Theme.inset;
+            border-width: 1px;
+            border-color: Theme.line;
+        }
+
+        Focusable {
+            nav: "choice";
+            nav-index: root.choice.index;
+            kind: NavKind.stepper;
+        }
+
         for preset[i] in root.choice.presets: Rectangle {
+            property <int> grid-col: mod(i, root.cols);
+            property <int> grid-row: floor(i / root.cols);
             property <bool> chosen: i == root.choice.chosen;
-            min-width: max(Theme.row, word.preferred-width + 24px);
-            horizontal-stretch: 0;
-            background: self.chosen ? Theme.tint : touch.has-hover ? Theme.tint-hover : transparent;
-            // (The line between it and the one before.)
+            x: self.grid-col * parent.cell-w;
+            y: self.grid-row * root.row-h;
+            width: parent.cell-w;
+            height: root.row-h;
+            background: self.chosen ? Theme.tint : grid-touch.has-hover ? Theme.tint-hover : transparent;
             Rectangle {
                 x: 0;
                 width: 1px;
-                visible: i > 0;
+                visible: parent.grid-col > 0;
+                background: Theme.line;
+            }
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                visible: parent.grid-row > 0;
                 background: Theme.line;
             }
 
@@ -304,18 +406,21 @@ component ChoiceSeg inherits Rectangle {
                 background: Theme.cursor;
             }
 
-            word := Text {
+            Text {
+                x: 4px;
+                width: max(0px, parent.width - 8px);
                 text: I18n.upper(preset);
                 color: parent.chosen ? Theme.cursor : Theme.muted;
                 font-family: Theme.display;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: Theme.display-bold;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.4px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
+                overflow: elide;
             }
 
-            touch := TouchArea {
+            grid-touch := TouchArea {
                 mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
                 clicked => {
                     Nav.point("choice", root.choice.index);
@@ -421,6 +526,7 @@ export component NaviTab inherits Rectangle {
         width: Theme.handheld ? 64px : 96px;
         height: self.width / 2;
         source: NaviView.face;
+        image-fit: contain;
         image-rendering: pixelated;
     }
 
@@ -540,11 +646,8 @@ export component NaviTab inherits Rectangle {
         height: self.preferred-height;
         spacing: root.fact-gap;
         alignment: start;
-        for choice in NaviView.choices: HorizontalLayout {
-            alignment: start;
-            ChoiceSeg {
-                choice: choice;
-            }
+        for choice in NaviView.choices: ChoiceSeg {
+            choice: choice;
         }
     }
 

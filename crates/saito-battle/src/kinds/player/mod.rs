@@ -1229,6 +1229,9 @@ fn refresh_abilities(b: &mut Battle, r: ObjectRef) {
         let a = ai_mut(b, r);
         a.charge_shot = s.weapons.charge_shot;
         a.back_special = s.weapons.back_special;
+    } else if b.content.form(s.form).traits.has(FormTraits::STATS_CHARGE_SHOT) {
+        let fallback = b.content.form(s.form).weapons.charge_shot;
+        ai_mut(b, r).charge_shot = s.weapons.charge_shot.or(fallback);
     }
     apply_ability_flags(b, r);
 }
@@ -1258,15 +1261,19 @@ fn apply_ability_flags(b: &mut Battle, r: ObjectRef) {
 fn update_element(b: &mut Battle, r: ObjectRef) {
     let s = *stats(b, r);
     let base = in_base_form(b, r);
+    let (form_element, stats_element, form_weakness) = {
+        let form = b.content.form(s.form);
+        (form.element as u8, form.traits.has(FormTraits::STATS_ELEMENT), form.weakness)
+    };
     let element = if !is_megaman(b, r) {
         b.content.navi(s.navi).element as u8
-    } else if !base {
-        b.content.form(s.form).element as u8
+    } else if !base && !stats_element {
+        form_element
     } else {
         s.element
     };
     set_element(b, r, element);
-    let weakness = if !base { b.content.form(s.form).weakness } else { b.content.navi(s.navi).weakness };
+    let weakness = if !base { form_weakness } else { b.content.navi(s.navi).weakness };
     coll_mut(b, r).secondary_weakness = weakness.0;
 }
 
@@ -1328,11 +1335,17 @@ fn load_weapons(b: &mut Battle, r: ObjectRef) {
         a.back_special = w.back_special;
         a.alt_a_charge = None;
     } else {
-        let w = content.form(s.form).weapons;
+        let form = content.form(s.form);
+        let w = form.weapons;
         a.mode9_a = w.mode9_a;
         a.a_charge = w.a_charge;
         a.buster = w.buster;
-        set_charge_shot_routine(a, w.charge_shot, &content);
+        let charge_shot = if form.traits.has(FormTraits::STATS_CHARGE_SHOT) {
+            s.weapons.charge_shot.or(w.charge_shot)
+        } else {
+            w.charge_shot
+        };
+        set_charge_shot_routine(a, charge_shot, &content);
         // (EXE4's leaves it: the rule `status.form_keeps_back_special`.)
         if !content.rules().form_keeps_back_special {
             a.back_special = w.back_special;

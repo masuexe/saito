@@ -7,6 +7,7 @@ local charge_glow = require("./charge_glow")
 local collision = require("./collision")
 local deletion = require("./deletion")
 local invalid = require("../chips/invalid").invalid
+local machine_gun = require("../navis/megaman/weapons/machine_gun")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 local statuses = require("./status")
@@ -53,6 +54,7 @@ local roles: RolesSpec = {
     },
     actions = {
         deletion = deletion.action,
+        forced_charged_shot = machine_gun.action,
     },
     kinds = {
         charge_glow = charge_glow.kind,

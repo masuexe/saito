@@ -55,6 +55,10 @@ attachment.kind = new.kind {
 }
 
 function attachment.attach(owner: Object, look: AttachmentLook, which: Slot, anim: number, while_dimmed: boolean?): Object?
+    local prev = slot.held(owner, which)
+    if prev and prev.active and prev.kind == attachment.kind then
+        prev:free()
+    end
     local o = battle.spawn(attachment.kind, Vec3.zero)
     if o then
         o.related1 = owner

@@ -131,6 +131,11 @@ impl Kit {
     }
 }
 
+/// Heading of choice `choice` (e.g. EXE3's Style / Element), if the game's strings name one.
+pub fn choice_label(names: &Names, choice: &Choice) -> Option<String> {
+    names.text(TEXT_TABLE, choice.label_key())
+}
+
 /// Preset `preset` of choice `choice` (EXE5's Light or Dark), by its name in the game's strings in `names`' language
 /// (its id where they have none).
 pub fn preset_name(names: &Names, choice: &Choice, preset: &Preset) -> String {

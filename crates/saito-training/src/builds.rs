@@ -374,13 +374,13 @@ impl Maker {
             let values: Vec<Fact> = forms.iter().map(|f| Fact::Value(Value::Def(Registry::Form, f.0))).collect();
             side.set_fact(content, &choice.fact, &values)?;
         }
-        let choices: Vec<(String, String)> = b
-            .choices_of(content, &side)
-            .into_iter()
-            .map(|c| (c.id.clone(), c.presets[picks.below(c.presets.len())].id.clone()))
-            .collect();
-        for (choice, preset) in choices {
-            b.take_preset(content, &mut side, &choice, &preset)?;
+        for i in 0..b.choices.len() {
+            let c = &b.choices[i];
+            if !b.choices_of(content, &side).iter().any(|o| o.id == c.id) {
+                continue;
+            }
+            let preset = c.presets[picks.below(c.presets.len())].id.clone();
+            b.take_preset(content, &mut side, &c.id, &preset)?;
         }
         // The rest of what a build states, drawn, before the folder (the
         // folder's rules read the stats the side's facts make).

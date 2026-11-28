@@ -11,6 +11,37 @@ return {
         { id = "white", color = 0xE6EEF8 },
         { id = "blue", color = 0x3D8BFF },
     },
+    -- Pre-battle Style Change (save byte 0x1881: `(style_type << 3) | style_element`): Normal Style is always
+    -- non-elemental (`null`); every Style Change pairs one of the 7 styles with one of the 4 elements.
+    choices = {
+        {
+            id = "style_type",
+            navi = "megaman",
+            fact = "style_type",
+            presets = {
+                { id = "normal", set = { style_type = "normal" } },
+                { id = "guts", set = { style_type = "guts" } },
+                { id = "custom", set = { style_type = "custom" } },
+                { id = "team", set = { style_type = "team" } },
+                { id = "shield", set = { style_type = "shield" } },
+                { id = "ground", set = { style_type = "ground" } },
+                { id = "shadow", set = { style_type = "shadow" } },
+                { id = "bug", set = { style_type = "bug" } },
+            },
+        },
+        {
+            id = "style_element",
+            navi = "megaman",
+            fact = "style_element",
+            unless = { fact = "style_type", value = "normal" },
+            presets = {
+                { id = "heat", set = { style_element = "heat" } },
+                { id = "aqua", set = { style_element = "aqua" } },
+                { id = "elec", set = { style_element = "elec" } },
+                { id = "wood", set = { style_element = "wood" } },
+            },
+        },
+    },
     -- Facts every competitive build keeps at the rules' defaults: full HP Memory base HP (1000) and max Regular
     -- memory (50 MB).
     at_defaults = { "hp", "reg_up" },

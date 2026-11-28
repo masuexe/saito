@@ -45,7 +45,12 @@ anims.PANLOUT = 0x24
 anims.PANLOUT_END = 0x25
 anims.HAMMER = 0x24
 anims.PUNCH = 0x2C
+anims.TWISTER_WINDUP = 0x2D
+anims.TWISTER_OPEN = 0x2E
+anims.TWISTER_HOLD = 0x2F
+anims.TWISTER_CLOSE = 0x30
 anims.FLAMETHROWER = 0x36
+anims.FLAMETHROWER_HOLD = 0x37
 anims.AIRSHOT = 0x38
 anims.DASH = 0x39
 

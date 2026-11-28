@@ -14,7 +14,9 @@ local sparks = require("../../../lib/sparks")
 
 local guards = {}
 
-local TICKS = 20
+-- A6BE Action 5 (0x080B12D4): 0x1A (26) active guard ticks; 0x080B1368 table gives 0c-03 anim 2 / fade 3 for Shield
+-- (sub 1, chip 0x161) and anim 4 / fade 5 for Reflect (sub 2, chip 0x162).
+local TICKS = 26
 local BLOCK_TICKS = 16
 local ANTIDMG_STANCE_TICKS = 24
 local REFLECT_COOLDOWN = 40
@@ -23,14 +25,14 @@ local CHARGE = { 60, 60, 60, 60, 60, 60 }
 local SHIELD = guard.action {
     id = "megaman/shield/action",
     ticks = TICKS,
-    shield = shield.look { anim = 0 },
+    shield = shield.look { anim = 2, fade_anim = 3 },
     counter = nil,
 }
 
 local BLOCK = guard.action {
     id = "megaman/block/action",
     ticks = BLOCK_TICKS,
-    shield = shield.look { anim = 0 },
+    shield = shield.look { anim = 2, fade_anim = 3 },
     counter = nil,
 }
 
@@ -47,7 +49,7 @@ local REFLECTED_Z = 0x04_0000
 local REFLECT = guard.action {
     id = "megaman/reflect/action",
     ticks = TICKS,
-    shield = shield.look { anim = 0 },
+    shield = shield.look { anim = 4, fade_anim = 5 },
     counter = function(me: Object, x: number, y: number, damage: number)
         projectile.spawn(me, x, y, { variant = REFLECTED, damage = damage, z = REFLECTED_Z })
     end,

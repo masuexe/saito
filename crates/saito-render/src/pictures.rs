@@ -292,6 +292,88 @@ pub fn face(graphics: &Graphics, c: &Content, form: saito_content_api::FormHandl
     image(tiles, 4, 2, palettes.first()?)
 }
 
+/// A battle sprite's first frame of animation `anim` in `palette_index`,
+/// cropped to its opaque pixels (skipping part 0 when the frame has multiple
+/// parts, as battle sprites keep their ground shadow in part 0). Used to
+/// preview a navi/form in games whose forms have no emotion-window mugshot.
+pub fn sprite_frame(
+    graphics: &Graphics,
+    c: &Content,
+    sprite: saito_battle::content::SpriteId,
+    anim: u8,
+    palette_index: u8,
+) -> Option<Image> {
+    let sheet = crate::lookups::sprite(graphics, c, sprite, &|| "for a preview".into(), &mut Problems::default())?;
+    let frame = sheet.animations.get(anim as usize)?.first()?;
+    let (parts, tiles, palette_set) = crate::lookups::frame_parts(sheet, frame)?;
+    // Match battle sprite rendering (`crate::objects::queue_objects`): a sprite draws all of its parts in one palette,
+    // adding part 0's palette offset only when the game's rules set `load_sets_part_palette` (EXE3 keeps it false;
+    // Bug Style's OAM parts carry nibble 0xF which would otherwise shift every element off its palette).
+    let first_palette = if c.rules().effects.load_sets_part_palette {
+        parts.first().map_or(0, |p| p.palette)
+    } else {
+        0
+    };
+    let resolved = palette_index.wrapping_add(first_palette) as usize;
+    let palette = palette_set.get(resolved).or_else(|| palette_set.first())?;
+    let drawn: &[saito_assets::SpritePart] = if parts.len() > 1 { &parts[1..] } else { parts };
+    if drawn.is_empty() {
+        return None;
+    }
+    let min_x = drawn.iter().map(|p| i32::from(p.x)).min()?;
+    let min_y = drawn.iter().map(|p| i32::from(p.y)).min()?;
+    let max_x = drawn.iter().map(|p| i32::from(p.x) + i32::from(p.width)).max()?;
+    let max_y = drawn.iter().map(|p| i32::from(p.y) + i32::from(p.height)).max()?;
+    let (w, h) = (usize::try_from(max_x - min_x).ok()?, usize::try_from(max_y - min_y).ok()?);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut rgba = vec![0u8; w * h * 4];
+    for part in drawn {
+        let (pw, ph) = (part.width as usize, part.height as usize);
+        let tiles_per_row = pw / 8;
+        let ox = (i32::from(part.x) - min_x) as usize;
+        let oy = (i32::from(part.y) - min_y) as usize;
+        for row in 0..ph {
+            let ty = if part.vflip { ph - 1 - row } else { row };
+            for col in 0..pw {
+                let tx = if part.hflip { pw - 1 - col } else { col };
+                let t = part.tile as usize + (ty / 8) * tiles_per_row + tx / 8;
+                let Some(tile) = tiles.get(t) else { continue };
+                let idx = tile[(ty % 8) * 8 + tx % 8];
+                if idx == 0 {
+                    continue;
+                }
+                let rgb = to_rgb(palette[idx as usize]);
+                let dst = ((oy + row) * w + (ox + col)) * 4;
+                rgba[dst..dst + 4].copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 0xFF]);
+            }
+        }
+    }
+    // Crop away fully transparent OAM margins so previews sit centered and crisp.
+    let (mut left, mut top, mut right, mut bottom) = (w, h, 0usize, 0usize);
+    for y in 0..h {
+        for x in 0..w {
+            if rgba[(y * w + x) * 4 + 3] != 0 {
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+    }
+    if left >= right || top >= bottom {
+        return None;
+    }
+    let (cw, ch) = (right - left, bottom - top);
+    let mut cropped = Vec::with_capacity(cw * ch * 4);
+    for y in top..bottom {
+        let start = (y * w + left) * 4;
+        cropped.extend_from_slice(&rgba[start..start + cw * 4]);
+    }
+    Some(Image { width: cw as u32, height: ch as u32, rgba: cropped })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +452,73 @@ mod tests {
         let at_top_right = (56 * 4) as usize;
         assert_eq!(img.rgba[at_top_right + 3], 0xFF);
         assert_eq!(img.rgba[(8 * 64 * 4) + 3], 0x00);
+    }
+
+    #[test]
+    fn sprite_frame_skips_shadow_uses_palette_and_crops_margins() {
+        use saito_assets::{Bundle, SpriteFrame, SpritePart, SpriteSheet};
+        use saito_battle::content::testing;
+        let mut c = testing::build();
+        c.define().unwrap();
+        let sprite = testing::sprite_named(&c, "test-navi");
+        let assets = testing::asset_numbers(&c);
+
+        // Two 8x8 tiles: tile 0 is shadow (color 1 everywhere), tile 1 has a single opaque pixel at (2, 3) with color 2.
+        let mut pixels = vec![1u8; Tiles::TILE];
+        let mut body = vec![0u8; Tiles::TILE];
+        body[3 * 8 + 2] = 2;
+        pixels.extend_from_slice(&body);
+        let mut pal0 = [0u16; 16];
+        pal0[2] = 0x001F; // red
+        let mut pal1 = [0u16; 16];
+        pal1[2] = 0x03E0; // green
+
+        let sheet = SpriteSheet {
+            category: testing::NAVI_SPRITE.category,
+            index: testing::NAVI_SPRITE.index,
+            animations: vec![vec![SpriteFrame { tileset: 0, palette_set: 0, parts: 0, duration: 1, flags: 0 }]],
+            tilesets: vec![Tiles { pixels }],
+            palette_sets: vec![vec![pal0, pal1]],
+            part_lists: vec![vec![
+                SpritePart { tile: 0, x: -4, y: 0, width: 8, height: 8, hflip: false, vflip: false, palette: 0 },
+                SpritePart { tile: 1, x: -4, y: -8, width: 8, height: 8, hflip: false, vflip: false, palette: 0 },
+            ]],
+        };
+        let bundle = Bundle { sprites: vec![sheet], ..Bundle::default() };
+        let graphics = Graphics::of(&bundle).with_numbers(&assets);
+
+        let img = sprite_frame(&graphics, &c, sprite, 0, 1).expect("renders cropped body sprite");
+        // Shadow (part 0) was skipped and transparent margins cropped down to the single 1x1 body pixel in palette 1 (green).
+        assert_eq!((img.width, img.height), (1, 1));
+        assert_eq!(img.rgba, [0, 0xFF, 0, 0xFF]);
+
+        // EXE3 Bug Style OAM parts carry nibble 0xF (palette = 15); when `load_sets_part_palette` is false,
+        // `sprite_frame` must not shift `palette_index` by `part.palette` (matching battle rendering).
+        c.rules.as_mut().unwrap().effects.load_sets_part_palette = false;
+        let mut pal16 = [0u16; 16];
+        pal16[2] = 0x7C00; // blue (wrong palette if 1 + 15 were used)
+        let mut palettes = vec![pal0, pal1];
+        palettes.resize(16, pal0);
+        palettes.push(pal16);
+        let bug_sheet = SpriteSheet {
+            category: testing::NAVI_SPRITE.category,
+            index: testing::NAVI_SPRITE.index,
+            animations: vec![vec![SpriteFrame { tileset: 0, palette_set: 0, parts: 0, duration: 1, flags: 0 }]],
+            tilesets: vec![Tiles { pixels: bundle.sprites[0].tilesets[0].pixels.clone() }],
+            palette_sets: vec![palettes],
+            part_lists: vec![vec![
+                SpritePart { tile: 0, x: -4, y: 0, width: 8, height: 8, hflip: false, vflip: false, palette: 15 },
+                SpritePart { tile: 1, x: -4, y: -8, width: 8, height: 8, hflip: false, vflip: false, palette: 15 },
+            ]],
+        };
+        let bug_bundle = Bundle { sprites: vec![bug_sheet], ..Bundle::default() };
+        let bug_graphics = Graphics::of(&bug_bundle).with_numbers(&assets);
+        let bug_img = sprite_frame(&bug_graphics, &c, sprite, 0, 1).expect("renders bug-style sprite in exact palette");
+        assert_eq!(bug_img.rgba, [0, 0xFF, 0, 0xFF]);
+
+        // When `load_sets_part_palette` is true, part 0's palette offset applies once to the whole sprite.
+        c.rules.as_mut().unwrap().effects.load_sets_part_palette = true;
+        let shifted_img = sprite_frame(&bug_graphics, &c, sprite, 0, 1).expect("renders shifted palette");
+        assert_eq!(shifted_img.rgba, [0, 0, 0xFF, 0xFF]);
     }
 }

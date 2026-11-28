@@ -119,12 +119,21 @@ pub struct Choice {
     pub presets: Vec<Preset>,
     navi: Option<NaviHandle>,
     fact: String,
+    /// Optional condition hiding this choice when `fact` currently has variant `value`
+    /// (e.g. EXE3's `style_element` is omitted when `style_type` is `"normal"`).
+    unless: Option<(String, String)>,
 }
 
 impl Choice {
     /// The preset named `id`.
     pub fn preset(&self, id: &str) -> Option<&Preset> {
         self.presets.iter().find(|p| p.id == id)
+    }
+
+    /// The key of the choice's own heading in the game's strings' text table
+    /// [`TEXT_TABLE`].
+    pub fn label_key(&self) -> &str {
+        &self.id
     }
 
     /// The key of preset `preset`'s name in the game's strings' text table
@@ -368,6 +377,16 @@ impl Builds {
                 Data::Str(name) => Some(ids::navi(content, game, name).ok_or_else(|| format!("{module}: choice {id}: {game} has no navi {name:?}"))?),
                 other => return Err(format!("{module}: choice {id}: its navi is a navi's name, not {other:?}")),
             };
+            let unless = match c.field("unless") {
+                Data::Nil => None,
+                u => match (u.field("fact"), u.field("value")) {
+                    (Data::Str(f), Data::Str(v)) => {
+                        facts::field(content, f).ok_or_else(|| format!("{module}: choice {id}: unless: {}", facts::no_field(content, f)))?;
+                        Some((f.clone(), v.clone()))
+                    }
+                    _ => return Err(format!("{module}: choice {id}: `unless` has its `fact` and `value`")),
+                },
+            };
             let presets: Vec<Preset> = items(c.field("presets"))
                 .iter()
                 .map(|p| match p.field("id") {
@@ -378,7 +397,7 @@ impl Builds {
             if presets.is_empty() {
                 return Err(format!("{module}: choice {id} has no presets"));
             }
-            choices.push(Choice { id: id.clone(), presets, navi, fact: fact.clone() });
+            choices.push(Choice { id: id.clone(), presets, navi, fact: fact.clone(), unless });
         }
         let slots = match data.field("slots") {
             Data::Nil => None,
@@ -547,9 +566,18 @@ impl Builds {
         self.choices.iter().find(|c| c.id == id)
     }
 
-    /// Whether `side` has choice `c`: any navi's, or its own navi's.
+    /// Whether `side` has choice `c`: any navi's, or its own navi's, and not
+    /// hidden by its `unless` condition.
     fn offers(&self, content: &Content, side: &Side, c: &Choice) -> bool {
-        c.navi.is_none_or(|n| side.stated_navi(content) == Some(n))
+        if !c.navi.is_none_or(|n| side.stated_navi(content) == Some(n)) {
+            return false;
+        }
+        if let Some((fact, value)) = &c.unless
+            && matches!(side.facts.get(content, fact), Some(Stated::Variant(Some(v))) if v == *value)
+        {
+            return false;
+        }
+        true
     }
 
     /// The choices `side` has, in the game's order: a choice of one navi
@@ -661,6 +689,7 @@ impl Builds {
         if let Some((hp_fact, cur)) = preserved_hp {
             made.set_fact(content, hp_fact, &[Fact::Value(Value::Int(cur))])?;
         }
+        self.settle(content, &mut made);
         *side = made;
         Ok(())
     }
@@ -969,10 +998,15 @@ impl Checked {
         let mut b = self.battle.clone()?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             b.tick(&Default::default(), Default::default());
-            b.player(0)?;
+            let p = b.player(0)?;
             let stats = &b.stats[0];
             if !b.content.navi(stats.navi).changes_form() {
                 return Some(Face::Navi(stats.navi));
+            }
+            let form = b.content.form(stats.form);
+            if form.mugshot.is_none() {
+                let palette = b.objects.sprite(p).look.palette;
+                return Some(Face::Sprite(form.sprite, form.idle_anim, palette));
             }
             let emotion = b.game_rules().emotion.name(player::emotion(&b, 0)).to_string();
             Some(Face::Form(stats.form, emotion, player::face_variant(&b, 0)))
@@ -1070,11 +1104,14 @@ fn named_stat(d: &Data) -> Option<NamedStat> {
 
 /// The face the emotion window shows of a navi: its form's for an emotion
 /// (by the emotion's name in the game's rules; of the form's second set
-/// where the rules ask), or a navi's own where it doesn't change form.
+/// where the rules ask), a navi's own where it doesn't change form, or a
+/// battle sprite frame `(sprite, anim, palette)` where the form has no
+/// emotion-window mugshot (EXE3 Styles).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Face {
     Form(FormHandle, String, u8),
     Navi(NaviHandle),
+    Sprite(saito_battle::content::SpriteId, u8, u8),
 }
 
 /// `side` with nothing installed: each of its lists of entries of the game's
@@ -2560,6 +2597,274 @@ mod tests {
         let checked = Checked::of(&six, "exe6", &side);
         let got: Vec<(&Wrong, Option<&str>)> = checked.problems.iter().map(|p| (&p.what, p.field.as_deref())).collect();
         assert_eq!(got, [(&Wrong::NotTaken, Some("navicust_programs"))]);
+    }
+
+    /// EXE3 MegaMan switches Style Change type and element via `Builds::choices`:
+    /// Normal Style hides `style_element` and keeps it `null`; switching to any
+    /// Style Change offers `style_element` (defaulting to `heat` from `null`,
+    /// preserving an already-chosen element across style changes) and updates
+    /// starting stats, element, and sprite preview `(anim, palette)`.
+    #[test]
+    fn exe3_megaman_style_choices() {
+        let content = crate::testing::exe3_content();
+        let builds = Builds::of(&content, "exe3").unwrap();
+        assert_eq!(builds.choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["style_type", "style_element"]);
+
+        let mut side = builds.new_build(&content, "white").unwrap();
+        let variant = |side: &Side, fact: &str| match side.facts.get(&content, fact) {
+            Some(Stated::Variant(v)) => v,
+            other => panic!("{fact}: {other:?}"),
+        };
+
+        // Normal Style starts with null element and hides the element selector.
+        assert_eq!(variant(&side, "style_type").as_deref(), Some("normal"));
+        assert_eq!(variant(&side, "style_element").as_deref(), Some("null"));
+        assert_eq!(builds.choices_of(&content, &side).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["style_type"]);
+        assert_eq!(builds.preset_of(&content, &side, "style_type").map(|p| p.id.as_str()), Some("normal"));
+        assert!(builds.preset_of(&content, &side, "style_element").is_none());
+        let checked = Checked::of(&content, "exe3", &side);
+        assert_eq!(checked.problems, Vec::new());
+        assert_eq!(checked.stats().map(|s| s.element), Some(0));
+        assert!(matches!(checked.face(), Some(Face::Sprite(_, 0, 0))), "{:?}", checked.face());
+
+        // Switching from Normal to Guts exposes style_element and defaults it to heat.
+        builds.take_preset(&content, &mut side, "style_type", "guts").unwrap();
+        assert_eq!(variant(&side, "style_type").as_deref(), Some("guts"));
+        assert_eq!(variant(&side, "style_element").as_deref(), Some("heat"));
+        assert_eq!(builds.choices_of(&content, &side).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["style_type", "style_element"]);
+        let checked = Checked::of(&content, "exe3", &side);
+        assert_eq!(checked.problems, Vec::new());
+        // EXE3 Guts Style (A6BE 0x0804735E) grants 2x buster damage + Guts Machine Gun, NOT innate SuperArmor.
+        assert_eq!(checked.stats().map(|s| (s.element, s.super_armor)), Some((1, false)));
+        assert!(matches!(checked.face(), Some(Face::Sprite(_, 1, 6))), "{:?}", checked.face());
+
+        // Changing element updates stats.element and palette; changing style preserves the element.
+        builds.take_preset(&content, &mut side, "style_element", "aqua").unwrap();
+        assert_eq!(variant(&side, "style_element").as_deref(), Some("aqua"));
+        builds.take_preset(&content, &mut side, "style_type", "custom").unwrap();
+        assert_eq!(variant(&side, "style_type").as_deref(), Some("custom"));
+        assert_eq!(variant(&side, "style_element").as_deref(), Some("aqua"));
+        let checked = Checked::of(&content, "exe3", &side);
+        assert_eq!(checked.problems, Vec::new());
+        assert_eq!(checked.stats().map(|s| (s.element, s.custom_level)), Some((2, 6)));
+        assert!(matches!(checked.face(), Some(Face::Sprite(_, 2, 9))), "{:?}", checked.face());
+        assert_eq!(builds.as_built(&content, &mut side), Vec::<String>::new());
+
+        // Team Style bumps Mega chip limit to 6 while preserving Aqua element.
+        builds.take_preset(&content, &mut side, "style_type", "team").unwrap();
+        let checked = Checked::of(&content, "exe3", &side);
+        assert_eq!(checked.stats().map(|s| (s.element, s.mega_level)), Some((2, 6)));
+
+        // Switching back to Normal resets style_element to null and hides the element selector.
+        builds.take_preset(&content, &mut side, "style_type", "normal").unwrap();
+        assert_eq!(variant(&side, "style_type").as_deref(), Some("normal"));
+        assert_eq!(variant(&side, "style_element").as_deref(), Some("null"));
+        assert_eq!(builds.choices_of(&content, &side).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["style_type"]);
+        assert!(matches!(Checked::of(&content, "exe3", &side).face(), Some(Face::Sprite(_, 0, 0))));
+    }
+
+    /// EXE3 Style battle behavior:
+    /// - Bug Style previews use the exact element palette (6/9/3/12) on animation 7.
+    /// - Elemental Styles keep their body element and elemental charged shot (Heat Flamethrower,
+    ///   Aqua Bubbler, Elec ZapRing, Wood Twister) after player spawn and weapon load.
+    /// - Guts Style triggers Guts Machine Gun on 5 rapid B presses.
+    #[test]
+    fn exe3_style_element_charged_shots_and_guts_machine_gun() {
+        use saito_battle::battle::TickEvents;
+        use saito_battle::input::{PlayerTick, ScreenChoice, keys};
+        use saito_battle::kinds::player::running_content_action;
+
+        let content = crate::testing::exe3_content();
+        let builds = Builds::of(&content, "exe3").unwrap();
+
+        let make_side = |style: &str, elem: Option<&str>| {
+            let mut side = builds.new_build(&content, "white").unwrap();
+            builds.take_preset(&content, &mut side, "style_type", style).unwrap();
+            if let Some(el) = elem {
+                builds.take_preset(&content, &mut side, "style_element", el).unwrap();
+            }
+            side
+        };
+
+        // 1. Bug Style shows each element's palette on idle anim 7 and preserves its element.
+        for (elem, expected_pal, expected_elem) in [("heat", 6u8, 1u8), ("aqua", 9, 2), ("elec", 3, 3), ("wood", 12, 4)] {
+            let side = make_side("bug", Some(elem));
+            let checked = Checked::of(&content, "exe3", &side);
+            assert_eq!(checked.problems, Vec::new(), "bug/{elem}");
+            assert!(
+                matches!(checked.face(), Some(Face::Sprite(_, 7, p)) if p == expected_pal),
+                "bug/{elem}: {:?}",
+                checked.face()
+            );
+            assert_eq!(checked.stats().map(|s| s.element), Some(expected_elem), "bug/{elem} stats.element");
+        }
+
+        let start_fight = |s0: &Side, s1: &Side| -> Battle {
+            let m = Match { sides: [s0.clone(), s1.clone()], ..Match::empty(&content, "exe3").unwrap() };
+            let mut b = Battle::new(m.round(&content, 1), content.clone());
+            let ok = PlayerTick { choice: Some(ScreenChoice::Ok), ..Default::default() };
+            let idle = PlayerTick::default();
+            let mut entered = false;
+            for _ in 0..400 {
+                let tick_in = [ok.clone(), ok.clone()];
+                b.tick(&tick_in, TickEvents::default());
+                if !b.paused && b.round.battle_time > 15 {
+                    b.tick(&[idle.clone(), idle.clone()], TickEvents::default());
+                    entered = true;
+                    break;
+                }
+            }
+            assert!(entered, "failed to reach active fight phase");
+            b
+        };
+
+        // 2. Elemental Styles fire their elemental charged shots (not plain CS) and keep their body element.
+        let normal = make_side("normal", None);
+        for (elem, expected_elem, expected_weapon, expected_action) in [
+            ("heat", 1u8, "megaman/charged-shot/heat", "megaman/charged-shot/heat-action"),
+            ("aqua", 2u8, "megaman/charged-shot/aqua", "megaman/charged-shot/aqua-action"),
+            ("elec", 3u8, "megaman/charged-shot/elec", "megaman/charged-shot/elec-action"),
+            ("wood", 4u8, "megaman/charged-shot/wood", "megaman/charged-shot/wood-action"),
+        ] {
+            let styled = make_side("custom", Some(elem));
+            let mut b = start_fight(&styled, &normal);
+            let p0 = b.player(0).unwrap();
+            assert_eq!(b.objects.get(p0).element, expected_elem, "{elem} body element");
+            let ai_id = b.objects.get(p0).actor.unwrap();
+            let cs_handle = b.actors.get(ai_id).charge_shot.expect("charge_shot weapon");
+            assert_eq!(content.defs.weapon(cs_handle).key, expected_weapon, "{elem} charge_shot weapon");
+
+            // Hold B until full charge (155 ticks covers Elec's 150-tick Charge Lv 1), then release B!
+            let hold_b = [PlayerTick { held: keys::B, ..Default::default() }, PlayerTick::default()];
+            for _ in 0..155 {
+                b.tick(&hold_b, TickEvents::default());
+            }
+            let release = [PlayerTick::default(), PlayerTick::default()];
+            let mut saw_action = false;
+            for _ in 0..10 {
+                b.tick(&release, TickEvents::default());
+                if let Some(act) = running_content_action(&b, p0)
+                    && content.defs.action(act).key == expected_action
+                {
+                    saw_action = true;
+                    break;
+                }
+            }
+            assert!(saw_action, "{elem}: expected charged shot action {expected_action}");
+            // Step forward so the elemental charged shot resolves completely without Luau errors,
+            // and verify swapped arm attachments never overlap (at most 1 active attachment at once).
+            for _ in 0..60 {
+                b.tick(&release, TickEvents::default());
+                let mut attachments = 0usize;
+                for slot in 0..b.objects.capacity(saito_battle::object::Pool::Attack) {
+                    let r = saito_battle::object::ObjectRef { pool: saito_battle::object::Pool::Attack, slot };
+                    if b.objects.is_allocated(r) && b.local_kind_key(r) == "attachment" {
+                        attachments += 1;
+                        if elem == "wood" {
+                            assert_eq!(
+                                b.objects.sprite(r).look.palette,
+                                0,
+                                "wood twister-arm (0c-19) should use blue palette 0"
+                            );
+                        }
+                    }
+                }
+                assert!(attachments <= 1, "{elem}: overlapping arm attachments ({attachments} active)");
+            }
+        }
+
+        // 3. Guts Style: mashing B 5 times rapidly triggers Guts Machine Gun, fires 6 rapid shots,
+        // and the final 6th shot inflicts mercy invulnerability flash (A6BE 0x080D5CE4 row 0x0F: hit_mod=3).
+        let guts = make_side("guts", Some("heat"));
+        let mut b = start_fight(&guts, &normal);
+        let p0 = b.player(0).unwrap();
+        let p1 = b.player(1).unwrap();
+        assert_eq!(b.objects.get(p0).panel.y, b.objects.get(p1).panel.y);
+        let hp_before = b.objects.get(p1).hp;
+
+        let press_b = [PlayerTick { held: keys::B, ..Default::default() }, PlayerTick::default()];
+        let release = [PlayerTick::default(), PlayerTick::default()];
+        let mut saw_machine_gun = false;
+        let mut saw_flash = false;
+        // Mash B 6 times (alternating press/release every 2 ticks).
+        for i in 0..12 {
+            let input = if i % 2 == 0 { &press_b } else { &release };
+            b.tick(input, TickEvents::default());
+            if let Some(act) = running_content_action(&b, p0)
+                && content.defs.action(act).key == "guts/machine-gun"
+            {
+                saw_machine_gun = true;
+            }
+        }
+        for _ in 0..60 {
+            b.tick(&release, TickEvents::default());
+            if let Some(act) = running_content_action(&b, p0)
+                && content.defs.action(act).key == "guts/machine-gun"
+            {
+                saw_machine_gun = true;
+            }
+            if let Some(cid) = b.objects.get(p1).collision
+                && b.collision.get(cid).status_timers[saito_battle::collision::timer::FLASH] > 0
+            {
+                saw_flash = true;
+            }
+        }
+        assert!(saw_machine_gun, "Guts Style B-mashing should launch guts/machine-gun");
+        assert!(saw_flash, "Guts Machine Gun finisher should inflict mercy invulnerability flash");
+        let dmg_dealt = hp_before - b.objects.get(p1).hp;
+        // At Attack Lv 1 with Guts 2x buster_mult, each shot deals 2 damage; 6 MG shots (+ initial buster) deal >= 12.
+        assert!(dmg_dealt >= 12, "Guts Machine Gun should deal at least 12 total damage (6x2), dealt {dmg_dealt}");
+
+        // 4. Shield Style (A6BE 0x0804735E) has NO innate B+Left Shield (that was EXE2);
+        // installing the Shield NaviCust program enables B+Left, raising 0c-03 anim 2 / fade 3 at owner.pos.
+        let mut shield_side = make_side("shield", Some("wood"));
+        let b_plain = start_fight(&shield_side, &normal);
+        let p0_plain = b_plain.player(0).unwrap();
+        let ai_plain = b_plain.objects.get(p0_plain).actor.unwrap();
+        assert!(
+            b_plain.actors.get(ai_plain).back_special.is_none(),
+            "Shield Style alone should not grant innate B+Left Shield in EXE3"
+        );
+
+        let shield_prog = ids::entry(&content, "exe3", "navicust_programs", "shield").unwrap();
+        let blue = program_colors(&content, shield_prog).iter().position(|c| *c == "blue").unwrap() as u8;
+        set_navicust(
+            &content,
+            &mut shield_side,
+            &[PlacedProgram { program: shield_prog, color: blue, x: 3, y: 3, rotation: 0, compressed: false }],
+            0,
+        );
+        assert_eq!(Checked::of(&content, "exe3", &shield_side).problems, Vec::new());
+        let mut b = start_fight(&shield_side, &normal);
+        let p0 = b.player(0).unwrap();
+        let b_left = [PlayerTick { held: keys::B | keys::LEFT, ..Default::default() }, PlayerTick::default()];
+        let mut saw_shield_up = false;
+        let mut saw_shield_fade = false;
+        for i in 0..60 {
+            let input = if i < 2 { &b_left } else { &release };
+            b.tick(input, TickEvents::default());
+            for slot in 0..b.objects.capacity(saito_battle::object::Pool::Attack) {
+                let r = saito_battle::object::ObjectRef { pool: saito_battle::object::Pool::Attack, slot };
+                if !b.objects.is_allocated(r) {
+                    continue;
+                }
+                if b.local_kind_key(r) == "guard-shield" {
+                    let s = b.objects.sprite(r);
+                    if s.anim == 2 {
+                        saw_shield_up = true;
+                        assert_eq!(
+                            b.objects.get(r).pos,
+                            b.objects.get(p0).pos,
+                            "guard-shield should sit at owner.pos without extra X offset"
+                        );
+                    } else if s.anim == 3 {
+                        saw_shield_fade = true;
+                    }
+                }
+            }
+        }
+        assert!(saw_shield_up, "Shield NCP B+Left should raise guard-shield with 0c-03 anim 2");
+        assert!(saw_shield_fade, "Shield NCP guard-shield should fade with 0c-03 anim 3");
     }
 }
 

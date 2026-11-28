@@ -4,7 +4,6 @@
 
 local buster = require("../weapons/buster")
 local charged_shot = require("../weapons/charged_shot")
-local guards = require("../weapons/guards")
 
 local STYLE_CHANGE = new.action {
     id = "styles/noop-change",
@@ -21,6 +20,7 @@ local function style_form(spec: {
     charge_shot: Weapon?,
     back_special: Weapon?,
     status_reset: { FormEffect }?,
+    rapid_presses: { presses: number, window: number }?,
 }): FormDef
     return {
         sprite = megaman_sprite,
@@ -35,6 +35,8 @@ local function style_form(spec: {
         palette = spec.palette,
         idle_anim = spec.idle_anim,
         status_reset = spec.status_reset,
+        rapid_presses = spec.rapid_presses,
+        traits = { "stats_element", "stats_charge_shot" },
     }
 end
 
@@ -42,7 +44,9 @@ return {
     guts = style_form {
         palette = 6,
         idle_anim = 1,
-        status_reset = { "super_armor" },
+        -- A6BE 0x080B55FA: 5 rapid B presses within 10 ticks trigger Guts Machine Gun (`actions.forced_charged_shot`).
+        -- No innate SuperArmor in EXE3 (A6BE 0x0804735E): SuperArmor comes from the SprArmor NCP.
+        rapid_presses = { presses = 5, window = 10 },
     },
     custom = style_form {
         palette = 9,
@@ -55,7 +59,6 @@ return {
     shield = style_form {
         palette = 24,
         idle_anim = 4,
-        back_special = guards.shield,
     },
     ground = style_form {
         palette = 18,
@@ -65,7 +68,6 @@ return {
     shadow = style_form {
         palette = 15,
         idle_anim = 6,
-        back_special = guards.anti_dmg,
     },
     bug = style_form {
         palette = 21,

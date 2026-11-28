@@ -19,9 +19,15 @@ local made = common.make {
 
 shield.kind = made.kind
 
-function shield.look(spec: { anim: number }): ReflectorShieldLook
+function shield.look(spec: { anim: number, fade_anim: number? }): ReflectorShieldLook
     local anim = spec.anim
-    return common.look { sprite = SPRITE, anim = anim, palette = 0, fade_anim = anim, fade_ticks = FADE_TICKS }
+    return common.look {
+        sprite = SPRITE,
+        anim = anim,
+        palette = 0,
+        fade_anim = spec.fade_anim or anim,
+        fade_ticks = FADE_TICKS,
+    }
 end
 
 function shield.spawn(owner: Object, offset: Vec3, look: ReflectorShieldLook): Object?

@@ -1143,7 +1143,15 @@ mod tests {
 
         // Record 12 frames from a reference Battle run into a JSONL trace.
         let mut ref_battle = Battle::new(round_setup, content.clone());
-        assert!(ref_battle.stats[0].super_armor, "Guts Style enables SuperArmor");
+        assert!(
+            !ref_battle.stats[0].super_armor,
+            "EXE3 Guts Style does not grant innate SuperArmor (requires SprArmor NCP)"
+        );
+        assert_eq!(
+            ref_battle.stats[0].game_stat(&content, "buster_mult"),
+            Some(saito_content_api::FieldValue::U8(2)),
+            "Guts Style doubles normal buster damage"
+        );
         assert!(ref_battle.stats[0].undershirt, "NaviCust UnderSht compiled");
         assert_eq!(ref_battle.stats[1].custom_level, 6, "Custom Style sets custom_level = 6");
 

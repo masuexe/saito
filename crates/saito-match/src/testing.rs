@@ -50,6 +50,12 @@ pub fn exe4_content() -> Arc<Content> {
     EXE4.get_or_init(|| Arc::new(defined(&["exe4"]).unwrap_or_else(|e| panic!("content/exe4: {e}")))).clone()
 }
 
+/// content/'s EXE3, defined once per test process.
+pub fn exe3_content() -> Arc<Content> {
+    static EXE3: OnceLock<Arc<Content>> = OnceLock::new();
+    EXE3.get_or_init(|| Arc::new(defined(&["exe3"]).unwrap_or_else(|e| panic!("content/exe3: {e}")))).clone()
+}
+
 /// The rulesets of `game` (exe4, exe5 or exe6) on its content above, read
 /// once per test process.
 pub fn rulesets(game: &str) -> Arc<crate::ruleset::Rulesets> {
@@ -181,7 +187,9 @@ pub fn set_navicust(content: &Content, side: &mut crate::Side, parts: &[PlacedPr
         })
         .collect();
     side.set_fact(content, "navicust_programs", &records).unwrap();
-    side.set_fact(content, "navicust_expansions", &[Fact::Value(Value::Int(expansions as i64))]).unwrap();
+    if side.facts.fact(content, "navicust_expansions").is_some() {
+        side.set_fact(content, "navicust_expansions", &[Fact::Value(Value::Int(expansions as i64))]).unwrap();
+    }
 }
 
 /// `side`'s NaviCust's expansions (its `navicust_expansions`); none: no
