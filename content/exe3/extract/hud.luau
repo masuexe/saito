@@ -276,6 +276,9 @@ function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string 
     h.chip_icons = chip_icons(set, names, chip_versions)
     local rom = set.A6BE
     h.layout = {
+        -- EXE3 draws enemy/navi HP above the head: y = projected_y - entity_table[id].height
+        -- (A6BE `0x0800FCE2`, MegaMan entry `0x08019618+2` / A6BJ `0x0801957C+2` = 0x32 = 50).
+        navi_hp_dy = -50,
         chatbox_text = CHATBOX_TEXT,
         chatbox_arrows = { CHATBOX_ARROW_AT, CHATBOX_ARROW_AT },
         telop = telop(rom),

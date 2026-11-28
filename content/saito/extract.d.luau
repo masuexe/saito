@@ -169,6 +169,7 @@ export type TelopLook = { places: { { number } }?, glyphs: Tiles?, palette: Pale
 export type HudLayout = {
     pause: { number }?,
     hp_number_priority: number?,
+    navi_hp_dy: number?,
     hud_priority: number?,
     message: { number }?,
     judge_from_hold: boolean?,

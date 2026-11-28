@@ -567,6 +567,10 @@ pub struct HudLayout {
     /// The priority the HP numbers under objects are drawn at (EXE6's
     /// `sub_801C202`: 2; EXE4's 0x08014EB8: 1).
     pub hp_number_priority: u8,
+    /// Vertical pixel offset from a player navi's ground projection to its
+    /// HP number (`dy = 0` in EXE4–6, below feet; `-50` in EXE3, above head
+    /// per `0x0800FCE2` and MegaMan's entity-table height `0x32`).
+    pub navi_hp_dy: i8,
     /// The priority of the HUD's layer, BG3: the HP box, the gauge and
     /// the custom screen (EXE6's 1; EXE4's 0, 0x08006AD4's BG3CNT 0x1F00,
     /// so the custom screen covers the HP numbers' priority 1 there). The
@@ -604,6 +608,7 @@ impl Default for HudLayout {
         HudLayout {
             pause: (100, 63),
             hp_number_priority: 2,
+            navi_hp_dy: 0,
             hud_priority: 1,
             message: (7, 2, 17),
             judge_from_hold: false,

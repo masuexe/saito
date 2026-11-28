@@ -1233,7 +1233,8 @@ pub fn draw<'a>(
         // (Its four cells; mirrored about the object where the seat
         // mirrors, as its digits' pixels are, upright: `Seat::ink_shift`.)
         let x = seat.about(p.x, number.dx as i32 + if number.damage { 0 } else { 4 * n - 32 }, 32);
-        let y = p.y + number.dy as i32;
+        let dy = if navi(number.object) && number.dy == 0 { hud.layout.navi_hp_dy as i32 } else { number.dy as i32 };
+        let y = p.y + dy;
         let digits = &hud.enemy_digits[e.color.min(2) as usize];
         let shown: Vec<SpritePart> = digits4(value)
             .into_iter()
@@ -3846,5 +3847,38 @@ mod tests {
 
         let right_parts = draw_seat(right);
         assert!(right_parts.iter().all(|&(_, y)| y != 64), "right seat must not draw a second result banner");
+    }
+
+    #[test]
+    fn navi_hp_dy_offsets_player_hp_number() {
+        let mut b = battle();
+        b.tick(&[saito_battle::input::PlayerTick::default(); 2], Default::default());
+        let p1 = b.player(1).expect("opponent navi");
+        b.show_hp(p1, 0, 0, false, Some(0));
+
+        let mut state = HudState::default();
+        state.tick(&b, 0);
+
+        let draw_y = |navi_hp_dy: i8| -> i32 {
+            let mut h = hud();
+            h.layout.navi_hp_dy = navi_hp_dy;
+            h.enemy_digits = std::array::from_fn(|_| Tiles { pixels: vec![1; 20 * Tiles::TILE] });
+            let assets = saito_assets::Bundle { hud: h, ..saito_assets::Bundle::default() };
+            let numbers = testing::asset_numbers(&b.content);
+            let graphics = crate::graphics::Graphics::of(&assets).with_numbers(&numbers);
+            let seat = Seat::of(crate::seat::Consoles::One, &b)[0];
+            let (mut layer, mut scratch) = (Layer::new(1, 3), Layer::new(1, 3));
+            let mut list = SpriteList::default();
+            let mut text = TextSink::original();
+            let mut problems = Problems::default();
+            let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
+            let view = crate::render::Renderer::view(&b);
+            draw(&b, &assets, &graphics, &state, &shared, (seat, &view, None, 0), false, Smooth::default(), (&mut layer, &mut scratch), &mut list, &mut text, &mut problems);
+            list.into_parts().into_iter().next().expect("opponent HP digit").y
+        };
+
+        let below = draw_y(0);
+        let above = draw_y(-50);
+        assert_eq!(above, below - 50, "EXE3 navi_hp_dy = -50 must raise the opponent navi's HP number by 50px");
     }
 }

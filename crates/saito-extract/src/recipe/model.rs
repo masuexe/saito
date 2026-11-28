@@ -579,6 +579,7 @@ fn hud_layout(v: &Value, path: &str) -> R<HudLayout> {
     record(v, path, |f, l: &mut HudLayout| {
         f.set("pause", &mut l.pause, place)?;
         f.set("hp_number_priority", &mut l.hp_number_priority, int)?;
+        f.set("navi_hp_dy", &mut l.navi_hp_dy, int)?;
         f.set("hud_priority", &mut l.hud_priority, int)?;
         f.set("message", &mut l.message, |v, p| {
             let [a, b, c] = array(v, p, int)?;
