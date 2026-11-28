@@ -161,6 +161,28 @@ function visual.make(spec: Spec): Visual
     -- isn't bubbled); hidden at the end of the animation while the barrier stands; gone at it once the barrier is.
     local function down(me: Object, owner: Object)
         local b = (me.state :: State).barrier
+        local look = b.look
+        local c = owner.collision
+        -- Barriers with no separate shatter animation (EXE3 `0c-04` anim 4: A6BE `0x080EE1C0`) vanish at once.
+        if look.down_steps == 0 then
+            if me.phase_init == 0 and b.down_sound then
+                battle.play_sound(b.down_sound)
+                me.phase_init = 4
+            end
+            if c.barrier ~= "none" then
+                if c.barrier_hp ~= 0 and not (blows and owner:status("bubbled")) then
+                    me.visible = true
+                    battle.play_sound(b.sound)
+                    go(me, UP)
+                else
+                    me.visible = false
+                end
+                return
+            end
+            unlink(me)
+            me:free()
+            return
+        end
         if me.phase_init == 0 then
             me.anim = me.anim + 1
             if b.down_sound then
@@ -168,9 +190,7 @@ function visual.make(spec: Spec): Visual
             end
             me.phase_init = 4
         end
-        local c = owner.collision
         -- (On the tick it starts down, its sprite still plays the barrier up, which loops.)
-        local look = b.look
         local last_frame = if me.sprite.animation == look.anim + 1
             then me.sprite.steps >= look.down_steps
             else (me.sprite.steps > 0 and me.sprite.steps % look.up_steps == 0)

@@ -37,36 +37,36 @@ local function barrier(b: Barrier): Barrier
     return new.record("barrier", b)
 end
 
--- ID 1: Barrier (10 HP).
+-- ID 1: Barrier (10 HP; A6BE 0x080EDFF4 row 1: 0c-04 anim 4, pal 0, 22t loop, no down anim).
 barriers.barrier_10 = barrier {
     id = "barrier/10",
     behavior = "plain",
     hp = 10,
     threshold = 0,
     timer = NO_TIMER,
-    look = { sprite = SPRITE, anim = 4, palette = 0, attach_point = 0, hidden_parts = 0, up_steps = 16, down_steps = 21 },
+    look = { sprite = SPRITE, anim = 4, palette = 0, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
     sound = SOUND,
 }
 
--- ID 2: Barr100 (100 HP).
+-- ID 2: Barr100 (100 HP; A6BE 0x080EDFF4 row 2: 0c-04 anim 4, pal 1, no down anim).
 barriers.barrier_100 = barrier {
     id = "barrier/100",
     behavior = "plain",
     hp = 100,
     threshold = 0,
     timer = NO_TIMER,
-    look = { sprite = SPRITE, anim = 4, palette = 1, attach_point = 0, hidden_parts = 0, up_steps = 16, down_steps = 21 },
+    look = { sprite = SPRITE, anim = 4, palette = 1, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
     sound = SOUND,
 }
 
--- ID 3: Barr200 (200 HP).
+-- ID 3: Barr200 (200 HP; A6BE 0x080EDFF4 row 3: 0c-04 anim 4, pal 2, no down anim).
 barriers.barrier_200 = barrier {
     id = "barrier/200",
     behavior = "plain",
     hp = 200,
     threshold = 0,
     timer = NO_TIMER,
-    look = { sprite = SPRITE, anim = 4, palette = 2, attach_point = 0, hidden_parts = 0, up_steps = 16, down_steps = 21 },
+    look = { sprite = SPRITE, anim = 4, palette = 2, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
     sound = SOUND,
 }
 
@@ -92,14 +92,14 @@ barriers.life_aura = barrier {
     sound = SOUND,
 }
 
--- ID 8: FirstBarrier (EXE3's Shield Style / NaviCust FirstBarrier: plain 100-HP barrier, ID 8).
+-- ID 8: FirstBarrier (EXE3 NaviCust FirstBar / HubBatc, A6BE 0x080B048C: plain 100-HP barrier, ID 8, pal 1).
 barriers.first_barrier = barrier {
     id = "barrier/first",
     behavior = "plain",
     hp = 100,
     threshold = 0,
     timer = NO_TIMER,
-    look = { sprite = SPRITE, anim = 4, palette = 1, attach_point = 0, hidden_parts = 0, up_steps = 16, down_steps = 21 },
+    look = { sprite = SPRITE, anim = 4, palette = 1, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
     sound = SOUND,
 }
 

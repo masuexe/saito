@@ -87,7 +87,8 @@ function styles.round_setup(side: number)
     elseif st == "team" then
         stats.mega_level = math.min(stats.mega_level + 1, 10)
     elseif st == "shield" then
-        stats.first_barrier = barriers.first_barrier
+        -- A6BE 0x080B04A2..0x080B04B0: Shield Style starts with a 10 HP Barrier (FirstBar NCP upgrades to 100 HP).
+        stats.first_barrier = barriers.barrier_10
     elseif st == "bug" then
         stats.bug_style = true
     end

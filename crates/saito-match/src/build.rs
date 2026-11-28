@@ -2815,16 +2815,44 @@ mod tests {
         // At Attack Lv 1 with Guts 2x buster_mult, each shot deals 2 damage; 6 MG shots (+ initial buster) deal >= 12.
         assert!(dmg_dealt >= 12, "Guts Machine Gun should deal at least 12 total damage (6x2), dealt {dmg_dealt}");
 
-        // 4. Shield Style (A6BE 0x0804735E) has NO innate B+Left Shield (that was EXE2);
-        // installing the Shield NaviCust program enables B+Left, raising 0c-03 anim 2 / fade 3 at owner.pos.
+        // 4. Shield Style (A6BE 0x0804735E / 0x080B04A2):
+        // - Starts with a 10 HP Barrier (not 100 HP FirstBar!) that breaks cleanly on 10 damage and frees its visual.
+        // - Has NO innate B+Left Shield (that was EXE2); installing the Shield NCP enables B+Left (`0c-03` anim 2 -> 3).
         let mut shield_side = make_side("shield", Some("wood"));
-        let b_plain = start_fight(&shield_side, &normal);
+        let mut b_plain = start_fight(&shield_side, &normal);
         let p0_plain = b_plain.player(0).unwrap();
         let ai_plain = b_plain.objects.get(p0_plain).actor.unwrap();
         assert!(
             b_plain.actors.get(ai_plain).back_special.is_none(),
             "Shield Style alone should not grant innate B+Left Shield in EXE3"
         );
+        let c0_plain = b_plain.objects.get(p0_plain).collision.unwrap();
+        assert_eq!(b_plain.collision.get(c0_plain).barrier, 1, "Shield Style starts with ID 1 Barrier");
+        assert_eq!(b_plain.collision.get(c0_plain).barrier_hp, 10, "Shield Style starts with 10 HP Barrier");
+        assert!(b_plain.actors.get(ai_plain).barrier_visual.is_some(), "barrier visual should be up");
+
+        // Side 1 fires a 10-damage Charged Shot at Side 0: should break the 10 HP barrier and free its visual.
+        let p1_hold_b = [PlayerTick::default(), PlayerTick { held: keys::B, ..Default::default() }];
+        for _ in 0..105 {
+            b_plain.tick(&p1_hold_b, TickEvents::default());
+        }
+        for _ in 0..40 {
+            b_plain.tick(&release, TickEvents::default());
+        }
+        assert_eq!(b_plain.collision.get(c0_plain).barrier, 0, "10-dmg hit should break Shield Style's 10 HP barrier");
+        assert_eq!(b_plain.collision.get(c0_plain).barrier_hp, 0);
+        assert_eq!(b_plain.objects.get(p0_plain).hp, 1000, "barrier absorbs the breaking hit");
+        assert!(
+            b_plain.actors.get(ai_plain).barrier_visual.is_none(),
+            "barrier visual should unlink and free immediately on break"
+        );
+        // Subsequent buster shot should now damage Side 0 directly.
+        let p1_tap_b = [PlayerTick::default(), PlayerTick { held: keys::B, ..Default::default() }];
+        b_plain.tick(&p1_tap_b, TickEvents::default());
+        for _ in 0..25 {
+            b_plain.tick(&release, TickEvents::default());
+        }
+        assert!(b_plain.objects.get(p0_plain).hp < 1000, "after barrier breaks, subsequent hits damage HP");
 
         let shield_prog = ids::entry(&content, "exe3", "navicust_programs", "shield").unwrap();
         let blue = program_colors(&content, shield_prog).iter().position(|c| *c == "blue").unwrap() as u8;
