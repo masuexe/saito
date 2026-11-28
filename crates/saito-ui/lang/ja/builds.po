@@ -737,26 +737,26 @@ msgstr "各バージョン ダークソウルAI（ABD）仕様ガイド"
 msgid "Common Rules (All Versions)"
 msgstr "共通ルール（全バージョン）"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
-msgstr "スタンダード枠は最大16種類で 4×・4×・2×・2×・1×12 の重み付け（計24枠）、加えてメガ最大5枠・ギガ1枠・PA1枠を持ちます。\n通常プレイでABDに記録できないチップ（EXE4は22種、EXE5は82種）は黄色警告で表示されます。EXE4ではスタンダード16枠が全て埋まっていない場合、ダークソードが必須です。\n各ラウンドでのABDによるメガ・ギガ・ダーク・PA使用回数は自動記録され（設定からLOG/CSV/JSONL出力可能）、ホストは任意の回数上限（既定5回、3回はEXE5公式大会基準）を設定して上限到達チップをそのラウンドの実行プールから除外できます。"
+msgid "• Pool capacity: Standard/Dark pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\n• Legality notices: Some chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked yellow in the editor). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\n• Tracking & cap: ABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable a per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to disable a chip for the rest of the round once reached."
+msgstr "• 枠構成：スタンダード／ダーク枠は最大16種を 4×・4×・2×・2×・1×12 で配分（計24枠）、加えてメガ5枠・ギガ1枠・PA1枠を持ちます。\n• 不正データ警告：通常プレイでABDに記録できないチップ（EXE4は22種、EXE5は82種）は黄色警告で表示されます。EXE4ではスタンダード16枠が未充足の場合、ダークソードが必須です。\n• 集計と上限：各ラウンドでのABDによるメガ・ギガ・ダーク・PA使用回数は自動記録されます（設定からLOG/CSV/JSONL出力可能）。ホストは回数上限（既定5回、3回はEXE5公式大会基準）も設定でき、到達したチップはそのラウンド中使用されなくなります。"
 
 msgid "Original (GBA)"
 msgstr "オリジナル（GBA）"
 
-msgid "Uses the memory pool's exact order and 4/4/2/2/1×12 weights with no Dark Chip priority penalty, no Mega/Giga/PA unlock thresholds, and no extra post-chip buster cooldown."
-msgstr "記憶プールの並び順と 4/4/2/2/1×12 の重み付けをそのまま使用します。ダークチップの優先度低下、上位チップの解放条件、特定チップ後の追加バスター制限はありません。"
+msgid "• Plays chips strictly in your memory pool order with 4/4/2/2/1×12 weights.\n• No Dark Chip priority penalty, no high-class unlock thresholds, and no extra post-chip buster cooldown."
+msgstr "• 記憶プールの並び順と 4/4/2/2/1×12 の重み付けをそのまま使用します。\n• ダークチップ降格、上位チップ解放条件、特定チップ後の追加バスター制限はありません。"
 
 msgid "Legacy Collection (EXE4 & EXE5)"
 msgstr "アドコレ版（Legacy Collection・EXE4 / EXE5）"
 
-msgid "• Dark Chip priority penalty: Dark Chips (including EXE4 DrkVulcn in Mega) cannot occupy the top 4 slots. Only when a Dark Chip is present and fewer than 3 non-Dark Standard chips are registered are the top 3 slots padded with Cannon, MiniBomb, and AirShot (normal builds with 3+ non-Dark Standard chips do not trigger padding and do not need all 16 slots filled). With 4+ non-Dark Standard chips, Dark Chips in the top 4 are swapped down to 1× slots.\n• High-class unlock thresholds (by unique Standard/Dark chip count): Mega unlocks 1/2/3/4/5 slots at 3/6/10/14/16 unique chips; Giga and PA unlock at 12 unique chips."
-msgstr "・ダークチップ優先度低下：ダークチップ（EXE4メガ枠のダークバルカン含む）は上位4枠に入れません。ダークチップが含まれ、かつ非ダークのスタンダードが3種未満のときのみ上位3枠にキャノン／ミニボム／エアシュートが補填されます（非ダークが3種以上あれば補填は起きず、16枠すべてを埋める必要はありません）。非ダークが4種以上ある場合、上位4枠のダークチップは後方の1×枠と入れ替わります。\n・上位チップ解放条件（スタンダード／ダークの種類数）：メガは3/6/10/14/16種で1〜5枠解放、ギガとPAは12種で解放されます。"
+msgid "[Dark Chip Priority Penalty]\nDark Chips in the Standard pool cannot occupy the top 4 slots and are adjusted at battle start:\n• 4+ non-Dark Standard chips: Dark Chips in the top 4 swap with non-Dark chips behind them into 1× slots.\n• 3 non-Dark Standard chips: They take slots 1–3, and the first Dark Chip moves to slot 4 (2×).\n• Fewer than 3 non-Dark Standard chips: Only when a Dark Chip is present are empty spots in slots 1–3 padded with Cannon, MiniBomb, and AirShot (builds with 3+ non-Dark Standard chips never trigger padding and do not need all 16 slots filled).\n\n[High-Class Unlock Thresholds]\nUnlocked by total unique Standard + Dark chip count (Mega slots are governed only by this threshold):\n• Mega: 1 / 2 / 3 / 4 / 5 slots unlock at 3 / 6 / 10 / 14 / 16 types.\n• Giga & Program Advance: Unlock at 12 types."
+msgstr "【ダークチップ降格】\nスタンダード枠のダークチップは上位4枠に入れず、対戦開始時に自動調整されます：\n• 非ダークのスタンダードが4種以上：上位4枠のダークチップは後方の非ダークと入れ替わり、1×枠に下がります。\n• 非ダークのスタンダードが3種：非ダーク3種が1〜3枠に入り、最初のダークチップは4枠目（2×）になります。\n• 非ダークのスタンダードが3種未満：ダークチップが含まれる場合のみ、1〜3枠の空きにキャノン・ミニボム・エアシュートが順に補填されます（非ダークが3種以上あれば補填されず、16枠すべてを埋める必要はありません）。\n\n【上位チップ解放条件】\nスタンダード＋ダークの合計種類数で解放（メガ枠はこの条件のみ適用）：\n• メガ：3 / 6 / 10 / 14 / 16 種で 1 / 2 / 3 / 4 / 5 枠解放。\n• ギガ・PA：12 種で解放。"
 
 msgid "Double Team DS (5DS — EXE5 Only)"
 msgstr "5DS版（ダブルチームDS・EXE5限定）"
 
-msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
-msgstr "・内部チップID昇順ソート：4/4/2/2/1×12 の重み付けを行う前に、スタンダード／ダーク枠とメガ枠が内部ID昇順で並び替えられます（使用回数ではなくIDの若いチップが高重みになります）。\n・チップ使用後のバスター制限：ダークチップ、サーチマン（無印/SP/DS）、シビレパルサー1〜3、ビッグノイズを使用すると、次のチップを試みる前に3連バスターを8回（原作は2回）撃つ必要があります。"
+msgid "[Auto-Sort by Internal ID]\n• Standard/Dark and Mega pools ignore manual order and sort ascending by internal chip ID at battle start.\n• Chips with lower internal IDs automatically take the top 4 slots (4×, 4×, 2×, 2×).\n\n[Post-Chip Buster Cooldown]\n• After using any of the following chips, the AI enters a cooldown (8 decision ticks, forcing 7 consecutive buster runs before attempting chips again):\n  Any Dark Chip, SearchMan (V1/SP/DS), ShakPar 1–3, BigNoise."
+msgstr "【内部ID昇順での自動ソート】\n• スタンダード／ダーク枠とメガ枠は手動順を使わず、対戦開始時に内部チップID昇順へ自動並び替えされます。\n• 内部IDが若いチップほど自動的に上位4枠（4×・4×・2×・2×）に入ります。\n\n【特定チップ後の強制バスター冷却】\n• 以下のチップ使用後、AIは冷却状態に入ります（8回判定の冷却に入り、7回連続でバスター行動を行ってから通常出牌に戻ります）：\n  全ダークチップ、サーチマン（無印/SP/DS）、シビレパルサー1〜3、ビッグノイズ。"
 
 msgid "Copy"
 msgstr "コピー"

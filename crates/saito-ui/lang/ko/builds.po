@@ -718,26 +718,26 @@ msgstr "버전별 다크 소울 AI(ABD) 사양 가이드"
 msgid "Common Rules (All Versions)"
 msgstr "공통 규칙 (전 버전)"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
-msgstr "스탠다드 풀은 최대 16종 칩을 4×, 4×, 2×, 2×, 1×12 가중치(총 24칸)로 배치하며, 메가 최대 5칸·기가 1칸·PA 1칸을 가집니다.\n일반 플레이로 ABD에 기록할 수 없는 칩(EXE4 22종, EXE5 82종)은 노란색 경고로 표시됩니다. EXE4는 스탠다드 16칸이 모두 채워지지 않은 경우 다크소드가 필수입니다.\n라운드별 ABD 메가/기가/다크/PA 사용 횟수는 자동 기록되며(설정에서 LOG/CSV/JSONL 내보내기 가능), 방장은 라운드당 사용 상한(기본 5회, 3회는 EXE5 공식 대회 기준)을 설정해 상한에 도달한 칩을 해당 라운드 실행 풀에서 제외할 수 있습니다."
+msgid "• Pool capacity: Standard/Dark pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\n• Legality notices: Some chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked yellow in the editor). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\n• Tracking & cap: ABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable a per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to disable a chip for the rest of the round once reached."
+msgstr "• 슬롯 구성: 스탠다드/다크 풀은 최대 16종을 4×, 4×, 2×, 2×, 1×12 가중치(총 24칸)로 배분하며, 메가 5칸·기가 1칸·PA 1칸을 가집니다.\n• 불법 데이터 안내: 일반 플레이로 ABD에 기록할 수 없는 칩(EXE4 22종, EXE5 82종)은 노란색 경고로 표시됩니다. EXE4는 스탠다드 16칸이 모두 채워지지 않은 경우 다크소드가 필수입니다.\n• 기록 및 상한: 라운드별 ABD 메가/기가/다크/PA 사용 횟수는 자동 기록되며(설정에서 LOG/CSV/JSONL 내보내기 가능), 방장이 사용 상한(기본 5회, 3회는 EXE5 공식 대회 기준)을 켜면 도달한 칩은 해당 라운드에서 더 이상 발동하지 않습니다."
 
 msgid "Original (GBA)"
 msgstr "오리지널 (GBA)"
 
-msgid "Uses the memory pool's exact order and 4/4/2/2/1×12 weights with no Dark Chip priority penalty, no Mega/Giga/PA unlock thresholds, and no extra post-chip buster cooldown."
-msgstr "메모리 풀의 순서와 4/4/2/2/1×12 가중치를 그대로 사용하며, 다크 칩 우선순위 페널티, 상위 칩 해금 조건, 특정 칩 사용 후 추가 버스터 쿨타임이 없습니다."
+msgid "• Plays chips strictly in your memory pool order with 4/4/2/2/1×12 weights.\n• No Dark Chip priority penalty, no high-class unlock thresholds, and no extra post-chip buster cooldown."
+msgstr "• 메모리 풀의 현재 순서와 4/4/2/2/1×12 가중치를 그대로 사용합니다.\n• 다크 칩 하향, 상위 칩 해금 조건, 특정 칩 사용 후 추가 버스터 쿨타임이 없습니다."
 
 msgid "Legacy Collection (EXE4 & EXE5)"
 msgstr "레거시 컬렉션 (EXE4 & EXE5)"
 
-msgid "• Dark Chip priority penalty: Dark Chips (including EXE4 DrkVulcn in Mega) cannot occupy the top 4 slots. Only when a Dark Chip is present and fewer than 3 non-Dark Standard chips are registered are the top 3 slots padded with Cannon, MiniBomb, and AirShot (normal builds with 3+ non-Dark Standard chips do not trigger padding and do not need all 16 slots filled). With 4+ non-Dark Standard chips, Dark Chips in the top 4 are swapped down to 1× slots.\n• High-class unlock thresholds (by unique Standard/Dark chip count): Mega unlocks 1/2/3/4/5 slots at 3/6/10/14/16 unique chips; Giga and PA unlock at 12 unique chips."
-msgstr "• 다크 칩 우선순위 제한: 다크 칩(EXE4 메가 칸의 다크발칸 포함)은 상위 4칸을 차지할 수 없습니다. 다크 칩이 포함되어 있고 비다크 스탠다드가 3종 미만일 때만 상위 3칸에 캐논·미니밤·에어샷이 채워집니다(비다크 3종 이상이면 보정이 발생하지 않으며 16칸을 모두 채울 필요가 없습니다). 비다크가 4종 이상이면 상위 4칸의 다크 칩이 후방 1× 칸과 교체됩니다.\n• 상위 칩 해금 조건(스탠다드/다크 칩 종류 수 기준): 메가는 3/6/10/14/16종에서 1~5칸 해금, 기가와 PA는 12종 이상에서 해금됩니다."
+msgid "[Dark Chip Priority Penalty]\nDark Chips in the Standard pool cannot occupy the top 4 slots and are adjusted at battle start:\n• 4+ non-Dark Standard chips: Dark Chips in the top 4 swap with non-Dark chips behind them into 1× slots.\n• 3 non-Dark Standard chips: They take slots 1–3, and the first Dark Chip moves to slot 4 (2×).\n• Fewer than 3 non-Dark Standard chips: Only when a Dark Chip is present are empty spots in slots 1–3 padded with Cannon, MiniBomb, and AirShot (builds with 3+ non-Dark Standard chips never trigger padding and do not need all 16 slots filled).\n\n[High-Class Unlock Thresholds]\nUnlocked by total unique Standard + Dark chip count (Mega slots are governed only by this threshold):\n• Mega: 1 / 2 / 3 / 4 / 5 slots unlock at 3 / 6 / 10 / 14 / 16 types.\n• Giga & Program Advance: Unlock at 12 types."
+msgstr "【다크 칩 우선순위 하향】\n스탠다드 풀의 다크 칩은 상위 4칸을 차지할 수 없으며, 대전 시작 시 자동 조정됩니다:\n• 비다크 스탠다드 4종 이상: 상위 4칸의 다크 칩이 뒤쪽 비다크 칩과 교체되어 1× 칸으로 내려갑니다.\n• 비다크 스탠다드 3종: 비다크 3종이 1~3칸을 차지하고, 첫 번째 다크 칩이 4칸(2×)에 배치됩니다.\n• 비다크 스탠다드 3종 미만: 풀에 다크 칩이 포함된 경우에만 1~3칸의 빈자리에 캐논·미니밤·에어샷이 순서대로 보정됩니다(비다크 3종 이상이면 보정되지 않으며 16칸을 모두 채울 필요가 없습니다).\n\n【상위 칩 해금 조건】\n스탠다드 + 다크 칩 총 종류 수로 해금(메가 슬롯은 이 조건만 적용):\n• 메가: 3 / 6 / 10 / 14 / 16종 달성 시 1 / 2 / 3 / 4 / 5칸 해금.\n• 기가 및 PA: 12종 달성 시 해금."
 
 msgid "Double Team DS (5DS — EXE5 Only)"
-msgstr "5DS판 (더블 팀 DS — EXE5 전용)"
+msgstr "5DS판 (더블 팀 DS · EXE5 전용)"
 
-msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
-msgstr "• 내부 칩 ID 오름차순 정렬: 4/4/2/2/1×12 가중치를 적용하기 전에 스탠다드/다크 풀과 메가 풀이 내부 배틀칩 ID 오름차순으로 정렬됩니다(사용 횟수가 아닌 앞선 ID가 높은 가중치를 차지).\n• 칩 사용 후 버스터 쿨타임: 다크 칩, 서치맨(일반/SP/DS), 샤크파(1~3), 빅노이즈 사용 후 다음 칩을 시도하기 전에 3연발 버스터를 8회(원작은 2회) 발사해야 합니다."
+msgid "[Auto-Sort by Internal ID]\n• Standard/Dark and Mega pools ignore manual order and sort ascending by internal chip ID at battle start.\n• Chips with lower internal IDs automatically take the top 4 slots (4×, 4×, 2×, 2×).\n\n[Post-Chip Buster Cooldown]\n• After using any of the following chips, the AI enters a cooldown (8 decision ticks, forcing 7 consecutive buster runs before attempting chips again):\n  Any Dark Chip, SearchMan (V1/SP/DS), ShakPar 1–3, BigNoise."
+msgstr "【내부 칩 ID 자동 정렬】\n• 스탠다드/다크 풀과 메가 풀은 수동 순서를 쓰지 않고, 대전 시작 시 내부 칩 ID 오름차순으로 강제 정렬됩니다.\n• 번호가 앞선 칩이 자동으로 상위 4칸(4×, 4×, 2×, 2×)을 차지합니다.\n\n【특정 칩 사용 후 강제 버스터 쿨타임】\n• 아래 칩 사용 후 AI는 쿨타임에 진입합니다(8회 판정 쿨타임, 7회 연속 버스터 행동 후 정상 칩 사용 복귀):\n  모든 다크 칩, 서치맨(일반/SP/DS), 샤크파 1~3, 빅노이즈."
 
 msgid "Copy"
 msgstr "복사"

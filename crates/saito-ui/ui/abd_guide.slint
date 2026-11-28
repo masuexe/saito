@@ -61,25 +61,25 @@ export component AbdGuideDialog inherits DialogFrame {
 
             GuideCard {
                 heading: @tr("Common Rules (All Versions)");
-                body: @tr("Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit.");
+                body: @tr("• Pool capacity: Standard/Dark pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\n• Legality notices: Some chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked yellow in the editor). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\n• Tracking & cap: ABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable a per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to disable a chip for the rest of the round once reached.");
             }
 
             GuideCard {
                 active: root.active-mode == 0;
                 heading: @tr("Original (GBA)");
-                body: @tr("Uses the memory pool's exact order and 4/4/2/2/1×12 weights with no Dark Chip priority penalty, no Mega/Giga/PA unlock thresholds, and no extra post-chip buster cooldown.");
+                body: @tr("• Plays chips strictly in your memory pool order with 4/4/2/2/1×12 weights.\n• No Dark Chip priority penalty, no high-class unlock thresholds, and no extra post-chip buster cooldown.");
             }
 
             GuideCard {
                 active: root.active-mode == 1;
                 heading: @tr("Legacy Collection (EXE4 & EXE5)");
-                body: @tr("• Dark Chip priority penalty: Dark Chips (including EXE4 DrkVulcn in Mega) cannot occupy the top 4 slots. Only when a Dark Chip is present and fewer than 3 non-Dark Standard chips are registered are the top 3 slots padded with Cannon, MiniBomb, and AirShot (normal builds with 3+ non-Dark Standard chips do not trigger padding and do not need all 16 slots filled). With 4+ non-Dark Standard chips, Dark Chips in the top 4 are swapped down to 1× slots.\n• High-class unlock thresholds (by unique Standard/Dark chip count): Mega unlocks 1/2/3/4/5 slots at 3/6/10/14/16 unique chips; Giga and PA unlock at 12 unique chips.");
+                body: @tr("[Dark Chip Priority Penalty]\nDark Chips in the Standard pool cannot occupy the top 4 slots and are adjusted at battle start:\n• 4+ non-Dark Standard chips: Dark Chips in the top 4 swap with non-Dark chips behind them into 1× slots.\n• 3 non-Dark Standard chips: They take slots 1–3, and the first Dark Chip moves to slot 4 (2×).\n• Fewer than 3 non-Dark Standard chips: Only when a Dark Chip is present are empty spots in slots 1–3 padded with Cannon, MiniBomb, and AirShot (builds with 3+ non-Dark Standard chips never trigger padding and do not need all 16 slots filled).\n\n[High-Class Unlock Thresholds]\nUnlocked by total unique Standard + Dark chip count (Mega slots are governed only by this threshold):\n• Mega: 1 / 2 / 3 / 4 / 5 slots unlock at 3 / 6 / 10 / 14 / 16 types.\n• Giga & Program Advance: Unlock at 12 types.");
             }
 
             if root.has-ds: GuideCard {
                 active: root.active-mode == 2;
                 heading: @tr("Double Team DS (5DS — EXE5 Only)");
-                body: @tr("• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip.");
+                body: @tr("[Auto-Sort by Internal ID]\n• Standard/Dark and Mega pools ignore manual order and sort ascending by internal chip ID at battle start.\n• Chips with lower internal IDs automatically take the top 4 slots (4×, 4×, 2×, 2×).\n\n[Post-Chip Buster Cooldown]\n• After using any of the following chips, the AI enters a cooldown (8 decision ticks, forcing 7 consecutive buster runs before attempting chips again):\n  Any Dark Chip, SearchMan (V1/SP/DS), ShakPar 1–3, BigNoise.");
             }
         }
     }

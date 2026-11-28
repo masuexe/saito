@@ -735,26 +735,26 @@ msgstr "各版本黑暗之魂 AI（ABD）性能说明"
 msgid "Common Rules (All Versions)"
 msgstr "通用规则（各版本共通）"
 
-msgid "Standard pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\nSome chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked with a yellow warning). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\nABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable an optional per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to remove any Mega/Giga/Dark/PA chip from the runtime pool once it reaches the limit."
-msgstr "标准记忆芯片池最多容纳 16 种不同芯片，按 4×、4×、2×、2×、1×12 的权重分配（共 24 格），另加 MEGA 最多 5 格、GIGA 1 格、程序强化 1 格。\n部分芯片在原作正常流程中无法写入 ABD（EXE4 有 22 种，EXE5 有 82 种，编辑器内标黄提示）；EXE4 在标准栏位未填满时必须包含黑暗剑。\n每局联机与练习模式中 ABD 使用 MEGA/GIGA/黑暗/PA 芯片的次数会自动记录（可在设置中导出为 LOG/CSV/JSONL）；房主也可开启单局 ABD 上限（默认 5 次，3 次对应 EXE5 官方大会规则），达到上限后该芯片本局内将不再由 ABD 使用。"
+msgid "• Pool capacity: Standard/Dark pool holds up to 16 unique chips with 4×, 4×, 2×, 2×, 1×12 weights (24 slots), plus up to 5 Mega, 1 Giga, and 1 Program Advance.\n• Legality notices: Some chips cannot be recorded in normal play (22 in EXE4, 82 in EXE5; marked yellow in the editor). In EXE4, DarkSword is required in Standard unless all 16 Standard slots are full.\n• Tracking & cap: ABD Mega/Giga/Dark/PA chip uses per round are logged automatically (exportable as LOG/CSV/JSONL in Settings). Hosts may also enable a per-round ABD Cap (default 5; 3 matches official EXE5 tournament rules) to disable a chip for the rest of the round once reached."
+msgstr "• 槽位容量：标准/黑暗池最多 16 种芯片，按 4×、4×、2×、2×、1×12 分配（共 24 格）；另含 MEGA 5 格、GIGA 1 格、程序强化 1 格。\n• 合法性提示：部分芯片在原作中无法正常写入 ABD（EXE4 有 22 种，EXE5 有 82 种），编辑器内会标黄提示；EXE4 在标准池未填满时必须包含黑暗剑。\n• 统计与上限：对局中 ABD 使用 MEGA / GIGA / 黑暗 / PA 的次数会自动记录（可在设置中导出为 LOG/CSV/JSONL）；房主也可开启单局使用上限（默认 5 次，3 次对应 EXE5 官方大会规则），达上限后本局不再触发。"
 
 msgid "Original (GBA)"
 msgstr "原版（GBA）"
 
-msgid "Uses the memory pool's exact order and 4/4/2/2/1×12 weights with no Dark Chip priority penalty, no Mega/Giga/PA unlock thresholds, and no extra post-chip buster cooldown."
-msgstr "严格按照记忆芯片池内的排序与 4/4/2/2/1×12 权重出牌，无黑暗芯片优先级降权，无高阶芯片解锁门槛，也没有使用特定芯片后的额外连射冷却。"
+msgid "• Plays chips strictly in your memory pool order with 4/4/2/2/1×12 weights.\n• No Dark Chip priority penalty, no high-class unlock thresholds, and no extra post-chip buster cooldown."
+msgstr "• 完全按记忆芯片池的当前顺序与 4/4/2/2/1×12 权重出牌。\n• 无黑暗芯片降权、无高阶芯片解锁门槛，也无额外连射冷却。"
 
 msgid "Legacy Collection (EXE4 & EXE5)"
-msgstr "合集版（Legacy Collection，EXE4 & EXE5）"
+msgstr "合集版（Legacy Collection · EXE4 & EXE5）"
 
-msgid "• Dark Chip priority penalty: Dark Chips (including EXE4 DrkVulcn in Mega) cannot occupy the top 4 slots. Only when a Dark Chip is present and fewer than 3 non-Dark Standard chips are registered are the top 3 slots padded with Cannon, MiniBomb, and AirShot (normal builds with 3+ non-Dark Standard chips do not trigger padding and do not need all 16 slots filled). With 4+ non-Dark Standard chips, Dark Chips in the top 4 are swapped down to 1× slots.\n• High-class unlock thresholds (by unique Standard/Dark chip count): Mega unlocks 1/2/3/4/5 slots at 3/6/10/14/16 unique chips; Giga and PA unlock at 12 unique chips."
-msgstr "• 黑暗芯片降权：黑暗芯片（含 EXE4 MEGA 栏中的黑暗火神炮）不能占据前 4 高权重位。仅当池中存在黑暗芯片且非黑暗标准芯片不足 3 种时，前 3 位才会用加农炮、迷你炸弹、空气弹顺位补齐（正常配入 ≥3 种非黑暗标准芯片时不会触发填充，无需填满全部 16 槽）；当非黑暗标准芯片 ≥4 种时，前 4 位中的黑暗芯片会被换到后排 1× 位。\n• 高阶芯片解锁门槛（按标准/黑暗芯片种类数计算）：达到 3 / 6 / 10 / 14 / 16 种时分别解锁 1 / 2 / 3 / 4 / 5 个 MEGA 槽位；GIGA 与程序强化需满 12 种才会解锁。"
+msgid "[Dark Chip Priority Penalty]\nDark Chips in the Standard pool cannot occupy the top 4 slots and are adjusted at battle start:\n• 4+ non-Dark Standard chips: Dark Chips in the top 4 swap with non-Dark chips behind them into 1× slots.\n• 3 non-Dark Standard chips: They take slots 1–3, and the first Dark Chip moves to slot 4 (2×).\n• Fewer than 3 non-Dark Standard chips: Only when a Dark Chip is present are empty spots in slots 1–3 padded with Cannon, MiniBomb, and AirShot (builds with 3+ non-Dark Standard chips never trigger padding and do not need all 16 slots filled).\n\n[High-Class Unlock Thresholds]\nUnlocked by total unique Standard + Dark chip count (Mega slots are governed only by this threshold):\n• Mega: 1 / 2 / 3 / 4 / 5 slots unlock at 3 / 6 / 10 / 14 / 16 types.\n• Giga & Program Advance: Unlock at 12 types."
+msgstr "【黑暗芯片降权】\n标准池中的黑暗芯片不能占据前 4 高权重位，开局会自动调整：\n• 非黑暗标准芯片 ≥ 4 种：前 4 位中的黑暗芯片与后排非黑暗芯片互换，降为 1×。\n• 非黑暗标准芯片 = 3 种：3 张非黑暗芯片占前 3 位，第 1 张黑暗芯片落至第 4 位（2×）。\n• 非黑暗标准芯片 < 3 种：仅当池中含黑暗芯片时，前 3 位空缺依次补入加农炮、迷你炸弹、空气弹（正常配够 3 种以上非黑暗芯片时不会补卡，无需填满 16 格）。\n\n【高阶芯片解锁门槛】\n按标准 + 黑暗芯片的总种类数解锁（MEGA 栏位仅受此门槛限制）：\n• MEGA：满 3 / 6 / 10 / 14 / 16 种时，分别解锁 1 / 2 / 3 / 4 / 5 格。\n• GIGA 与程序强化：满 12 种时解锁。"
 
 msgid "Double Team DS (5DS — EXE5 Only)"
-msgstr "5DS 版（Double Team DS，仅 EXE5）"
+msgstr "5DS 版（Double Team DS · 仅 EXE5）"
 
-msgid "• Internal ID sort: Before applying 4/4/2/2/1×12 weights, Standard/Dark and Mega pools are sorted by internal BattleChip ID ascending (earlier IDs automatically take the higher 4×/4×/2×/2× weights instead of usage order).\n• Post-chip buster cooldown: After using any Dark Chip, SearchMan (V1/SP/DS), ShakPar (1–3), or BigNoise, the AI must fire 8 three-shot buster runs (vs 2 in Original) before attempting another chip."
-msgstr "• 内部芯片 ID 升序重排：在套用 4/4/2/2/1×12 权重前，标准/黑暗池与 MEGA 池均强制按游戏内部 BattleChip ID 从小到大排序（编号靠前的芯片自动获得高权重，不再按使用次数排序）。\n• 芯片后强制连射冷却：使用任意黑暗芯片、侦察人（无印/SP/DS）、摇星游行（1–3）或巨大噪音后，AI 必须先执行 8 次洛克炮三连射（原版仅 2 次）才能再次尝试出卡。"
+msgid "[Auto-Sort by Internal ID]\n• Standard/Dark and Mega pools ignore manual order and sort ascending by internal chip ID at battle start.\n• Chips with lower internal IDs automatically take the top 4 slots (4×, 4×, 2×, 2×).\n\n[Post-Chip Buster Cooldown]\n• After using any of the following chips, the AI enters a cooldown (8 decision ticks, forcing 7 consecutive buster runs before attempting chips again):\n  Any Dark Chip, SearchMan (V1/SP/DS), ShakPar 1–3, BigNoise."
+msgstr "【按内部编号自动排序】\n• 标准/黑暗池与 MEGA 池不采用手动顺序，开局强制按芯片内部编号从小到大重排。\n• 编号靠前的芯片会自动占到前 4 高权重位（4×、4×、2×、2×）。\n\n【特定芯片后的强制连射冷却】\n• 使用以下芯片后，AI 会进入连射冷却（8 轮冷却判定，需连续打完 7 次洛克炮连射回合后才恢复正常出卡）：\n  任意黑暗芯片、侦察人（无印/SP/DS）、摇星游行 1–3、巨大噪音。"
 
 msgid "Copy"
 msgstr "复制"
