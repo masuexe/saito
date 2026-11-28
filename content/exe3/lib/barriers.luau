@@ -27,10 +27,12 @@ local BARRIER_IDS: { [string]: number } = {
     ["barrier/10"] = 1,
     ["barrier/100"] = 2,
     ["barrier/200"] = 3,
+    ["barrier/500"] = 4,
     ["barrier/aura"] = 6,
     ["barrier/life-aura"] = 7,
     ["barrier/first"] = 8,
     ["barrier/bubble-wrap"] = 9,
+    ["barrier/dark-aura"] = 10,
 }
 
 local function barrier(b: Barrier): Barrier
@@ -67,6 +69,17 @@ barriers.barrier_200 = barrier {
     threshold = 0,
     timer = NO_TIMER,
     look = { sprite = SPRITE, anim = 4, palette = 2, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
+    sound = SOUND,
+}
+
+-- ID 4: 500Barr PA (500 HP; A6BE 0x080EDFF4 row 4: 0c-04 anim 4, pal 3, no down anim).
+barriers.barrier_500 = barrier {
+    id = "barrier/500",
+    behavior = "plain",
+    hp = 500,
+    threshold = 0,
+    timer = NO_TIMER,
+    look = { sprite = SPRITE, anim = 4, palette = 3, attach_point = 0, hidden_parts = 0, up_steps = 22, down_steps = 0 },
     sound = SOUND,
 }
 
@@ -116,6 +129,17 @@ barriers.bubble_wrap = barrier {
     down_sound = BUBBLE_POP_SOUND,
 }
 
+-- ID 10: DarkAura (blocks < 300 damage for 3000 ticks; A6BE/A3XE 0x080EDFF4 row 8: 0c-04 anim 0 pal 2).
+barriers.dark_aura = barrier {
+    id = "barrier/dark-aura",
+    behavior = "plain",
+    hp = 1,
+    threshold = 300,
+    timer = 3000,
+    look = { sprite = AURA, anim = 0, palette = 2, attach_point = 0, hidden_parts = 0, up_steps = 9, down_steps = 19 },
+    sound = SOUND,
+}
+
 function barriers.raise(navi: Object, b: Barrier, keep_old: boolean?)
     navi:raise_barrier {
         id = if b.id then BARRIER_IDS[b.id] else nil,
@@ -130,6 +154,17 @@ function barriers.raise(navi: Object, b: Barrier, keep_old: boolean?)
         common_visual.finish(old)
     end
     barrier_visual.spawn(navi, b)
+end
+
+-- Non-dimming instant barrier/aura raise (A6BE Family 3, 0x080B117C).
+function barriers.action(id: string, b: Barrier): Action
+    return new.action {
+        id = id,
+        update = function(me: Object)
+            barriers.raise(me, b)
+            me:exit_attack()
+        end,
+    }
 end
 
 barriers.controller = common_controller.make {

@@ -11,25 +11,14 @@ local GAUGE_FULL_SOUND = asset.sound("gauge-full")
 local BONUS_SOUND = asset.sound("damage-bonus")
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
 
-local FULLCUST_KIND = new.kind {
-    id = "plus/fullcust-controller",
-    pool = "effect",
-    update = dimming_chips.phases {
-        name = "FullCust",
-        effect = function(me: Object)
-            if me.phase_init == 0 then
-                battle.fill_custom_gauge()
-                battle.play_sound(GAUGE_FULL_SOUND)
-                me.timer = 20
-                me.phase_init = 4
-            end
-            local t = me.timer - 1
-            me.timer = t
-            if t < 0 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
+-- A6BE Family 45 (0x080B3A10, b11=0x02): FullCust is an instant non-dimming action.
+local FULLCUST_ACTION = new.action {
+    id = "plus/fullcust-action",
+    update = function(me: Object)
+        battle.fill_custom_gauge()
+        battle.play_sound(GAUGE_FULL_SOUND)
+        me:exit_attack()
+    end,
 }
 
 local AIRSHOES_KIND = new.kind {
@@ -91,7 +80,7 @@ local atk_30: Chip = {
 }
 
 local fire_30: Chip = {
-    modifier = "attack_plus",
+    modifier = "fire_plus",
     action = spawners.action { id = "fire-30/action", spawn = plus.spawner(30) },
     codes = { "*" },
     element = "null",
@@ -107,7 +96,7 @@ local fire_30: Chip = {
 }
 
 local aqua_30: Chip = {
-    modifier = "attack_plus",
+    modifier = "aqua_plus",
     action = spawners.action { id = "aqua-30/action", spawn = plus.spawner(30) },
     codes = { "*" },
     element = "null",
@@ -123,7 +112,7 @@ local aqua_30: Chip = {
 }
 
 local elec_30: Chip = {
-    modifier = "attack_plus",
+    modifier = "elec_plus",
     action = spawners.action { id = "elec-30/action", spawn = plus.spawner(30) },
     codes = { "*" },
     element = "null",
@@ -139,7 +128,7 @@ local elec_30: Chip = {
 }
 
 local wood_30: Chip = {
-    modifier = "attack_plus",
+    modifier = "wood_plus",
     action = spawners.action { id = "wood-30/action", spawn = plus.spawner(30) },
     codes = { "*" },
     element = "null",
@@ -204,6 +193,7 @@ local airshoes: Chip = {
 }
 
 local fullcust: Chip = {
+    action = FULLCUST_ACTION,
     codes = { "*" },
     element = "null",
     family = "null",
@@ -213,10 +203,7 @@ local fullcust: Chip = {
     damage = 0,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "library" },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(FULLCUST_KIND, user, spec, true)
-    end,
+    flags = { "library" },
     auto_battle = { class = "at_once" },
 }
 

@@ -38,6 +38,7 @@ local WAIT = 1
 -- has no burst (EXE4's, 0x080CD3D4) states none.
 export type Look = {
     id: string,
+    wait: number?,
     burst_sound: Sound?,
     burst_effect: Effect?,
     burst_target: CollisionType?,
@@ -180,7 +181,7 @@ local function init(me: Object, look: Look)
     me.element = element.byte(v.element, v.secondary)
     me:set_coordinates_from_panel()
     climb(me, v)
-    me.timer2 = WAIT
+    me.timer2 = if look.wait ~= nil then look.wait else WAIT
     if not me:create_collision() then
         me:free()
         return

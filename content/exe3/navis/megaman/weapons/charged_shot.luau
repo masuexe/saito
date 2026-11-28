@@ -28,18 +28,18 @@ local SHOT_Z = 0x18_0000
 local CHARGED_SHOT_Z = 0x08_0000
 
 -- Authentic charge thresholds derived from A6BE `0x080B5980` (`0x8000 / rate` across Charge Lv 1..5).
-local NORMAL_CHARGE_TICKS = { 100, 85, 70, 55, 40, 40 }
-local HEAT_WOOD_CHARGE_TICKS = { 130, 110, 90, 70, 50, 50 }
-local ELEC_CHARGE_TICKS = { 150, 125, 105, 85, 65, 65 }
+local NORMAL_CHARGE_TICKS: { number } = { 100, 85, 70, 55, 40, 40 }
+local HEAT_WOOD_CHARGE_TICKS: { number } = { 130, 110, 90, 70, 50, 50 }
+local ELEC_CHARGE_TICKS: { number } = { 150, 125, 105, 85, 65, 65 }
 
 -- Authentic Style WeaponLv 1..3 damage tables (A6BE 0x080B1BF4, 0x080B1540, 0x080B1CFC, 0x080B1DDC).
-local HEAT_DAMAGE = { 50, 80, 100 }
-local AQUA_DAMAGE = { 40, 60, 80 }
-local ELEC_DAMAGE = { 20, 30, 40 }
-local WOOD_DAMAGE = { 10, 15, 20 }
+local HEAT_DAMAGE: { number } = { 50, 80, 100 }
+local AQUA_DAMAGE: { number } = { 40, 60, 80 }
+local ELEC_DAMAGE: { number } = { 20, 30, 40 }
+local WOOD_DAMAGE: { number } = { 10, 15, 20 }
 
 local SHOT_SOUND = asset.sound("buster-shot")
-local CANNON_SOUND = asset.sound("cannon")
+local CANNON_SOUND = asset.sound("spreader") -- A6BE 0x080B1554 = 0x7D (Aqua Bubbler fire)
 local BUBBLER_SPLASH_SOUND = asset.sound("freeze") -- A6BE 0x080D5FAF[1] = 0xAE
 local FLAME_SOUND = asset.sound("flamethrower") -- A6BE 0x080B1C76 = 0x82
 local ZAPRING_SOUND = asset.sound("zapring") -- A6BE 0x080B1D4E = 0xB0

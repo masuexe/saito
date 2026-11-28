@@ -628,7 +628,7 @@ type PawnState = { life: number, tick: number }
 local PAWN_KIND = new.kind {
     id = "trap/pawn",
     pool = "attack",
-    state = { life = "u16", tick = "u8" },
+    state = { life = "u16", tick = "u16" },
     update = function(me: Object)
         local l = me.lifecycle
         if l == "init" then

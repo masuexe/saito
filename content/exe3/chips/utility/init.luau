@@ -547,7 +547,7 @@ type TotemState = { life: number, tick: number, heal_amt: number }
 local TOTEM_KIND = new.kind {
     id = "utility/totem",
     pool = "attack",
-    state = { life = "u16", tick = "u8", heal_amt = "u16" },
+    state = { life = "u16", tick = "u16", heal_amt = "u16" },
     update = function(me: Object)
         local l = me.lifecycle
         if l == "init" then
@@ -647,52 +647,100 @@ local function make_totem_action(id: string, heal_amt: number): Action
 end
 
 -- =============================================================================
--- 9. Spice1-3: Explodes ALL Grass panels on the battlefield!
+-- 9. Spice1-3 (0x048..0x04A): Non-dimming column-by-column sweep exploding Grass panels!
+-- Verified against A6BE Family 43 (0x080B3972, b11=0x01) -> AttackObj 0x46 (0x080DE6BC):
+-- non-dimming action sweeping all 6 columns every 8 ticks.
 -- =============================================================================
-local SPICE_CTRL = new.kind {
-    id = "utility/spice-controller",
-    pool = "effect",
-    update = dimming_chips.phases {
-        name = "Spice",
-        effect = function(me: Object)
-            if me.phase_init == 0 then
+type SpiceSweepState = { col: number, tick: number }
+
+local SPICE_SWEEP_KIND = new.kind {
+    id = "utility/spice-sweep",
+    pool = "attack",
+    state = { col = "u8", tick = "u8" },
+    update = function(me: Object)
+        local l = me.lifecycle
+        if l == "init" then
+            if battle.over() then
+                me:free()
+                return
+            end
+            local s = me.state :: SpiceSweepState
+            s.col = if me.alliance == 0 then 1 else 6
+            s.tick = 0
+            me:set_lifecycle("update")
+        elseif l == "update" then
+            if battle.over() then
+                me:set_lifecycle("destroy")
+                return
+            end
+            local s = me.state :: SpiceSweepState
+            if s.tick == 0 then
+                local hit_any = false
                 for py = 1, 3 do
-                    for px = 1, 6 do
-                        local p = field.panel(px, py)
-                        if p and p.kind == "grass" then
-                            dim_hitbox(me, {
-                                panel_x = px,
-                                panel_y = py,
-                                element = 4, -- wood
-                                z = 0x10_0000,
-                                region = regions.single,
-                                hit_effect = sparks.wood,
-                                target = collision.hits_navis,
-                                self_type = collision.piercing,
-                                damage = me.damage,
-                                stamina = me.stamina,
-                                hit_mod = 3,
-                            })
-                            local cx, cy = field.center(px, py)
-                            battle.effect(Vec3.new(cx, cy, 0x10_0000), SPICE_FX)
-                        end
+                    local p = field.panel(s.col, py)
+                    if p and p.kind == "grass" then
+                        hit_any = true
+                        battle.hitbox(me, {
+                            panel_x = s.col,
+                            panel_y = py,
+                            element = 4, -- wood
+                            z = 0x10_0000,
+                            region = regions.single,
+                            hit_effect = sparks.wood,
+                            target = collision.hits_navis,
+                            self_type = collision.piercing,
+                            damage = me.damage,
+                            stamina = me.stamina,
+                            hit_mod = 3,
+                        })
+                        local cx, cy = field.center(s.col, py)
+                        battle.effect(Vec3.new(cx, cy, 0x10_0000), SPICE_FX)
                     end
                 end
-                battle.play_sound(BLAST_SOUND)
-                me.timer = 22
-                me.phase_init = 4
+                if hit_any then
+                    battle.play_sound(BLAST_SOUND)
+                end
             end
-            local t = me.timer - 1
-            me.timer = int.u16(t)
-            if t < 0 then
-                dimming_chips.done(me)
+            s.tick += 1
+            if s.tick >= 8 then
+                s.tick = 0
+                local next_col = s.col + me.facing
+                if next_col < 1 or next_col > 6 then
+                    me:set_lifecycle("destroy")
+                    return
+                end
+                s.col = next_col
             end
-        end,
-    },
+        else
+            me:destroy()
+        end
+    end,
 }
 
-local function spice_hook(user: Object, spec: DimmingChipSpec): Object?
-    return dimming_chips.spawn(SPICE_CTRL, user, spec)
+local function make_spice_action(id: string): Action
+    return new.action {
+        id = id,
+        state = { timer = "u16" },
+        update = function(me: Object, s: ActTimer)
+            if me.step_init == 0 then
+                me:set_animation(anims.idle(me))
+                me:set_status("using_action", true)
+                local o = battle.spawn(SPICE_SWEEP_KIND)
+                if o then
+                    o.panel_x, o.panel_y = me.panel_x, me.panel_y
+                    o.alliance, o.flip = me.alliance, me.flip
+                    local damage = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+                    o:set_damage_word(damage)
+                end
+                s.timer = 0
+                me.step_init = 4
+            end
+            s.timer += 1
+            if s.timer >= 14 then
+                me:exit_attack()
+            end
+        end,
+    }
 end
 
 -- =============================================================================
@@ -1504,6 +1552,7 @@ local totem3: Chip = {
 }
 
 local spice1: Chip = {
+    action = make_spice_action("spice1/action"),
     codes = { "B", "D", "I", "S", "Z", "*" },
     element = "wood",
     family = "wood",
@@ -1513,11 +1562,11 @@ local spice1: Chip = {
     damage = 80,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "standard_library", "library" },
-    dimming = spice_hook,
+    flags = { "has_damage", "standard_library", "library" },
 }
 
 local spice2: Chip = {
+    action = make_spice_action("spice2/action"),
     codes = { "C", "F", "I", "K", "R" },
     element = "wood",
     family = "wood",
@@ -1527,11 +1576,11 @@ local spice2: Chip = {
     damage = 110,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "standard_library", "library" },
-    dimming = spice_hook,
+    flags = { "has_damage", "standard_library", "library" },
 }
 
 local spice3: Chip = {
+    action = make_spice_action("spice3/action"),
     codes = { "D", "F", "J", "O", "Q" },
     element = "wood",
     family = "wood",
@@ -1541,8 +1590,7 @@ local spice3: Chip = {
     damage = 140,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "standard_library", "library" },
-    dimming = spice_hook,
+    flags = { "has_damage", "standard_library", "library" },
 }
 
 local crsshld1: Chip = {

@@ -31,11 +31,11 @@ local WOOD_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 8, steps = 1
 local BIG_SLASH = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 0, steps = 15 }
 local CUST_SLASH = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 1, steps = 15 }
 
-local function slash(id: string, region: Region, effect: Effect, sound: Sound?, blade: AttachmentLook?): Action
+local function slash(id: string, region: Region, effect: Effect, sound: Sound?, blade: AttachmentLook?, hit_mod: number?): Action
     return swords.slash {
         id = id,
         blade = blade or swords.blade,
-        hit = { region = region, collision = HIT, hit_mod = 3 },
+        hit = { region = region, collision = HIT, hit_mod = hit_mod or 3 },
         effect = effect,
         sound = sound or swords.swing,
     }
@@ -126,7 +126,7 @@ local elecswrd: Chip = {
 }
 
 local bambswrd: Chip = {
-    action = slash("bambswrd/action", regions.wide, WOOD_SLASH, nil, swords.wood_blade),
+    action = slash("bambswrd/action", regions.wide, WOOD_SLASH, nil, swords.wood_blade, 1),
     codes = { "B", "L", "N", "P", "W" },
     element = "wood",
     family = "sword",
@@ -324,10 +324,10 @@ local slasher: Chip = {
     traits = { "not_named_on_use" },
 }
 
--- Muramasa (0x0CA): Mega sword dealing damage equal to user's missing HP (cap 999)!
+-- Muramasa (0x0CA): Mega sword dealing damage equal to user's missing HP (cap 999), 2x1 LongSwrd (A6BE 0x080D65CC row 9)!
 local muramasa: Chip = {
     damage = { formula = "hp_lost", cap = 999 },
-    action = slash("muramasa/action", regions.single, MURAMASA_SLASH, swords.big_swing),
+    action = slash("muramasa/action", regions.long, MURAMASA_SLASH, swords.big_swing),
     codes = { "M" },
     element = "null",
     family = "sword",

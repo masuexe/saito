@@ -22,13 +22,13 @@ local STEALTH_KIND = new.kind {
                 local s = me.state :: StealthState
                 if user then
                     if s.mode == "mole" then
+                        -- A6BE 0x080F8D80: Mole sets timed submerged status only (480/720/960t).
                         user:set_status_timer("submerged", s.ticks)
                         user:set_status("submerged", true)
-                        user:set_status_timer("flash", s.ticks)
-                        user:set_status("invisible", true)
                     else
+                        -- A6BE 0x080FA4F8: Shadow blocks non-sword hits via rules hit_guard;
+                        -- do NOT set flash (which would block swords under flash_timer_first).
                         api.set_shadow_ticks(user.alliance, s.ticks)
-                        user:set_status_timer("flash", s.ticks)
                     end
                     battle.effect(user.pos, PUFF_FX)
                 end
@@ -68,7 +68,7 @@ local mole1: Chip = {
     hit_param = 0,
     lockout = 0,
     flags = { "dimming", "standard_library", "library" },
-    dimming = hook("mole", 240),
+    dimming = hook("mole", 480),
 }
 
 local mole2: Chip = {
@@ -82,7 +82,7 @@ local mole2: Chip = {
     hit_param = 0,
     lockout = 0,
     flags = { "dimming", "standard_library", "library" },
-    dimming = hook("mole", 360),
+    dimming = hook("mole", 720),
 }
 
 local mole3: Chip = {
@@ -96,7 +96,7 @@ local mole3: Chip = {
     hit_param = 0,
     lockout = 0,
     flags = { "dimming", "standard_library", "library" },
-    dimming = hook("mole", 480),
+    dimming = hook("mole", 960),
 }
 
 local shadow: Chip = {

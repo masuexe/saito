@@ -4,7 +4,7 @@
 
 use super::folder::FolderChip;
 use super::library::Library;
-use crate::content::{ChipClass, ChipCode, ChipFlags, ChipModifier, Recipe};
+use crate::content::{ChipClass, ChipCode, ChipFlags, ChipModifier, Element, Recipe};
 use crate::hand::ChipHand;
 use saito_content_api::ChipHandle;
 
@@ -235,11 +235,15 @@ fn codes_run(chips: &[FolderChip]) -> bool {
     stars <= 1 && expected >= 0
 }
 
-/// Whether modifier `m` applies to a chip of `flags` right before it
-/// (`sub_8029224`'s test).
-fn applies(m: ChipModifier, flags: ChipFlags) -> bool {
+/// Whether modifier `m` applies to a chip of `flags` and `element` right before it
+/// (`sub_8029224` / EXE3 `0x0800F9E0`'s test).
+fn applies(m: ChipModifier, flags: ChipFlags, element: Element) -> bool {
     match m {
         ChipModifier::AttackPlus => flags.has(ChipFlags::HAS_DAMAGE),
+        ChipModifier::FirePlus => flags.has(ChipFlags::HAS_DAMAGE) && element == Element::Fire,
+        ChipModifier::AquaPlus => flags.has(ChipFlags::HAS_DAMAGE) && element == Element::Aqua,
+        ChipModifier::ElecPlus => flags.has(ChipFlags::HAS_DAMAGE) && element == Element::Elec,
+        ChipModifier::WoodPlus => flags.has(ChipFlags::HAS_DAMAGE) && element == Element::Wood,
         ChipModifier::NaviPlus => flags.has(ChipFlags::NAVI),
         ChipModifier::Paralyze => flags.has(ChipFlags::HAS_DAMAGE),
         ChipModifier::Uninstall => flags.has(ChipFlags::HAS_DAMAGE) && !flags.has(ChipFlags::DIMMING),
@@ -252,7 +256,11 @@ fn applies(m: ChipModifier, flags: ChipFlags) -> bool {
 /// `prev` ([`fold_modifiers`]'s test; a Program Advance the picks form
 /// aside). A chip that isn't a modifier never does.
 pub fn stays_unfolded(library: &dyn Library, prev: Option<ChipHandle>, chip: ChipHandle) -> bool {
-    library.chip(chip).modifier.is_some_and(|m| !applies(m, prev.map_or(ChipFlags(0), |p| library.chip(p).flags)))
+    let (flags, element) = prev.map_or((ChipFlags(0), Element::Null), |p| {
+        let d = library.chip(p);
+        (d.flags, d.element)
+    });
+    library.chip(chip).modifier.is_some_and(|m| !applies(m, flags, element))
 }
 
 /// `sub_8029224`: a modifier right after a chip it applies to folds into
@@ -267,13 +275,21 @@ fn fold_modifiers(entries: &mut [Entry; 6], library: &dyn Library) {
             i += 1;
             continue;
         };
-        let prev = entries[i - 1].id.map_or(ChipFlags(0), |p| library.chip(p).flags);
-        if !applies(m, prev) {
+        let (prev_flags, prev_element) = entries[i - 1].id.map_or((ChipFlags(0), Element::Null), |p| {
+            let d = library.chip(p);
+            (d.flags, d.element)
+        });
+        if !applies(m, prev_flags, prev_element) {
             i += 1;
             continue;
         }
         match m {
-            ChipModifier::AttackPlus | ChipModifier::NaviPlus => entries[i - 1].bonus += entries[i].damage,
+            ChipModifier::AttackPlus
+            | ChipModifier::FirePlus
+            | ChipModifier::AquaPlus
+            | ChipModifier::ElecPlus
+            | ChipModifier::WoodPlus
+            | ChipModifier::NaviPlus => entries[i - 1].bonus += entries[i].damage,
             ChipModifier::Paralyze => entries[i - 1].modifiers |= modifier_bits::PARALYZE,
             ChipModifier::Uninstall => entries[i - 1].modifiers |= modifier_bits::UNINSTALL,
         }
@@ -350,6 +366,8 @@ mod tests {
     const QUIET: ChipId = 2;
     const DIMMING: ChipId = 3;
     const NAVI: ChipId = 4;
+    const FIRE_HIT: ChipId = 5;
+    const AQUA_HIT: ChipId = 6;
 
     fn library() -> TestLibrary {
         let damaging = chip(ChipClass::Standard, EVERY_CODE, ChipFlags::HAS_DAMAGE, 40);
@@ -359,8 +377,12 @@ mod tests {
                 (QUIET, chip(ChipClass::Standard, EVERY_CODE, 0, 0)),
                 (DIMMING, chip(ChipClass::Standard, EVERY_CODE, ChipFlags::HAS_DAMAGE | ChipFlags::DIMMING, 30)),
                 (NAVI, chip(ChipClass::Mega, EVERY_CODE, ChipFlags::NAVI, 100)),
+                (FIRE_HIT, ChipData { element: Element::Fire, ..chip(ChipClass::Standard, EVERY_CODE, ChipFlags::HAS_DAMAGE, 80) }),
+                (AQUA_HIT, ChipData { element: Element::Aqua, ..chip(ChipClass::Standard, EVERY_CODE, ChipFlags::HAS_DAMAGE, 60) }),
                 (0xC0, modifier(ChipModifier::AttackPlus, 10)),
                 (0xC1, modifier(ChipModifier::NaviPlus, 20)),
+                (0xC4, modifier(ChipModifier::FirePlus, 30)),
+                (0xC5, modifier(ChipModifier::AquaPlus, 30)),
                 (0xB8, modifier(ChipModifier::Paralyze, 0)),
                 (0xB9, modifier(ChipModifier::Uninstall, 0)),
                 (0x140, chip(ChipClass::ProgramAdvance, EVERY_CODE, ChipFlags::HAS_DAMAGE, 300)),
@@ -473,6 +495,18 @@ mod tests {
         let b = built(&[pick(CANNON, 0), pick(0xC1, 26), pick(NAVI, 0), pick(0xC1, 26)]);
         assert_eq!(b.hand.ids[..4], ids([CANNON, 0xC1, NAVI, NONE]));
         assert_eq!(b.hand.attack_bonus[..3], [0, 0, 20]);
+    }
+
+    #[test]
+    fn elemental_plus_requires_matching_element() {
+        // Fire+30 folds into Fire chips, stays unfolded after Null or Aqua chips (max 5 picks).
+        let b = built(&[pick(CANNON, 0), pick(0xC4, 26), pick(FIRE_HIT, 0), pick(0xC4, 26), pick(AQUA_HIT, 0)]);
+        assert_eq!(b.hand.ids[..5], ids([CANNON, 0xC4, FIRE_HIT, AQUA_HIT, NONE]));
+        assert_eq!(b.hand.attack_bonus[..4], [0, 0, 30, 0]);
+        // Aqua+30 folds into Aqua chips, not Fire chips.
+        let b = built(&[pick(FIRE_HIT, 0), pick(0xC5, 26), pick(AQUA_HIT, 0), pick(0xC5, 26)]);
+        assert_eq!(b.hand.ids[..4], ids([FIRE_HIT, 0xC5, AQUA_HIT, NONE]));
+        assert_eq!(b.hand.attack_bonus[..3], [0, 0, 30]);
     }
 
     #[test]

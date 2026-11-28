@@ -915,14 +915,16 @@ impl UserData for Object {
             let byte = |k: &str| -> mlua::Result<u8> {
                 u8::try_from(table_int(&t, k)?).map_err(|_| mlua::Error::runtime(format!("barrier `{k}` is not a byte")))
             };
-            let timer = u16::try_from(table_int(&t, "timer")?)
-                .map_err(|_| mlua::Error::runtime("barrier `timer` is not a halfword"))?;
+            let half = |k: &str| -> mlua::Result<u16> {
+                u16::try_from(table_int(&t, k)?)
+                    .map_err(|_| mlua::Error::runtime(format!("barrier `{k}` is not a halfword")))
+            };
             let spec = saito_content_api::api::BarrierSpec {
                 id,
                 behavior,
-                hp: byte("hp")?,
-                threshold: byte("threshold")?,
-                timer,
+                hp: half("hp")?,
+                threshold: half("threshold")?,
+                timer: half("timer")?,
                 weak_element: byte("weak_element")?,
             };
             with(|api, _| api.raise_barrier(this.0, spec).map_err(api_error))

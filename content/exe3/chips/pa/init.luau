@@ -700,54 +700,54 @@ local timebom: Chip = {
 }
 
 -- =============================================================================
--- 7. H-Burst (0x14D): Spreader x3 code-run -> 5x100 multi-explosion!
+-- 7. H-Burst (0x14D): Non-dimming Spreader x3 -> 5x100 multi-explosion (A6BE Fam 24 0x080B24B0)!
 -- =============================================================================
 type CountState = { hits: number }
+type PaActState = { timer: number, hits: number }
 
-local HBURST_KIND = new.kind {
-    id = "pa/h-burst-controller",
-    pool = "effect",
-    state = { hits = "u8" },
-    update = dimming_chips.phases {
-        name = "H-Burst",
-        effect = function(me: Object)
-            local s = me.state :: CountState
-            if me.phase_init == 0 then
-                battle.play_sound(SPREADER_SOUND)
-                me.timer = 0
-                s.hits = 0
-                me.phase_init = 4
-            end
-            if me.timer % 6 == 2 and s.hits < 5 then
-                s.hits += 1
-                local tx, ty = enemy_target(me.alliance)
-                local reg = if s.hits % 2 == 1 then regions.plus else regions.square
-                dim_hitbox(me, {
-                    panel_x = tx,
-                    panel_y = ty,
-                    element = 0,
-                    z = 0x10_0000,
-                    region = reg,
-                    hit_effect = sparks.blast,
-                    target = collision.hits_navis,
-                    self_type = collision.attack,
-                    damage = me.damage,
-                    stamina = me.stamina,
-                    hit_mod = if s.hits == 5 then 3 else 1,
-                })
-                battle.region_effects(tx, ty, reg, me.alliance, FLASH_FX, 0x10_0000)
-                battle.play_sound(BLAST_SOUND)
-                battle.shake_camera(2, 6)
-            end
-            me.timer += 1
-            if me.timer >= 38 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
+local HBURST_ACTION = new.action {
+    id = "pa/h-burst-action",
+    state = { timer = "u16", hits = "u8" },
+    update = function(me: Object, s: PaActState)
+        if me.step_init == 0 then
+            me:set_animation(anims.buster_shoot(me))
+            me:set_status("using_action", true)
+            battle.play_sound(SPREADER_SOUND)
+            s.timer = 0
+            s.hits = 0
+            me.step_init = 4
+        end
+        if s.timer % 6 == 2 and s.hits < 5 then
+            s.hits += 1
+            local tx, ty = enemy_target(me.alliance)
+            local reg = if s.hits % 2 == 1 then regions.plus else regions.square
+            local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+            battle.hitbox(me, {
+                panel_x = tx,
+                panel_y = ty,
+                element = 0,
+                z = 0x10_0000,
+                region = reg,
+                hit_effect = sparks.blast,
+                target = collision.hits_navis,
+                self_type = collision.attack,
+                damage = bit32.band(dmg, 0xFFFF),
+                stamina = bit32.rshift(dmg, 16),
+                hit_mod = 0,
+            })
+            battle.region_effects(tx, ty, reg, me.alliance, FLASH_FX, 0x10_0000)
+            battle.play_sound(BLAST_SOUND)
+            battle.shake_camera(2, 6)
+        end
+        s.timer += 1
+        if s.timer >= 34 then
+            me:exit_attack()
+        end
+    end,
 }
 
 local h_burst: Chip = {
+    action = HBURST_ACTION,
     codes = PA_CODES,
     element = "null",
     family = "program_advance",
@@ -757,20 +757,19 @@ local h_burst: Chip = {
     damage = 100,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage" },
+    flags = { "has_damage" },
     program_advances = {
         { order = 6, code_run = { chip = spreaders.spreader, count = 3 } },
     },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(HBURST_KIND, user, spec, true)
-    end,
 }
 
 -- =============================================================================
--- 8 & 9. BubSprd (0x14E) and HeatSprd (0x14F): 300-dmg elemental 3x3 spreaders!
+-- 8 & 9. BubSprd (0x14E) and HeatSprd (0x14F): 300-dmg elemental 3x3 spreaders (hit_mod=0)!
 -- =============================================================================
-local HEAT_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = HEAT_BLAST_FX, sound = SPREADER_SOUND }
-local BUB_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = BUBBLE_SPLASH_FX, sound = SPREADER_SOUND }
+local AQUA_BURST_SOUND = asset.sound("freeze")
+local FIRE_BURST_SOUND = asset.sound("heat-blast")
+local HEAT_BURST = bullet.variant { region = regions.square, hit_mod = 0, effect = HEAT_BLAST_FX, sound = FIRE_BURST_SOUND }
+local BUB_BURST = bullet.variant { region = regions.square, hit_mod = 0, effect = BUBBLE_SPLASH_FX, sound = AQUA_BURST_SOUND }
 
 type SpreadState = { timer: number }
 
@@ -927,53 +926,56 @@ local elemswrd: Chip = {
 }
 
 -- =============================================================================
--- 12. EvilCut (0x152): StepSwrd + HeroSwrd + StepCros (dim triple 150x3 slash!)
+-- 12. EvilCut (0x152): Non-dimming StepSwrd + HeroSwrd + StepCros (A6BE Fam 41 0x080B373C)!
 -- =============================================================================
-local EVILCUT_KIND = new.kind {
-    id = "pa/evilcut-controller",
-    pool = "effect",
-    state = { hits = "u8" },
-    update = dimming_chips.phases {
-        name = "EvilCut",
-        effect = function(me: Object)
-            local s = me.state :: CountState
-            if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                me.timer = 0
-                s.hits = 0
-                me.phase_init = 4
+local EVILCUT_ACTION = new.action {
+    id = "pa/evilcut-action",
+    state = { timer = "u16", hits = "u8" },
+    update = function(me: Object, s: PaActState)
+        if me.step_init == 0 then
+            me.anim = anims.SWORD_SWING
+            me:set_status("using_action", true)
+            attachment.attach(me, swords.blade, "related", 0)
+            s.timer = 0
+            s.hits = 0
+            me.step_init = 4
+        end
+        if s.timer % 9 == 3 and s.hits < 3 then
+            s.hits += 1
+            local tx = me.panel_x + me.facing * 2
+            local ty = me.panel_y
+            if not field.valid(tx, ty) then
+                tx, ty = enemy_target(me.alliance)
             end
-            if me.timer % 10 == 4 and s.hits < 3 then
-                s.hits += 1
-                local tx, ty = enemy_target(me.alliance)
-                local reg = if s.hits == 3 then regions.x else regions.wide
-                dim_hitbox(me, {
-                    panel_x = tx,
-                    panel_y = ty,
-                    element = 0,
-                    z = 0x10_0000,
-                    region = reg,
-                    hit_effect = sparks.heavy,
-                    target = collision.hits_navis,
-                    self_type = collision.slash,
-                    damage = me.damage,
-                    stamina = me.stamina,
-                    hit_mod = if s.hits == 3 then 3 else 1,
-                })
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), BIG_SLASH, me.alliance)
-                battle.play_sound(SWING_SOUND)
-                battle.palette_flash(0, 6, true, true)
-            end
-            me.timer += 1
-            if me.timer >= 40 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
+            local reg = if s.hits == 1 then regions.wide else regions.x
+            local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+            battle.hitbox(me, {
+                panel_x = tx,
+                panel_y = ty,
+                element = 0,
+                z = 0x10_0000,
+                region = reg,
+                hit_effect = sparks.heavy,
+                target = collision.hits_navis,
+                self_type = collision.slash,
+                damage = bit32.band(dmg, 0xFFFF),
+                stamina = bit32.rshift(dmg, 16),
+                hit_mod = if s.hits == 3 then 3 else 1,
+            })
+            local cx, cy = field.center(tx, ty)
+            battle.effect(Vec3.new(cx, cy, 0x10_0000), BIG_SLASH, me.alliance)
+            battle.play_sound(SWING_SOUND)
+        end
+        s.timer += 1
+        if s.timer >= 34 then
+            me.related1 = nil
+            me:exit_attack()
+        end
+    end,
 }
 
 local evilcut: Chip = {
+    action = EVILCUT_ACTION,
     codes = PA_CODES,
     element = "null",
     family = "program_advance",
@@ -983,13 +985,10 @@ local evilcut: Chip = {
     damage = 150,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage" },
+    flags = { "has_damage" },
     program_advances = {
         { order = 11, sequence = { blades.stepswrd, blades.heroswrd, blades.stepcros } },
     },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(EVILCUT_KIND, user, spec, true)
-    end,
 }
 
 -- =============================================================================
@@ -1092,57 +1091,52 @@ local deuxhero: Chip = {
 }
 
 -- =============================================================================
--- 15. HyperRat (0x154): Ratton1 + Ratton2 + Ratton3 -> 500-dmg homing rat missile!
+-- 15. HyperRat (0x154): Non-dimming Ratton1+2+3 (A6BE Fam 29 0x080B2BE4)!
 -- =============================================================================
-type RatState = { step: number }
-
-local HYPERRAT_KIND = new.kind {
-    id = "pa/hyperrat-controller",
-    pool = "effect",
-    state = { step = "u8" },
-    update = dimming_chips.phases {
-        name = "HyperRat",
-        effect = function(me: Object)
-            local s = me.state :: RatState
-            if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                me.timer = 0
-                s.step = 0
-                me.phase_init = 4
-            end
-            if me.timer == 2 then
-                local tx, ty = enemy_target(me.alliance)
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), RATTON_FX)
-            end
-            if me.timer == 14 then
-                local tx, ty = enemy_target(me.alliance)
-                dim_hitbox(me, {
-                    panel_x = tx,
-                    panel_y = ty,
-                    element = 0,
-                    z = 0x10_0000,
-                    region = regions.plus,
-                    hit_effect = sparks.blast,
-                    target = collision.hits_navis,
-                    self_type = collision.piercing,
-                    damage = me.damage,
-                    stamina = me.stamina,
-                    hit_mod = 5,
-                })
-                battle.region_effects(tx, ty, regions.plus, me.alliance, BLAST_FX, 0x10_0000)
-                battle.play_sound(BLAST_SOUND)
-                battle.shake_camera(3, 18)
-            end
-            me.timer += 1
-            if me.timer >= 38 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
+local HYPERRAT_ACTION = new.action {
+    id = "pa/hyperrat-action",
+    state = { timer = "u16", hits = "u8" },
+    update = function(me: Object, s: PaActState)
+        if me.step_init == 0 then
+            me:set_animation(anims.THROW_LOW)
+            me:set_status("using_action", true)
+            s.timer = 0
+            s.hits = 0
+            me.step_init = 4
+        end
+        if s.timer == 4 then
+            local tx, ty = enemy_target(me.alliance)
+            local cx, cy = field.center(tx, ty)
+            battle.effect(Vec3.new(cx, cy, 0x10_0000), RATTON_FX)
+        elseif s.timer == 14 then
+            local tx, ty = enemy_target(me.alliance)
+            local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+            battle.hitbox(me, {
+                panel_x = tx,
+                panel_y = ty,
+                element = 0,
+                z = 0x10_0000,
+                region = regions.plus,
+                hit_effect = sparks.blast,
+                target = collision.hits_navis,
+                self_type = collision.attack,
+                damage = bit32.band(dmg, 0xFFFF),
+                stamina = bit32.rshift(dmg, 16),
+                hit_mod = 2,
+            })
+            battle.region_effects(tx, ty, regions.plus, me.alliance, BLAST_FX, 0x10_0000)
+            battle.play_sound(BLAST_SOUND)
+            battle.shake_camera(3, 18)
+        end
+        s.timer += 1
+        if s.timer >= 28 then
+            me:exit_attack()
+        end
+    end,
 }
 
 local hyperrat: Chip = {
+    action = HYPERRAT_ACTION,
     codes = PA_CODES,
     element = "null",
     family = "program_advance",
@@ -1152,62 +1146,59 @@ local hyperrat: Chip = {
     damage = 500,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage" },
+    flags = { "has_damage" },
     program_advances = {
         { order = 39, sequence = { magnums.ratton1, magnums.ratton2, magnums.ratton3 } },
     },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(HYPERRAT_KIND, user, spec, true)
+}
+
+-- =============================================================================
+-- 16. EverCrse (0x155): Non-dimming CrsShld1+2+3 (A6BE Fam 5 0x080B12D4)!
+-- =============================================================================
+local EVERCRSE_ACTION = new.action {
+    id = "pa/evercrse-action",
+    state = { timer = "u16", hits = "u8" },
+    update = function(me: Object, s: PaActState)
+        if me.step_init == 0 then
+            me:set_animation(anims.idle(me))
+            me:set_status("guard", true)
+            me:set_status("using_action", true)
+            battle.play_sound(SHIELD_SOUND)
+            s.timer = 0
+            s.hits = 0
+            me.step_init = 4
+        end
+        if s.hits == 0 and me.collision.guard_dirs ~= 0 then
+            s.hits = 1
+            local tx, ty = enemy_target(me.alliance)
+            local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+            battle.hitbox(me, {
+                panel_x = tx,
+                panel_y = ty,
+                element = 0,
+                z = 0x10_0000,
+                region = regions.single,
+                hit_effect = sparks.charged,
+                target = collision.hits_navis,
+                self_type = collision.piercing,
+                damage = bit32.band(dmg, 0xFFFF),
+                stamina = bit32.rshift(dmg, 16),
+                hit_mod = 3,
+            })
+            local cx, cy = field.center(tx, ty)
+            battle.effect(Vec3.new(cx, cy, 0x10_0000), BURST_FX)
+            battle.play_sound(SWORD_SOUND)
+        end
+        s.timer += 1
+        if s.timer >= 26 then
+            me:set_status("guard", false)
+            me:exit_attack()
+        end
     end,
 }
 
--- =============================================================================
--- 16. EverCrse (0x155): CrsShld1 + CrsShld2 + CrsShld3 -> multi-hit CurseShield!
--- =============================================================================
-local EVERCRSE_KIND = new.kind {
-    id = "pa/evercrse-controller",
-    pool = "effect",
-    state = { hits = "u8" },
-    update = dimming_chips.phases {
-        name = "EverCrse",
-        effect = function(me: Object)
-            local s = me.state :: CountState
-            if me.phase_init == 0 then
-                battle.play_sound(SHIELD_SOUND)
-                me.timer = 0
-                s.hits = 0
-                me.phase_init = 4
-            end
-            if me.timer % 8 == 4 and s.hits < 5 then
-                s.hits += 1
-                local tx, ty = enemy_target(me.alliance)
-                local last = s.hits == 5
-                dim_hitbox(me, {
-                    panel_x = tx,
-                    panel_y = ty,
-                    element = 0,
-                    z = 0x10_0000,
-                    region = regions.single,
-                    hit_effect = sparks.charged,
-                    target = collision.hits_navis,
-                    self_type = collision.piercing,
-                    damage = me.damage,
-                    stamina = me.stamina,
-                    hit_mod = if last then 3 else 1,
-                })
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), BURST_FX)
-                battle.play_sound(SWORD_SOUND)
-            end
-            me.timer += 1
-            if me.timer >= 50 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
-}
-
 local evercrse: Chip = {
+    action = EVERCRSE_ACTION,
     codes = PA_CODES,
     element = "null",
     family = "program_advance",
@@ -1217,13 +1208,10 @@ local evercrse: Chip = {
     damage = 100,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage" },
+    flags = { "has_damage" },
     program_advances = {
         { order = 40, sequence = { utilities.crsshld1, utilities.crsshld2, utilities.crsshld3 } },
     },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(EVERCRSE_KIND, user, spec, true)
-    end,
 }
 
 -- =============================================================================
@@ -1498,45 +1486,11 @@ local bodygrd: Chip = {
 }
 
 -- =============================================================================
--- 20. 500Barr (0x159): Barrier + Barr100 + Barr200 -> raises 500-HP barrier (ID 4)!
+-- 20. 500Barr (0x159): Non-dimming Barrier + Barr100 + Barr200 -> 500-HP barrier (ID 4, pal 3)!
+-- Verified against A6BE Family 3 (0x080B117C, b11=0x02): instant non-dimming action.
 -- =============================================================================
-local BARR500_KIND = new.kind {
-    id = "pa/500barr-controller",
-    pool = "effect",
-    update = dimming_chips.phases {
-        name = "500Barr",
-        effect = function(me: Object)
-            if me.phase_init == 0 then
-                local user = me.related1 or battle.player(me.alliance)
-                if user then
-                    user:raise_barrier {
-                        id = 4,
-                        behavior = "plain",
-                        hp = 500,
-                        threshold = 0,
-                        timer = 0xFFFF,
-                        weak_element = 0,
-                    }
-                    local old = user.barrier_visual
-                    if old then
-                        common_visual.finish(old)
-                    end
-                    barrier_visual.spawn(user, barriers.barrier_200)
-                    battle.play_sound(BARRIER_SOUND)
-                end
-                me.timer = 20
-                me.phase_init = 4
-            end
-            local t = me.timer - 1
-            me.timer = t
-            if t < 0 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
-}
-
 local barr_500: Chip = {
+    action = barriers.action("pa/500barr-action", barriers.barrier_500),
     codes = PA_CODES,
     element = "null",
     family = "program_advance",
@@ -1546,13 +1500,10 @@ local barr_500: Chip = {
     damage = 0,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming" },
+    flags = {},
     program_advances = {
         { order = 26, sequence = { barrier_chips.barrier, barrier_chips.barr100, barrier_chips.barr200 } },
     },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(BARR500_KIND, user, spec, true)
-    end,
 }
 
 -- =============================================================================

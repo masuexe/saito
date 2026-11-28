@@ -13,7 +13,7 @@ local spreader = {}
 local MUZZLE_FLASH = new.effect { sprite = asset.sprite("spreader-flash"), anim = 0, palette = 0, steps = 7 }
 
 local LOOK: SpreaderLook = {
-    sound = asset.sound("cannon"),
+    sound = asset.sound("spreader"),
     muzzle = MUZZLE_FLASH,
     slot = "related",
     bullet_kind = bullet.kind,

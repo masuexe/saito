@@ -532,7 +532,15 @@ pub struct ProgramAdvanceRecipe {
 pub enum ChipModifier {
     /// Adds its damage to a damaging chip's attack bonus (Atk+10, Atk+30).
     AttackPlus,
-    /// Adds its damage to a navi chip's attack bonus (Navi+20).
+    /// Adds its damage to a damaging Fire chip's attack bonus (EXE3 Fire+30).
+    FirePlus,
+    /// Adds its damage to a damaging Aqua chip's attack bonus (EXE3 Aqua+30).
+    AquaPlus,
+    /// Adds its damage to a damaging Elec chip's attack bonus (EXE3 Elec+30).
+    ElecPlus,
+    /// Adds its damage to a damaging Wood chip's attack bonus (EXE3 Wood+30).
+    WoodPlus,
+    /// Adds its damage to a navi chip's attack bonus (Navi+20, Navi+40).
     NaviPlus,
     /// Makes a damaging chip paralyze (WhiCapsl).
     Paralyze,

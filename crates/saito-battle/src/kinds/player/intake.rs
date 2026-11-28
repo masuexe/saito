@@ -154,14 +154,16 @@ fn absorb_hit(c: &mut CollisionData) {
 
 // ---- Barrier ---------------------------------------------------------------
 
-/// A barrier's u16 view of HP (+0x16) and threshold (+0x17).
+/// A barrier's u16 HP view.
 fn barrier_hp16(c: &CollisionData) -> u16 {
-    c.barrier_hp as u16 | (c.barrier_threshold as u16) << 8
+    c.barrier_hp
 }
 
 fn set_barrier_hp16(c: &mut CollisionData, v: u16) {
-    c.barrier_hp = v as u8;
-    c.barrier_threshold = (v >> 8) as u8;
+    c.barrier_hp = v;
+    if v == 0 {
+        c.barrier_threshold = 0;
+    }
 }
 
 /// `sub_801A802`: barriers and auras absorb this tick's hits (fed by the
@@ -273,7 +275,7 @@ fn barrier(b: &mut Battle, r: ObjectRef) {
     sum = (sum + (1 << shift) - 1) >> shift;
     if !spec.threshold_aura || sum >= c.barrier_threshold as u32 {
         let left = c.barrier_hp as i32 - sum as i32;
-        c.barrier_hp = left as u8;
+        c.barrier_hp = left.max(0) as u16;
         if left <= 0 {
             if !spec.regrow && !spec.popped {
                 c.barrier = 0;

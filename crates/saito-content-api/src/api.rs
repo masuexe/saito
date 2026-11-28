@@ -108,9 +108,10 @@ pub struct BarrierSpec {
     pub behavior: u8,
     /// Its HP (+0x16), the damage a hit must reach to wear it (+0x17), its
     /// timer (+0x1A; 0xFFFF: none), and the element that breaks it (+0x14;
-    /// 0: none).
-    pub hp: u8,
-    pub threshold: u8,
+    /// 0: none). Widened to u16 to support EXE3's 500Barr (500 HP) and
+    /// DarkAura (300 threshold).
+    pub hp: u16,
+    pub threshold: u16,
     pub timer: u16,
     pub weak_element: u8,
 }
@@ -485,7 +486,7 @@ named_fields! {
         /// barrier goes up with `raise_barrier`), the barrier's HP byte, and
         /// the hit modifier that popped it (+0x15).
         Barrier = "barrier", enum_type(&BARRIER_STATES), rw;
-        BarrierHp = "barrier_hp", U8, ro;
+        BarrierHp = "barrier_hp", U16, ro;
         BarrierPopHitMod = "barrier_pop_hit_mod", U8, ro;
         /// A bubble is its barrier (BblWrap's, the barrier byte 8), and the
         /// barrier's timer (+0x1A: a bubble's 0 while it is down).

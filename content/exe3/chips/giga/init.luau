@@ -26,8 +26,7 @@ local APPEAR_SOUND = asset.sound("appear")
 local BLAST_SOUND = asset.sound("hit-bomb")
 local CANNON_SOUND = asset.sound("cannon")
 local SWING_SOUND = asset.sound("big-sword-swing")
-local RECOVER_SOUND = asset.sound("sfx-recover")
-local BARRIER_SOUND = asset.sound("barrier")
+local GAUGE_FULL_SOUND = asset.sound("gauge-full")
 local CRACK_SOUND = asset.sound("panel-crack")
 
 local function dim_hitbox(owner: Object, spec: HitboxSpec)
@@ -218,7 +217,8 @@ local BALANCE_KIND = new.kind {
                 for side = 0, 1 do
                     local navi = battle.player(side)
                     if navi and not navi:status("dead") and navi.hp > 1 then
-                        navi.hp = math.max(1, math.floor(navi.hp / 2))
+                        -- A6BE 0x080FDB9C: ceiling half `(hp + 1) >> 1`.
+                        navi.hp = math.max(1, math.floor((navi.hp + 1) / 2))
                         battle.effect(navi.pos, ENERGY_RING_FX)
                     end
                 end
@@ -280,7 +280,8 @@ local ALPHARMSG_KIND = new.kind {
 }
 
 -- =============================================================================
--- BLUE GIGA 1: FoldrBak (0x12F) - restores ALL 30 chips into battle folder + heals!
+-- BLUE GIGA 1: FoldrBak (0x12F) - restores ALL 30 chips into battle folder & fills Custom Gauge!
+-- Verified against A3XE 0x080FC50C: calls 0x08010B20 (full gauge) + 0x08011454 (restore folder), NO HP heal.
 -- =============================================================================
 local FOLDRBAK_KIND = new.kind {
     id = "giga/foldrbak-controller",
@@ -291,13 +292,9 @@ local FOLDRBAK_KIND = new.kind {
             if me.phase_init == 0 then
                 local side = me.alliance
                 api.restore_folder(side)
-                local user = me.related1 or battle.player(side)
-                if user and not user:status("dead") then
-                    user.hp = math.min(user.max_hp, user.hp + 200)
-                    battle.effect(user.pos, HEAL_FX)
-                end
+                battle.fill_custom_gauge()
                 battle.palette_flash(1, 14, true, true)
-                battle.play_sound(RECOVER_SOUND)
+                battle.play_sound(GAUGE_FULL_SOUND)
                 me.timer = 28
                 me.phase_init = 4
             end
@@ -364,43 +361,10 @@ local DELTARAY_KIND = new.kind {
 }
 
 -- =============================================================================
--- BLUE GIGA 3: DarkAura (0x135) - raises 300-threshold DarkAura barrier (ID 10)!
+-- BLUE GIGA 3: DarkAura (0x135) - non-dimming 300-threshold / 3000-tick DarkAura (ID 10, pal 2)!
+-- Verified against A3XE/A6BE Family 3 (0x080B117C, b11=0x02): instant non-dimming raise.
 -- =============================================================================
-local DARKAURA_KIND = new.kind {
-    id = "giga/darkaura-controller",
-    pool = "effect",
-    update = dimming_chips.phases {
-        name = "DarkAura",
-        effect = function(me: Object)
-            if me.phase_init == 0 then
-                local user = me.related1 or battle.player(me.alliance)
-                if user then
-                    user:raise_barrier {
-                        id = 10,
-                        behavior = "plain",
-                        hp = 1,
-                        threshold = 300,
-                        timer = 1800,
-                        weak_element = 0,
-                    }
-                    local old = user.barrier_visual
-                    if old then
-                        common_visual.finish(old)
-                    end
-                    barrier_visual.spawn(user, barriers.life_aura)
-                    battle.play_sound(BARRIER_SOUND)
-                end
-                me.timer = 24
-                me.phase_init = 4
-            end
-            local t = me.timer - 1
-            me.timer = t
-            if t < 0 then
-                dimming_chips.done(me)
-            end
-        end,
-    },
-}
+local DARKAURA_ACTION = barriers.action("darkaura/action", barriers.dark_aura)
 
 -- =============================================================================
 -- BLUE GIGA 4: AlphArmΩ (`alpharmom`, 0x136) - dim massive rocket/claw barrage (500 dmg)!
@@ -611,6 +575,7 @@ local deltaray: Chip = {
 
 local darkaura: Chip = {
     version = "blue",
+    action = DARKAURA_ACTION,
     codes = { "A" },
     element = "null",
     family = "null",
@@ -620,8 +585,7 @@ local darkaura: Chip = {
     damage = 0,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "library" },
-    dimming = dim_hook(DARKAURA_KIND),
+    flags = { "library" },
 }
 
 local alpharmom: Chip = {

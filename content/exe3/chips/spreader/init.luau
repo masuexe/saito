@@ -17,19 +17,22 @@ local FLASH = new.effect { sprite = pink_flash_sprite, anim = 0, palette = 0, st
 local AQUA_FLASH = new.effect { sprite = bubble_splash_sprite, anim = 0, palette = 0, steps = 26 }
 local FIRE_FLASH = new.effect { sprite = heat_blast_sprite, anim = 0, palette = 0, steps = 36 }
 local SOUND = asset.sound("spreader")
+local AQUA_BURST_SOUND = asset.sound("freeze") -- A6BE 0x080D5FAF[1] = 0xAE
+local FIRE_BURST_SOUND = asset.sound("heat-blast") -- A6BE 0x080D5FAF[2] = 0xA9
 
 local SHOTGUN_BURST = bullet.variant { region = regions.long, hit_mod = 0, effect = FLASH, sound = SOUND }
 local VGUN_BURST = bullet.variant { region = regions.fork, hit_mod = 0, effect = FLASH, sound = SOUND }
 local SIDEGUN_BURST = bullet.variant { region = regions.wide, hit_mod = 0, effect = FLASH, sound = SOUND }
 local SPREADER_BURST = bullet.variant { region = regions.square, hit_mod = 0, effect = FLASH, sound = SOUND }
 
-local BUBBLER_BURST = bullet.variant { region = regions.long, hit_mod = 3, effect = AQUA_FLASH, sound = SOUND }
-local BUBV_BURST = bullet.variant { region = regions.fork, hit_mod = 3, effect = AQUA_FLASH, sound = SOUND }
-local BUBLSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 3, effect = AQUA_FLASH, sound = SOUND }
+-- A6BE 0x080D5FE2: Bubbler and HeatShot lines all use hit_mod = 0 (no flinch / no mercy flash).
+local BUBBLER_BURST = bullet.variant { region = regions.long, hit_mod = 0, effect = AQUA_FLASH, sound = AQUA_BURST_SOUND }
+local BUBV_BURST = bullet.variant { region = regions.fork, hit_mod = 0, effect = AQUA_FLASH, sound = AQUA_BURST_SOUND }
+local BUBLSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 0, effect = AQUA_FLASH, sound = AQUA_BURST_SOUND }
 
-local HEATSHOT_BURST = bullet.variant { region = regions.long, hit_mod = 3, effect = FIRE_FLASH, sound = SOUND }
-local HEATV_BURST = bullet.variant { region = regions.fork, hit_mod = 3, effect = FIRE_FLASH, sound = SOUND }
-local HEATSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 3, effect = FIRE_FLASH, sound = SOUND }
+local HEATSHOT_BURST = bullet.variant { region = regions.long, hit_mod = 0, effect = FIRE_FLASH, sound = FIRE_BURST_SOUND }
+local HEATV_BURST = bullet.variant { region = regions.fork, hit_mod = 0, effect = FIRE_FLASH, sound = FIRE_BURST_SOUND }
+local HEATSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 0, effect = FIRE_FLASH, sound = FIRE_BURST_SOUND }
 
 local shotgun: Chip = {
     action = spreader.action { id = "shotgun/action", delay = 1, z = 0x00, shot = SHOTGUN_BURST },

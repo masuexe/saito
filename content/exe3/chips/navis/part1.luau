@@ -586,10 +586,10 @@ return {
     mistmanv3 = h.navi_chip({ "M" }, "null", "null", 130, 74, 4, mistman_hook),
     mistmanv4 = h.navi_chip({ "M" }, "null", "null", 150, 77, 4, mistman_hook),
     mistmanv5 = h.navi_chip({ "M" }, "null", "null", 170, 80, 4, mistman_hook, "giga"),
-    -- Roll V1-V3 (0x0DB..0x0DD)
-    roll = h.navi_chip({ "R" }, "null", "recovery", 20, 10, 2, roll_hook(60)),
-    rollv2 = h.navi_chip({ "R" }, "null", "recovery", 30, 22, 3, roll_hook(100)),
-    rollv3 = h.navi_chip({ "R" }, "null", "recovery", 40, 34, 4, roll_hook(140)),
+    -- Roll V1-V3 (0x0DB..0x0DD; A6BE 0x080B6F0C [15,25,40]*2 -> 30/50/80 HP heal)
+    roll = h.navi_chip({ "R" }, "null", "recovery", 20, 10, 2, roll_hook(30)),
+    rollv2 = h.navi_chip({ "R" }, "null", "recovery", 30, 22, 3, roll_hook(50)),
+    rollv3 = h.navi_chip({ "R" }, "null", "recovery", 40, 34, 4, roll_hook(80)),
     -- GutsMan V1-V5 (0x0DE..0x0E2)
     gutsman = h.navi_chip({ "G" }, "null", "break", 50, 15, 2, gutsman_hook),
     gutsmanv2 = h.navi_chip({ "G" }, "null", "break", 70, 41, 3, gutsman_hook),

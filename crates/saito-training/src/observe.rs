@@ -790,7 +790,13 @@ fn chip_facts(content: &Content, names: &Names, h: ChipHandle, code: Option<u8>,
     at += 6;
     let modifier = match c.modifier {
         None => 0,
-        Some(ChipModifier::AttackPlus) => 1,
+        Some(
+            ChipModifier::AttackPlus
+            | ChipModifier::FirePlus
+            | ChipModifier::AquaPlus
+            | ChipModifier::ElecPlus
+            | ChipModifier::WoodPlus,
+        ) => 1,
         Some(ChipModifier::NaviPlus) => 2,
         Some(ChipModifier::Paralyze) => 3,
         Some(ChipModifier::Uninstall) => 4,

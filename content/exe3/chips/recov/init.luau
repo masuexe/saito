@@ -12,7 +12,7 @@ local recov10: Chip = {
     mb = 5,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov10/action", hp = 10 },
 }
@@ -26,7 +26,7 @@ local recov30: Chip = {
     mb = 8,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov30/action", hp = 30 },
 }
@@ -40,7 +40,7 @@ local recov50: Chip = {
     mb = 14,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov50/action", hp = 50 },
 }
@@ -54,7 +54,7 @@ local recov80: Chip = {
     mb = 20,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov80/action", hp = 80 },
 }
@@ -68,7 +68,7 @@ local recov120: Chip = {
     mb = 35,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov120/action", hp = 120 },
 }
@@ -82,7 +82,7 @@ local recov150: Chip = {
     mb = 50,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov150/action", hp = 150 },
 }
@@ -96,7 +96,7 @@ local recov200: Chip = {
     mb = 65,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov200/action", hp = 200 },
 }
@@ -110,7 +110,7 @@ local recov300: Chip = {
     mb = 80,
     damage = 0,
     hit_param = 0,
-    lockout = 30,
+    lockout = 15,
     flags = { "standard_library", "library" },
     action = recov.action { id = "recov300/action", hp = 300 },
 }

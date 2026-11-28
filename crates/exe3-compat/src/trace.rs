@@ -1320,10 +1320,34 @@ mod tests {
         assert_eq!(rook.anim, 4, "rook uses chess sprite anim 4");
 
         // 2. All dimming trap & utility chips exit dimming cleanly (no u16 timer softlock!).
-        for dim_chip in ["mine", "timebomb", "pawn", "hole", "repair", "nrthwind", "fanfare", "spice1", "team1", "sensor1"] {
+        for dim_chip in ["mine", "timebomb", "pawn", "hole", "repair", "nrthwind", "fanfare", "team1", "sensor1"] {
             let (b, saw_dim, _, _) = run_chip(dim_chip, 220);
             assert!(saw_dim, "{dim_chip} must dim");
             assert!(!b.is_dimmed(), "{dim_chip} must NOT softlock time-freeze");
+        }
+
+        // 2b. ROM non-dimming chips (ChipData+0x0B bit 0x40 == 0) must NEVER dim.
+        for non_dim in [
+            "barrier", "barr100", "barr200", "aura", "lifeaura", "darkaura", "500barr",
+            "invis", "fullcust", "spice1", "zeushamr",
+            "standout", "salamndr", "watrline", "fountain", "ligtning", "bolt",
+            "h-burst", "evilcut", "hyperrat", "evercrse",
+        ] {
+            let (b, saw_dim, _, _) = run_chip(non_dim, 60);
+            assert!(!saw_dim, "{non_dim} must NOT dim (ROM b11 bit 0x40 == 0)");
+            assert!(!b.is_dimmed(), "{non_dim} must leave battle unpaused");
+        }
+
+        // 2c. FoldrBak restores folder & fills custom gauge without healing HP.
+        {
+            let (b, saw_dim, _, _) = run_chip("foldrbak", 140);
+            assert!(saw_dim, "foldrbak must dim");
+            assert!(!b.is_dimmed(), "foldrbak must finish dimming");
+            assert_eq!(
+                b.gauge.value,
+                saito_battle::hud::CustomGauge::FULL,
+                "foldrbak must fill custom gauge (A3XE 0x08010B20)"
+            );
         }
 
         // 3. All 17 Navi chips & 4 Navi Giga chips: show Navi sprite, hide & restore user, exit dimming!

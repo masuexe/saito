@@ -185,31 +185,29 @@ local guardian: Chip = {
 }
 
 -- =============================================================================
--- 2. ZeusHamr (0x0D0): Dim 250 breaking damage to ALL grounded Navis on field!
+-- 2. ZeusHamr (0x0D0): Non-dimming hammer slam dealing 250 breaking damage to ALL grounded Navis
+--    when the panel ahead is solid (A6BE Family 47, 0x080B3B0E, b11=0x01).
 -- =============================================================================
-local ZEUSHAMR_KIND = new.kind {
-    id = "mega/zeushamr-controller",
-    pool = "effect",
-    update = dimming_chips.phases {
-        name = "ZeusHamr",
-        effect = function(me: Object)
-            local user = me.related1 or battle.player(me.alliance)
-            if me.phase_init == 0 then
-                if user then
-                    user:set_animation(anims.HAMMER)
-                    attachment.attach(user, ZEUSHAMR_ARM, "related", 0, true)
-                end
-                battle.play_sound(APPEAR_SOUND)
-                battle.palette_flash(1, 14, true, true)
-                me.timer = 0
-                me.phase_init = 4
-            end
-            if user then
-                user:update_sprite_while_dimmed()
-            end
-            if me.timer == 14 then
-                -- Strike all grounded enemies across the entire field via breaking hitbox.
-                dim_hitbox(me, {
+type MegaActState = { timer: number, step: number }
+
+local ZEUSHAMR_ACTION = new.action {
+    id = "mega/zeushamr-action",
+    state = { timer = "u16", step = "u8" },
+    update = function(me: Object, s: MegaActState)
+        if me.step_init == 0 then
+            me:set_animation(anims.HAMMER)
+            attachment.attach(me, ZEUSHAMR_ARM, "related", 0, true)
+            me:set_status("using_action", true)
+            s.timer = 0
+            me.step_init = 4
+        end
+        if s.timer == 14 then
+            local fx, fy = me.panel_x + me.facing, me.panel_y
+            local fp = if field.valid(fx, fy) then field.panel(fx, fy) else nil
+            local solid_ahead = fp ~= nil and fp.kind ~= "hole"
+            local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+            if solid_ahead then
+                battle.hitbox(me, {
                     panel_x = me.panel_x,
                     panel_y = me.panel_y,
                     element = 0,
@@ -218,41 +216,53 @@ local ZEUSHAMR_KIND = new.kind {
                     hit_effect = sparks.breaking,
                     target = collision.hits_navis,
                     self_type = collision.piercing_break,
-                    damage = me.damage,
-                    stamina = me.stamina,
-                    hit_mod = 5,
+                    damage = bit32.band(dmg, 0xFFFF),
+                    stamina = bit32.rshift(dmg, 16),
+                    hit_mod = 3,
                 })
-                -- ZeusHamr also strikes the user if grounded (not floating/invisible).
-                if user and not user:status("dead") and not user:status("invisible") then
+                if not me:status("dead") and not me:status("invisible") and not me:status("flashing") then
                     local stats = battle.navi(me.alliance)
                     if not stats.float_shoes and not stats.air_shoes then
-                        local hit_dmg = me.damage
-                        local p = field.panel(user.panel_x, user.panel_y)
+                        local hit_dmg = bit32.band(dmg, 0xFFFF)
+                        local p = field.panel(me.panel_x, me.panel_y)
                         if p and p.kind == "holy" then
                             hit_dmg = math.floor(hit_dmg / 2)
                         end
-                        user.hp = math.max(0, user.hp - hit_dmg)
-                        battle.effect(user.pos, IMPACT_FX)
+                        me.hp = math.max(0, me.hp - hit_dmg)
+                        battle.effect(me.pos, IMPACT_FX)
                     end
                 end
                 battle.region_effects(me.panel_x, me.panel_y, regions.field, me.alliance, GROUND_CRACK_FX, 0x08_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.play_sound(CRACK_SOUND)
                 battle.shake_camera(3, 22)
+            elseif field.valid(fx, fy) then
+                battle.hitbox(me, {
+                    panel_x = fx,
+                    panel_y = fy,
+                    element = 0,
+                    z = 0,
+                    region = regions.single,
+                    hit_effect = sparks.breaking,
+                    target = collision.hits_navis,
+                    self_type = collision.breaking,
+                    damage = bit32.band(dmg, 0xFFFF),
+                    stamina = bit32.rshift(dmg, 16),
+                    hit_mod = 3,
+                })
+                battle.play_sound(CRACK_SOUND)
             end
-            me.timer += 1
-            if me.timer >= 42 then
-                if user then
-                    user.related1 = nil
-                    user:set_animation(anims.idle(user))
-                end
-                dimming_chips.done(me)
-            end
-        end,
-    },
+        end
+        s.timer += 1
+        if s.timer >= 36 then
+            me.related1 = nil
+            me:exit_attack()
+        end
+    end,
 }
 
 local zeushamr: Chip = {
+    action = ZEUSHAMR_ACTION,
     codes = { "Z" },
     element = "null",
     family = "break",
@@ -262,10 +272,7 @@ local zeushamr: Chip = {
     damage = 250,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = function(user: Object, spec: DimmingChipSpec): Object?
-        return dimming_chips.spawn(ZEUSHAMR_KIND, user, spec, true)
-    end,
+    flags = { "has_damage", "library" },
 }
 
 -- =============================================================================
@@ -606,32 +613,29 @@ local jealousy: Chip = {
 }
 
 -- =============================================================================
--- 8 & 9. StandOut (0x0D7) / Salamndr (0x111): Fire pillar erupting across enemy row/area!
+-- 8 & 9. StandOut (0x0D7) / Salamndr (0x111): Non-dimming Fire pillar (A6BE Family 59, b11=0x01)!
 -- =============================================================================
-type ElemState = { upgraded: boolean, step: number }
-
-local FIRE_PILLAR_KIND = new.kind {
-    id = "mega/fire-pillar-controller",
-    pool = "effect",
-    state = { upgraded = "bool", step = "u8" },
-    update = dimming_chips.phases {
-        name = "FirePillar",
-        effect = function(me: Object)
-            local s = me.state :: ElemState
-            if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                me.timer = 0
+local function make_fire_pillar_action(id: string, upgraded: boolean): Action
+    return new.action {
+        id = id,
+        state = { timer = "u16", step = "u8" },
+        update = function(me: Object, s: MegaActState)
+            if me.step_init == 0 then
+                me:set_animation(anims.idle(me))
+                me:set_status("using_action", true)
+                s.timer = 0
                 s.step = 0
-                me.phase_init = 4
+                me.step_init = 4
             end
-            if me.timer == 10 then
+            if s.timer == 8 then
                 local tx = me.panel_x + me.facing
                 local ty = me.panel_y
                 if not field.valid(tx, ty) then
                     tx, ty = enemy_target(me.alliance)
                 end
-                local region = if s.upgraded then regions.deep_fan else regions.row
-                dim_hitbox(me, {
+                local region = if upgraded then regions.deep_fan else regions.row
+                local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+                battle.hitbox(me, {
                     panel_x = tx,
                     panel_y = ty,
                     element = 1,
@@ -640,33 +644,24 @@ local FIRE_PILLAR_KIND = new.kind {
                     hit_effect = sparks.fire,
                     target = collision.hits_navis,
                     self_type = collision.piercing,
-                    damage = me.damage,
-                    stamina = me.stamina,
+                    damage = bit32.band(dmg, 0xFFFF),
+                    stamina = bit32.rshift(dmg, 16),
                     hit_mod = 3,
                 })
-                battle.region_effects(tx, ty, region, me.alliance, if s.upgraded then HEAT_BLAST_FX else FLAME_FX, 0x10_0000)
+                battle.region_effects(tx, ty, region, me.alliance, if upgraded then HEAT_BLAST_FX else FLAME_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 14)
             end
-            me.timer += 1
-            if me.timer >= 34 then
-                dimming_chips.done(me)
+            s.timer += 1
+            if s.timer >= 28 then
+                me:exit_attack()
             end
         end,
-    },
-}
-
-local function elem_hook(kind: Kind, upgraded: boolean): (user: Object, spec: DimmingChipSpec) -> Object?
-    return function(user: Object, spec: DimmingChipSpec): Object?
-        local o = dimming_chips.spawn(kind, user, spec)
-        if o then
-            (o.state :: ElemState).upgraded = upgraded
-        end
-        return o
-    end
+    }
 end
 
 local standout: Chip = {
+    action = make_fire_pillar_action("standout/action", false),
     codes = { "P", "*" },
     element = "fire",
     family = "fire",
@@ -676,11 +671,11 @@ local standout: Chip = {
     damage = 220,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(FIRE_PILLAR_KIND, false),
+    flags = { "has_damage", "library" },
 }
 
 local salamndr: Chip = {
+    action = make_fire_pillar_action("salamndr/action", true),
     codes = { "S", "*" },
     element = "fire",
     family = "fire",
@@ -690,36 +685,33 @@ local salamndr: Chip = {
     damage = 300,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(FIRE_PILLAR_KIND, true),
+    flags = { "has_damage", "library" },
 }
 
 -- =============================================================================
--- 10 & 11. WatrLine (0x0D8) / Fountain (0x112): Aqua jet sweeping forward & back!
+-- 10 & 11. WatrLine (0x0D8) / Fountain (0x112): Non-dimming Aqua jet (A6BE Family 60, b11=0x01)!
 -- =============================================================================
-local AQUA_JET_KIND = new.kind {
-    id = "mega/aqua-jet-controller",
-    pool = "effect",
-    state = { upgraded = "bool", step = "u8" },
-    update = dimming_chips.phases {
-        name = "AquaJet",
-        effect = function(me: Object)
-            local s = me.state :: ElemState
-            if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                me.timer = 0
+local function make_aqua_jet_action(id: string, upgraded: boolean): Action
+    return new.action {
+        id = id,
+        state = { timer = "u16", step = "u8" },
+        update = function(me: Object, s: MegaActState)
+            if me.step_init == 0 then
+                me:set_animation(anims.idle(me))
+                me:set_status("using_action", true)
+                s.timer = 0
                 s.step = 0
-                me.phase_init = 4
+                me.step_init = 4
             end
-            if me.timer % 5 == 2 and s.step < 6 then
+            if s.timer % 5 == 2 and s.step < 6 then
                 s.step += 1
-                -- Sweeps forward across panels then rebounds!
                 local dist = if s.step <= 3 then s.step else (7 - s.step)
                 local tx = me.panel_x + me.facing * dist
                 local ty = me.panel_y
                 if field.valid(tx, ty) then
-                    local region = if s.upgraded then regions.wide else regions.single
-                    dim_hitbox(me, {
+                    local region = if upgraded then regions.wide else regions.single
+                    local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+                    battle.hitbox(me, {
                         panel_x = tx,
                         panel_y = ty,
                         element = 2,
@@ -728,23 +720,24 @@ local AQUA_JET_KIND = new.kind {
                         hit_effect = sparks.aqua,
                         target = collision.hits_navis,
                         self_type = collision.piercing,
-                        damage = me.damage,
-                        stamina = me.stamina,
+                        damage = bit32.band(dmg, 0xFFFF),
+                        stamina = bit32.rshift(dmg, 16),
                         hit_mod = 3,
                     })
                     battle.region_effects(tx, ty, region, me.alliance, BUBBLE_SPLASH_FX, 0x10_0000)
                     battle.play_sound(BUBBLE_SOUND)
                 end
             end
-            me.timer += 1
-            if me.timer >= 40 then
-                dimming_chips.done(me)
+            s.timer += 1
+            if s.timer >= 36 then
+                me:exit_attack()
             end
         end,
-    },
-}
+    }
+end
 
 local watrline: Chip = {
+    action = make_aqua_jet_action("watrline/action", false),
     codes = { "C", "*" },
     element = "aqua",
     family = "aqua",
@@ -754,11 +747,11 @@ local watrline: Chip = {
     damage = 180,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(AQUA_JET_KIND, false),
+    flags = { "has_damage", "library" },
 }
 
 local fountain: Chip = {
+    action = make_aqua_jet_action("fountain/action", true),
     codes = { "D", "*" },
     element = "aqua",
     family = "aqua",
@@ -768,31 +761,29 @@ local fountain: Chip = {
     damage = 240,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(AQUA_JET_KIND, true),
+    flags = { "has_damage", "library" },
 }
 
 -- =============================================================================
--- 12 & 13. Ligtning (0x0D9) / Bolt (0x113): Elec strike hitting enemy & adjacent panels!
+-- 12 & 13. Ligtning (0x0D9) / Bolt (0x113): Non-dimming Elec strike (A6BE Family 61, b11=0x01)!
 -- =============================================================================
-local ELEC_BOLT_KIND = new.kind {
-    id = "mega/elec-bolt-controller",
-    pool = "effect",
-    state = { upgraded = "bool", step = "u8" },
-    update = dimming_chips.phases {
-        name = "ElecBolt",
-        effect = function(me: Object)
-            local s = me.state :: ElemState
-            if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                battle.palette_flash(1, 10, true, true)
-                me.timer = 0
-                me.phase_init = 4
+local function make_elec_bolt_action(id: string, upgraded: boolean): Action
+    return new.action {
+        id = id,
+        state = { timer = "u16", step = "u8" },
+        update = function(me: Object, s: MegaActState)
+            if me.step_init == 0 then
+                me:set_animation(anims.idle(me))
+                me:set_status("using_action", true)
+                s.timer = 0
+                s.step = 0
+                me.step_init = 4
             end
-            if me.timer == 10 then
+            if s.timer == 8 then
                 local tx, ty = enemy_target(me.alliance)
-                local region = if s.upgraded then regions.square else regions.plus
-                dim_hitbox(me, {
+                local region = if upgraded then regions.square else regions.plus
+                local dmg = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
+                battle.hitbox(me, {
                     panel_x = tx,
                     panel_y = ty,
                     element = 3,
@@ -801,23 +792,24 @@ local ELEC_BOLT_KIND = new.kind {
                     hit_effect = sparks.elec,
                     target = collision.hits_navis,
                     self_type = collision.piercing,
-                    damage = me.damage,
-                    stamina = me.stamina,
+                    damage = bit32.band(dmg, 0xFFFF),
+                    stamina = bit32.rshift(dmg, 16),
                     hit_mod = 3,
                 })
                 battle.region_effects(tx, ty, region, me.alliance, LIGHTNING_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 12)
             end
-            me.timer += 1
-            if me.timer >= 34 then
-                dimming_chips.done(me)
+            s.timer += 1
+            if s.timer >= 28 then
+                me:exit_attack()
             end
         end,
-    },
-}
+    }
+end
 
 local ligtning: Chip = {
+    action = make_elec_bolt_action("ligtning/action", false),
     codes = { "L", "*" },
     element = "elec",
     family = "elec",
@@ -827,11 +819,11 @@ local ligtning: Chip = {
     damage = 160,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(ELEC_BOLT_KIND, false),
+    flags = { "has_damage", "library" },
 }
 
 local bolt: Chip = {
+    action = make_elec_bolt_action("bolt/action", true),
     codes = { "T", "*" },
     element = "elec",
     family = "elec",
@@ -841,8 +833,7 @@ local bolt: Chip = {
     damage = 210,
     hit_param = 0,
     lockout = 0,
-    flags = { "dimming", "has_damage", "library" },
-    dimming = elem_hook(ELEC_BOLT_KIND, true),
+    flags = { "has_damage", "library" },
 }
 
 -- =============================================================================
@@ -928,8 +919,9 @@ local gaiaswrd: Chip = {
     flags = { "has_damage", "library" },
 }
 
+-- A6BE/A3XE 0x080D65CC row 12: GaiaBlad uses region 0x02 = Long (2x1), not wide_long.
 local gaiablad: Chip = {
-    action = make_gaia_action("gaiablad/action", regions.wide_long),
+    action = make_gaia_action("gaiablad/action", regions.long),
     codes = { "G", "*" },
     element = "wood",
     family = "sword",
