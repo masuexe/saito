@@ -546,6 +546,9 @@ pub struct Hud {
     /// and the other languages' the game's graphics have (`lettering`).
     pub language: String,
     pub languages: Vec<(String, HudLettering)>,
+    /// Per-version HUD palette & banner cap overrides (e.g. EXE3 Black's green
+    /// pointed banners and monochrome frame accent).
+    pub versioned: Versioned<HudVersion>,
     /// How its pictures' letters and digits look (`letters`), the words'
     /// in the language the lettering above is in.
     pub letters: letters::HudLetters,
@@ -555,6 +558,20 @@ pub struct Hud {
     pub shapes: shapes::HudShapes,
     pub mugshot_frame: Option<shapes::MugshotFrame>,
     pub mugshot_box_frame: Option<shapes::MugshotBoxFrame>,
+}
+
+/// Version-specific HUD appearance overrides (e.g. EXE3 Black's green/gold/orange
+/// banner palette, pointed `<===>` banner caps, and charcoal HP/gauge accent).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HudVersion {
+    pub banner_palette: Option<Palette>,
+    pub hp_palettes: Vec<Palette>,
+    pub gauge_palette: Option<Palette>,
+    /// Optional `[left_cap, right_cap]` 8x16 glyphs (4 tiles) replacing the end
+    /// caps of barred banners in pixel-art mode.
+    pub banner_caps: Option<Tiles>,
+    /// Draw barred banners with pointed `<===>` chevron ends in sharp-HUD mode.
+    pub pointed_banner_bar: bool,
 }
 
 /// Where the HUD's code puts its pieces, where games differ (the default:

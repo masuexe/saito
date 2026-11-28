@@ -561,7 +561,24 @@ fn hud(v: &Value, path: &str) -> R<Hud> {
         f.set("chatbox", &mut h.chatbox, chatbox)?;
         f.set("layout", &mut h.layout, hud_layout)?;
         f.set("language", &mut h.language, string)?;
-        f.set("languages", &mut h.languages, |v, p| named(v, p, hud_lettering))
+        f.set("languages", &mut h.languages, |v, p| named(v, p, hud_lettering))?;
+        f.set("versioned", &mut h.versioned, |v, p| {
+            record(v, p, |f, x: &mut Versioned<HudVersion>| {
+                f.set("base_version", &mut x.base_version, string)?;
+                f.set("base", &mut x.base, hud_version)?;
+                f.set("versions", &mut x.versions, |v, p| named(v, p, hud_version))
+            })
+        })
+    })
+}
+
+fn hud_version(v: &Value, path: &str) -> R<HudVersion> {
+    record(v, path, |f, x: &mut HudVersion| {
+        f.opt("banner_palette", &mut x.banner_palette, palette)?;
+        f.set("hp_palettes", &mut x.hp_palettes, |v, p| list(v, p, palette))?;
+        f.opt("gauge_palette", &mut x.gauge_palette, palette)?;
+        f.opt("banner_caps", &mut x.banner_caps, tiles)?;
+        f.set("pointed_banner_bar", &mut x.pointed_banner_bar, boolean)
     })
 }
 
@@ -732,7 +749,10 @@ fn version_pictures(v: &Value, path: &str) -> R<VersionPictures> {
     record(v, path, |f, x: &mut VersionPictures| {
         f.set("buttons", &mut x.buttons, |v, p| named(v, p, button))?;
         f.set("form_names", &mut x.form_names, tiles)?;
-        f.set("form_name_palettes", &mut x.form_name_palettes, |v, p| list(v, p, palette))
+        f.set("form_name_palettes", &mut x.form_name_palettes, |v, p| list(v, p, palette))?;
+        f.set("frame_palettes", &mut x.frame_palettes, |v, p| list(v, p, palette))?;
+        f.opt("icon_palette", &mut x.icon_palette, palette)?;
+        f.opt("gray_palette", &mut x.gray_palette, palette)
     })
 }
 

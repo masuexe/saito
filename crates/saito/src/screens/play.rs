@@ -1672,6 +1672,11 @@ impl Play {
         self.show_match(shell);
     }
 
+    fn set_exe3_hud_style(&mut self, shell: &mut Shell, style: crate::settings::Exe3HudStylePref) {
+        settings::set_exe3_hud_style(shell, style);
+        self.show_match(shell);
+    }
+
     fn set_keyboard_only_custom(&mut self, shell: &mut Shell, on: bool) {
         settings::set_keyboard_only_custom(shell, on);
         self.show_match(shell);
@@ -3200,6 +3205,10 @@ impl Screen for Play {
             "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.sync-dark-buster-arm" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" | "menu.set.hd-chip-art" => {
                 self.set_enhancement(shell, id, None);
             }
+            "menu.set.exe3-hud-style" => {
+                let next = crate::settings::Exe3HudStylePref::from_index(shell.settings.exe3_hud_style.as_index() as i32 + 1);
+                self.set_exe3_hud_style(shell, next);
+            }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, !shell.settings.keyboard_only_custom),
             "menu.keys.key" | "menu.keys.button" => self.binding.ask(shell, index, id == "menu.keys.button"),
             "menu.reset" => {
@@ -3254,6 +3263,10 @@ impl Screen for Play {
             "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.sync-dark-buster-arm" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" | "menu.set.hd-chip-art" => {
                 self.set_enhancement(shell, id, Some(by > 0));
             }
+            "menu.set.exe3-hud-style" => {
+                let next = crate::settings::Exe3HudStylePref::from_index(shell.settings.exe3_hud_style.as_index() as i32 + by);
+                self.set_exe3_hud_style(shell, next);
+            }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, by > 0),
             "name.version" => self.step_version(shell, by),
             _ => {}
@@ -3294,6 +3307,9 @@ impl Screen for Play {
             "menu.set.fullscreen" => self.set_full_screen(shell, choice == 1),
             "menu.set.reduce-flashes" | "menu.set.hide-aura-number" | "menu.set.sync-dark-buster-arm" | "menu.set.text" | "menu.set.hud" | "menu.set.smooth" | "menu.set.fill" | "menu.set.hd-chip-art" => {
                 self.set_enhancement(shell, id, Some(choice == 1));
+            }
+            "menu.set.exe3-hud-style" => {
+                self.set_exe3_hud_style(shell, crate::settings::Exe3HudStylePref::from_index(choice));
             }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, choice == 1),
             _ => {}

@@ -44,5 +44,5 @@ pub mod textlayer;
 pub mod numbers;
 pub mod vfont;
 
-pub use render::{Enhancements, Frame, Glide, Renderer};
+pub use render::{Enhancements, Exe3HudStyle, Frame, Glide, Renderer};
 pub use seat::Consoles;

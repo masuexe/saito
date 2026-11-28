@@ -90,17 +90,29 @@ msgstr "フラッシュ軽減"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "バトル中の激しい白画面フラッシュを抑えます。"
 
-msgid "Hide aura number (EXE4-6)"
-msgstr "ドリームオーラの数値非表示（EXE4-6）"
+msgid "Hide aura number (EXE4-5)"
+msgstr "ドリームオーラの数値非表示（EXE4-5）"
 
-msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
-msgstr "ドリームオーラの「200」表示を隠します（EXE4-6限定）。"
+msgid "Hide the 200 number on LifeAura (EXE4-5 only)."
+msgstr "ドリームオーラの「200」表示を隠します（EXE4-5限定）。"
 
 msgid "Dark buster arm (EXE5)"
 msgstr "悪ロックマンのバスター配色同期（EXE5）"
 
 msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
 msgstr "EXE5のロックマンのバスター色を本体の善悪カラーに同期します（通常・ソルクロス・フォルテクロス対応）。"
+
+msgid "HUD & Custom style (EXE3)"
+msgstr "HUD・カスタム画面スタイル（EXE3）"
+
+msgid "Auto switches White/Black HUD and Custom Screen from the build, or forces White or Black."
+msgstr "構築に応じてホワイト／ブラックのバナーとカスタム画面を自動切替、または固定します。"
+
+msgid "White"
+msgstr "ホワイト"
+
+msgid "Black"
+msgstr "ブラック"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "ステージをウィンドウの端まで広げ、HUDも端に寄せます。"

@@ -795,6 +795,42 @@ impl View<'_> {
             None => p,
         }
     }
+
+    fn theme_version(&self) -> &str {
+        self.graphics.theme_version(self.b, self.side)
+    }
+
+    fn frame_palettes(&self) -> &[Palette] {
+        self.assets
+            .versioned
+            .version(self.theme_version())
+            .filter(|v| !v.frame_palettes.is_empty())
+            .map_or(self.assets.frame_palettes.as_slice(), |v| v.frame_palettes.as_slice())
+    }
+
+    fn icon_palette(&self) -> Palette {
+        self.assets
+            .versioned
+            .version(self.theme_version())
+            .and_then(|v| v.icon_palette)
+            .unwrap_or(self.assets.icon_palette)
+    }
+
+    fn gray_palette(&self) -> Palette {
+        self.assets
+            .versioned
+            .version(self.theme_version())
+            .and_then(|v| v.gray_palette)
+            .unwrap_or(self.assets.gray_palette)
+    }
+
+    fn hud_hp_palette(&self) -> Palette {
+        self.hud
+            .versioned
+            .version(self.theme_version())
+            .and_then(|v| v.hp_palettes.first().copied())
+            .unwrap_or(self.hud.hp_palettes[0])
+    }
 }
 
 /// A navi's forms of a version of its game: its form list named for the
@@ -1184,10 +1220,10 @@ impl Window {
         w.tiles.put(w.layout.column_cells, &a.column_cells);
         w.tiles.put(w.layout.turn_limit, &a.turn_limit);
         w.tiles.put(w.layout.name_bar, &a.name_bar);
-        w.palettes[11] = a.icon_palette;
-        w.palettes[12] = a.gray_palette;
+        w.palettes[11] = v.icon_palette();
+        w.palettes[12] = v.gray_palette();
         w.palettes[14] = a.other_palette;
-        w.palettes[13] = v.hud.hp_palettes[0];
+        w.palettes[13] = v.hud_hp_palette();
         w.chip_window(v, text, problems);
         w.letter_help(v, text, problems);
         w.slots(v, problems);
@@ -1741,7 +1777,7 @@ impl Window {
         let blank_details = |w: &mut Window, picture: &Picture| {
             // sub_80287D2: the name's cells and the window's colors.
             w.tiles.fill(w.layout.name, 2 * NAME_CELLS, BLANK_8);
-            w.palettes[9] = a.frame_palettes.first().copied().unwrap_or([0; 16]);
+            w.palettes[9] = v.frame_palettes().first().copied().unwrap_or([0; 16]);
             w.put_picture(picture);
             w.palettes[10] = picture.palette;
             // sub_802869E
@@ -1752,7 +1788,7 @@ impl Window {
         // (Drawn for nothing, the pointer away: the window empty, its frame
         // in the standard colors, its ground where the picture goes.)
         if cw.empty {
-            let standard = a.frame_palettes.first().copied().unwrap_or([0; 16]);
+            let standard = v.frame_palettes().first().copied().unwrap_or([0; 16]);
             let len = if a.pictures.ok.tiles.is_empty() { a.picture_tiles() * Tiles::TILE } else { a.pictures.ok.tiles.pixels.len() };
             let ground = Picture { tiles: Tiles { pixels: vec![BLANK_8; len] }, palette: standard };
             blank_details(self, &ground);
@@ -1908,7 +1944,7 @@ impl Window {
     fn frame_palette(&self, v: &View, c: Option<FolderChip>, problems: &mut Problems) -> Palette {
         let a = v.assets;
         let frame = c.map_or(0, |c| crate::lookups::chip_window(a, &v.b.content, c.id, c.code.0, problems));
-        a.frame_palettes.get(frame).copied().unwrap_or([0; 16])
+        v.frame_palettes().get(frame).copied().unwrap_or([0; 16])
     }
 
     /// A chip's name (8 cells of the 8x16 font in the window's colors) and

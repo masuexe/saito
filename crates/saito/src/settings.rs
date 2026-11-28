@@ -129,6 +129,57 @@ impl TouchPadLayouts {
     }
 }
 
+/// EXE3 HUD & Custom Screen version policy (`Settings::exe3_hud_style`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Exe3HudStylePref {
+    /// Derive White vs Black from the build's exclusive Giga chips or Style.
+    #[default]
+    Auto,
+    /// Always use EXE3 White's HUD and Custom Screen.
+    White,
+    /// Always use EXE3 Black's green pointed banners and monochrome Custom Screen.
+    Black,
+}
+
+impl Exe3HudStylePref {
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Auto => 0,
+            Self::White => 1,
+            Self::Black => 2,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(3) {
+            1 => Self::White,
+            2 => Self::Black,
+            _ => Self::Auto,
+        }
+    }
+
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
+
+    pub fn to_render(self) -> saito_frontend::game::Exe3HudStyle {
+        match self {
+            Self::Auto => saito_frontend::game::Exe3HudStyle::Auto,
+            Self::White => saito_frontend::game::Exe3HudStyle::White,
+            Self::Black => saito_frontend::game::Exe3HudStyle::Black,
+        }
+    }
+
+    pub fn from_render(style: saito_frontend::game::Exe3HudStyle) -> Self {
+        match style {
+            saito_frontend::game::Exe3HudStyle::Auto => Self::Auto,
+            saito_frontend::game::Exe3HudStyle::White => Self::White,
+            saito_frontend::game::Exe3HudStyle::Black => Self::Black,
+        }
+    }
+}
+
 /// Battle favorite BGM rotation mode (`Settings::favorite_battle_bgm`, `S-135`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -284,10 +335,13 @@ pub struct Settings {
     pub fill_window: bool,
     /// Soften sudden full-screen white flashes in battle (photosensitive accessibility).
     pub reduce_flashes: bool,
-    /// Hide the "200" number on LifeAura barriers (EXE4–6).
+    /// Hide the "200" number on LifeAura barriers (EXE4–5).
     pub hide_aura_number: bool,
     /// Sync EXE5 Dark/Light MegaMan's buster arm palette with his body palette (Normal, Sol Cross, Bass Cross).
     pub sync_dark_buster_arm: bool,
+    /// EXE3 HUD & Custom Screen version policy (`auto` from build, always `white`, or always `black`).
+    #[serde(skip_serializing_if = "Exe3HudStylePref::is_auto")]
+    pub exe3_hud_style: Exe3HudStylePref,
     /// Use Legacy Collection high-resolution chip artwork when available.
     pub hd_chip_art: bool,
     /// 0 to 100.
@@ -360,6 +414,7 @@ impl Default for Settings {
             reduce_flashes: false,
             hide_aura_number: false,
             sync_dark_buster_arm: false,
+            exe3_hud_style: Exe3HudStylePref::Auto,
             hd_chip_art: false,
             music: 80,
             effects: 100,
@@ -397,12 +452,14 @@ impl Settings {
             hide_aura_number: self.hide_aura_number,
             sync_dark_buster_arm: self.sync_dark_buster_arm,
             hd_chip_art: self.hd_chip_art,
+            exe3_hud_style: self.exe3_hud_style.to_render(),
         }
     }
 
     pub fn set_enhancements(&mut self, e: saito_frontend::game::Enhancements) {
         (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number, self.sync_dark_buster_arm, self.hd_chip_art) =
             (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number, e.sync_dark_buster_arm, e.hd_chip_art);
+        self.exe3_hud_style = Exe3HudStylePref::from_render(e.exe3_hud_style);
     }
 
     /// Step netplay's input delay across `Auto` (`-1`) and fixed `0..=MAX_INPUT_DELAY`.
@@ -593,16 +650,19 @@ mod tests {
         assert!(!other.keyboard_only_custom, "default mouse custom selection enabled");
         assert!(!other.hide_aura_number, "default LifeAura number visible");
         assert!(!other.sync_dark_buster_arm, "default EXE5 dark buster arm sync off");
+        assert_eq!(other.exe3_hud_style, Exe3HudStylePref::Auto, "default EXE3 HUD style is Auto");
         assert!(!other.hd_chip_art, "default HD chip art off");
-        let mut toggled = Settings { hide_aura_number: true, sync_dark_buster_arm: true, hd_chip_art: true, ..Settings::default() };
+        let mut toggled = Settings { hide_aura_number: true, sync_dark_buster_arm: true, exe3_hud_style: Exe3HudStylePref::Black, hd_chip_art: true, ..Settings::default() };
         assert!(toggled.enhancements().hide_aura_number);
         assert!(toggled.enhancements().sync_dark_buster_arm);
+        assert_eq!(toggled.enhancements().exe3_hud_style, saito_frontend::game::Exe3HudStyle::Black);
         assert!(toggled.enhancements().hd_chip_art);
         let toggled_toml = toml::to_string(&toggled).unwrap();
         assert_eq!(toml::from_str::<Settings>(&toggled_toml).unwrap(), toggled);
         toggled.set_enhancements(saito_frontend::game::Enhancements::NONE);
         assert!(!toggled.hide_aura_number);
         assert!(!toggled.sync_dark_buster_arm);
+        assert_eq!(toggled.exe3_hud_style, Exe3HudStylePref::Auto);
         assert!(!toggled.hd_chip_art);
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");

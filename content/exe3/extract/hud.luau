@@ -336,6 +336,31 @@ local function telop(rom: Rom): TelopLook
     }
 end
 
+local function black_hud_version(set: Set): HudVersion
+    -- Blue US (`A3XE`) and Black JP (`A3XJ`) share the green-bar / vivid-gold-white-letter / orange-digit banner
+    -- palette (`BANNER_PALETTE - 0x20`), while Black JP (`A3XJ`) adds pointed `<===>` banner end caps (glyphs 28/29).
+    local rom_blue = set.A3XE
+    local rom_black = set.A3XJ
+    local hp_pals: { Palette } = {}
+    for i = 0, 2 do
+        table.insert(hp_pals, hud.palette(rom_blue, at(rom_blue, HP_PALETTES) + 0x20 * i))
+    end
+    local offs = at(rom_black, BANNER_OFFSETS)
+    local font_base = at(rom_black, BANNER_FONT)
+    local left_off = rom_black:u16(offs + 2 * 28)
+    local right_off = rom_black:u16(offs + 2 * 29)
+    return {
+        banner_palette = hud.palette(rom_blue, at(rom_blue, BANNER_PALETTE) - 0x20),
+        hp_palettes = hp_pals,
+        gauge_palette = hp_pals[1],
+        banner_caps = gba.join({
+            gba.tiles(rom_black, font_base + left_off, 0x40),
+            gba.tiles(rom_black, font_base + right_off, 0x40),
+        }),
+        pointed_banner_bar = true,
+    }
+end
+
 function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string }): Hud
     local h: Hud = {}
     h.chip_icons = chip_icons(set, names, chip_versions)
@@ -351,6 +376,11 @@ function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string 
     }
     drawn(rom, h)
     worded(rom, names, h)
+    h.versioned = {
+        base_version = versions.WHITE,
+        base = {},
+        versions = { { name = versions.BLUE, value = black_hud_version(set) } },
+    }
     return h
 end
 

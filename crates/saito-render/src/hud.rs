@@ -268,8 +268,9 @@ pub fn shared_glyphs<'a>(
     let Some((look, t)) = hud.layout.telop.as_ref().and_then(|l| l.tiles.map(|t| (l, t))) else { return out };
     let s = &state.shared;
     let local = seat.side;
+    let version = graphics.theme_version(b, local);
     let banner_palette = matches!(s.palette, Load::Banner(_)) || s.palette == Load::Pause && t.pause_loads_banner_palette;
-    out.telop_palette = banner_palette.then_some(hud.banner_palette);
+    out.telop_palette = banner_palette.then_some(hud_banner_palette(hud, version));
     out.banner_palette = matches!(s.palette, Load::Telop(_)).then_some(look.palette);
     // A telop's name glyphs, as its start renders them (none in the enhanced
     // mode, whose name is the text layer's).
@@ -792,6 +793,7 @@ pub fn draw<'a>(
         return;
     }
     let local = seat.side;
+    let version = graphics.theme_version(b, local);
     let player = b.player(local);
     let open = custom_open(b, local);
     let color = state.hp.map(|h| h.color).unwrap_or(0) as usize;
@@ -807,7 +809,7 @@ pub fn draw<'a>(
     let shift = crate::custom::hud_shift_with_peek(b, screen_layer, local, custom_peek);
     if let Some(r) = player.filter(|_| !hide_boxes && !b.hud_hidden.hp_box) {
         let shown = state.hp.map(|h| h.shown).unwrap_or(b.objects.get(r).hp);
-        let pal = &hud.hp_palettes[color.min(2)];
+        let pal = hud_hp_palette(hud, version, color.min(2));
         let digits_x = seat.x(shift + 8, 32);
         // With the sharp HUD the HP in the numbers' font over the cells
         // left blank (the box's glyph 10), and the box drawn as shapes where
@@ -841,13 +843,13 @@ pub fn draw<'a>(
     // battle's).
     keep_to(seat, Anchor::TOP, (&mut *layer, &mut *scratch), list, text);
     if custom_gauge && seat.draws_shared() && gauge_shown(b, state, local) {
-        let pal = &hud.gauge_palette;
+        let pal = hud_gauge_palette(hud, version);
         let color = |_: u8, c: u8| pal[c as usize & 15];
         // With the sharp HUD the frame's word in the lettering font, in
         // its look, its cells with their letters taken off (their plate);
         // and the frame and its cells drawn as shapes where the game's graphics have
         // their drawings (`shapes`), the word over them.
-        let word = gauge_word(b, hud, text, problems);
+        let word = gauge_word(b, hud, pal, text, problems);
         let frame_drawn = hud.shapes.gauge_frame.as_ref().filter(|_| text.draws_shapes());
         if let Some(m) = frame_drawn {
             for part in &m.parts {
@@ -1007,7 +1009,7 @@ pub fn draw<'a>(
     // place), and none at the edges.
     let marks_hidden = b.message.is_some() || b.hud_hidden.defensive_marks || result_started(b);
     if !open && !hide_boxes && !crate::custom::gauge_held(b, local) && !marks_hidden {
-        let pal = &hud.hp_palettes[0];
+        let pal = hud_hp_palette(hud, version, 0);
         for (side, column, anchor) in [(local, 6, Anchor::TOP_LEFT), (local ^ 1, 26, Anchor::TOP_RIGHT)] {
             if b.linked[side as usize & 1].chip.is_none() || (side != local && !seat.draws_other()) {
                 continue;
@@ -1041,7 +1043,7 @@ pub fn draw<'a>(
     let step = b.banner_block_for(local).step;
     let judge_shown = if hud.layout.judge_from_hold { step == 4 } else { step < 8 };
     if seat.draws_shared() && b.banner_for(local).is_some_and(|id| crate::lookups::is_judge(graphics, &b.content, id)) && judge_shown {
-        let pal = &hud.hp_palettes[0];
+        let pal = hud_hp_palette(hud, version, 0);
         let j = &b.fight.judge;
         // While the digits roll the numbers are random; then the damage
         // the other side took and the local side took. The numbers are
@@ -1094,7 +1096,7 @@ pub fn draw<'a>(
     // "TIME UP!" stays for the judge's first second.
     // (The timer and the message under the gauge keep to the top, with it.)
     keep_to(seat, Anchor::TOP, (&mut *layer, &mut *scratch), list, text);
-    let text_palette = &hud.hp_palettes[color.min(2)];
+    let text_palette = hud_hp_palette(hud, version, color.min(2));
     let timed = match b.fight.state {
         fight::FIGHTING | fight::PAUSE => b.fight.turn_timer != TURN_TICKS,
         fight::JUDGE => b.fight.sub == 0 && !hud.layout.timer_uses_banner_digits,
@@ -1122,7 +1124,7 @@ pub fn draw<'a>(
     });
     if late && timed && seat.draws_shared() {
         if hud.layout.timer_uses_banner_digits {
-            draw_timer_digits(hud, timer_seconds, list, text, problems);
+            draw_timer_digits(hud, version, timer_seconds, list, text, problems);
         } else {
             let line = match message {
                 Some((line, true)) if one_line => line,
@@ -1158,7 +1160,7 @@ pub fn draw<'a>(
         {
             let bonus = saito_battle::kinds::player::next_chip_bonus(b, r);
             let doubled = saito_battle::kinds::player::next_chip_doubles(b, r);
-            let pal = &hud.hp_palettes[color.min(2)];
+            let pal = hud_hp_palette(hud, version, color.min(2));
             keep_to(seat, Anchor::BOTTOM_LEFT, (&mut *layer, &mut *scratch), list, text);
             // (On the right of a screen of both, at the bottom right: laid
             // out from the left in the scratch layer as its console lays it,
@@ -1346,17 +1348,18 @@ pub fn draw<'a>(
                 let (x, y) = (layout.x as i32, layout.y as i32);
                 let vscale = Some(banner_scale(block));
                 let clip = Rect::new(x, 0, 160, crate::compose::HEIGHT as i32);
-                let d = crate::shapes::drawn(logo, |_, c| h.banner_palette[c as usize & 15], (false, false), None);
+                let bpal = hud_banner_palette(h, version);
+                let d = crate::shapes::drawn(logo, |_, c| bpal[c as usize & 15], (false, false), None);
                 let item = TextItem { vscale, ..crate::shapes::item(d, (x, y), (logo.size[0] as i32, logo.size[1] as i32)) };
                 words = vec![TextItem { clip, ..item }];
                 // (Its words on it, as text, squashed with it.)
-                for item in crate::shapes::words(logo, |_, c| h.banner_palette[c as usize & 15], text, &b.content, problems) {
+                for item in crate::shapes::words(logo, |_, c| bpal[c as usize & 15], text, &b.content, problems) {
                     words.push(TextItem { rect: item.rect.offset(x, y), vscale, clip, ..item });
                 }
             } else {
-                words = clean.then(|| lettered_banner(b, block, h, layout, number, id, text, problems)).flatten().unwrap_or_default();
+                words = clean.then(|| lettered_banner(b, block, h, version, layout, number, id, text, problems)).flatten().unwrap_or_default();
             }
-            banner_parts(b, block, h, layout, id, number, !words.is_empty(), &mut group);
+            banner_parts(b, block, h, version, layout, id, number, !words.is_empty(), &mut group);
             if words.is_empty() {
                 // (The glyphs and the palette a telop loaded over the
                 // banner's: `TelopTiles`.)
@@ -2359,19 +2362,81 @@ fn own_icon_parts<'a>(
 /// The priority of `own_icon_parts`' sprites (EXE4's 0x08015000: 1).
 const OWN_ICON_PRIORITY: u8 = 1;
 
+fn hud_version<'a>(hud: &'a Hud, version: &str) -> Option<&'a saito_assets::HudVersion> {
+    hud.versioned.version(version)
+}
+
+fn hud_banner_palette(hud: &Hud, version: &str) -> Palette {
+    hud_version(hud, version).and_then(|v| v.banner_palette).unwrap_or(hud.banner_palette)
+}
+
+fn hud_hp_palette<'a>(hud: &'a Hud, version: &str, idx: usize) -> &'a Palette {
+    hud_version(hud, version).and_then(|v| v.hp_palettes.get(idx)).unwrap_or(&hud.hp_palettes[idx])
+}
+
+fn hud_gauge_palette<'a>(hud: &'a Hud, version: &str) -> &'a Palette {
+    hud_version(hud, version).and_then(|v| v.gauge_palette.as_ref()).unwrap_or(&hud.gauge_palette)
+}
+
+/// Build (and cache by width) a sharp-HUD pointed `<===>` banner bar SVG matching
+/// EXE3 Black (`A3XJ`) end caps (`LEFT_CAP` / `RIGHT_CAP`, glyphs 28 & 29).
+fn pointed_banner_bar(width: u16) -> Option<saito_assets::shapes::Drawing> {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+    if width < 16 {
+        return None;
+    }
+    static CACHE: OnceLock<Mutex<BTreeMap<u16, saito_assets::shapes::Drawing>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(d) = guard.get(&width)
+    {
+        return Some(d.clone());
+    }
+    let w = width as f32;
+    let svg = format!(
+        concat!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{sw}" height="128" viewBox="0 0 {width} 16">"##,
+            r##"<path d="M6 3 L{r_in} 3 L{r_tip} 7 L{r_tip} 9 L{r_in} 13 L6 13 L2 9 L2 7 Z" fill="#60f880" data-color="3"/>"##,
+            r##"<path d="M2 8 L{r_tip} 8 L{r_tip} 9 L{r_in} 13 L6 13 L2 9 Z" fill="#087820" data-color="5"/>"##,
+            r##"<path d="M6.414 4 L{r_body} 4 L{r_inner} 7.414 L{r_inner} 8.586 L{r_body} 12 L6.414 12 L3 8.586 L3 7.414 Z" fill="#28b828" data-color="4"/>"##,
+            r##"</svg>"##,
+        ),
+        sw = width as u32 * 8,
+        width = width,
+        r_in = w - 7.0,
+        r_tip = w - 3.0,
+        r_body = w - 7.414,
+        r_inner = w - 4.0,
+    );
+    let drawn = saito_assets::shapes::from_svg(&svg).ok()?;
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(width, drawn.clone());
+    }
+    Some(drawn)
+}
+
 /// The banner's five 32x16 sprites (as 8x16 glyphs) with its vertical
 /// squash: grow over 5 frames, hold, shrink (`sub_801CE28`).
 /// `layout` is banner `id`'s (its number in `hud`'s game's graphics).
 /// `blank`: blank parts in the glyphs' places, as many (the sharp text's
 /// lettering draws the words: `lettered_banner`).
-fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, layout: &'a saito_assets::BannerLayout, id: BannerId, number: u8, blank: bool, out: &mut Vec<SpritePart<'a>>) {
+fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, version: &str, layout: &'a saito_assets::BannerLayout, id: BannerId, number: u8, blank: bool, out: &mut Vec<SpritePart<'a>>) {
     let vscale = Some(banner_scale(block));
-    let pal = hud.banner_palette;
+    let pal = hud_banner_palette(hud, version);
     let tiles = |own: &'a Tiles| if blank { &*BLANK_GLYPH } else { own };
     let k_of = |k: usize| if blank { 0 } else { k };
     let cells = layout.glyphs.len() / 2;
+    let caps = hud_version(hud, version)
+        .and_then(|v| v.banner_caps.as_ref())
+        .filter(|c| !blank && layout.bar.is_some() && cells >= 2 && c.len() >= 4);
     for k in 0..cells {
-        out.push(glyph(tiles(&layout.glyphs), k_of(k), pal, layout.x as i32 + 8 * k as i32, layout.y as i32, 0, vscale));
+        let (t, idx) = match caps {
+            Some(c) if k == 0 => (c, 0),
+            Some(c) if k + 1 == cells => (c, 1),
+            _ => (tiles(&layout.glyphs), k_of(k)),
+        };
+        out.push(glyph(t, idx, pal, layout.x as i32 + 8 * k as i32, layout.y as i32, 0, vscale));
     }
     if let Some((nx, ny)) = layout.number_at {
         let n = banner_number(b, id, number);
@@ -2386,11 +2451,11 @@ fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, layout: &'a saito_
 /// The Final Turn countdown in a game whose timer is drawn with the
 /// banners' digits (EXE3's `0x080102E0`: `BANNER_DIGITS` in `banner_palette`
 /// at y = 8, single digit at x = 0x74, two digits at x = 0x70 / 0x78).
-fn draw_timer_digits<'a>(hud: &'a Hud, seconds: usize, list: &mut SpriteList<'a>, text: &mut TextSink, problems: &mut Problems) {
+fn draw_timer_digits<'a>(hud: &'a Hud, version: &str, seconds: usize, list: &mut SpriteList<'a>, text: &mut TextSink, problems: &mut Problems) {
     if seconds == 0 || hud.banner_digits.is_empty() {
         return;
     }
-    let pal = hud.banner_palette;
+    let pal = hud_banner_palette(hud, version);
     let digits = seconds.min(99).to_string();
     let count = digits.len();
     let first_x = if count == 1 { 0x74 } else { 0x70 };
@@ -2446,7 +2511,7 @@ fn hp_box_number(hud: &Hud, palette: &Palette, shown: u16, (x, y): (i32, i32), t
 /// lettering font where it lacks a character), its capitals as high as the
 /// picture's letters' ink, at the font's own spacing, narrowed as a whole
 /// where wider than their columns, standing as they stand in the cells.
-fn gauge_word(b: &Battle, hud: &Hud, text: &TextSink, problems: &mut Problems) -> Option<(Vec<usize>, Tiles, TextItem)> {
+fn gauge_word(b: &Battle, hud: &Hud, pal: &Palette, text: &TextSink, problems: &mut Problems) -> Option<(Vec<usize>, Tiles, TextItem)> {
     let words = text.strings.lettering(&b.content, "gauge.custom")?;
     let Some(font) = [GAUGE_WORD_FONT, LetteringFont::Display].into_iter().find(|&f| text.takes_lettering_in(words, f)) else {
         text.lettering_in(words, LetteringFont::Display, || "the picture of \"gauge.custom\"".into(), problems);
@@ -2459,7 +2524,7 @@ fn gauge_word(b: &Battle, hud: &Hud, text: &TextSink, problems: &mut Problems) -
     let lettering = Lettering { font, ..Lettering::wide(l.top, l.cap) };
     // (Its colors in the picture's bands, not a ramp: the user, "remove the
     // gradient on the custom bar in enhanced mode".)
-    let look = crate::lettering::Look { role: Role::Lettering(lettering), ..crate::lettering::Look::of(l, &hud.gauge_palette, Lettering::wide) }.stepped();
+    let look = crate::lettering::Look { role: Role::Lettering(lettering), ..crate::lettering::Look::of(l, pal, Lettering::wide) }.stepped();
     let [from, to] = l.span.map(i32::from);
     let item = look.item(words, Rect::new(x + from, 0, to - from, 8), crate::custom::align_of(found.align));
     Some((cells, found.blank.clone(), item))
@@ -2524,6 +2589,7 @@ fn lettered_banner(
     b: &Battle,
     block: &Banner,
     hud: &Hud,
+    version: &str,
     layout: &saito_assets::BannerLayout,
     number: u8,
     id: BannerId,
@@ -2535,7 +2601,7 @@ fn lettered_banner(
     let what = || format!("banner {name:?}");
     // (By its place in the game's graphics' banners: its number there over 4.)
     let found = crate::lookups::letters(hud.letters.words.banners.get(number as usize / 4).and_then(Option::as_ref), what, problems)?;
-    let pal = &hud.banner_palette;
+    let pal = &hud_banner_palette(hud, version);
     let letters = &found.letters;
     let (x, y) = (layout.x as i32, layout.y as i32);
     let vscale = Some(banner_scale(block));
@@ -2593,6 +2659,10 @@ fn lettered_banner(
     items.first()?;
     let box_width = (layout.glyphs.len() / 2).max(1) as i32 * 8;
     if let Some(bar) = &layout.bar {
+        let pointed = hud_version(hud, version)
+            .filter(|v| v.pointed_banner_bar)
+            .and_then(|_| pointed_banner_bar(bar.size[0]));
+        let bar = pointed.as_ref().unwrap_or(bar);
         let d = crate::shapes::drawn(bar, |_, c| pal[c as usize & 15], (false, false), None);
         items.insert(0, TextItem { vscale, ..crate::shapes::item(d, (x, y), (bar.size[0] as i32, bar.size[1] as i32)) });
     }
@@ -3407,7 +3477,7 @@ mod tests {
         let mut ticks = 0;
         while b.banner.active {
             let mut parts = Vec::new();
-            banner_parts(&b, &b.banner, &hud, &layout, BannerId(0), 0, false, &mut parts);
+            banner_parts(&b, &b.banner, &hud, "", &layout, BannerId(0), 0, false, &mut parts);
             assert_eq!(parts.len(), 20);
             let whole = banner_scale(&b.banner) == 0x100;
             for part in &parts {
@@ -3949,7 +4019,7 @@ mod tests {
         };
         let h = hud();
         let mut parts = Vec::new();
-        banner_parts(&b, &b.banner, &h, &layout, turn_id, 0x10, false, &mut parts);
+        banner_parts(&b, &b.banner, &h, "white", &layout, turn_id, 0x10, false, &mut parts);
         assert_eq!(parts.len(), 21);
         assert_eq!(parts.last().unwrap().x, 36 + 20 * 8);
     }
@@ -3963,14 +4033,41 @@ mod tests {
         // Single digit ("9"): centered at x = 0x74 (116), y = 8.
         let mut list = SpriteList::default();
         let mut text = TextSink::original();
-        draw_timer_digits(&h, 9, &mut list, &mut text, &mut problems);
+        draw_timer_digits(&h, "white", 9, &mut list, &mut text, &mut problems);
         let parts: Vec<_> = list.into_parts().into_iter().map(|p| (p.x, p.y)).collect();
         assert_eq!(parts, vec![(0x74, 8)]);
 
         // Two digits ("10"): x = 0x70 (112) and x = 0x78 (120), y = 8.
         let mut list = SpriteList::default();
-        draw_timer_digits(&h, 10, &mut list, &mut text, &mut problems);
+        draw_timer_digits(&h, "white", 10, &mut list, &mut text, &mut problems);
         let parts: Vec<_> = list.into_parts().into_iter().map(|p| (p.x, p.y)).collect();
         assert_eq!(parts, vec![(0x70, 8), (0x78, 8)]);
+    }
+
+    #[test]
+    fn hud_version_selects_black_palette_and_pointed_bar_svg() {
+        let mut h = hud();
+        h.banner_palette = [1; 16];
+        h.versioned = saito_assets::Versioned {
+            base_version: "white".into(),
+            base: saito_assets::HudVersion::default(),
+            versions: vec![(
+                "blue".into(),
+                saito_assets::HudVersion {
+                    banner_palette: Some([2; 16]),
+                    hp_palettes: vec![[3; 16]],
+                    gauge_palette: Some([4; 16]),
+                    banner_caps: None,
+                    pointed_banner_bar: true,
+                },
+            )],
+        };
+        assert_eq!(hud_banner_palette(&h, "white"), [1; 16]);
+        assert_eq!(hud_banner_palette(&h, "blue"), [2; 16]);
+        assert_eq!(*hud_hp_palette(&h, "blue", 0), [3; 16]);
+        assert_eq!(*hud_gauge_palette(&h, "blue"), [4; 16]);
+        let bar = pointed_banner_bar(136).expect("pointed banner bar SVG parses");
+        assert_eq!(bar.size, [136, 16]);
+        assert_eq!(bar.colors, vec![(0, 3), (0, 5), (0, 4)]);
     }
 }

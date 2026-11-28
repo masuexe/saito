@@ -24,7 +24,7 @@
 //! (`shapes`).
 
 use crate::compose::{Anchor, Fade, HEIGHT, Size, WIDTH};
-pub use crate::render::Enhancements;
+pub use crate::render::{Enhancements, Exe3HudStyle};
 use crate::vfont::{Role, VectorFont};
 
 /// A rectangle in frame pixels.

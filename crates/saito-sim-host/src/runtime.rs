@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use saito_battle::BattleResult;
 use saito_extract::RomSource;
-use saito_frontend::game::Enhancements;
+use saito_frontend::game::{Enhancements, Exe3HudStyle};
 use saito_frontend::player::time_of;
 use saito_frontend::replay::{End, Info, MatchKind, Outcome};
 use saito_frontend::viewer::Speed;
 use saito_sim_abi::{
-    ABI_VERSION, EnhancementsConfig, PartySnapshot, PlayOutRequest, PlayOutResponse, RomMount, StillRequest,
+    ABI_VERSION, EnhancementsConfig, Exe3HudStyleConfig, PartySnapshot, PlayOutRequest, PlayOutResponse, RomMount, StillRequest,
     VFS_CONTENT, VFS_POOL_PREFIX, VFS_ROMS, ViewerOpenRequest, ViewerOpenResponse, ViewerState,
 };
 
@@ -24,6 +24,11 @@ fn enhancements_config(e: Enhancements) -> EnhancementsConfig {
         hide_aura_number: e.hide_aura_number,
         sync_dark_buster_arm: e.sync_dark_buster_arm,
         hd_chip_art: e.hd_chip_art,
+        exe3_hud_style: match e.exe3_hud_style {
+            Exe3HudStyle::Auto => Exe3HudStyleConfig::Auto,
+            Exe3HudStyle::White => Exe3HudStyleConfig::White,
+            Exe3HudStyle::Black => Exe3HudStyleConfig::Black,
+        },
     }
 }
 

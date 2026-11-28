@@ -91,17 +91,29 @@ msgstr "깜빡임 감소"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "전투 중 갑작스러운 흰 화면 번쩍임을 줄입니다."
 
-msgid "Hide aura number (EXE4-6)"
-msgstr "드림오라 숫자 숨기기 (EXE4-6)"
+msgid "Hide aura number (EXE4-5)"
+msgstr "드림오라 숫자 숨기기 (EXE4-5)"
 
-msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
-msgstr "드림오라의 200 숫자를 숨깁니다 (EXE4-6 전용)."
+msgid "Hide the 200 number on LifeAura (EXE4-5 only)."
+msgstr "드림오라의 200 숫자를 숨깁니다 (EXE4-5 전용)."
 
 msgid "Dark buster arm (EXE5)"
 msgstr "다크 록맨 버스터 색상 동기화 (EXE5)"
 
 msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
 msgstr "EXE5 록맨의 버스터 색상을 본체의 선악 색상과 맞춥니다 (일반, 솔 크로스, 포르테 크로스 지원)."
+
+msgid "HUD & Custom style (EXE3)"
+msgstr "HUD 및 커스텀 화면 스타일 (EXE3)"
+
+msgid "Auto switches White/Black HUD and Custom Screen from the build, or forces White or Black."
+msgstr "빌드에 따라 화이트/블랙 배너와 커스텀 화면을 자동 전환하거나 고정합니다."
+
+msgid "White"
+msgstr "화이트"
+
+msgid "Black"
+msgstr "블랙"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."

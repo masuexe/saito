@@ -19,6 +19,46 @@ use saito_battle::content::PaletteFlashOrder;
 use saito_battle::transform::{SequencerState, TransformPhase};
 use std::sync::Arc;
 
+/// Which version's HUD and Custom Screen theme EXE3 uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Exe3HudStyle {
+    /// Automatically derive White vs Black from the player's build (Black Giga chips or Shadow Style -> Black; else White).
+    #[default]
+    Auto,
+    /// Always use EXE3 White's HUD & blue-silver Custom Screen.
+    White,
+    /// Always use EXE3 Black's green pointed banners & monochrome Custom Screen.
+    Black,
+}
+
+impl Exe3HudStyle {
+    pub const COUNT: usize = 3;
+
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Auto => 0,
+            Self::White => 1,
+            Self::Black => 2,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(Self::COUNT as i32) {
+            1 => Self::White,
+            2 => Self::Black,
+            _ => Self::Auto,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::White => "white",
+            Self::Black => "black",
+        }
+    }
+}
+
 /// Which of the graphics enhancements a battle is drawn with (the app's
 /// "Graphics enhancements"). Each draws something the original draws more
 /// finely, and each can be on or off alone; with none of them
@@ -47,19 +87,21 @@ pub struct Enhancements {
     pub fill: bool,
     /// Soften sudden full-screen white flashes in battle.
     pub reduce_flashes: bool,
-    /// Hide the "200" number part drawn on LifeAura barriers (EXE4–6).
+    /// Hide the "200" number part drawn on LifeAura barriers (EXE4–5).
     pub hide_aura_number: bool,
     /// Sync EXE5 Dark/Light MegaMan's buster arm palette with his body palette (Normal, Sol Cross, Bass Cross).
     pub sync_dark_buster_arm: bool,
     /// Use Legacy Collection Vol. 2 high-resolution chip artwork where available.
     pub hd_chip_art: bool,
+    /// EXE3 HUD & Custom Screen theme policy (Auto from build, always White, or always Black).
+    pub exe3_hud_style: Exe3HudStyle,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
@@ -100,6 +142,9 @@ impl std::str::FromStr for Enhancements {
                 "hide-aura-number" | "hide_aura_number" => e.hide_aura_number = true,
                 "sync-dark-buster-arm" | "sync_dark_buster_arm" => e.sync_dark_buster_arm = true,
                 "hd-chip-art" | "hd_chip_art" => e.hd_chip_art = true,
+                "exe3-hud=auto" | "exe3_hud_style=auto" => e.exe3_hud_style = Exe3HudStyle::Auto,
+                "exe3-hud=white" | "exe3_hud_style=white" => e.exe3_hud_style = Exe3HudStyle::White,
+                "exe3-hud=black" | "exe3-hud=blue" | "exe3_hud_style=black" | "exe3_hud_style=blue" => e.exe3_hud_style = Exe3HudStyle::Black,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
         }
@@ -575,6 +620,7 @@ impl Renderer {
         // renderer's own fields, written while these are read.)
         let mut graphics = self.graphics.view();
         graphics.set_version(self.console_version);
+        graphics.set_exe3_hud_style(self.enhancements.exe3_hud_style);
         let mut view = Self::view_for(b, self.consoles, screen_layers);
         if self.enhancements.reduce_flashes {
             view.fade = soften_flash(view.fade);
@@ -1361,5 +1407,17 @@ mod tests {
         assert_eq!(run(&exe5, megaman_id, 0, 0, true), pal_arm_default, "normal MegaMan keeps original buster-arm palette");
         assert_eq!(run(&exe5, sol_id, 14, 2, true), pal_sol_dark, "dark Sol Cross MegaMan (anim 14) syncs buster-arm");
         assert_eq!(run(&exe6, megaman_id, 0, 2, true), pal_arm_default, "non-EXE5 games never rewrite buster-arm palette");
+    }
+
+    #[test]
+    fn exe3_hud_style_parses_and_resolves_overrides() {
+        assert_eq!(Enhancements::NONE.exe3_hud_style, Exe3HudStyle::Auto);
+        assert_eq!(Enhancements::ALL.exe3_hud_style, Exe3HudStyle::Auto);
+        assert_eq!("exe3-hud=white".parse::<Enhancements>(), Ok(Enhancements { exe3_hud_style: Exe3HudStyle::White, ..Enhancements::NONE }));
+        assert_eq!("exe3-hud=black".parse::<Enhancements>(), Ok(Enhancements { exe3_hud_style: Exe3HudStyle::Black, ..Enhancements::NONE }));
+        assert_eq!("text,hud,exe3-hud=black".parse::<Enhancements>(), Ok(Enhancements { text: true, hud: true, exe3_hud_style: Exe3HudStyle::Black, ..Enhancements::NONE }));
+        for idx in 0..3 {
+            assert_eq!(Exe3HudStyle::from_index(idx).as_index(), idx as usize);
+        }
     }
 }

@@ -193,6 +193,14 @@ export type HudLettering = {
     chatbox_text: { number }?,
 }
 
+export type HudVersion = {
+    banner_palette: Palette?,
+    hp_palettes: { Palette }?,
+    gauge_palette: Palette?,
+    banner_caps: Tiles?,
+    pointed_banner_bar: boolean?,
+}
+
 export type Hud = {
     tiles: Tiles?,
     first_tile: number?,
@@ -230,6 +238,7 @@ export type Hud = {
     layout: HudLayout?,
     language: string?,
     languages: Named<HudLettering>?,
+    versioned: Versioned<HudVersion>?,
 }
 
 -- A cursor's place and its corners: two frames of four, each { y, x, hflip, vflip }.
@@ -284,7 +293,14 @@ export type PatchList = { first_tile: number?, patches: { MapPatch }? }
 export type WindowLabel = { name: string?, first: number?, last: number?, top: number?, bottom: number?, letters: { number }? }
 export type ChipArt = { key: string, picture: Picture?, version: string? }
 export type Emblem = { navi: string, tiles: Tiles?, palette: Palette? }
-export type VersionPictures = { buttons: Named<ButtonPictures>?, form_names: Tiles?, form_name_palettes: { Palette }? }
+export type VersionPictures = {
+    buttons: Named<ButtonPictures>?,
+    form_names: Tiles?,
+    form_name_palettes: { Palette }?,
+    frame_palettes: { Palette }?,
+    icon_palette: Palette?,
+    gray_palette: Palette?,
+}
 export type Versioned<T> = { base_version: string, base: T, versions: Named<T>? }
 export type ButtonLettering = { tiles: Tiles?, picture: Picture? }
 export type CustomLettering = { pictures: SlotPictures?, form_names: Named<Tiles>?, buttons: Named<ButtonLettering>? }

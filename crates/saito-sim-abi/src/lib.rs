@@ -64,6 +64,16 @@ pub struct PlayOutResponse {
     pub stopped: Option<String>,
 }
 
+/// EXE3 HUD & Custom Screen theme policy passed across the guest ABI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Exe3HudStyleConfig {
+    #[default]
+    Auto,
+    White,
+    Black,
+}
+
 /// Rendering enhancement flags passed to the guest renderer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnhancementsConfig {
@@ -83,6 +93,8 @@ pub struct EnhancementsConfig {
     pub sync_dark_buster_arm: bool,
     #[serde(default)]
     pub hd_chip_art: bool,
+    #[serde(default)]
+    pub exe3_hud_style: Exe3HudStyleConfig,
 }
 
 /// Request to render a 240×160 still frame from a replay (`saito_sim_still`).

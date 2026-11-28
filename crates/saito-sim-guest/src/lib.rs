@@ -114,6 +114,11 @@ fn enhancements_of(cfg: EnhancementsConfig) -> Enhancements {
         hide_aura_number: cfg.hide_aura_number,
         sync_dark_buster_arm: cfg.sync_dark_buster_arm,
         hd_chip_art: cfg.hd_chip_art,
+        exe3_hud_style: match cfg.exe3_hud_style {
+            saito_sim_abi::Exe3HudStyleConfig::Auto => saito_frontend::game::Exe3HudStyle::Auto,
+            saito_sim_abi::Exe3HudStyleConfig::White => saito_frontend::game::Exe3HudStyle::White,
+            saito_sim_abi::Exe3HudStyleConfig::Black => saito_frontend::game::Exe3HudStyle::Black,
+        },
     }
 }
 
@@ -160,8 +165,8 @@ fn load_game(
         game.to_string(),
         content_dir.to_string(),
         format!(
-            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{}|{want_sound}",
-            enhancements.text, enhancements.hud, enhancements.motion, enhancements.fill, enhancements.reduce_flashes, enhancements.hide_aura_number, enhancements.sync_dark_buster_arm
+            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{}|{}|{want_sound}",
+            enhancements.text, enhancements.hud, enhancements.motion, enhancements.fill, enhancements.reduce_flashes, enhancements.hide_aura_number, enhancements.sync_dark_buster_arm, enhancements.exe3_hud_style.as_str()
         ),
     );
     if let Some(cached) = STATE.with(|s| s.borrow().game_cache.get(&cache_key).cloned()) {

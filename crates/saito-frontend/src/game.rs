@@ -29,7 +29,7 @@ pub use saito_extract::RomSource;
 use saito_extract::{Extraction, Recipe};
 use saito_render::Renderer;
 use saito_render::graphics::{GameGraphics, OtherBackgrounds, OtherGame};
-pub use saito_render::textlayer::Enhancements;
+pub use saito_render::textlayer::{Enhancements, Exe3HudStyle};
 pub use saito_render::vfont::VectorFont;
 use std::collections::BTreeMap;
 use std::fmt;

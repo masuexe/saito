@@ -91,17 +91,29 @@ msgstr "防爆闪模式"
 msgid "Soften sudden white-screen flashes in battle."
 msgstr "减弱战斗中的瞬间白屏闪烁，降低光敏不适。"
 
-msgid "Hide aura number (EXE4-6)"
-msgstr "隐藏梦之灵数字（EXE4-6）"
+msgid "Hide aura number (EXE4-5)"
+msgstr "隐藏梦之灵数字（EXE4-5）"
 
-msgid "Hide the 200 number on LifeAura (EXE4-6 only)."
-msgstr "隐藏梦之灵上的 200 数字（仅限 EXE4-6）。"
+msgid "Hide the 200 number on LifeAura (EXE4-5 only)."
+msgstr "隐藏梦之灵上的 200 数字（仅限 EXE4-5）。"
 
 msgid "Dark buster arm (EXE5)"
 msgstr "恶洛克人手炮同步配色（EXE5）"
 
 msgid "Match EXE5 MegaMan's buster arm palette to his light/dark body (Normal, Sol Cross, and Bass Cross)."
 msgstr "在 EXE5 中使洛克人手炮颜色与本体善恶配色同步（含普通、太阳交错与佛鲁迪交错）。"
+
+msgid "HUD & Custom style (EXE3)"
+msgstr "HUD 与改装画面风格（EXE3）"
+
+msgid "Auto switches White/Black HUD and Custom Screen from the build, or forces White or Black."
+msgstr "按构筑自动切换白版/黑版横幅与改装画面，或强制使用白版/黑版风格。"
+
+msgid "White"
+msgstr "白版"
+
+msgid "Black"
+msgstr "黑版"
 
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"

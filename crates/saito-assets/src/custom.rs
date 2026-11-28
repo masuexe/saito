@@ -137,6 +137,12 @@ pub struct VersionPictures {
     /// Background palette 10 in the form list window: the form under the
     /// cursor's, then a used one's (EXE6's, `dword_86E944C`).
     pub form_name_palettes: Vec<Palette>,
+    /// Optional per-version custom-screen frame palettes (when non-empty,
+    /// overrides `CustomScreen::frame_palettes`, e.g. EXE3 Black's monochrome frame).
+    pub frame_palettes: Vec<Palette>,
+    /// Optional per-version slot icon & grayed-out palettes (e.g. EXE3 Black's silver border).
+    pub icon_palette: Option<Palette>,
+    pub gray_palette: Option<Palette>,
 }
 
 impl VersionPictures {

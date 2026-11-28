@@ -250,6 +250,7 @@ impl GameGraphics {
             others: &self.others,
             numbers: &self.numbers,
             version: None,
+            exe3_hud_style: crate::render::Exe3HudStyle::Auto,
             hd_art: Some(&self.hd_art),
             hd_elements: Some(&self.hd_elements),
             hd_cross: Some(&self.hd_cross),
@@ -278,6 +279,7 @@ pub struct Graphics<'a> {
     /// another version's shows that version's ROM's art, which this console
     /// draws otherwise (`ChipArt::version`).
     version: Option<&'static str>,
+    exe3_hud_style: crate::render::Exe3HudStyle,
     hd_art: Option<&'a HdArtCache>,
     hd_elements: Option<&'a HdElementCache>,
     hd_cross: Option<&'a HdCrossCache>,
@@ -286,7 +288,7 @@ pub struct Graphics<'a> {
 impl<'a> Graphics<'a> {
     /// The graphics `bundle`: every asset is its.
     pub fn of(bundle: &'a Bundle) -> Graphics<'a> {
-        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None, hd_art: None, hd_elements: None, hd_cross: None }
+        Graphics { bundle, others: &NO_OTHERS, numbers: &NO_NUMBERS, version: None, exe3_hud_style: crate::render::Exe3HudStyle::Auto, hd_art: None, hd_elements: None, hd_cross: None }
     }
 
     /// These graphics, with other games' backgrounds beside them.
@@ -320,6 +322,33 @@ impl<'a> Graphics<'a> {
     /// The console's version, when the frontend says it (`set_version`).
     pub fn version(&self) -> Option<&'static str> {
         self.version
+    }
+
+    /// Set the EXE3 HUD & Custom Screen version policy (`Enhancements::exe3_hud_style`).
+    pub fn set_exe3_hud_style(&mut self, style: crate::render::Exe3HudStyle) {
+        self.exe3_hud_style = style;
+    }
+
+    /// The EXE3 HUD & Custom Screen version policy.
+    pub fn exe3_hud_style(&self) -> crate::render::Exe3HudStyle {
+        self.exe3_hud_style
+    }
+
+    /// The version key (`"white"` / `"blue"` etc.) whose HUD and Custom Screen theme
+    /// should be drawn for `side`: explicit console version wins (traces), else in
+    /// EXE3 obeys `exe3_hud_style` (`Auto` derives from build Giga chips / Style).
+    pub(crate) fn theme_version<'x>(&'x self, b: &'x saito_battle::Battle, side: u8) -> &'x str {
+        if let Some(v) = self.version {
+            return v;
+        }
+        if b.content.game() == "exe3" {
+            return match self.exe3_hud_style {
+                crate::render::Exe3HudStyle::White => "white",
+                crate::render::Exe3HudStyle::Black => "blue",
+                crate::render::Exe3HudStyle::Auto => exe3_auto_version(b, side),
+            };
+        }
+        crate::custom::console_version(b, self, side)
     }
 
     /// A chip's icon, under its key in the game's graphics.
@@ -450,6 +479,46 @@ impl<'a> Graphics<'a> {
             true => id,
             false => c.stage_background().unwrap_or(id),
         }
+    }
+}
+
+fn setup_enum_name<'a>(b: &'a saito_battle::Battle, side: u8, field: &str) -> Option<&'a str> {
+    let defs = &b.content.defs;
+    let schema = defs.schema(defs.rules()?.setup);
+    let block = b.setup.players[side as usize & 1].rules.as_ref()?;
+    let fields = schema.fields();
+    let index = fields.iter().position(|f| f.name == field)?;
+    match (&fields[index].ty, block.get(schema, index)) {
+        (saito_content_api::FieldType::Enum(names), saito_content_api::FieldValue::Enum(i)) => {
+            names.get(i as usize).map(String::as_str)
+        }
+        _ => None,
+    }
+}
+
+/// Automatically derive EXE3 White (`"white"`) vs Black (`"blue"`) from a side's build:
+/// Black-exclusive Giga chips (`version = "blue"`) or Shadow Style select `"blue"`,
+/// White-exclusive Giga chips / Ground Style / neutral builds default to `"white"`.
+pub(crate) fn exe3_auto_version(b: &saito_battle::Battle, side: u8) -> &'static str {
+    let mut saw_white = false;
+    let defs = &b.content.defs;
+    for chip in b.setup.players[side as usize & 1].folder.chips.iter().flatten() {
+        let key = &defs.chip(chip.id).key;
+        if let Some(saito_content_api::Data::Str(v)) = defs.extension(saito_content_api::Registry::Chip, key, "version") {
+            match v.as_str() {
+                "blue" => return "blue",
+                "white" => saw_white = true,
+                _ => {}
+            }
+        }
+    }
+    if saw_white {
+        return "white";
+    }
+    match setup_enum_name(b, side, "style_type") {
+        Some("shadow") => "blue",
+        Some("ground") => "white",
+        _ => "white",
     }
 }
 

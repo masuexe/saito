@@ -255,6 +255,17 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
     -- Pad each 4x3 Regular chip frame (0x180 B = 12 tiles) with 4 blank tiles to canonical 4x4 (32x32) layout.
     local blank4 = gba.tiles(bytes.hex(string.rep("00", 0x80)), 0, 0x80)
 
+    local rom_blue = set.A3XE
+    local black_frame_palettes: { Palette } = {}
+    for i = 0, 3 do
+        table.insert(black_frame_palettes, palette(rom_blue, at(rom_blue, FRAME_PALETTES) + 0x20 * i))
+    end
+    local black_pictures: VersionPictures = {
+        frame_palettes = black_frame_palettes,
+        icon_palette = palette(rom_blue, at(rom_blue, ICON_PALETTE)),
+        gray_palette = palette(rom_blue, at(rom_blue, ICON_PALETTE) + 0x20),
+    }
+
     return {
         layout = {
             column_cells = 0xC2,
@@ -305,7 +316,11 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         }),
         slot_codes = gba.tiles(rom, at(rom, SLOT_CODES), 0x40 * SLOT_CODE_GLYPHS),
         empty_icon = gba.tiles(rom, at(rom, EMPTY_ICON), 0x80),
-        versioned = { base_version = versions.WHITE, base = {} },
+        versioned = {
+            base_version = versions.WHITE,
+            base = {},
+            versions = { { name = versions.BLUE, value = black_pictures } },
+        },
         cursor = custom.tiles(rom, CURSOR),
         -- `[CURSOR_PALETTE]` loads 2 palettes (0x40 B) to OBJ pal 8..9 (`0x02009100`): pal 0 is icon/gray, pal 1 (+0x20)
         -- is the bright magenta/pink cursor palette (`0x086B0188` in A6BE).

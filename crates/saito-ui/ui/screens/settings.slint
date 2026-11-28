@@ -49,6 +49,8 @@ export global SettingsView {
     in property <bool> reduce-flashes;
     in property <bool> hide-aura-number;
     in property <bool> sync-dark-buster-arm;
+    // EXE3 HUD & Custom Screen style: 0 = Auto, 1 = White, 2 = Black.
+    in property <int> exe3-hud-style: 0;
     in property <bool> check-updates;
     in property <bool> can-update;
     in property <string> update-note;
@@ -546,10 +548,30 @@ component SettingsPage inherits Page {
                 }
 
                 Rectangle {
+                    height: exe3-hud-row.height;
+                    exe3-hud-row := SettingLabel {
+                        label: @tr("HUD & Custom style (EXE3)");
+                        note: @tr("Auto switches White/Black HUD and Custom Screen from the build, or forces White or Black.");
+                        control-x: root.control-x;
+                        control-width: root.control-width;
+                    }
+
+                    Seg {
+                        x: root.control-x;
+                        y: 6px;
+                        nav: "set.exe3-hud-style";
+                        first: I18n.upper(@tr("Auto"));
+                        second: I18n.upper(@tr("White"));
+                        third: I18n.upper(@tr("Black"));
+                        chosen: SettingsView.exe3-hud-style;
+                    }
+                }
+
+                Rectangle {
                     height: aura-number-row.height;
                     aura-number-row := SettingLabel {
-                        label: @tr("Hide aura number (EXE4-6)");
-                        note: @tr("Hide the 200 number on LifeAura (EXE4-6 only).");
+                        label: @tr("Hide aura number (EXE4-5)");
+                        note: @tr("Hide the 200 number on LifeAura (EXE4-5 only).");
                         control-x: root.control-x;
                         control-width: root.control-width;
                     }
