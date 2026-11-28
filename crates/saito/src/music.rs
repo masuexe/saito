@@ -548,19 +548,39 @@ pub fn round_music(games: &Games, ready: &Ready, music: &Music) -> Option<Arc<Ro
         let Some((game, name)) = content.background_of(id) else { continue };
         // (One of the battle's own game is read from its content, which may be a replay's revision.)
         let other = (game != content.game()).then(|| games.read(game)).flatten();
-        let of = match &other {
-            Some(other) => &other.loaded,
-            None if game == content.game() => &ready.loaded,
-            None => continue,
-        };
-        let Some(raw_song) = of.game.content.music_of_background(name) else { continue };
-        let song = if use_ds { of.ds_counterpart(raw_song).unwrap_or(raw_song) } else { raw_song };
-        let key = (game.to_string(), song.to_string());
-        if !made.contains_key(&key) {
-            let Some(theme) = of.theme(song) else { continue };
-            made.insert(key.clone(), sound.parts(content, Some(&theme)));
+        match &other {
+            Some(other) => {
+                let of = &other.loaded;
+                let Some(raw_song) = of.game.content.music_of_background(name) else { continue };
+                let song = if use_ds { of.ds_counterpart(raw_song).unwrap_or(raw_song) } else { raw_song };
+                let key = (game.to_string(), song.to_string());
+                if !made.contains_key(&key) {
+                    let Some(theme) = of.theme(song) else { continue };
+                    made.insert(key.clone(), sound.parts(content, Some(&theme)));
+                }
+                by_background.insert(id, made[&key].clone());
+            }
+            None if game == content.game() => {
+                let of = &ready.loaded;
+                let Some(raw_song) = of.game.content.music_of_background(name) else { continue };
+                let song = if use_ds { of.ds_counterpart(raw_song).unwrap_or(raw_song) } else { raw_song };
+                let key = (game.to_string(), song.to_string());
+                if !made.contains_key(&key) {
+                    let Some(theme) = of.theme(song) else { continue };
+                    made.insert(key.clone(), sound.parts(content, Some(&theme)));
+                }
+                by_background.insert(id, made[&key].clone());
+            }
+            None => {
+                let Some(song) = saito_extract::extra_background_music(game, name) else { continue };
+                let key = (game.to_string(), song.to_string());
+                if !made.contains_key(&key) {
+                    let Some(theme) = resolve_extra_theme(games, game, song) else { continue };
+                    made.insert(key.clone(), sound.parts(content, Some(&theme)));
+                }
+                by_background.insert(id, made[&key].clone());
+            }
         }
-        by_background.insert(id, made[&key].clone());
     }
     Some(Arc::new(RoundMusic { own, by_background }))
 }
@@ -1043,6 +1063,18 @@ mod tests {
         assert_eq!(favs[0].1, "net-battle");
         assert_eq!(favs[1].0, "exe2");
         assert_eq!(favs[1].1, "final-battle");
+
+        // Extra backgrounds (EXE1/EXE2) pair with their own EXE1/EXE2 battle themes under Music::Background.
+        let rounds = round_music(&with_extra, &exe6_ready, &Music::Background).expect("round music");
+        let exe1_rocket = exe6_ready.content().background_handle("exe1", "rocket-comp").expect("exe1:rocket-comp in pool");
+        let exe2_gospel = exe6_ready.content().background_handle("exe2", "gospel-core").expect("exe2:gospel-core in pool");
+        let (banks_e1, songs_e1) = rounds.parts(exe1_rocket);
+        let (banks_e2, songs_e2) = rounds.parts(exe2_gospel);
+        let battle_handle = exe6_ready.content().defs.roles().link_battle_music(true);
+        assert_eq!(banks_e1.len(), 2, "exe1 paired theme adds exe1 bank");
+        assert_eq!(songs_e1.0[battle_handle.0 as usize].song, saito_extract::gba_bgm_track("exe1", "final-battle").unwrap().song_id);
+        assert_eq!(banks_e2.len(), 2, "exe2 paired theme adds exe2 bank");
+        assert_eq!(songs_e2.0[battle_handle.0 as usize].song, saito_extract::gba_bgm_track("exe2", "final-battle").unwrap().song_id);
 
         // Practice Music selector (`offered` / `name` / `sound`) also offers EXE1/EXE2 battle themes
         // and displays official Legacy Collection names for EXE1/EXE2/EXE3.

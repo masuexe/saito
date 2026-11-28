@@ -2143,7 +2143,7 @@ mod tests {
     #[test]
     fn the_places_are_the_games_after_random() {
         use saito_match::testing::{exe4_content, exe5_content, exe6_content};
-        crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], "ja");
+        crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], "ja");
         for (game, content) in [("exe6", exe6_content()), ("exe5", exe5_content()), ("exe4", exe4_content())] {
             let places = Places::of(&content, game);
             let (mut arenas, mut stages) = (places.arenas.concat(), saito_match::link_battle_stages(&content, game));
@@ -2171,10 +2171,21 @@ mod tests {
             for (name, key) in backgrounds.iter().zip(&places.backgrounds) {
                 assert!(!name.is_empty() && name != key && !name.contains(" / ") && !name.contains('-'), "{game}: {key} has a name");
             }
-            // The pool: BN4's first, BN6's last, every game's in any game's practice, named by its game.
-            assert_eq!(places.backgrounds.len(), 27 + 22 + 21, "{game}");
-            assert_eq!((backgrounds[0].as_str(), backgrounds[27 + 22 + 20].as_str()), ("EXE4 秋原エリア", "EXE6 ウラインターネット"), "{game}");
-            assert!(backgrounds.contains(&"EXE5 ネビュラグレイ".to_string()) && backgrounds.contains(&"EXE4 デューオ".to_string()), "{game}");
+            // The pool: EXE1's first, EXE6's last, every game's in any game's practice, named by its game.
+            let expected_len = content.background_pool.len();
+            assert_eq!(places.backgrounds.len(), expected_len, "{game}");
+            assert_eq!(
+                (backgrounds[0].as_str(), backgrounds.last().unwrap().as_str()),
+                ("EXE1 ミユキの電脳", "EXE6 ウラインターネット"),
+                "{game}"
+            );
+            assert!(
+                backgrounds.contains(&"EXE1 学校の電脳".to_string())
+                    && backgrounds.contains(&"EXE2 ゴスペル最深部".to_string())
+                    && backgrounds.contains(&"EXE5 ネビュラグレイ".to_string())
+                    && backgrounds.contains(&"EXE4 デューオ".to_string()),
+                "{game}"
+            );
             let own = |b: &str| !b.contains(':');
             assert_eq!(places.backgrounds.iter().filter(|b| own(b)).count(), saito_match::ids::backgrounds(&content, game).len(), "{game}: its own by their names");
             // (A background named by its name in the game is found.)

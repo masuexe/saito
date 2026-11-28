@@ -174,10 +174,28 @@ pub fn background_pool(dir: &Path) -> saito_battle::content::BackgroundPool {
 
 /// The background pool of `games`, each a game and the content directory its locales are read from (an app whose
 /// games each have content of their own: a bundle each, docs/design/content-deployment.md §5).
+///
+/// Non-playable Legacy Collection Vol. 1 titles declared in [`saito_extract::EXTRA_BG_GAMES`] (e.g. `exe1`, `exe2`)
+/// are included automatically whenever `games` is non-empty and does not already provide a playable pack for that
+/// title. Once a title gains a playable `content/<game>` pack, its own locales take precedence seamlessly.
 pub fn background_pool_of(games: &[(String, std::path::PathBuf)]) -> saito_battle::content::BackgroundPool {
-    saito_battle::content::BackgroundPool::new(
-        games.iter().flat_map(|(game, dir)| backgrounds_in(dir, game, OWN).unwrap_or_default().into_keys().map(move |name| (game.clone(), name))),
-    )
+    let playable = games.iter().flat_map(|(game, dir)| {
+        backgrounds_in(dir, game, OWN)
+            .unwrap_or_default()
+            .into_keys()
+            .map(move |name| (game.clone(), name))
+    });
+    let extra = (!games.is_empty()).then(|| {
+        saito_extract::EXTRA_BG_GAMES
+            .iter()
+            .filter(|&&(extra_game, _)| !games.iter().any(|(g, _)| g == extra_game))
+            .flat_map(|&(extra_game, specs)| {
+                specs
+                    .iter()
+                    .map(move |spec| (extra_game.to_string(), spec.key.to_string()))
+            })
+    });
+    saito_battle::content::BackgroundPool::new(playable.chain(extra.into_iter().flatten()))
 }
 
 /// Game `game`'s backgrounds' names as a player sees them in `lang` (each
@@ -614,5 +632,32 @@ mod tests {
         assert_eq!(names("exe6", "ja")["final-battle"], "VS 電脳獣");
         assert_eq!(names("exe6", "ko")["crossover-battle"], names("exe6", "ja")["crossover-battle"], "no table of its own");
         assert!(names("nowhere", "ja").is_empty());
+    }
+
+    /// `background_pool_of` includes optional non-playable titles (`exe1`, `exe2`) automatically
+    /// when no playable pack provides them, and prefers a playable pack's locales once present.
+    #[test]
+    fn background_pool_includes_extra_games_and_yields_to_playable_pack() {
+        let dir = crate::index::content();
+        let pool = background_pool(&dir);
+        assert!(pool.keys().any(|k| k == "exe1:school-comp"));
+        assert!(pool.keys().any(|k| k == "exe2:gospel-core"));
+        assert!(background_pool_of(&[]).is_empty(), "empty games list yields empty pool");
+
+        // Simulate a future playable `content/exe1` pack taking over from EXTRA_BG_GAMES:
+        let tmp = std::env::temp_dir().join(format!("saito_test_exe1_bg_pool_{}", std::process::id()));
+        let loc_dir = tmp.join("exe1").join("locales");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&loc_dir).unwrap();
+        std::fs::write(
+            loc_dir.join("ja.toml"),
+            "language = \"ja\"\n[backgrounds]\n\"custom-exe1-bg\" = { name = \"テスト\" }\n",
+        )
+        .unwrap();
+        let migrated = background_pool_of(&[("exe1".into(), tmp.clone())]);
+        let _ = std::fs::remove_dir_all(&tmp);
+        let exe1_keys: Vec<&str> = migrated.iter().filter(|(g, _)| *g == "exe1").map(|(_, n)| n).collect();
+        assert_eq!(exe1_keys, ["custom-exe1-bg"], "playable exe1 pack overrides extra catalog");
+        assert!(migrated.keys().any(|k| k == "exe2:gospel-core"), "other extra titles stay present");
     }
 }

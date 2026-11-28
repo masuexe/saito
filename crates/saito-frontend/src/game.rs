@@ -191,6 +191,25 @@ pub fn others(game: &str, dir: &Path, roms: &RomSource) -> Arc<OtherGame> {
         .clone()
 }
 
+/// Optional non-playable title `game`'s backgrounds (e.g. `exe1`, `exe2`), extracted directly from
+/// `roms` when first wanted and cached for the run.
+pub fn others_extra(game: &str, roms: &RomSource) -> Arc<OtherGame> {
+    let key = (game.to_string(), PathBuf::new(), format!("{roms:?}"));
+    let mut games = saito_threads::lock(&OTHER_GAMES).unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (game, roms) = (game.to_string(), roms.clone());
+    games
+        .entry(key)
+        .or_insert_with(|| {
+            OtherGame::new(Box::new(move || {
+                saito_extract::extract_extra_backgrounds(&roms, &game).map_err(|e| {
+                    log::warn!("the background pool's {game} backgrounds aren't drawn: {e}");
+                    e
+                })
+            }))
+        })
+        .clone()
+}
+
 /// Every background extracted, by its name in the assets' index.
 fn backgrounds_of(e: &Extraction) -> BTreeMap<String, Background> {
     e.index.backgrounds.iter().filter_map(|(name, &n)| Some((name.clone(), e.graphics.background(n)?.clone()))).collect()
@@ -255,6 +274,17 @@ impl ContentLoaded {
         for (game, from) in &pool {
             if *game != name && content.background_pool.iter().any(|(g, _)| g == game) {
                 others.insert(game, self::others(game, from, roms));
+            }
+        }
+        // Optional non-playable Legacy Collection Vol. 1 titles (e.g. `exe1`, `exe2`):
+        // registered only if no playable content pack already owns that game and `roms` has its ROM.
+        for &(extra_game, _) in saito_extract::EXTRA_BG_GAMES {
+            if extra_game != name
+                && others.game(extra_game).is_none()
+                && content.background_pool.iter().any(|(g, _)| g == extra_game)
+                && saito_extract::has_extra_bg_rom(roms, extra_game)
+            {
+                others.insert(extra_game, self::others_extra(extra_game, roms));
             }
         }
         let Extraction { graphics, sound, ds_sound, ds_voices, index, .. } = own;

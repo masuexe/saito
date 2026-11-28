@@ -19,6 +19,7 @@
 
 pub mod bgm;
 mod elements;
+pub mod extra_bg;
 mod gfx;
 pub mod hd_art;
 pub mod letters;
@@ -32,6 +33,9 @@ pub mod source;
 mod sprite;
 
 pub use bgm::{EXTRA_BGM_GAMES, GbaBgmTrack, extract_extra_bgm_bank, gba_bgm_is_battle_theme, gba_bgm_track, gba_bgm_tracks};
+pub use extra_bg::{
+    EXE1_BACKGROUNDS, EXE2_BACKGROUNDS, EXTRA_BG_GAMES, ExtraBackgroundSpec, extract_extra_backgrounds, extra_background_music, extra_backgrounds, has_extra_bg_rom,
+};
 pub use nds::{DsBgmTrack, EXE5DS_BATTLE_THEMES, EXE5DS_BGM_TRACKS, exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
 pub use recipe::Recipe;
 pub use sound::SongVersions;

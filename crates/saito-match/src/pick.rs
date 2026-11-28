@@ -358,7 +358,7 @@ mod tests {
                     seen.insert(content.background_of(b.background).unwrap().0.to_string());
                 }
             }
-            assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["exe3", "exe4", "exe5", "exe6"], "{game}: every game's");
+            assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["exe1", "exe2", "exe3", "exe4", "exe5", "exe6"], "{game}: every game's");
         }
     }
 

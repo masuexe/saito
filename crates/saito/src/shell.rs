@@ -407,8 +407,19 @@ impl Shell {
     /// Read games `ids`' names in `lang` (for [`Shell::game_name`]), their battle themes' (for
     /// `crate::music::name`) and their backgrounds' (for `crate::backgrounds::name`).
     pub(crate) fn read_game_names(ids: &[&str], lang: &str) {
-        let names: HashMap<String, String> =
+        let mut names: HashMap<String, String> =
             ids.iter().filter_map(|id| saito_content::locale::game_name(&crate::contents::dir(id)?, id, lang).map(|name| (id.to_string(), name))).collect();
+        // Fallback display names for non-playable Legacy Collection Vol. 1 titles (`exe1`, `exe2`)
+        // until they have playable content packs with their own `locales/<lang>.toml`.
+        for &(extra, _) in saito_extract::EXTRA_BG_GAMES {
+            names.entry(extra.to_string()).or_insert_with(|| {
+                if lang == "en" {
+                    extra.strip_prefix("exe").map_or_else(|| extra.to_ascii_uppercase(), |n| format!("BN{n}"))
+                } else {
+                    extra.to_ascii_uppercase()
+                }
+            });
+        }
         GAME_NAMES.with(|n| *n.borrow_mut() = names);
         crate::music::name_themes(ids.iter().copied(), lang);
         crate::backgrounds::name_backgrounds(ids.iter().copied(), lang);
