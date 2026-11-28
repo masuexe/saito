@@ -1,6 +1,7 @@
 --!strict
 -- EXE3 CopyDmg (0x0C2): marks the opponent so damage taken is copied!
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local common_mark = require("@exelib/copydmg/mark")
 
@@ -29,7 +30,7 @@ local copydmg: Chip = {
         update = function(me: Object, s: State)
             if me.step == SHOOT then
                 if me.step_init == 0 then
-                    me:set_animation(0x12)
+                    me:set_animation(anims.buster_shoot(me))
                     me:set_status("using_action", true)
                     me.step_init = 4
                     s.timer = 0

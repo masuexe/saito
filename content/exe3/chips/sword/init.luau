@@ -2,6 +2,7 @@
 -- EXE3 Swords: Sword, WideSwrd, LongSwrd, FireSwrd, AquaSwrd, ElecSwrd, BambSwrd,
 -- CustSwrd, VarSwrd, StepSwrd, StepCros, Slasher, Muramasa, HeroSwrd.
 
+local anims = require("../lib/anims")
 local attachment = require("../objects/attachment")
 local collision = require("../rules/collision")
 local regions = require("@exelib/regions")
@@ -227,7 +228,7 @@ local SLASHER_ACTION = new.action {
     update = function(me: Object, s: SlasherState)
         local step = me.step
         if step == SLASHER_START then
-            me:set_animation(0)
+            me:set_animation(anims.idle(me))
             local x = find_intruder_col(me)
             if x ~= 0 then
                 s.target_x = x
@@ -247,7 +248,7 @@ local SLASHER_ACTION = new.action {
             end
         elseif step == SLASHER_HIT then
             if me.step_init == 0 then
-                me.anim = 5
+                me.anim = anims.SWORD_SWING
                 battle.play_sound(swords.big_swing)
                 attachment.attach(me, swords.blade, "related", 0)
                 me:set_status("using_action", true)

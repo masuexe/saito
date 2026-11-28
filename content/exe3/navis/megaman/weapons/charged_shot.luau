@@ -8,7 +8,7 @@
 --   - Ground (CrackShot): fires shot cracking panels ahead and spreading cracks on impact
 -- Honors BrakChrg (`stats.brake_charge`) and WeapLV+1 (`stats.weapon_level`).
 
-local attachment = require("../../../objects/attachment")
+local anims = require("../../../lib/anims")
 local bullet = require("../../../objects/bullet")
 local collision = require("../../../rules/collision")
 local projectile = require("../../../lib/projectile")
@@ -21,7 +21,6 @@ local charged_shot = {}
 
 local SHOOT, RECOVER = 0x0, 0x4
 local SHOT_Z = 0x18_0000
-local NAVI_NUMBER = 0
 local SHOT_SOUND = asset.sound("buster-shot")
 local SPREADER_SOUND = asset.sound("spreader")
 local CRACK_SOUND = asset.sound("panel-crack")
@@ -472,7 +471,7 @@ local function make_action(id: string, fire_fn: (me: Object, breaking: boolean) 
             local step = me.step
             if step == SHOOT then
                 if me.step_init == 0 then
-                    me:set_animation(0x12)
+                    me:set_animation(anims.buster_shoot(me))
                     me.step_init = 4
                     me:set_status("using_action", true)
                     s.timer = 0
@@ -481,7 +480,6 @@ local function make_action(id: string, fire_fn: (me: Object, breaking: boolean) 
                     battle.play_sound(SHOT_SOUND)
                     local breaking: boolean = battle.navi(me.alliance).brake_charge == true
                     me.attack_count = fire_fn(me, breaking)
-                    attachment.attach(me, attachment.muzzle_flash, "related", NAVI_NUMBER)
                 end
                 s.timer += 1
                 if s.timer > 4 then

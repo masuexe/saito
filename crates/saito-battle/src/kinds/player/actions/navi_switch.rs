@@ -252,7 +252,8 @@ fn land(b: &mut Battle, r: ObjectRef, knockout: bool) {
             clear_flag1(b, r, LANDING);
             clear_flag2(b, r, LANDING);
         }
-        common::set_animation(b, r, 4);
+        let depart_anim = b.game_rules().effects.player_anims.move_depart;
+        common::set_animation(b, r, depart_anim);
         b.objects.get_mut(r).related[0] = None;
         ai_mut(b, r).overlay = None;
         if knockout {
@@ -332,7 +333,8 @@ fn party_land(b: &mut Battle, r: ObjectRef, how: Land) {
         clear_flag1(b, r, LANDING | f1::DRAG);
         clear_flag2(b, r, 0x110);
         b.objects.get_mut(r).slide_state = 0;
-        common::set_animation(b, r, 0);
+        let idle = super::super::idle_anim(b, r);
+        common::set_animation(b, r, idle);
         if let Some(overlay) = b.objects.get(r).related[1] {
             form::tell_overlay(b, overlay);
         }

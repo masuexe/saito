@@ -106,8 +106,12 @@ fn init(b: &mut Battle, r: ObjectRef) {
     {
         form::keep_overlay_stepping(b, overlay);
     }
+    let pa = b.game_rules().effects.player_anims;
     let o = b.objects.get_mut(r);
-    o.anim = 3 + warp as u8;
+    o.anim = match warp {
+        Warp::In => pa.move_arrive,
+        Warp::Out => pa.move_depart,
+    };
     o.anim_loaded = 0xFF;
     common::set_progress(b, r, Progress::UPDATE);
     tick(b, r);

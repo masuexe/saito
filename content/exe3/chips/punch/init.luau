@@ -2,6 +2,7 @@
 -- EXE3 Punch, Hammer, Dash & AirSwrd chips:
 -- GutPunch (0x02F), GutStrgt (0x030), GutImpct (0x031), Hammer (0x040), DashAtk (0x035), AirSwrd (0x02A).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local element = require("@exelib/element")
 local regions = require("@exelib/regions")
@@ -70,7 +71,7 @@ local function make_punch_action(
         state = { timer = "u16" },
         update = function(me: Object, s: PunchState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.PUNCH)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -133,7 +134,7 @@ local DASHATK_ACTION = new.action {
     state = { timer = "u16", orig_x = "u8", cur_x = "u8", returning = "bool" },
     update = function(me: Object, s: DashState)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.DASH)
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -192,7 +193,7 @@ local AIRSWRD_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: AirSwrdState)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.SWORD_SWING)
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0

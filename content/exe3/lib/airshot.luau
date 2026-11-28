@@ -1,6 +1,7 @@
 --!strict
 -- EXE3's AirShot action wrapper over @exelib/airshot.
 
+local anims = require("./anims")
 local attachment = require("../objects/attachment")
 local common = require("@exelib/airshot")
 local projectile = require("./projectile")
@@ -18,7 +19,7 @@ local LOOK: AirShotLook = {
         attachment.attach(me, look, which, NAVI_NUMBER)
     end,
     projectiles = projectile,
-    anim = 12,
+    anim = anims.AIRSHOT,
     slot = "related",
 }
 

@@ -7,6 +7,7 @@
 --   ligtning (0x0D9), bolt     (0x113),
 --   gaiaswrd (0x0DA), gaiablad (0x114).
 
+local anims = require("../lib/anims")
 local attachment = require("../objects/attachment")
 local chip_hand = require("@exelib/chip_hand")
 local collision = require("../rules/collision")
@@ -841,7 +842,7 @@ local function make_gaia_action(id: string, region: Region): Action
         state = { timer = "u16", total_dmg = "u16" },
         update = function(me: Object, s: GaiaState)
             if me.step_init == 0 then
-                me.anim = 5
+                me.anim = anims.SWORD_SWING
                 me:set_status("using_action", true)
                 attachment.attach(me, swords.blade, "related", 0)
                 local base = me.attack_damage + me.extra

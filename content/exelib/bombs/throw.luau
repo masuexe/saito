@@ -66,10 +66,11 @@ end
 -- A chip's throw, of a game's `look`.
 function throw.action(spec: ThrowSpec, look: ThrowLook): Action
     local SOUND = look.sound
+    local anim_throw = look.anim or ANIM_THROW
     -- `sub_80EB644`: wind up, throw on the tenth tick, stand.
     local function wind_up(me: Object, s: State)
         if me.step_init == 0 then
-            me:set_animation(ANIM_THROW)
+            me:set_animation(anim_throw)
             me:open_counter_window()
             local hold = look.hold
             if hold then

@@ -3,6 +3,7 @@
 -- Yo-Yo1 (0x045), Yo-Yo2 (0x046), Yo-Yo3 (0x047),
 -- Boomer1 (0x054), Boomer2 (0x055), Boomer3 (0x056), Lance (0x04B).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
@@ -163,7 +164,7 @@ local function make_yoyo_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ThrowActState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -284,7 +285,7 @@ local function make_boomer_action(id: string, step_ticks: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ThrowActState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -316,7 +317,7 @@ local LANCE_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ThrowActState)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0

@@ -1,6 +1,7 @@
 --!strict
 -- EXE3's Cannon action wrapper over @exelib/cannon.
 
+local anims = require("./anims")
 local attachment = require("../objects/attachment")
 local common = require("@exelib/cannon")
 local projectile = require("./projectile")
@@ -16,7 +17,7 @@ local function afterimages(me: Object, spec: CannonSpec, flip: number)
     local form = battle.navi(me.alliance).form
     battle.afterimage(me, me.pos, {
         sprite = form.sprite,
-        anim = 9,
+        anim = anims.CANNON_RAISE,
         flip = flip,
         lifetime = AFTERIMAGE_TICKS,
         color_shader = AFTERIMAGE_SHADER,
@@ -37,8 +38,8 @@ local LOOK: CannonLook = {
         attachment.attach(me, look, which, NAVI_NUMBER)
     end,
     projectiles = projectile,
-    raise_anim = 9,
-    lower_anim = 8,
+    raise_anim = anims.CANNON_RAISE,
+    lower_anim = anims.CANNON_LOWER,
     afterimages = afterimages,
 }
 

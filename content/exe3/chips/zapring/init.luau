@@ -2,6 +2,7 @@
 -- EXE3 ZapRing, Rope, Tornado & Burner chips:
 -- ZapRing1-3 (0x042..0x044), Rope1-3 (0x04E..0x050), Tornado (0x041), Burner (0x036).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local element = require("@exelib/element")
 local regions = require("@exelib/regions")
@@ -112,7 +113,7 @@ local function make_zapring_action(id: string, step_ticks: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -152,7 +153,7 @@ local function make_rope_action(id: string, reach: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -258,7 +259,7 @@ local TORNADO_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -292,7 +293,7 @@ local BURNER_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0

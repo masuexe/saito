@@ -325,6 +325,11 @@ pub struct FormData {
     /// mood).
     #[serde(default)]
     pub palette: u8,
+    /// The idle animation index in the form's sprite sheet (0 in EXE4/5/6,
+    /// where each form has its own sheet; 0..=7 in EXE3, where Normal and the
+    /// 7 Styles share `00-00` and each Style has its own idle animation).
+    #[serde(default)]
+    pub idle_anim: u8,
     /// Its faces in the emotion window (`sub_801E6A8`), by emotion.
     /// Presentation only.
     #[serde(default, deserialize_with = "faces")]

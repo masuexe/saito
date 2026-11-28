@@ -24,7 +24,7 @@ local function start(me: Object)
     me:set_status("submerged", false)
     navi_status.reset_charge(me)
     me.chip = nil
-    me.anim = 2
+    me.anim = 9
     me:unreserve_panel(me.future_panel_x, me.future_panel_y)
     me.barrier_visual = nil
     me.collision.barrier = "none"

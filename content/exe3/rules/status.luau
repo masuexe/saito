@@ -46,7 +46,7 @@ local status = {
         missing_collision_status = 0xE3A02004,
         reactions = "flash_timer_first",
         reaction_actions = "plain",
-        drag = { poses = { otherwise = 1 }, ending = "keeps_pose" },
+        drag = { poses = { otherwise = 8 }, ending = "keeps_pose" },
         bugs_before_drain = true,
         no_charge_drive = false,
         hp_loss = "hit_drains_gauge",

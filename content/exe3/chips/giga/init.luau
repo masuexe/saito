@@ -16,7 +16,7 @@ local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, pale
 local BIG_SLASH_FX = new.effect { sprite = asset.sprite("big-slash"), anim = 0, palette = 0, steps = 15 }
 local BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 14 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
-local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 0, palette = 0, steps = 10 }
+local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 
 local APPEAR_SOUND = asset.sound("appear")
 local BLAST_SOUND = asset.sound("hit-bomb")

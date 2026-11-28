@@ -3,6 +3,7 @@
 -- ShockWav (0x02C), SonicWav (0x02D), DynaWave (0x02E), BigWave (0x071),
 -- Wave (0x03D), RedWave (0x03E), MudWave (0x03F).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
@@ -134,7 +135,7 @@ local function make_wave_action(id: string, elem: number, step_ticks: number, mo
         state = { timer = "u16" },
         update = function(me: Object, s: WaveActState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0

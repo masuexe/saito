@@ -3,6 +3,7 @@
 -- Magnum1-3 (0x051..0x053), Ratton1-3 (0x03A..0x03C), NoBeam1-3 (0x094..0x096),
 -- IceWave1-3 (0x05A..0x05C), Arrow1-3 (0x060..0x062).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local dimming_chips = require("@exelib/dimming")
 local element = require("@exelib/element")
@@ -10,9 +11,9 @@ local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
-local TARGET_SPRITE = asset.sprite("target-marker")
+local TARGET_SPRITE = HIT_SPARKS
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
-local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 0, palette = 0, steps = 10 }
+local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 12 }
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 12 }
 local CANNON_SOUND = asset.sound("cannon")
@@ -243,7 +244,7 @@ local function make_ratton_action(id: string, step_ticks: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -282,7 +283,7 @@ local function make_nobeam_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -408,7 +409,7 @@ local function make_icewave_action(id: string, step_ticks: number, rows: number)
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -518,7 +519,7 @@ local function make_arrow_action(id: string, tier: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0

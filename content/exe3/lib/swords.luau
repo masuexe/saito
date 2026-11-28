@@ -1,6 +1,7 @@
 --!strict
 -- EXE3's sword action wrapper over @exelib/swords/slash (including StepSwrd step-forward slashes).
 
+local anims = require("./anims")
 local attachment = require("../objects/attachment")
 local slash = require("@exelib/swords/slash")
 local sword_sprite = asset.sprite("sword")
@@ -62,6 +63,9 @@ local function make_game(steps: SlashSteps): SlashGame
         end,
         refreshes_form_overlay = false,
         recovery_clears_moving = false,
+        swing_anim = anims.SWORD_SWING,
+        warp_out_anim = anims.MOVE_DEPART,
+        idle_anim = anims.idle,
     }
 end
 

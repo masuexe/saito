@@ -11,7 +11,7 @@ local pink_flash_sprite = asset.sprite("pink-flash")
 local spreader_sprite = asset.sprite("spreader")
 
 local GUN = attachment.look { sprite = spreader_sprite, palette = 0 }
-local FLASH = new.effect { sprite = pink_flash_sprite, anim = 0, palette = 0, steps = 10 }
+local FLASH = new.effect { sprite = pink_flash_sprite, anim = 1, palette = 0, steps = 10 }
 local AQUA_FLASH = new.effect { sprite = hit_sparks_sprite, anim = 3, palette = 0, steps = 14 }
 local FIRE_FLASH = new.effect { sprite = hit_sparks_sprite, anim = 2, palette = 0, steps = 14 }
 local SOUND = asset.sound("spreader")

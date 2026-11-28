@@ -1,6 +1,7 @@
 --!strict
 -- EXE3 VarSwrd helper: SonicBoom piercing wave, Elemental Sonic wave, FighterSword, LifeSword, and command inputs.
 
+local anims = require("../../lib/anims")
 local collision = require("../../rules/collision")
 local regions = require("@exelib/regions")
 local sonic_boom = require("@exelib/swords/sonic_boom")
@@ -35,7 +36,7 @@ local function make_sonic_action(id: string, count: number, elements: { number }
         state = { timer = "u16", thrown = "u8" },
         update = function(me: Object, s: BoomState)
             if me.step_init == 0 then
-                me:set_animation(5)
+                me:set_animation(anims.SWORD_SWING)
                 me:set_status("using_action", true)
                 s.timer = 0
                 s.thrown = 0

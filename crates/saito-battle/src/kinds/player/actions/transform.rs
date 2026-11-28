@@ -133,8 +133,9 @@ pub(in crate::kinds::player) fn revert(b: &mut Battle, r: ObjectRef) {
         s.load(sprite);
         s.look.shadow = crate::object::sprite::Shadow::Ground;
         if !resumes {
+            let idle = b.content.form(base).idle_anim;
             let o = b.objects.get_mut(r);
-            o.anim = 0;
+            o.anim = idle;
             o.anim_loaded = 0xFF;
         }
         let anim = b.objects.get(r).anim;
@@ -220,8 +221,9 @@ pub(in crate::kinds::player) fn break_form(b: &mut Battle, r: ObjectRef) -> bool
         b.sound(SoundRole::Fade);
         land(b, r);
         if !any_form {
+            let reaction = b.game_rules().effects.player_anims.reaction;
             let o = b.objects.get_mut(r);
-            o.anim = 2;
+            o.anim = reaction;
             o.anim_loaded = 0xFF;
             crate::kinds::player::refresh_form_overlay(b, r);
         }
@@ -255,12 +257,13 @@ pub(in crate::kinds::player) fn break_form(b: &mut Battle, r: ObjectRef) -> bool
         let s = b.objects.sprite_mut(r);
         s.load(sprite);
         s.look.shadow = crate::object::sprite::Shadow::Ground;
+        let idle = b.content.form(new).idle_anim;
         let o = b.objects.get_mut(r);
         o.flags &= !flags::NO_SPRITE_UPDATE;
-        o.anim = 0;
+        o.anim = idle;
         o.anim_loaded = 0xFF;
         let s = b.objects.sprite_mut(r);
-        s.set_animation(0, &b.content);
+        s.set_animation(idle, &b.content);
         s.look.set_flip(flip);
         s.look.white = true;
         stats_mut(b, r).form = new;

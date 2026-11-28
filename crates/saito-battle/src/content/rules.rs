@@ -370,6 +370,28 @@ pub struct EffectsRules {
     /// What a frame's sprite draw has room for. Presentation: the
     /// renderer's.
     pub sprite_budget: SpriteBudgetRules,
+    /// Player navi animation indices used by engine-driven transitions (move
+    /// depart/arrive, flinch, hitstun/status reactions, warp). Defaults match
+    /// EXE4/5/6 (`1, 2, 3, 4`); EXE3 overrides them to its Gen-1 `00-00`
+    /// layout (`8, 9, 0x0A, 0x0B`).
+    #[serde(default)]
+    pub player_anims: PlayerAnims,
+}
+
+/// Engine-driven animation indices on a player navi's sprite sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerAnims {
+    pub flinch: u8,
+    pub reaction: u8,
+    pub move_arrive: u8,
+    pub move_depart: u8,
+}
+
+impl Default for PlayerAnims {
+    fn default() -> Self {
+        Self { flinch: 1, reaction: 2, move_arrive: 3, move_depart: 4 }
+    }
 }
 
 /// A frame's sprite budget (the effects section's `sprite_budget`). The

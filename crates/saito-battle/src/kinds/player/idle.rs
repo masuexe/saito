@@ -70,7 +70,7 @@ fn battle_over(b: &mut Battle, r: ObjectRef) {
         };
         return set_attack(b, r, protect, 0);
     }
-    b.objects.get_mut(r).anim = 0;
+    b.objects.get_mut(r).anim = super::idle_anim(b, r);
 }
 
 /// `sub_801056A`: a reactive defensive chip fires.
@@ -239,7 +239,7 @@ fn phase_timer(b: &mut Battle, r: ObjectRef) {
         // EXE4's idle stands the navi each tick past this phase (the
         // rules' `idle_stands`).
         if b.game_rules().idle_stands {
-            b.objects.get_mut(r).anim = 0;
+            b.objects.get_mut(r).anim = super::idle_anim(b, r);
         }
         return;
     }

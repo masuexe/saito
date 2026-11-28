@@ -4,7 +4,7 @@
 local sparks = {}
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
-local chip_destruction_spark_sprite = asset.sprite("chip-destruction-spark")
+local chip_destruction_spark_sprite = asset.sprite("hit-marker")
 local explosion_sprite = asset.sprite("explosion")
 local hit_sprite = asset.sprite("hit")
 local impact_sprite = asset.sprite("impact")
@@ -17,7 +17,7 @@ local BY_ELEMENT: { [number]: Spark } = {
     [2] = new.spark { sprite = HIT_SPARKS, anim = 2, palette = 0, steps = 18 },
     [3] = new.spark { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 14 },
     [4] = new.spark { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 16 },
-    [5] = new.spark { sprite = pink_flash_sprite, anim = 0, palette = 0, steps = 10 },
+    [5] = new.spark { sprite = pink_flash_sprite, anim = 1, palette = 0, steps = 10 },
 }
 
 sparks.plain = BY_ELEMENT[0]

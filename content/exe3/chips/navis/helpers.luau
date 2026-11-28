@@ -21,9 +21,9 @@ helpers.BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palett
 helpers.PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 helpers.DUST_FX = new.effect { sprite = asset.sprite("dust"), anim = 0, palette = 0, steps = 14 }
 helpers.HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
-helpers.FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 0, palette = 0, steps = 10 }
-helpers.BUBBLE_FX = new.effect { sprite = asset.sprite("bubble"), anim = 0, palette = 0, steps = 14 }
-helpers.TARGET_FX = new.effect { sprite = asset.sprite("target-marker"), anim = 0, palette = 0, steps = 14 }
+helpers.FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
+helpers.BUBBLE_FX = new.effect { sprite = asset.sprite("grab-shot"), anim = 0, palette = 0, steps = 14 }
+helpers.TARGET_FX = new.effect { sprite = HIT_SPARKS, anim = 0, palette = 0, steps = 14 }
 helpers.CONFUSE_FX = new.effect { sprite = asset.sprite("confusion"), anim = 0, palette = 0, steps = 16 }
 helpers.BLIND_FX = new.effect { sprite = asset.sprite("blindness"), anim = 0, palette = 0, steps = 16 }
 

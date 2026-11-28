@@ -51,4 +51,5 @@ return {
     draw_order = "slots",
     sprite_depth = "ground_and_priority",
     sprite_budget = { tiles = 0x2FF, palettes = 10 },
+    player_anims = { flinch = 8, reaction = 9, move_arrive = 0x0A, move_depart = 0x0B },
 }

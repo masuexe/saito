@@ -192,7 +192,8 @@ fn begin(b: &mut Battle, r: ObjectRef) {
     set_flag1(b, r, f1::MOVING);
     let side = b.objects.get(r).alliance;
     b.bump_side_stat(side, 4, 1);
-    set_animation(b, r, 4);
+    let depart_anim = b.game_rules().effects.player_anims.move_depart;
+    set_animation(b, r, depart_anim);
     vars(b, r).timer = 3;
     set_phase(b, r, Phase::Depart);
 }
@@ -314,7 +315,8 @@ fn depart(b: &mut Battle, r: ObjectRef) {
     {
         crate::kinds::player::face_toward(b, r, t);
     }
-    set_animation(b, r, 3);
+    let arrive_anim = b.game_rules().effects.player_anims.move_arrive;
+    set_animation(b, r, arrive_anim);
     vars(b, r).timer = 5;
     set_phase(b, r, Phase::Arrive);
 }
@@ -386,7 +388,8 @@ fn arrive(b: &mut Battle, r: ObjectRef) {
     set_flag1(b, r, f1::MOVE_COMPLETE);
     let v = vars(b, r);
     v.timer = v.end_lag;
-    set_animation(b, r, 0);
+    let idle = super::super::idle_anim(b, r);
+    set_animation(b, r, idle);
     set_phase(b, r, Phase::Recover);
 }
 
@@ -430,7 +433,8 @@ fn land(b: &mut Battle, r: ObjectRef) {
     b.unreserve_panel(r, p.x, p.y);
     set_coordinates_from_panel(b, r);
     b.update_collision_panels(r);
-    set_animation(b, r, 3);
+    let arrive_anim = b.game_rules().effects.player_anims.move_arrive;
+    set_animation(b, r, arrive_anim);
     vars(b, r).timer = 5;
     set_phase(b, r, Phase::Arrive);
 }

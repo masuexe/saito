@@ -1,6 +1,7 @@
 --!strict
 -- EXE3's thrown bombs (MiniBomb, SnglBomb, DublBomb, TrplBomb, CannBall).
 
+local anims = require("../lib/anims")
 local attachment = require("../objects/attachment")
 local bomb = require("@exelib/bombs/bomb")
 local throw = require("@exelib/bombs/throw")
@@ -33,6 +34,7 @@ local LOOK: ThrowLook = {
         attachment.attach(me, held, "related", anim)
     end,
     releases_by_side = true,
+    anim = anims.BOMB_THROW,
 }
 
 function bombs.throw(spec: ThrowSpec): Action

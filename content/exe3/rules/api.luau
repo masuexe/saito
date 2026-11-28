@@ -71,6 +71,11 @@ function api.set_last_navi_chip(side: number, chip: Chip)
     api.state(side).last_navi_chip = chip
 end
 
+function api.style_type(side: number): string
+    local setup = rules.setup_of(side)
+    return (setup.style_type :: string?) or "normal"
+end
+
 -- Restores every chip from side's setup folder back into the battle folder (FoldrBak Giga chip).
 function api.restore_folder(side: number)
     local setup = rules.setup_of(side)

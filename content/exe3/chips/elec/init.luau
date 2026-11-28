@@ -1,6 +1,7 @@
 --!strict
 -- EXE3 Electric Chips: Sensor1-3 (0x065..0x067) and Plasma1-3 (0x05D..0x05F).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local dimming_chips = require("@exelib/dimming")
 local regions = require("@exelib/regions")
@@ -224,7 +225,7 @@ local function make_plasma_action(id: string, max_pulses: number, wide: boolean)
         state = { timer = "u16" },
         update = function(me: Object, s: PlasmaActState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 s.timer = 0
                 me.step_init = 4

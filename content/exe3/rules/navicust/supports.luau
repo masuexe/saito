@@ -13,7 +13,7 @@ local supports = {}
 
 local BURST_EFFECT = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 16 }
 local HEAL_EFFECT = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
-local CHIP_DESTROY_SPARK = new.effect { sprite = asset.sprite("chip-destruction-spark"), anim = 0, palette = 0, steps = 15 }
+local CHIP_DESTROY_SPARK = new.effect { sprite = asset.sprite("hit-marker"), anim = 0, palette = 0, steps = 15 }
 
 local RUSH_SOUND = asset.sound("appear")
 local BEAT_SOUND = asset.sound("damage-bonus")

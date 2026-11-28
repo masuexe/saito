@@ -1,6 +1,7 @@
 --!strict
 -- EXE3 spreaders action (ShotGun, V-Gun, SideGun, Spreader) over @exelib/spreadr/action.
 
+local anims = require("../../lib/anims")
 local attachment = require("../../objects/attachment")
 local bullet = require("../../objects/bullet")
 local common = require("@exelib/spreadr/action")
@@ -18,7 +19,7 @@ local LOOK: SpreaderLook = {
     hold = spreader.hold,
     slot = "related",
     bullet_kind = bullet.kind,
-    anim = 14,
+    anim = anims.SPREADER,
 }
 
 function spreader.action(spec: { id: string, gun: AttachmentLook, delay: number, z: number, shot: BulletVariant }): Action

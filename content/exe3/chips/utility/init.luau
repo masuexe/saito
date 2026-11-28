@@ -6,6 +6,7 @@
 -- Burning, FireRatn, RockArm1-3, Needler1-3, Team1, Team2,
 -- Mettaur, Bunny, Spikey, Swordy, Jelly, Mushy, Momogra, KillrEye, Scuttlst.
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local dimming_chips = require("@exelib/dimming")
 local element = require("@exelib/element")
@@ -23,7 +24,7 @@ local WIND_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette =
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 14 }
 local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
-local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 0, palette = 0, steps = 10 }
+local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 local CONFUSE_FX = new.effect { sprite = asset.sprite("confusion"), anim = 0, palette = 0, steps = 16 }
 local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 
@@ -216,7 +217,7 @@ local PANIC_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -332,7 +333,7 @@ local function make_lavacan_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -380,7 +381,7 @@ local VOLCANO_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -443,7 +444,7 @@ local function make_elem_ball_action(id: string, elem: number, panel_type: Panel
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -491,7 +492,7 @@ local function make_airstrm_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -604,7 +605,7 @@ local function make_totem_action(id: string, heal_amt: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -691,7 +692,7 @@ local function make_crsshld_action(id: string): Action
         state = { timer = "u16", countered = "bool" },
         update = function(me: Object, s: CrsState)
             if me.step_init == 0 then
-                me:set_animation(0)
+                me:set_animation(anims.idle(me))
                 me:set_status("guard", true)
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -738,7 +739,7 @@ local GEYSER_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -779,7 +780,7 @@ local function make_shake_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -821,7 +822,7 @@ local CONDOR_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -859,7 +860,7 @@ local BURNING_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -895,7 +896,7 @@ local FIRERATN_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -933,7 +934,7 @@ local function make_rockarm_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0

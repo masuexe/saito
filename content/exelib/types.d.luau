@@ -44,6 +44,10 @@ export type SlashGame = {
     -- How many of its sprite's steps the navi's warp out (animation 4) lasts: what a step sword with nowhere to step
     -- waits out before it steps back. Each game states it (its navis' own).
     warp_out_steps: ((me: Object) -> number)?,
+    -- Optional animation overrides for games whose MegaMan sheet uses different indices (EXE3: swing=0x1D, warp_out=0x0B).
+    swing_anim: number?,
+    warp_out_anim: number?,
+    idle_anim: ((me: Object) -> number)?,
 }
 
 -- A game's buster parts (@exelib/buster): the muzzle flash a shot leaves, the buster arm, an enemy navi's arm, the
@@ -107,6 +111,8 @@ export type ThrowLook = {
     attachment: Kind,
     hold: ((me: Object, held: AttachmentLook, anim: number) -> ())?,
     releases_by_side: boolean?,
+    -- Optional throw animation index override (default 6; EXE3 uses 0x22).
+    anim: number?,
 }
 
 -- A game's thrown bomb (@exelib/bombs/bomb): its kind's key, its sprite, its landing's sound, the splash in a hole,

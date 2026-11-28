@@ -4,6 +4,7 @@
 -- Rook (0x099), Pawn (0x097), Knight (0x098), Guard (0x076), Snake (0x083),
 -- Hole (0x0A1), Repair (0x09F).
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local common_debris = require("@exelib/rock/debris")
 local common_rock = require("@exelib/rock")
@@ -344,7 +345,7 @@ local function make_blkbomb_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -448,7 +449,7 @@ local PRISM_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(0x12)
+            me:set_animation(anims.buster_shoot(me))
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -730,7 +731,7 @@ local GUARD_ACTION = new.action {
     state = { timer = "u16", countered = "bool" },
     update = function(me: Object, s: GuardActState)
         if me.step_init == 0 then
-            me:set_animation(0)
+            me:set_animation(anims.idle(me))
             me:set_status("guard", true)
             me:set_status("using_action", true)
             s.timer = 0

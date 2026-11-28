@@ -753,16 +753,27 @@ pub(crate) fn reset_attack_links(b: &mut Battle, r: ObjectRef) {
     }
 }
 
-/// `object_exitAttackState`: back to the idle action with animation 0.
+/// The navi's idle animation index (0 in EXE4/5/6; `0..=7` by Style in EXE3).
+pub(crate) fn idle_anim(b: &Battle, r: ObjectRef) -> u8 {
+    if is_megaman(b, r) {
+        form_of(b, r).idle_anim
+    } else {
+        0
+    }
+}
+
+/// `object_exitAttackState`: back to the idle action with the navi's idle animation.
 pub(crate) fn exit_attack_state(b: &mut Battle, r: ObjectRef) {
-    b.objects.get_mut(r).anim = 0;
+    let idle = idle_anim(b, r);
+    b.objects.get_mut(r).anim = idle;
     end_attack(b, r);
 }
 
 /// The same, keeping the lockouts as they are (EXE4's 0x0800CA28, the
 /// buster's and the charged shot's recovery's end).
 pub(crate) fn exit_attack_state_keeping_lockout(b: &mut Battle, r: ObjectRef) {
-    b.objects.get_mut(r).anim = 0;
+    let idle = idle_anim(b, r);
+    b.objects.get_mut(r).anim = idle;
     end_attack_with(b, r, false);
 }
 
@@ -1118,16 +1129,17 @@ pub(crate) fn stats_sprite(b: &Battle, side: u8) -> crate::content::SpriteId {
 /// `sub_800FC9E` + `sprite_load`: load the navi's battle sprite.
 fn load_sprite(b: &mut Battle, r: ObjectRef) {
     let id = stats_sprite(b, b.objects.get(r).alliance);
+    let idle = idle_anim(b, r);
     let flip = b.objects.get(r).alliance ^ b.objects.get(r).flip;
     let sprite = b.objects.sprite_mut(r);
     sprite.load(id);
-    sprite.set_animation(0, &b.content);
+    sprite.set_animation(idle, &b.content);
     // sprite_hasShadow; sprite_setFlip(object_getFlip()).
     sprite.look.shadow = crate::object::sprite::Shadow::Ground;
     sprite.look.set_flip(flip);
     let o = b.objects.get_mut(r);
     o.flags &= !flags::NO_SPRITE_UPDATE;
-    o.anim = 0;
+    o.anim = idle;
 }
 
 /// `sub_80141C8`: HP from the navi stats (full HP unless the battle keeps

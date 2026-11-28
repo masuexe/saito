@@ -2,7 +2,6 @@
 -- EXE3's attachments: a sprite a navi holds during an attack (muzzle flash, cannon, sword, bomb, gun).
 
 local slot = require("@exelib/slot")
-local muzzle_flash_sprite = asset.sprite("muzzle-flash")
 
 local attachment = {}
 
@@ -71,7 +70,5 @@ function attachment.attach(owner: Object, look: AttachmentLook, which: Slot, ani
     slot.fill(owner, which, o)
     return o
 end
-
-attachment.muzzle_flash = attachment.look { sprite = muzzle_flash_sprite, palette = 0 }
 
 return attachment

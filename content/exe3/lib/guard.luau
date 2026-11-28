@@ -1,6 +1,7 @@
 --!strict
 -- EXE3's B+Left guard action (Shield Style, Shield, Reflect).
 
+local anims = require("./anims")
 local shield = require("../objects/shield")
 
 local guard = {}
@@ -34,7 +35,7 @@ function guard.action(spec: Spec): Action
             shield.spawn(me, Vec3.px(SHIELD_X * me.facing, 0, SHIELD_Z), spec.shield)
             me:set_status("guard", true)
             me:set_status("using_action", true)
-            me.anim = 0
+            me.anim = anims.idle(me)
             me.marker = 0
             me.step_init = 4
             s.timer = 0

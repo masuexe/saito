@@ -73,6 +73,11 @@ end
 -- and its step (its `steps`; none: EXE6's, by the chip's `step`).
 function slash.action(spec: SlashSpec, attachment: Kind, game: SlashGame?): Action
     local rules: SlashGame = game or {}
+    local swing_anim = rules.swing_anim or SWING_ANIM
+    local warp_out_anim = rules.warp_out_anim or WARP_OUT_ANIM
+    local function idle_anim(me: Object): number
+        return if rules.idle_anim then rules.idle_anim(me) else 0
+    end
     local steps = rules.steps
     -- The blade's animation (`sub_80EBAE8`, or the spec's game's own).
     local blade_anim = spec.blade_anim or rules.blade_anim or parts.blade_anim
@@ -169,13 +174,13 @@ function slash.action(spec: SlashSpec, attachment: Kind, game: SlashGame?): Acti
         end
         if x == nil or y == nil then
             s.turned = 0
-            me:set_animation(WARP_OUT_ANIM)
+            me:set_animation(warp_out_anim)
             set_step(me, STEP_BACK)
             return
         end
         battle.afterimage(me, me.pos, {
             sprite = navi_afterimage(me),
-            anim = 0,
+            anim = idle_anim(me),
             flip = flip(me),
             color_shader = AFTERIMAGE_SHADER,
             lifetime = 0x14,
@@ -243,7 +248,7 @@ function slash.action(spec: SlashSpec, attachment: Kind, game: SlashGame?): Acti
     -- on the 10th, and the swing lasts 22.
     local function swing(me: Object, s: State)
         if me.step_init == 0 then
-            me:set_animation(SWING_ANIM)
+            me:set_animation(swing_anim)
             if refreshes_overlay then
                 me:refresh_form_overlay()
             end
@@ -258,7 +263,7 @@ function slash.action(spec: SlashSpec, attachment: Kind, game: SlashGame?): Acti
         if s.timer == 0x10 and stepping(me) then
             battle.afterimage(me, me.pos, {
                 sprite = navi_afterimage(me),
-                anim = SWING_ANIM,
+                anim = swing_anim,
                 flip = flip(me),
                 color_shader = AFTERIMAGE_SHADER,
                 lifetime = 0x1E,
@@ -297,7 +302,7 @@ function slash.action(spec: SlashSpec, attachment: Kind, game: SlashGame?): Acti
     local function step_back(me: Object, s: State)
         if not stays(me) then
             -- (After a swing the navi is still in it; with nowhere to step, in its warp out.)
-            local back = if me.sprite.animation == WARP_OUT_ANIM
+            local back = if me.sprite.animation == warp_out_anim
                 then me.sprite.steps >= warp_out_steps(me)
                 else me.sprite.steps >= SWING_STEPS
             if not back then

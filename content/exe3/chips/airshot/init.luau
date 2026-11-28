@@ -2,6 +2,7 @@
 -- EXE3 AirShot1, AirShot2, AirShot3 (compat/chips.toml IDs 0x004..0x006).
 -- Fires a blast of compressed air down the row that damages and knocks the target back 1 panel!
 
+local anims = require("../lib/anims")
 local attachment = require("../objects/attachment")
 local collision = require("../rules/collision")
 local element = require("@exelib/element")
@@ -38,7 +39,7 @@ local function make_airshot_action(id: string, recovery: number): Action
         state = { timer = "u16", recovery = "u8" },
         update = function(me: Object, s: AirShotState)
             if me.step_init == 0 then
-                me:set_animation(12)
+                me:set_animation(anims.AIRSHOT)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 attachment.attach(me, SHOOTER_LOOK, "related", 0)

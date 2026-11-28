@@ -2,7 +2,7 @@
 -- MegaMan's buster in EXE3: Attack + 1 damage (x2 in Guts Style via `stats.buster_mult`),
 -- plus BrakBust breaking-guard support.
 
-local attachment = require("../../../objects/attachment")
+local anims = require("../../../lib/anims")
 local collision = require("../../../rules/collision")
 local projectile = require("../../../lib/projectile")
 local shot = require("../../../objects/projectile")
@@ -29,28 +29,29 @@ local BREAK_SHOT = shot.variant {
     spark = sparks.breaking,
 }
 
-local NAVI_NUMBER = 0
 local SHOT_SOUND = asset.sound("buster-shot")
 local BLANK_SOUND = asset.sound("buster-blank")
 
-type State = { timer: number }
+type State = { timer: number, blank: boolean }
 
 local function shoot(me: Object, s: State, variant: ProjectileVariant)
     if me.step_init == 0 then
-        me:set_animation(0x12)
+        local blanks = battle.navi(me.alliance).buster_blanks
+        local blank = bit32.band(battle.rng(), 0xF) + 1 <= blanks
+        s.blank = blank
+        -- EXE3 Battle MegaMan 00-00: 0x0C+style has built-in muzzle flash; 0x14+style is blank/no-flash (0x080B0EF8..0x080B0F14).
+        me:set_animation(if blank then anims.buster_blank(me) else anims.buster_shoot(me))
         me:set_status("using_action", true)
         me.step_init = 4
         s.timer = 0
     end
     if s.timer == 1 then
-        local stats = battle.navi(me.alliance)
-        local blanks = stats.buster_blanks
-        if bit32.band(battle.rng(), 0xF) + 1 > blanks then
+        if not s.blank then
+            local stats = battle.navi(me.alliance)
             battle.play_sound(SHOT_SOUND)
             local damage = me.attack_damage
             local used = if stats.brake_buster then BREAK_SHOT else variant
             me.attack_count = projectile.fire(me, { variant = used, damage = damage, z = SHOT_Z })
-            attachment.attach(me, attachment.muzzle_flash, "related", NAVI_NUMBER)
         else
             battle.play_sound(BLANK_SOUND)
         end
@@ -88,7 +89,7 @@ end
 function buster.shot_action(id: string, variant: ProjectileVariant): Action
     return new.action {
         id = id,
-        state = { timer = "i16" },
+        state = { timer = "i16", blank = "bool" },
         update = function(me: Object, s: State)
             local step = me.step
             if step == SHOOT then

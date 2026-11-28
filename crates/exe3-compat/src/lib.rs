@@ -769,8 +769,8 @@ mod tests {
         assert!(c.is_legal_chip(0x138, Version::White)); // BassGS
         assert!(c.is_legal_chip(0x138, Version::Blue));
 
-        // Assets: Battle MegaMan is 04-00
-        assert_eq!(c.assets.sprites.get("megaman").map(String::as_str), Some("04-00"));
+        // Assets: Battle MegaMan is 00-00
+        assert_eq!(c.assets.sprites.get("megaman").map(String::as_str), Some("00-00"));
         assert_eq!(c.assets.backgrounds.len(), 30);
         assert_eq!(c.assets.banners.len(), 13);
 

@@ -2,6 +2,7 @@
 -- EXE3 Complete Program Advances (all 32 real PAs: 0x140..0x15F) + BassGS Giga chip (0x138).
 -- All 32 Program Advance recipes are live-wired below.
 
+local anims = require("../lib/anims")
 local antis = require("./anti")
 local attachment = require("../objects/attachment")
 local barrier_chips = require("./barrier")
@@ -69,7 +70,7 @@ local BREAK_FX = new.effect { sprite = hit_sparks_sprite, anim = 1, palette = 0,
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 18 }
 local BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 14 }
-local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 0, palette = 0, steps = 10 }
+local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
 local POISON_FX = new.effect { sprite = puff_sprite, anim = 0, palette = 0, steps = 14 }
 local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
@@ -132,7 +133,7 @@ local function make_zcanon_action(id: string): Action
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -224,7 +225,7 @@ local function make_zpunch_action(id: string, reach: Region, shakes: boolean): A
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -329,7 +330,7 @@ local Z_VARIBL_ACTION = new.action {
     state = { timer = "u16", cooldown = "u8", shots = "u8" },
     update = function(me: Object, s: ZTimerState)
         if me.step_init == 0 then
-            me.anim = 5
+            me.anim = anims.SWORD_SWING
             me:set_status("using_action", true)
             me:set_status_timer("flash", 180)
             me:set_status("invisible", true)
@@ -399,7 +400,7 @@ local function make_zyoyo_action(id: string): Action
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -500,7 +501,7 @@ local function make_zstep_action(id: string, region: Region): Action
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me.anim = 5
+                me.anim = anims.SWORD_SWING
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -770,7 +771,7 @@ local function make_big_spreader(id: string, elem: number, burst: BulletVariant)
         state = { timer = "u16" },
         update = function(me: Object, s: SpreadState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 s.timer = 0
                 me.step_init = 4
@@ -860,7 +861,7 @@ local ELEMSWRD_ACTION = new.action {
     state = { timer = "u16", cooldown = "u8", shots = "u8" },
     update = function(me: Object, s: ZTimerState)
         if me.step_init == 0 then
-            me.anim = 5
+            me.anim = anims.SWORD_SWING
             me:set_status("using_action", true)
             attachment.attach(me, swords.blade, "related", 0)
             s.timer = 0

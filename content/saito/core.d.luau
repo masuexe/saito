@@ -2669,6 +2669,8 @@ export type FormDef = {
     breaks_to: FormDef?,
     -- MegaMan's palette in a Cross.
     palette: number?,
+    -- Idle animation index on the form's sprite sheet (default 0; EXE3 uses 0..=7 per Style on 00-00).
+    idle_anim: number?,
     -- Its face in the emotion window, or its faces by its navi's emotion.
     mugshot: (Mugshot | MugshotFaces)?,
     -- The version of its game it belongs to (EXE6's "gregar" or "falzar":

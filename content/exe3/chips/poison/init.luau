@@ -2,6 +2,7 @@
 -- EXE3 Poison chips: PoisMask (0x06C), PoisFace (0x06D), and Anubis (0x0CC).
 -- Also forms the PoisPhar Program Advance (PoisMask + PoisFace + Anubis)!
 
+local anims = require("../lib/anims")
 local collision = require("../rules/collision")
 local dimming_chips = require("@exelib/dimming")
 local regions = require("@exelib/regions")
@@ -21,7 +22,7 @@ local function make_poison_action(id: string, wide: boolean): Action
         state = { timer = "u16" },
         update = function(me: Object, s: MaskState)
             if me.step_init == 0 then
-                me:set_animation(0x12)
+                me:set_animation(anims.buster_shoot(me))
                 me:set_status("using_action", true)
                 s.timer = 0
                 me.step_init = 4

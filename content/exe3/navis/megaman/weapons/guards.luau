@@ -3,6 +3,7 @@
 -- AntiDmg enters a counter stance and, upon absorbing an attack, vanishes in a puff, grants temporary invisibility,
 -- and throws a diving shuriken onto the opponent's panel for 100 damage.
 
+local anims = require("../../../lib/anims")
 local api = require("../../../rules/api")
 local collision = require("../../../rules/collision")
 local guard = require("../../../lib/guard")
@@ -78,7 +79,7 @@ local ANTIDMG_ACTION = new.action {
     update = function(me: Object, s: AntiDmgState)
         if me.step_init == 0 then
             me:set_status("using_action", true)
-            me.anim = 0
+            me.anim = anims.idle(me)
             api.arm_anti_dmg_stance(me.alliance, ANTIDMG_STANCE_TICKS)
             s.timer = ANTIDMG_STANCE_TICKS
             s.countered = false

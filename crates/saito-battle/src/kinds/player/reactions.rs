@@ -89,8 +89,9 @@ fn explode(b: &mut Battle, r: ObjectRef) {
     if b.is_dimmed() {
         return;
     }
+    let reaction = b.game_rules().effects.player_anims.reaction;
     let o = b.objects.get_mut(r);
-    o.anim = 2;
+    o.anim = reaction;
     o.related[0] = None;
     o.prevent_anim = 0;
     let pos = o.pos;
@@ -200,8 +201,9 @@ fn end_reaction(b: &mut Battle, r: ObjectRef) {
     let clears = b.game_rules().request_clears.paralysis.0;
     ai_mut(b, r).requests &= !(request::ATTACKS | clears);
     clear_flag1(b, r, in_use(b));
+    let idle = super::idle_anim(b, r);
     let o = b.objects.get_mut(r);
-    o.anim = 0;
+    o.anim = idle;
     set_action(b, r, NaviAction::Idle);
 }
 
@@ -321,8 +323,9 @@ pub(super) fn flinch(b: &mut Battle, r: ObjectRef) {
                 b.objects.get_mut(r).pos.z = 0;
             }
         }
+        let flinch_anim = b.game_rules().effects.player_anims.flinch;
         let o = b.objects.get_mut(r);
-        o.anim = 1;
+        o.anim = flinch_anim;
         o.anim_loaded = 0xFF;
         refresh_form_overlay(b, r);
         finish_reaction_entry(b, r, true);
@@ -338,8 +341,9 @@ pub(super) fn flinch(b: &mut Battle, r: ObjectRef) {
     // (EXE6's 0x1000043F, EXE5's 0x1843F: the reactions section's.)
     let clears = b.game_rules().request_clears.flinch.0;
     ai_mut(b, r).requests &= !(request::ATTACKS | clears);
+    let idle = super::idle_anim(b, r);
     let o = b.objects.get_mut(r);
-    o.anim = 0;
+    o.anim = idle;
     set_action(b, r, NaviAction::Idle);
 }
 
@@ -364,7 +368,8 @@ fn mash(b: &mut Battle, r: ObjectRef, t: usize, flag: u32) -> bool {
 pub(super) fn paralysis(b: &mut Battle, r: ObjectRef) {
     if b.objects.get(r).phase_init == 0 {
         paralysis_hook(b, r);
-        enter_reaction(b, r, 2);
+        let reaction = b.game_rules().effects.player_anims.reaction;
+        enter_reaction(b, r, reaction);
         finish_reaction_entry(b, r, !plain(b));
     }
     if mash(b, r, timer::PARALYZE, f1::PARALYZED) {
@@ -379,7 +384,8 @@ pub(super) fn freeze(b: &mut Battle, r: ObjectRef) {
         coll_mut(b, r).status_timers[timer::FLASH] = 0;
         clear_invulnerable(b, r);
         b.sound(crate::content::SoundRole::Freeze);
-        enter_reaction(b, r, 2);
+        let reaction = b.game_rules().effects.player_anims.reaction;
+        enter_reaction(b, r, reaction);
         finish_reaction_entry(b, r, !plain(b));
     }
     if mash(b, r, timer::FREEZE, f1::FROZEN) {
@@ -393,7 +399,8 @@ pub(super) fn bubble(b: &mut Battle, r: ObjectRef) {
         // sub_800F3CC: no per-form hook.
         clear_invulnerable(b, r);
         b.sound(crate::content::SoundRole::Bubble);
-        enter_reaction(b, r, 2);
+        let reaction = b.game_rules().effects.player_anims.reaction;
+        enter_reaction(b, r, reaction);
         finish_reaction_entry(b, r, !plain(b));
     }
     let popped = mash(b, r, timer::BUBBLE, f1::BUBBLED);
@@ -550,8 +557,9 @@ fn recover_from_drag(b: &mut Battle, r: ObjectRef) {
         let clears = b.game_rules().request_clears.drag.0;
         ai_mut(b, r).requests &= !(request::ATTACKS | clears);
         if ending == DragEnding::Stands {
+            let idle = super::idle_anim(b, r);
             let o = b.objects.get_mut(r);
-            o.anim = 0;
+            o.anim = idle;
             o.anim_loaded = 0xFF;
         }
         return set_action(b, r, NaviAction::Idle);
@@ -568,9 +576,10 @@ fn recover_from_drag(b: &mut Battle, r: ObjectRef) {
     a.requests &= !(request::ATTACKS | clears);
     a.status &= !ai_status::HEAT_TRAP;
     clear_flag2(b, r, 0x10);
+    let idle = super::idle_anim(b, r);
     let o = b.objects.get_mut(r);
     o.slide_state = 0;
-    o.anim = 0;
+    o.anim = idle;
     o.anim_loaded = 0xFF;
     refresh_form_overlay(b, r);
     set_action(b, r, NaviAction::Idle);
