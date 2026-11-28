@@ -180,6 +180,57 @@ impl Exe3HudStylePref {
     }
 }
 
+/// Opponent navi in-battle HP display position (`Settings::opponent_hp_position`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpponentHpPositionPref {
+    /// Follow each game's original placement (above head in EXE3, below feet in EXE4–6).
+    #[default]
+    Original,
+    /// Always show above the opponent navi's head.
+    Above,
+    /// Always show below the opponent navi's feet.
+    Below,
+}
+
+impl OpponentHpPositionPref {
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Original => 0,
+            Self::Above => 1,
+            Self::Below => 2,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(3) {
+            1 => Self::Above,
+            2 => Self::Below,
+            _ => Self::Original,
+        }
+    }
+
+    pub fn is_original(&self) -> bool {
+        *self == Self::Original
+    }
+
+    pub fn to_render(self) -> saito_frontend::game::OpponentHpPosition {
+        match self {
+            Self::Original => saito_frontend::game::OpponentHpPosition::Original,
+            Self::Above => saito_frontend::game::OpponentHpPosition::Above,
+            Self::Below => saito_frontend::game::OpponentHpPosition::Below,
+        }
+    }
+
+    pub fn from_render(pos: saito_frontend::game::OpponentHpPosition) -> Self {
+        match pos {
+            saito_frontend::game::OpponentHpPosition::Original => Self::Original,
+            saito_frontend::game::OpponentHpPosition::Above => Self::Above,
+            saito_frontend::game::OpponentHpPosition::Below => Self::Below,
+        }
+    }
+}
+
 /// Battle favorite BGM rotation mode (`Settings::favorite_battle_bgm`, `S-135`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -342,6 +393,9 @@ pub struct Settings {
     /// EXE3 HUD & Custom Screen version policy (`auto` from build, always `white`, or always `black`).
     #[serde(skip_serializing_if = "Exe3HudStylePref::is_auto")]
     pub exe3_hud_style: Exe3HudStylePref,
+    /// Opponent navi HP position (`original` per game, always `above`, or always `below`).
+    #[serde(skip_serializing_if = "OpponentHpPositionPref::is_original")]
+    pub opponent_hp_position: OpponentHpPositionPref,
     /// Use Legacy Collection high-resolution chip artwork when available.
     pub hd_chip_art: bool,
     /// 0 to 100.
@@ -415,6 +469,7 @@ impl Default for Settings {
             hide_aura_number: false,
             sync_dark_buster_arm: false,
             exe3_hud_style: Exe3HudStylePref::Auto,
+            opponent_hp_position: OpponentHpPositionPref::Original,
             hd_chip_art: false,
             music: 80,
             effects: 100,
@@ -453,6 +508,7 @@ impl Settings {
             sync_dark_buster_arm: self.sync_dark_buster_arm,
             hd_chip_art: self.hd_chip_art,
             exe3_hud_style: self.exe3_hud_style.to_render(),
+            opponent_hp_position: self.opponent_hp_position.to_render(),
         }
     }
 
@@ -460,6 +516,7 @@ impl Settings {
         (self.sharp_text, self.sharp_hud, self.smooth_motion, self.fill_window, self.reduce_flashes, self.hide_aura_number, self.sync_dark_buster_arm, self.hd_chip_art) =
             (e.text, e.hud, e.motion, e.fill, e.reduce_flashes, e.hide_aura_number, e.sync_dark_buster_arm, e.hd_chip_art);
         self.exe3_hud_style = Exe3HudStylePref::from_render(e.exe3_hud_style);
+        self.opponent_hp_position = OpponentHpPositionPref::from_render(e.opponent_hp_position);
     }
 
     /// Step netplay's input delay across `Auto` (`-1`) and fixed `0..=MAX_INPUT_DELAY`.
@@ -651,11 +708,20 @@ mod tests {
         assert!(!other.hide_aura_number, "default LifeAura number visible");
         assert!(!other.sync_dark_buster_arm, "default EXE5 dark buster arm sync off");
         assert_eq!(other.exe3_hud_style, Exe3HudStylePref::Auto, "default EXE3 HUD style is Auto");
+        assert_eq!(other.opponent_hp_position, OpponentHpPositionPref::Original, "default opponent HP position is Original");
         assert!(!other.hd_chip_art, "default HD chip art off");
-        let mut toggled = Settings { hide_aura_number: true, sync_dark_buster_arm: true, exe3_hud_style: Exe3HudStylePref::Black, hd_chip_art: true, ..Settings::default() };
+        let mut toggled = Settings {
+            hide_aura_number: true,
+            sync_dark_buster_arm: true,
+            exe3_hud_style: Exe3HudStylePref::Black,
+            opponent_hp_position: OpponentHpPositionPref::Above,
+            hd_chip_art: true,
+            ..Settings::default()
+        };
         assert!(toggled.enhancements().hide_aura_number);
         assert!(toggled.enhancements().sync_dark_buster_arm);
         assert_eq!(toggled.enhancements().exe3_hud_style, saito_frontend::game::Exe3HudStyle::Black);
+        assert_eq!(toggled.enhancements().opponent_hp_position, saito_frontend::game::OpponentHpPosition::Above);
         assert!(toggled.enhancements().hd_chip_art);
         let toggled_toml = toml::to_string(&toggled).unwrap();
         assert_eq!(toml::from_str::<Settings>(&toggled_toml).unwrap(), toggled);
@@ -663,6 +729,7 @@ mod tests {
         assert!(!toggled.hide_aura_number);
         assert!(!toggled.sync_dark_buster_arm);
         assert_eq!(toggled.exe3_hud_style, Exe3HudStylePref::Auto);
+        assert_eq!(toggled.opponent_hp_position, OpponentHpPositionPref::Original);
         assert!(!toggled.hd_chip_art);
         assert_eq!(other.signaling_server, "");
         assert_eq!(Settings::default().input_delay, 4, "the input delay is 4 until the player sets another");

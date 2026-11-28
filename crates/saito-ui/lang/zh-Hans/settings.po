@@ -115,6 +115,22 @@ msgstr "白版"
 msgid "Black"
 msgstr "黑版"
 
+msgid "Opponent HP position"
+msgstr "对手 HP 显示位置"
+
+msgid "Follow each game's original position (above in EXE3, below in EXE4-6), or always show above or below."
+msgstr "按各代原作位置显示（EXE3 在上方、EXE4-6 在下方），或强制一律显示在上方或下方。"
+
+msgctxt "hp pos"
+msgid "Original"
+msgstr "原作"
+
+msgid "Above"
+msgstr "上方"
+
+msgid "Below"
+msgstr "下方"
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "场景延伸到窗口边缘，HUD 也随之靠边。"
 

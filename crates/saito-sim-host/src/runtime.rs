@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use saito_battle::BattleResult;
 use saito_extract::RomSource;
-use saito_frontend::game::{Enhancements, Exe3HudStyle};
+use saito_frontend::game::{Enhancements, Exe3HudStyle, OpponentHpPosition};
 use saito_frontend::player::time_of;
 use saito_frontend::replay::{End, Info, MatchKind, Outcome};
 use saito_frontend::viewer::Speed;
 use saito_sim_abi::{
-    ABI_VERSION, EnhancementsConfig, Exe3HudStyleConfig, PartySnapshot, PlayOutRequest, PlayOutResponse, RomMount, StillRequest,
+    ABI_VERSION, EnhancementsConfig, Exe3HudStyleConfig, OpponentHpPositionConfig, PartySnapshot, PlayOutRequest, PlayOutResponse, RomMount, StillRequest,
     VFS_CONTENT, VFS_POOL_PREFIX, VFS_ROMS, ViewerOpenRequest, ViewerOpenResponse, ViewerState,
 };
 
@@ -28,6 +28,11 @@ fn enhancements_config(e: Enhancements) -> EnhancementsConfig {
             Exe3HudStyle::Auto => Exe3HudStyleConfig::Auto,
             Exe3HudStyle::White => Exe3HudStyleConfig::White,
             Exe3HudStyle::Black => Exe3HudStyleConfig::Black,
+        },
+        opponent_hp_position: match e.opponent_hp_position {
+            OpponentHpPosition::Original => OpponentHpPositionConfig::Original,
+            OpponentHpPosition::Above => OpponentHpPositionConfig::Above,
+            OpponentHpPosition::Below => OpponentHpPositionConfig::Below,
         },
     }
 }

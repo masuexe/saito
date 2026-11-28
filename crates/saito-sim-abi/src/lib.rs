@@ -74,6 +74,16 @@ pub enum Exe3HudStyleConfig {
     Black,
 }
 
+/// Opponent navi HP number position policy passed across the guest ABI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpponentHpPositionConfig {
+    #[default]
+    Original,
+    Above,
+    Below,
+}
+
 /// Rendering enhancement flags passed to the guest renderer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnhancementsConfig {
@@ -95,6 +105,8 @@ pub struct EnhancementsConfig {
     pub hd_chip_art: bool,
     #[serde(default)]
     pub exe3_hud_style: Exe3HudStyleConfig,
+    #[serde(default)]
+    pub opponent_hp_position: OpponentHpPositionConfig,
 }
 
 /// Request to render a 240×160 still frame from a replay (`saito_sim_still`).

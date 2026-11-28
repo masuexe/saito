@@ -59,6 +59,50 @@ impl Exe3HudStyle {
     }
 }
 
+/// Where the opponent navi's in-battle HP number is displayed relative to its sprite.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum OpponentHpPosition {
+    /// Follow each game's original position (`HudLayout::navi_hp_dy`: above head in EXE3, below feet in EXE4–6).
+    #[default]
+    Original,
+    /// Always show above the opponent navi's head (`dy = -50`).
+    Above,
+    /// Always show below the opponent navi's feet (`dy = 0`).
+    Below,
+}
+
+impl OpponentHpPosition {
+    pub const COUNT: usize = 3;
+    /// Vertical offset (px) when shown above the navi's head (EXE3 `0x08019618+2` = `-50`).
+    pub const ABOVE_DY: i32 = -50;
+    /// Vertical offset (px) when shown below the navi's feet (EXE4–6 = `0`).
+    pub const BELOW_DY: i32 = 0;
+
+    pub fn as_index(self) -> usize {
+        match self {
+            Self::Original => 0,
+            Self::Above => 1,
+            Self::Below => 2,
+        }
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index.rem_euclid(Self::COUNT as i32) {
+            1 => Self::Above,
+            2 => Self::Below,
+            _ => Self::Original,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Above => "above",
+            Self::Below => "below",
+        }
+    }
+}
+
 /// Which of the graphics enhancements a battle is drawn with (the app's
 /// "Graphics enhancements"). Each draws something the original draws more
 /// finely, and each can be on or off alone; with none of them
@@ -95,13 +139,15 @@ pub struct Enhancements {
     pub hd_chip_art: bool,
     /// EXE3 HUD & Custom Screen theme policy (Auto from build, always White, or always Black).
     pub exe3_hud_style: Exe3HudStyle,
+    /// Opponent navi HP number position (Original per game, always Above, or always Below).
+    pub opponent_hp_position: OpponentHpPosition,
 }
 
 impl Enhancements {
     /// The original's picture exactly.
-    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto };
+    pub const NONE: Enhancements = Enhancements { text: false, hud: false, motion: false, fill: false, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto, opponent_hp_position: OpponentHpPosition::Original };
     /// Every enhancement.
-    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto };
+    pub const ALL: Enhancements = Enhancements { text: true, hud: true, motion: true, fill: true, reduce_flashes: false, hide_aura_number: false, sync_dark_buster_arm: false, hd_chip_art: false, exe3_hud_style: Exe3HudStyle::Auto, opponent_hp_position: OpponentHpPosition::Original };
     /// The enhancements by name, as `FromStr` reads them.
     pub const NAMES: [&str; 4] = ["text", "hud", "motion", "fill"];
 
@@ -145,6 +191,9 @@ impl std::str::FromStr for Enhancements {
                 "exe3-hud=auto" | "exe3_hud_style=auto" => e.exe3_hud_style = Exe3HudStyle::Auto,
                 "exe3-hud=white" | "exe3_hud_style=white" => e.exe3_hud_style = Exe3HudStyle::White,
                 "exe3-hud=black" | "exe3-hud=blue" | "exe3_hud_style=black" | "exe3_hud_style=blue" => e.exe3_hud_style = Exe3HudStyle::Black,
+                "hp-pos=original" | "opponent-hp-position=original" | "opponent_hp_position=original" => e.opponent_hp_position = OpponentHpPosition::Original,
+                "hp-pos=above" | "opponent-hp-position=above" | "opponent_hp_position=above" => e.opponent_hp_position = OpponentHpPosition::Above,
+                "hp-pos=below" | "opponent-hp-position=below" | "opponent_hp_position=below" => e.opponent_hp_position = OpponentHpPosition::Below,
                 _ => return Err(format!("no graphics enhancement {name:?} (original, enhanced, or some of {} joined by commas)", Enhancements::NAMES.join(", "))),
             }
         }
@@ -1418,6 +1467,22 @@ mod tests {
         assert_eq!("text,hud,exe3-hud=black".parse::<Enhancements>(), Ok(Enhancements { text: true, hud: true, exe3_hud_style: Exe3HudStyle::Black, ..Enhancements::NONE }));
         for idx in 0..3 {
             assert_eq!(Exe3HudStyle::from_index(idx).as_index(), idx as usize);
+        }
+    }
+
+    #[test]
+    fn opponent_hp_position_parses_and_roundtrips() {
+        assert_eq!(Enhancements::NONE.opponent_hp_position, OpponentHpPosition::Original);
+        assert_eq!(Enhancements::ALL.opponent_hp_position, OpponentHpPosition::Original);
+        assert_eq!("hp-pos=original".parse::<Enhancements>(), Ok(Enhancements { opponent_hp_position: OpponentHpPosition::Original, ..Enhancements::NONE }));
+        assert_eq!("hp-pos=above".parse::<Enhancements>(), Ok(Enhancements { opponent_hp_position: OpponentHpPosition::Above, ..Enhancements::NONE }));
+        assert_eq!("hp-pos=below".parse::<Enhancements>(), Ok(Enhancements { opponent_hp_position: OpponentHpPosition::Below, ..Enhancements::NONE }));
+        assert_eq!(
+            "text,hud,opponent-hp-position=above".parse::<Enhancements>(),
+            Ok(Enhancements { text: true, hud: true, opponent_hp_position: OpponentHpPosition::Above, ..Enhancements::NONE })
+        );
+        for idx in 0..3 {
+            assert_eq!(OpponentHpPosition::from_index(idx).as_index(), idx as usize);
         }
     }
 }

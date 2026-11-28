@@ -24,7 +24,7 @@
 //! (`shapes`).
 
 use crate::compose::{Anchor, Fade, HEIGHT, Size, WIDTH};
-pub use crate::render::{Enhancements, Exe3HudStyle};
+pub use crate::render::{Enhancements, Exe3HudStyle, OpponentHpPosition};
 use crate::vfont::{Role, VectorFont};
 
 /// A rectangle in frame pixels.
@@ -277,6 +277,8 @@ pub struct TextSink<'f> {
     lettering: bool,
     /// Legacy Collection HD chip art overlays are drawn in the chip window.
     hd_chip_art: bool,
+    /// Where opponent navi HP numbers are placed relative to their sprite.
+    opponent_hp_position: OpponentHpPosition,
     /// Where the items pushed keep to in a frame larger than the original's
     /// (`TextItem::anchor`).
     pub anchor: Anchor,
@@ -297,6 +299,7 @@ impl<'f> TextSink<'f> {
             strings: Default::default(),
             lettering,
             hd_chip_art: enhancements.hd_chip_art,
+            opponent_hp_position: enhancements.opponent_hp_position,
             anchor: Anchor::CENTER,
         }
     }
@@ -304,6 +307,11 @@ impl<'f> TextSink<'f> {
     /// Whether Legacy Collection HD chip art overlays should be queued in the chip window.
     pub fn draws_hd_chip_art(&self) -> bool {
         self.hd_chip_art
+    }
+
+    /// The configured opponent navi HP number placement policy.
+    pub fn opponent_hp_position(&self) -> OpponentHpPosition {
+        self.opponent_hp_position
     }
 
     /// Whether the strings are laid out for the text layer (the sharp text,

@@ -1240,7 +1240,15 @@ pub fn draw<'a>(
         // (Its four cells; mirrored about the object where the seat
         // mirrors, as its digits' pixels are, upright: `Seat::ink_shift`.)
         let x = seat.about(p.x, number.dx as i32 + if number.damage { 0 } else { 4 * n - 32 }, 32);
-        let dy = if navi(number.object) && number.dy == 0 { hud.layout.navi_hp_dy as i32 } else { number.dy as i32 };
+        let dy = if navi(number.object) && number.dy == 0 {
+            match text.opponent_hp_position() {
+                crate::render::OpponentHpPosition::Original => hud.layout.navi_hp_dy as i32,
+                crate::render::OpponentHpPosition::Above => crate::render::OpponentHpPosition::ABOVE_DY,
+                crate::render::OpponentHpPosition::Below => crate::render::OpponentHpPosition::BELOW_DY,
+            }
+        } else {
+            number.dy as i32
+        };
         let y = p.y + dy;
         let digits = &hud.enemy_digits[e.color.min(2) as usize];
         let shown: Vec<SpritePart> = digits4(value)
@@ -3973,7 +3981,7 @@ mod tests {
         let mut state = HudState::default();
         state.tick(&b, 0);
 
-        let draw_y = |navi_hp_dy: i8| -> i32 {
+        let draw_y = |navi_hp_dy: i8, position: crate::render::OpponentHpPosition| -> i32 {
             let mut h = hud();
             h.layout.navi_hp_dy = navi_hp_dy;
             h.enemy_digits = std::array::from_fn(|_| Tiles { pixels: vec![1; 20 * Tiles::TILE] });
@@ -3983,7 +3991,8 @@ mod tests {
             let seat = Seat::of(crate::seat::Consoles::One, &b)[0];
             let (mut layer, mut scratch) = (Layer::new(1, 3), Layer::new(1, 3));
             let mut list = SpriteList::default();
-            let mut text = TextSink::original();
+            let enhancements = crate::render::Enhancements { opponent_hp_position: position, ..crate::render::Enhancements::NONE };
+            let mut text = TextSink::new(enhancements, None);
             let mut problems = Problems::default();
             let shared = shared_glyphs(&b, &assets, &graphics, &state, seat, &text, &mut problems);
             let view = crate::render::Renderer::view(&b);
@@ -3991,9 +4000,13 @@ mod tests {
             list.into_parts().into_iter().next().expect("opponent HP digit").y
         };
 
-        let below = draw_y(0);
-        let above = draw_y(-50);
-        assert_eq!(above, below - 50, "EXE3 navi_hp_dy = -50 must raise the opponent navi's HP number by 50px");
+        let below = draw_y(0, crate::render::OpponentHpPosition::Original);
+        let above = draw_y(-50, crate::render::OpponentHpPosition::Original);
+        assert_eq!(above, below - 50, "Original respects per-game navi_hp_dy (-50 in EXE3 vs 0 in EXE4-6)");
+        assert_eq!(draw_y(0, crate::render::OpponentHpPosition::Above), above, "Above forces EXE4-6 opponent HP above head");
+        assert_eq!(draw_y(-50, crate::render::OpponentHpPosition::Above), above, "Above keeps EXE3 opponent HP above head");
+        assert_eq!(draw_y(-50, crate::render::OpponentHpPosition::Below), below, "Below forces EXE3 opponent HP below feet");
+        assert_eq!(draw_y(0, crate::render::OpponentHpPosition::Below), below, "Below keeps EXE4-6 opponent HP below feet");
     }
 
     #[test]

@@ -325,6 +325,19 @@ msgstr "ホワイト"
 msgid "Black"
 msgstr "ブラック"
 
+msgid "Opponent HP position"
+msgstr "相手HPの表示位置"
+
+msgctxt "hp pos"
+msgid "Original"
+msgstr "原作"
+
+msgid "Above"
+msgstr "上"
+
+msgid "Below"
+msgstr "下"
+
 msgid "HD chip art"
 msgstr "高解像度チップ画像"
 

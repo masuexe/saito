@@ -12,7 +12,7 @@ mod music;
 use crate::errors::UserError;
 use crate::input::{Action, Bindings, KeyPress, Scroll, bind_cap, key_name, mouse_name, pad_cap, pad_name};
 use crate::screens::{Screen, ScreenId};
-use crate::settings::{DEFAULT_SIGNAL_SERVER, Exe3HudStylePref, FavoriteBgmMode, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
+use crate::settings::{DEFAULT_SIGNAL_SERVER, Exe3HudStylePref, FavoriteBgmMode, OpponentHpPositionPref, ScreenOrientation, clean_name, clean_signaling_server, clean_signaling_server_draft};
 use crate::shell::Shell;
 use crate::sound::Cue;
 use saito_frontend::game::Enhancements;
@@ -78,7 +78,7 @@ fn mark_group(shell: &Shell, id: &str) {
 fn group_of(id: &str) -> Option<i32> {
     Some(match id {
         "set.name" | "set.language" | "set.updates" | "set.check-now" => 0,
-        "set.picture" | "set.ui-theme" | "set.ui-theme-import" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.exe3-hud-style" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
+        "set.picture" | "set.ui-theme" | "set.ui-theme-import" | "set.fullscreen" | "set.status-bar" | "set.orientation" | "set.motion" | "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.exe3-hud-style" | "set.opponent-hp-position" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" | "set.hd-chip-art-import" | "set.exe5ds-rom" | "set.exe5ds-rom-clear" => 1,
         "set.music" | "set.effects" | "set.exe5ds-music" | "set.exe5ds-voices" | "set.music-library" | "set.favorite-bgm" | "set.menu-bgm" | "set.mic-shout" | "set.mic-sensitivity" | "set.mic-test" | "set.quick-shout-tier" => 2,
         "set.delay" | "set.server" | "set.auto-upload" => 3,
         "set.key" | "set.button" | "set.reset" | "set.keyboard-only" | "set.landscape-pad" | "set.touch-layout" => 4,
@@ -117,6 +117,14 @@ pub fn set_enhancement(shell: &mut Shell, id: &str, on: Option<bool>) {
 pub fn set_exe3_hud_style(shell: &mut Shell, style: Exe3HudStylePref) {
     let mut e = shell.settings.enhancements();
     e.exe3_hud_style = style.to_render();
+    shell.set_enhancements(e);
+}
+
+/// Change the opponent navi HP display position (`Original` / `Above` / `Below`),
+/// applying immediately to settings and any active battle/replay renderer.
+pub fn set_opponent_hp_position(shell: &mut Shell, pos: OpponentHpPositionPref) {
+    let mut e = shell.settings.enhancements();
+    e.opponent_hp_position = pos.to_render();
     shell.set_enhancements(e);
 }
 
@@ -187,6 +195,7 @@ pub fn show_values(shell: &Shell, binding: &Binding) {
     view.set_hide_aura_number(s.hide_aura_number);
     view.set_sync_dark_buster_arm(s.sync_dark_buster_arm);
     view.set_exe3_hud_style(s.exe3_hud_style.as_index() as i32);
+    view.set_opponent_hp_position(s.opponent_hp_position.as_index() as i32);
     view.set_check_updates(s.check_updates);
     view.set_can_update(saito_updater::supported());
     view.set_keyboard_only_custom(s.keyboard_only_custom);
@@ -762,6 +771,11 @@ impl Screen for Settings {
                 set_exe3_hud_style(shell, next);
                 self.show(shell);
             }
+            "set.opponent-hp-position" => {
+                let next = OpponentHpPositionPref::from_index(shell.settings.opponent_hp_position.as_index() as i32 + 1);
+                set_opponent_hp_position(shell, next);
+                self.show(shell);
+            }
             "set.hd-chip-art-import" => {
                 if self.importing_hd_art.is_none() {
                     shell.choose_files("vol1.dat / vol2.dat / exe6.dat / exe6f.dat", &["dat"], "hd-art");
@@ -868,6 +882,11 @@ impl Screen for Settings {
                 set_exe3_hud_style(shell, next);
                 self.show(shell);
             }
+            "set.opponent-hp-position" => {
+                let next = OpponentHpPositionPref::from_index(shell.settings.opponent_hp_position.as_index() as i32 + by);
+                set_opponent_hp_position(shell, next);
+                self.show(shell);
+            }
             "set.music" => self.set_levels(shell, (shell.settings.music as i32 + 5 * by).clamp(0, 100) as u32, shell.settings.effects),
             "set.effects" => {
                 self.set_levels(shell, shell.settings.music, (shell.settings.effects as i32 + 5 * by).clamp(0, 100) as u32);
@@ -957,6 +976,10 @@ impl Screen for Settings {
             "set.reduce-flashes" | "set.hide-aura-number" | "set.sync-dark-buster-arm" | "set.text" | "set.hud" | "set.smooth" | "set.fill" | "set.hd-chip-art" => self.set_enhancement(shell, id, Some(choice == 1)),
             "set.exe3-hud-style" => {
                 set_exe3_hud_style(shell, Exe3HudStylePref::from_index(choice));
+                self.show(shell);
+            }
+            "set.opponent-hp-position" => {
+                set_opponent_hp_position(shell, OpponentHpPositionPref::from_index(choice));
                 self.show(shell);
             }
             "set.music" => self.set_levels(shell, choice.clamp(0, 100) as u32, shell.settings.effects),

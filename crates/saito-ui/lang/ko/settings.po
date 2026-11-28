@@ -115,6 +115,22 @@ msgstr "화이트"
 msgid "Black"
 msgstr "블랙"
 
+msgid "Opponent HP position"
+msgstr "상대 HP 표시 위치"
+
+msgid "Follow each game's original position (above in EXE3, below in EXE4-6), or always show above or below."
+msgstr "각 작품 원작 위치(EXE3 위, EXE4-6 아래)를 따르거나 항상 위/아래로 고정합니다."
+
+msgctxt "hp pos"
+msgid "Original"
+msgstr "원작"
+
+msgid "Above"
+msgstr "위"
+
+msgid "Below"
+msgstr "아래"
+
 msgid "The stage reaches the window's edges, the HUD with it."
 msgstr "스테이지와 HUD가 창 가장자리까지 채워집니다."
 

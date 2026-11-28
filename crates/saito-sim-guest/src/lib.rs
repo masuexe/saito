@@ -119,6 +119,11 @@ fn enhancements_of(cfg: EnhancementsConfig) -> Enhancements {
             saito_sim_abi::Exe3HudStyleConfig::White => saito_frontend::game::Exe3HudStyle::White,
             saito_sim_abi::Exe3HudStyleConfig::Black => saito_frontend::game::Exe3HudStyle::Black,
         },
+        opponent_hp_position: match cfg.opponent_hp_position {
+            saito_sim_abi::OpponentHpPositionConfig::Original => saito_frontend::game::OpponentHpPosition::Original,
+            saito_sim_abi::OpponentHpPositionConfig::Above => saito_frontend::game::OpponentHpPosition::Above,
+            saito_sim_abi::OpponentHpPositionConfig::Below => saito_frontend::game::OpponentHpPosition::Below,
+        },
     }
 }
 
@@ -165,8 +170,16 @@ fn load_game(
         game.to_string(),
         content_dir.to_string(),
         format!(
-            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{}|{}|{want_sound}",
-            enhancements.text, enhancements.hud, enhancements.motion, enhancements.fill, enhancements.reduce_flashes, enhancements.hide_aura_number, enhancements.sync_dark_buster_arm, enhancements.exe3_hud_style.as_str()
+            "{roms_key}|{lang}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{want_sound}",
+            enhancements.text,
+            enhancements.hud,
+            enhancements.motion,
+            enhancements.fill,
+            enhancements.reduce_flashes,
+            enhancements.hide_aura_number,
+            enhancements.sync_dark_buster_arm,
+            enhancements.exe3_hud_style.as_str(),
+            enhancements.opponent_hp_position.as_str()
         ),
     );
     if let Some(cached) = STATE.with(|s| s.borrow().game_cache.get(&cache_key).cloned()) {

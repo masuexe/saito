@@ -1677,6 +1677,11 @@ impl Play {
         self.show_match(shell);
     }
 
+    fn set_opponent_hp_position(&mut self, shell: &mut Shell, pos: crate::settings::OpponentHpPositionPref) {
+        settings::set_opponent_hp_position(shell, pos);
+        self.show_match(shell);
+    }
+
     fn set_keyboard_only_custom(&mut self, shell: &mut Shell, on: bool) {
         settings::set_keyboard_only_custom(shell, on);
         self.show_match(shell);
@@ -3209,6 +3214,10 @@ impl Screen for Play {
                 let next = crate::settings::Exe3HudStylePref::from_index(shell.settings.exe3_hud_style.as_index() as i32 + 1);
                 self.set_exe3_hud_style(shell, next);
             }
+            "menu.set.opponent-hp-position" => {
+                let next = crate::settings::OpponentHpPositionPref::from_index(shell.settings.opponent_hp_position.as_index() as i32 + 1);
+                self.set_opponent_hp_position(shell, next);
+            }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, !shell.settings.keyboard_only_custom),
             "menu.keys.key" | "menu.keys.button" => self.binding.ask(shell, index, id == "menu.keys.button"),
             "menu.reset" => {
@@ -3267,6 +3276,10 @@ impl Screen for Play {
                 let next = crate::settings::Exe3HudStylePref::from_index(shell.settings.exe3_hud_style.as_index() as i32 + by);
                 self.set_exe3_hud_style(shell, next);
             }
+            "menu.set.opponent-hp-position" => {
+                let next = crate::settings::OpponentHpPositionPref::from_index(shell.settings.opponent_hp_position.as_index() as i32 + by);
+                self.set_opponent_hp_position(shell, next);
+            }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, by > 0),
             "name.version" => self.step_version(shell, by),
             _ => {}
@@ -3310,6 +3323,9 @@ impl Screen for Play {
             }
             "menu.set.exe3-hud-style" => {
                 self.set_exe3_hud_style(shell, crate::settings::Exe3HudStylePref::from_index(choice));
+            }
+            "menu.set.opponent-hp-position" => {
+                self.set_opponent_hp_position(shell, crate::settings::OpponentHpPositionPref::from_index(choice));
             }
             "menu.set.keyboard-only" => self.set_keyboard_only_custom(shell, choice == 1),
             _ => {}

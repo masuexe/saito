@@ -325,6 +325,19 @@ msgstr "白版"
 msgid "Black"
 msgstr "黑版"
 
+msgid "Opponent HP position"
+msgstr "对手 HP 显示位置"
+
+msgctxt "hp pos"
+msgid "Original"
+msgstr "原作"
+
+msgid "Above"
+msgstr "上方"
+
+msgid "Below"
+msgstr "下方"
+
 msgid "HD chip art"
 msgstr "高清体验"
 
