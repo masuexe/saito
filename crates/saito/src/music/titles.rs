@@ -106,7 +106,7 @@ fn exe2_title(song: &str, lang: &str) -> Option<&'static str> {
         "virus-battle" => pick(lang, "Virus Busting", "ウイルスバスティング", "病毒激战", "바이러스 버스팅"),
         "battle-spirit" => pick(lang, "Battle Spirit", "バトルスピリット", "战役之魂", "배틀 스피릿"),
         "final-battle" => pick(lang, "VS. Gospel", "VS.ゴスペル", "对决戈斯巴鲁", "VS. 고스펠"),
-        "style-change" => pick(lang, "Style Change", "スタイルチェンジ", "型态转换", "스타일 체인지"),
+        "style-change" => pick(lang, "Style Change", "スタイルチェンジ", "形态转换", "스타일 체인지"),
         "pressure" => "Pressure",
         "credits" => "Peace Again",
         _ => return None,

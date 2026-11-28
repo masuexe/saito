@@ -1096,7 +1096,7 @@ mod tests {
         assert_eq!(track_title("exe2", "virus-battle"), "病毒激战");
         assert_eq!(track_title("exe2", "battle-spirit"), "战役之魂");
         assert_eq!(track_title("exe2", "final-battle"), "对决戈斯巴鲁");
-        assert_eq!(track_title("exe2", "style-change"), "型态转换");
+        assert_eq!(track_title("exe2", "style-change"), "形态转换");
         assert_eq!(saito_extract::gba_bgm_track("exe2", "style-change").unwrap().song_id, 0x01F);
         assert_eq!(track_title("exe2", "pressure"), "Pressure");
         assert_eq!(track_title("exe2", "credits"), "Peace Again");
