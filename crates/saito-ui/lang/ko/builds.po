@@ -750,3 +750,36 @@ msgstr "{}(으)로 덮어쓰기"
 
 msgid "Follow GBA (reset)"
 msgstr "GBA 따르기 (초기화)"
+
+msgid "Battle Preview"
+msgstr "실전 미리보기"
+
+msgid "Back to Edit"
+msgstr "편집으로 돌아가기"
+
+msgid "Sort by ID"
+msgstr "ID순 정리"
+
+msgid "Padded"
+msgstr "자동 보정"
+
+msgid "Need {}"
+msgstr "{}종 필요"
+
+msgid "{} / {} types"
+msgstr "{} / {}종"
+
+msgid "{}/{} unlocked"
+msgstr "{}/{} 해금"
+
+msgid "Need {} ({}/{})"
+msgstr "{}종 필요 ({}/{})"
+
+msgid "Unlocked"
+msgstr "해금됨"
+
+msgid "Battle Preview (Read-only) · LC Dark penalty & unlock rules applied"
+msgstr "실전 미리보기(읽기 전용) · 컬렉션 다크 하향/보정/해금 규칙 반영"
+
+msgid "Battle Preview (Read-only) · Sorted by 5DS internal chip ID"
+msgstr "실전 미리보기(읽기 전용) · 5DS 내부 칩 ID 오름차순 정렬"

@@ -767,3 +767,36 @@ msgstr "覆盖到 {}"
 
 msgid "Follow GBA (reset)"
 msgstr "恢复跟随 GBA"
+
+msgid "Battle Preview"
+msgstr "实战预览"
+
+msgid "Back to Edit"
+msgstr "返回编辑"
+
+msgid "Sort by ID"
+msgstr "按 ID 整理顺序"
+
+msgid "Padded"
+msgstr "自动补位"
+
+msgid "Need {}"
+msgstr "需{}种"
+
+msgid "{} / {} types"
+msgstr "已配 {} / {} 种"
+
+msgid "{}/{} unlocked"
+msgstr "已解锁 {}/{}"
+
+msgid "Need {} ({}/{})"
+msgstr "需满 {} 种 ({}/{})"
+
+msgid "Unlocked"
+msgstr "已解锁"
+
+msgid "Battle Preview (Read-only) · LC Dark penalty & unlock rules applied"
+msgstr "实战预览（只读）· 已按合集规则降权并标注补位/未解锁槽位"
+
+msgid "Battle Preview (Read-only) · Sorted by 5DS internal chip ID"
+msgstr "实战预览（只读）· 已按 5DS 内部芯片 ID 升序重排"

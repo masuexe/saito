@@ -79,6 +79,10 @@ pub struct AutoBattle {
     notice: Option<String>,
     /// The library's chip being dragged into a place, as the lifted row shows it.
     ghost: Option<ChipHandle>,
+    /// Non-destructive effective battle preview mode (LC / 5DS).
+    preview: bool,
+    /// Previewed chip at each visible physical `place` (used for detail strip inspection in preview mode).
+    preview_chips: std::collections::HashMap<usize, ChipHandle>,
 }
 
 impl AutoBattle {
@@ -151,10 +155,21 @@ impl AutoBattle {
         let kit = draft.kit.clone();
         let Some(layout) = kit.auto_layout() else { return };
         let data = Data::of_side(draft.content(), draft.side());
+        let can_preview = draft.abd_mode != saito_match::AbdMode::Original && saito_match::abd_mode::supported(&draft.kit.game);
+        if !can_preview {
+            self.preview = false;
+        }
+        let eff_preview = can_preview.then(|| saito_match::abd_mode::preview_side(draft.content(), &draft.kit.game, draft.abd_mode, draft.side()));
+        let ui = shell.ui();
+        let view = ui.global::<AutoBattleView>();
+
         self.at = vec![(0, 0); auto::PLACES];
         self.editable.clear();
+        self.preview_chips.clear();
         let mut row = 0;
         let mut filled = 0i32;
+        let in_preview = self.preview;
+        let is_lc = draft.abd_mode == saito_match::AbdMode::LegacyCollection && can_preview;
         let lines: Vec<PlaceLine> = draft.with_words(shell, |words| {
             let mut lines = Vec::new();
             // (`patterns` and `first` aren't shown: neither can be written by a player in normal gameplay.)
@@ -162,22 +177,137 @@ impl AutoBattle {
                 // (A list with no name in a game of one list has no title.)
                 if !list.name.is_empty() {
                     let title = auto::list_name(words.names, list);
-                    lines.push(PlaceLine { title: true, text: title.into(), row, ..Default::default() });
+                    let (meta, meta_tone) = if is_lc
+                        && let Some(eff) = &eff_preview
+                    {
+                        match list.name.as_str() {
+                            "standard" => (
+                                view.invoke_lc_std_count(eff.unique_std_count as i32, list.slot_count() as i32),
+                                if eff.unique_std_count >= saito_match::abd_mode::LC_GIGA_PA_THRESHOLD { 1 } else { 2 },
+                            ),
+                            "mega" => (
+                                view.invoke_lc_mega_unlocked(eff.allowed_mega as i32, list.slot_count() as i32),
+                                if eff.allowed_mega >= list.slot_count() { 1 } else { 2 },
+                            ),
+                            "giga" | "program_advance" => {
+                                if eff.giga_pa_unlocked {
+                                    (view.invoke_lc_unlocked(), 1)
+                                } else {
+                                    (
+                                        view.invoke_lc_need_types(
+                                            saito_match::abd_mode::LC_GIGA_PA_THRESHOLD as i32,
+                                            eff.unique_std_count as i32,
+                                        ),
+                                        2,
+                                    )
+                                }
+                            }
+                            _ => (Default::default(), 0),
+                        }
+                    } else {
+                        (Default::default(), 0)
+                    };
+                    lines.push(PlaceLine { title: true, text: title.into(), meta, meta_tone, row, ..Default::default() });
                     row += 1;
                 }
                 let entries = list.logical_entries(&data);
-                for (k, (slot, entry)) in list.slots().into_iter().zip(entries).enumerate() {
+                for (k, (slot, orig_entry)) in list.slots().into_iter().zip(entries).enumerate() {
                     let place = slot.start;
                     let (column, r) = ((k % columns) as i32, row + (k / columns) as i32);
                     self.at[place] = (column, r);
                     self.editable.push(place);
-                    if entry != Entry::Empty {
+                    if orig_entry != Entry::Empty {
                         filled += 1;
                     }
-                    let flagged = AutoBattle::problems(draft, place).next().is_some();
+                    let (entry, tag, tag_tone, locked, padded) = if in_preview
+                        && let Some(eff) = &eff_preview
+                    {
+                        match list.name.as_str() {
+                            "standard" => {
+                                let s = eff.standard[k];
+                                let e = s.chip.map_or(Entry::Empty, Entry::Chip);
+                                if let Some(c) = s.chip {
+                                    self.preview_chips.insert(place, c);
+                                }
+                                let (tag, tone) = if s.padded {
+                                    (view.invoke_preview_padded(), 3)
+                                } else if let Some(ow) = s.orig_weight
+                                    && ow != s.weight
+                                {
+                                    if s.weight > ow {
+                                        (format!("↑{}→{}×", ow, s.weight).into(), 1)
+                                    } else {
+                                        (format!("↓{}→{}×", ow, s.weight).into(), 2)
+                                    }
+                                } else if let Some(id) = s.internal_id {
+                                    (format!("#{:03}", id).into(), 4)
+                                } else {
+                                    (Default::default(), 0)
+                                };
+                                (e, tag, tone, false, s.padded)
+                            }
+                            "mega" => {
+                                let s = eff.mega[k];
+                                let e = s.chip.map_or(Entry::Empty, Entry::Chip);
+                                if let Some(c) = s.chip {
+                                    self.preview_chips.insert(place, c);
+                                }
+                                let (tag, tone) = if s.locked {
+                                    (view.invoke_preview_locked(s.need_std as i32), 2)
+                                } else if let Some(id) = s.internal_id {
+                                    (format!("#{:03}", id).into(), 4)
+                                } else {
+                                    (Default::default(), 0)
+                                };
+                                (e, tag, tone, s.locked, false)
+                            }
+                            "giga" => {
+                                let s = eff.giga;
+                                let e = s.chip.map_or(Entry::Empty, Entry::Chip);
+                                if let Some(c) = s.chip {
+                                    self.preview_chips.insert(place, c);
+                                }
+                                let (tag, tone) = if s.locked {
+                                    (view.invoke_preview_locked(s.need_std as i32), 2)
+                                } else {
+                                    (Default::default(), 0)
+                                };
+                                (e, tag, tone, s.locked, false)
+                            }
+                            "program_advance" => {
+                                let s = eff.pa;
+                                let e = s.chip.map_or(Entry::Empty, Entry::Chip);
+                                if let Some(c) = s.chip {
+                                    self.preview_chips.insert(place, c);
+                                }
+                                let (tag, tone) = if s.locked {
+                                    (view.invoke_preview_locked(s.need_std as i32), 2)
+                                } else {
+                                    (Default::default(), 0)
+                                };
+                                (e, tag, tone, s.locked, false)
+                            }
+                            _ => (orig_entry, Default::default(), 0, false, false),
+                        }
+                    } else {
+                        (orig_entry, Default::default(), 0, false, false)
+                    };
+                    let flagged = !in_preview && AutoBattle::problems(draft, place).next().is_some();
                     let chip = AutoBattle::cell(draft, words, entry, flagged, shell.settings.hd_chip_art);
                     let badge = if list.is_weighted() { format!("{}×", slot.weight) } else { String::new() };
-                    lines.push(PlaceLine { chip, number: k as i32 + 1, badge: badge.into(), place: place as i32, column, row: r, ..Default::default() });
+                    lines.push(PlaceLine {
+                        chip,
+                        number: k as i32 + 1,
+                        badge: badge.into(),
+                        place: place as i32,
+                        column,
+                        row: r,
+                        tag,
+                        tag_tone,
+                        locked,
+                        padded,
+                        ..Default::default()
+                    });
                 }
                 row += list.slot_count().div_ceil(columns) as i32;
             }
@@ -191,8 +321,6 @@ impl AutoBattle {
                 self.described = Some(Described::Place(self.place));
             }
         }
-        let ui = shell.ui();
-        let view = ui.global::<AutoBattleView>();
         view.set_lines(ModelRc::new(VecModel::from(lines)));
         view.set_rows(row);
         view.set_place(self.place as i32);
@@ -206,6 +334,23 @@ impl AutoBattle {
         view.set_abd_mode(draft.abd_mode.as_u8() as i32);
         view.set_abd_count(modes.len() as i32);
         view.set_abd_custom(ModelRc::new(VecModel::from(custom)));
+        view.set_preview(self.preview);
+        view.set_can_preview(can_preview);
+        let can_sort_ds = self.preview
+            && draft.abd_mode == saito_match::AbdMode::DoubleTeamDs
+            && draft.kit.game == "exe5"
+            && saito_match::abd_mode::transform_side(draft.content(), &draft.kit.game, saito_match::AbdMode::DoubleTeamDs, draft.side()) != *draft.side();
+        view.set_can_sort_ds(can_sort_ds);
+        let preview_banner = if self.preview {
+            match draft.abd_mode {
+                saito_match::AbdMode::LegacyCollection => view.invoke_preview_banner_lc(),
+                saito_match::AbdMode::DoubleTeamDs => view.invoke_preview_banner_ds(),
+                saito_match::AbdMode::Original => Default::default(),
+            }
+        } else {
+            Default::default()
+        };
+        view.set_preview_banner(preview_banner);
     }
 
     /// Non-blocking ABD-wide warning (e.g., EXE4 missing DarkSword when Standard slots are not full).
@@ -349,6 +494,7 @@ impl AutoBattle {
         // (Why the last chip wasn't put in is the focused place's.)
         let notice = if hovered.is_some_and(|h| Some(h) != self.described) { None } else { self.notice.clone() };
         let chip = match hovered.or(self.described) {
+            Some(Described::Place(i)) if self.preview => self.preview_chips.get(&i).copied(),
             Some(Described::Place(i)) => match AutoBattle::slot_entry(draft, &data, i) {
                 Entry::Chip(c) => Some(c),
                 _ => None,
@@ -739,8 +885,10 @@ impl Tab for AutoBattle {
     fn hide(&mut self, shell: &mut Shell, _draft: &mut Draft) {
         self.notice = None;
         self.hovered = None;
+        self.preview = false;
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
+        view.set_preview(false);
         if view.get_sheet() {
             view.set_sheet(false);
             shell.nav.close("lib.");
@@ -757,6 +905,9 @@ impl Tab for AutoBattle {
         match id {
             "places.place" => {
                 self.on_place(shell, draft, index.max(0) as usize);
+                if self.preview {
+                    return;
+                }
                 self.in_library = true;
                 view.set_in_library(true);
                 let row = self.row.min(self.rows.len().saturating_sub(1)) as i32;
@@ -768,20 +919,53 @@ impl Tab for AutoBattle {
                     shell.nav.focus(&to.id, to.index);
                 }
             }
-            "lib.rows" => self.put(shell, draft, index.max(0) as usize),
-            "lib.sort" => {
+            "lib.rows" if !self.preview => self.put(shell, draft, index.max(0) as usize),
+            "lib.sort" if !self.preview => {
                 let options = view.get_sorts().iter().map(|s| s.to_string()).collect();
                 shell.pick(id, 0, options, self.sort);
             }
-            "lib.direction" => {
+            "lib.direction" if !self.preview => {
                 self.descending = !self.descending;
                 self.changed(shell, draft);
             }
-            "lib.remove" => {
+            "lib.remove" if !self.preview => {
                 self.remove(shell, draft, self.place);
                 self.leave_library(shell);
             }
             "lib.close" => self.leave_library(shell),
+            "abd.preview" => {
+                let can_preview = draft.abd_mode != saito_match::AbdMode::Original && saito_match::abd_mode::supported(&draft.kit.game);
+                if !can_preview {
+                    return;
+                }
+                if !self.preview && (self.in_library || view.get_sheet()) {
+                    self.leave_library(shell);
+                }
+                self.preview = !self.preview;
+                self.notice = None;
+                shell.sound.play(if self.preview { Cue::Pick } else { Cue::Back });
+                self.changed(shell, draft);
+                shell.nav.focus("places.place", self.place as i32);
+            }
+            "abd.apply-ds" => {
+                if draft.abd_mode != saito_match::AbdMode::DoubleTeamDs || draft.kit.game != "exe5" {
+                    return;
+                }
+                let changed = draft.edit(|content, side| {
+                    let sorted = saito_match::abd_mode::transform_side(content, "exe5", saito_match::AbdMode::DoubleTeamDs, side);
+                    if sorted == *side {
+                        false
+                    } else {
+                        *side = sorted;
+                        true
+                    }
+                });
+                self.preview = false;
+                self.notice = None;
+                shell.sound.play(if changed { Cue::Pick } else { Cue::Back });
+                self.changed(shell, draft);
+                shell.nav.focus("places.place", self.place as i32);
+            }
             "abd.guide" => {
                 view.set_guide(true);
                 shell.nav.open("abd-guide.", crate::nav::Key::new("abd-guide.close", 0));
@@ -794,8 +978,8 @@ impl Tab for AutoBattle {
                     shell.sound.play(Cue::Back);
                 }
             }
-            "fix" => self.fix(shell, draft),
-            "clear" => {
+            "fix" if !self.preview => self.fix(shell, draft),
+            "clear" if !self.preview => {
                 let empty = Data::of_side(draft.content(), draft.side()).entries() == 0;
                 editor::ask_clear(shell, view.get_clear_question(), empty);
             }
@@ -811,6 +995,9 @@ impl Tab for AutoBattle {
     }
 
     fn choose(&mut self, shell: &mut Shell, draft: &mut Draft, id: &str, index: i32, choice: i32) {
+        if self.preview {
+            return;
+        }
         match id {
             "lib.sort" => {
                 self.sort = (choice.max(0) as usize).min(SORTS.len() - 1);
@@ -893,7 +1080,7 @@ impl Tab for AutoBattle {
 
     /// X, CLEAR.
     fn key(&mut self, shell: &mut Shell, draft: &mut Draft, key: &KeyPress) -> bool {
-        if editor::clear_key(shell, key) {
+        if !self.preview && editor::clear_key(shell, key) {
             self.activate(shell, draft, "clear", 0);
             return true;
         }
@@ -902,6 +1089,9 @@ impl Tab for AutoBattle {
 
     /// Delete empties the place.
     fn action(&mut self, shell: &mut Shell, draft: &mut Draft, action: Action) -> bool {
+        if self.preview {
+            return false;
+        }
         match (action, AutoBattle::focused_place(shell)) {
             (Action::Delete, Some(i)) => self.remove(shell, draft, i),
             // (In the library, Del on the chip the place holds takes it out, as Confirm does.)
@@ -911,14 +1101,22 @@ impl Tab for AutoBattle {
         true
     }
 
-    /// Esc closes the ABD guide dialog or leaves the library back to the place being filled.
-    fn back(&mut self, shell: &mut Shell, _draft: &mut Draft) -> bool {
+    /// Esc closes the ABD guide dialog, exits Battle Preview, or leaves the library back to the place being filled.
+    fn back(&mut self, shell: &mut Shell, draft: &mut Draft) -> bool {
         let ui = shell.ui();
         let view = ui.global::<AutoBattleView>();
         if view.get_guide() {
             view.set_guide(false);
             shell.nav.close("abd-guide.");
             shell.sound.play(Cue::Back);
+            return true;
+        }
+        if self.preview {
+            self.preview = false;
+            self.notice = None;
+            shell.sound.play(Cue::Back);
+            self.changed(shell, draft);
+            shell.nav.focus("places.place", self.place as i32);
             return true;
         }
         if shell.nav.focused().is_some_and(|k| k.id.starts_with("lib.")) || view.get_sheet() {

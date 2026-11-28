@@ -769,3 +769,36 @@ msgstr "{} へ上書きコピー"
 
 msgid "Follow GBA (reset)"
 msgstr "GBA に連動（リセット）"
+
+msgid "Battle Preview"
+msgstr "実戦プレビュー"
+
+msgid "Back to Edit"
+msgstr "編集に戻る"
+
+msgid "Sort by ID"
+msgstr "ID順に並べる"
+
+msgid "Padded"
+msgstr "自動補填"
+
+msgid "Need {}"
+msgstr "要{}種"
+
+msgid "{} / {} types"
+msgstr "{} / {} 種"
+
+msgid "{}/{} unlocked"
+msgstr "{}/{} 枠解放"
+
+msgid "Need {} ({}/{})"
+msgstr "{}種必要 ({}/{})"
+
+msgid "Unlocked"
+msgstr "解放済み"
+
+msgid "Battle Preview (Read-only) · LC Dark penalty & unlock rules applied"
+msgstr "実戦プレビュー（閲覧専用）・アドコレ仕様の降格・補填・解放条件を反映"
+
+msgid "Battle Preview (Read-only) · Sorted by 5DS internal chip ID"
+msgstr "実戦プレビュー（閲覧専用）・5DS内部チップID昇順で並び替え"

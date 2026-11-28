@@ -477,6 +477,12 @@ export component ChipRow inherits Rectangle {
     in property <int> number;
     // Optional prefix label shown in place of `number` (e.g., "4×", "2×", "1×" for weighted ABD slots).
     in property <string> badge;
+    // Optional preview status tag shown before the element (e.g., "↑1→4×", "↓4→1×", "Padded", "Need 12", "#004").
+    in property <string> tag;
+    // 0 = muted, 1 = good (weight up), 2 = warn (weight down / locked), 3 = mega/cyan (auto-padded), 4 = muted/mono (5DS ID).
+    in property <int> tag-tone;
+    in property <bool> locked;
+    in property <bool> padded;
     in property <bool> big;
     in property <bool> chosen;
     in property <bool> hover;
@@ -488,15 +494,16 @@ export component ChipRow inherits Rectangle {
     property <length> element-x: root.code-x - root.gap - 16px;
     property <length> mark-width: root.has-lead ? 34px : 30px;
     property <length> mark-x: root.element-x - root.gap - root.mark-width;
+    property <color> tag-color: root.tag-tone == 1 ? Theme.good : root.tag-tone == 2 ? Theme.warn : root.tag-tone == 3 ? Theme.mega : Theme.muted;
     height: root.big ? 40px : Theme.chip-row;
     Rectangle {
-        background: root.chosen ? @linear-gradient(90deg, Theme.tint 0%, Theme.clear 85%) : root.hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
+        background: root.chosen ? @linear-gradient(90deg, Theme.tint 0%, Theme.clear 85%) : root.padded ? @linear-gradient(90deg, Theme.mega.with-alpha(0.12) 0%, Theme.clear 85%) : root.hover ? @linear-gradient(90deg, Theme.tint-hover 0%, Theme.clear 85%) : transparent;
     }
 
     Rectangle {
         x: 0;
         width: 2px;
-        background: root.chosen ? Theme.cursor : transparent;
+        background: root.chosen ? Theme.cursor : root.padded ? Theme.mega : root.tag-tone == 1 ? Theme.good : root.tag-tone == 2 ? Theme.warn : transparent;
     }
 
     Text {
@@ -504,6 +511,7 @@ export component ChipRow inherits Rectangle {
         width: 22px;
         text: root.badge != "" ? root.badge : root.number <= 0 ? "" : (root.number < 10 ? "0\{root.number}" : "\{root.number}");
         color: root.badge == "4×" ? Theme.cursor : root.badge == "2×" ? Theme.text : Theme.dim;
+        opacity: root.locked ? 0.5 : 1;
         font-family: Theme.mono;
         font-size: 11px;
         font-weight: root.badge == "4×" || root.badge == "2×" ? 700 : 500;
@@ -516,6 +524,7 @@ export component ChipRow inherits Rectangle {
         y: (parent.height - 16px) / 2;
         width: 16px;
         height: 16px;
+        opacity: root.locked ? 0.45 : 1;
         background: !root.chip.there && Theme.pet ? Theme.slot-bg : transparent;
         border-width: root.chip.there ? 0px : 1px;
         border-color: root.chip.flagged ? Theme.bad : (Theme.pet ? Theme.slot-border : Theme.line);
@@ -527,13 +536,14 @@ export component ChipRow inherits Rectangle {
 
     // (A name has the mark's room too where the entry has no mark: nothing beside it moves. Its version's mark
     // follows it, a square of its color where the name and the mark's name don't both fit.)
-    property <length> name-end: root.chip.mark != ChipMark.none ? root.mark-x : (root.chip.warn && !root.chip.flagged ? warn-mark.x : root.element-x);
+    property <length> name-end: root.chip.mark != ChipMark.none ? root.mark-x : root.tag != "" ? tag-mark.x : (root.chip.warn && !root.chip.flagged ? warn-mark.x : root.element-x);
     property <length> name-room: max(0px, root.name-end - root.gap - name.x);
     name := Text {
         x: root.icon-x + 16px + root.gap;
         width: max(0px, root.name-room - (version.width > 0 ? version.width + 6px : 0px));
         text: root.chip.name;
         color: root.chip.flagged ? Theme.bad : root.chip.kind == ChipKind.mega ? Theme.mega : root.chip.kind == ChipKind.giga ? Theme.giga : Theme.text;
+        opacity: root.locked ? 0.48 : 1;
         font-family: Theme.body;
         font-size: root.big ? 14px : 12px;
         font-weight: 600;
@@ -546,14 +556,38 @@ export component ChipRow inherits Rectangle {
         y: (parent.height - self.height) / 2;
         tag: root.chip.version;
         short: name.preferred-width + 6px + self.natural-width > root.name-room;
+        opacity: root.locked ? 0.48 : 1;
+    }
+
+    tag-mark := Rectangle {
+        x: root.element-x - root.gap - self.width;
+        y: (parent.height - self.height) / 2;
+        width: root.tag != "" && root.chip.mark == ChipMark.none ? tag-label.preferred-width + 8px : 0px;
+        height: 16px;
+        visible: root.tag != "" && root.chip.mark == ChipMark.none;
+        border-radius: 2px;
+        background: root.tag-color.with-alpha(0.14);
+        border-width: 1px;
+        border-color: root.tag-color.with-alpha(0.6);
+        tag-label := Text {
+            x: 4px;
+            width: max(0px, parent.width - 8px);
+            text: root.tag;
+            color: root.tag-color;
+            font-family: root.tag-tone == 4 ? Theme.mono : Theme.body;
+            font-size: 9px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
 
     warn-mark := Rectangle {
         x: root.element-x - root.gap - self.width;
         y: (parent.height - self.height) / 2;
-        width: root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none ? warn-label.preferred-width + 10px : 0px;
+        width: root.tag == "" && root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none ? warn-label.preferred-width + 10px : 0px;
         height: 16px;
-        visible: root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none;
+        visible: root.tag == "" && root.chip.warn && !root.chip.flagged && root.chip.mark == ChipMark.none;
         border-width: 1px;
         border-color: Theme.warn;
         warn-label := Text {
@@ -590,6 +624,7 @@ export component ChipRow inherits Rectangle {
         height: 16px;
         source: root.chip.element;
         image-rendering: pixelated;
+        opacity: root.locked ? 0.45 : 1;
     }
 
     Text {

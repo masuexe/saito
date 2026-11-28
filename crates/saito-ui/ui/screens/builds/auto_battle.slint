@@ -21,12 +21,18 @@ import { ChipDetail, LibraryRow, LibraryHead, DropGap, LiftedRow, RemoveTarget, 
 export struct PlaceLine {
     title: bool,
     text: string,
+    meta: string,
+    meta-tone: int,
     number: int,
     badge: string,
     chip: ChipCell,
     place: int,
     column: int,
     row: int,
+    tag: string,
+    tag-tone: int,
+    locked: bool,
+    padded: bool,
 }
 
 // What the tab shows: src/screens/builds/auto_battle.rs sets these.
@@ -63,6 +69,11 @@ export global AutoBattleView {
     in property <int> abd-count;
     in property <[bool]> abd-custom;
     in property <bool> guide;
+    // Non-destructive effective battle preview mode (LC / 5DS) and 5DS in-place ID sort availability.
+    in property <bool> preview;
+    in property <bool> can-preview;
+    in property <bool> can-sort-ds;
+    in property <string> preview-banner;
     out property <int> marked: (self.in-library || Nav.id == "places.place") ? self.place : -1;
     // Where the place a chip just went into is (its column and row), counted: it flashes.
     in property <int> landed-column;
@@ -104,6 +115,30 @@ export global AutoBattleView {
     }
     public pure function already-placed() -> string {
         return @tr("Already placed");
+    }
+    public pure function preview-padded() -> string {
+        return @tr("Padded");
+    }
+    public pure function preview-locked(need: int) -> string {
+        return @tr("Need {}", need);
+    }
+    public pure function lc-std-count(n: int, total: int) -> string {
+        return @tr("{} / {} types", n, total);
+    }
+    public pure function lc-mega-unlocked(unlocked: int, total: int) -> string {
+        return @tr("{}/{} unlocked", unlocked, total);
+    }
+    public pure function lc-need-types(need: int, cur: int) -> string {
+        return @tr("Need {} ({}/{})", need, cur, need);
+    }
+    public pure function lc-unlocked() -> string {
+        return @tr("Unlocked");
+    }
+    public pure function preview-banner-lc() -> string {
+        return @tr("Battle Preview (Read-only) · LC Dark penalty & unlock rules applied");
+    }
+    public pure function preview-banner-ds() -> string {
+        return @tr("Battle Preview (Read-only) · Sorted by 5DS internal chip ID");
     }
 }
 
@@ -149,10 +184,25 @@ component PlaceView inherits Rectangle {
     Label {
         x: 0;
         y: 6px;
-        width: parent.width;
+        width: root.line.meta == "" ? parent.width : max(0px, parent.width - meta-label.width - 8px);
         height: 14px;
         visible: root.line.title;
         text: I18n.upper(root.line.text);
+    }
+
+    meta-label := Text {
+        x: parent.width - self.width;
+        y: 6px;
+        width: root.line.title && root.line.meta != "" ? self.preferred-width : 0px;
+        height: 14px;
+        visible: root.line.title && root.line.meta != "";
+        text: root.line.meta;
+        color: root.line.meta-tone == 1 ? Theme.good : root.line.meta-tone == 2 ? Theme.warn : Theme.muted;
+        font-family: Theme.body;
+        font-size: 11px;
+        font-weight: 600;
+        horizontal-alignment: right;
+        vertical-alignment: center;
     }
 
     ChipRow {
@@ -164,6 +214,10 @@ component PlaceView inherits Rectangle {
         chip: root.line.chip;
         number: root.number;
         badge: root.badge;
+        tag: root.line.tag;
+        tag-tone: root.line.tag-tone;
+        locked: root.line.locked;
+        padded: root.line.padded;
         chosen: root.chosen;
         hover: !Theme.handheld && hit.has-hover && !PlaceDrag.on && !PlaceDrag.filling;
         big: Theme.handheld;
@@ -176,8 +230,8 @@ component PlaceView inherits Rectangle {
     hit := Focusable {
         nav: root.line.title ? "" : "places.place";
         nav-index: root.line.place;
-        drag: root.line.title || !root.line.chip.there ? "" : "places.";
-        removable: !root.line.title;
+        drag: root.line.title || !root.line.chip.there || AutoBattleView.preview ? "" : "places.";
+        removable: !root.line.title && !AutoBattleView.preview;
         describes: !root.line.title;
     }
 }
@@ -508,10 +562,10 @@ export component AutoBattleTab inherits Rectangle {
     fix := WordButton {
         x: clear.x + clear.pad - 12px + self.pad - self.width;
         y: clear.y;
-        visible: AutoBattleView.needs-fix;
+        visible: AutoBattleView.needs-fix && !AutoBattleView.preview;
         nav: "fix";
         text: I18n.upper(@tr("Fix"));
-        enabled: AutoBattleView.needs-fix;
+        enabled: AutoBattleView.needs-fix && !AutoBattleView.preview;
     }
 
     // CLEAR (docs/design/app-ui.md §2.71; the user: "you should add clear for navicust/folder/patch cards/abd"): every
@@ -522,7 +576,7 @@ export component AutoBattleTab inherits Rectangle {
         y: Theme.phone ? 0px : root.pane-y + 14px;
         nav: "clear";
         text: I18n.upper(@tr("Clear"));
-        enabled: AutoBattleView.filled > 0 || AutoBattleView.needs-fix;
+        enabled: !AutoBattleView.preview && (AutoBattleView.filled > 0 || AutoBattleView.needs-fix);
     }
 
     // (What is wrong with the data: a phone's line of its own over the places, before CLEAR; sideways in the header,
@@ -551,11 +605,48 @@ export component AutoBattleTab inherits Rectangle {
         overflow: elide;
     }
 
-    page := ScrollPage {
+    property <length> preview-bar-h: AutoBattleView.preview ? 30px : 0px;
+    property <length> footer-h: AutoBattleView.can-preview ? (Theme.phone ? 52px : 44px) : 0px;
+    property <length> footer-pad: Theme.phone ? 0px : 12px;
+    property <length> footer-inner-w: max(0px, root.pane-width - root.footer-pad * 2);
+
+    // Compact read-only preview status strip (visible only while in Battle Preview).
+    Rectangle {
         x: Theme.phone ? 0px : 12px;
         y: root.pane-y + (Theme.phone ? root.phone-lead : 44px);
+        width: root.footer-inner-w;
+        height: AutoBattleView.preview ? 24px : 0px;
+        visible: AutoBattleView.preview;
+        background: Theme.tint;
+        border-radius: 3px;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 3px;
+            height: parent.height;
+            background: Theme.cursor;
+        }
+
+        Text {
+            x: 10px;
+            width: max(0px, parent.width - 16px);
+            height: parent.height;
+            text: AutoBattleView.preview-banner;
+            color: Theme.cursor;
+            font-family: Theme.body;
+            font-size: 11px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    page := ScrollPage {
+        x: Theme.phone ? 0px : 12px;
+        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px) + root.preview-bar-h;
         width: root.pane-width - (Theme.phone ? 0px : 12px);
-        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px);
+        height: max(0px, root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px) - root.preview-bar-h - root.footer-h);
         nav: "places.";
         content-height: AutoBattleView.rows * root.pitch;
         // (A mouse's drag on a place moves its chip: the wheel scrolls.)
@@ -591,6 +682,42 @@ export component AutoBattleTab inherits Rectangle {
         }
     }
 
+    // Sticky bottom action bar for LC / 5DS Battle Preview (and 5DS Sort-by-ID in preview mode).
+    if AutoBattleView.can-preview: Rectangle {
+        x: root.footer-pad;
+        y: root.pane-y + root.pane-height - root.footer-h;
+        width: root.footer-inner-w;
+        height: root.footer-h;
+
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: 1px;
+            background: Theme.line.with-alpha(0.5);
+        }
+
+        Button {
+            x: 0;
+            y: Theme.phone ? 8px : 6px;
+            width: AutoBattleView.preview && AutoBattleView.can-sort-ds ? (parent.width - 8px) / 2 : parent.width;
+            compact: true;
+            nav: "abd.preview";
+            kind: AutoBattleView.preview ? ButtonKind.ghost : ButtonKind.main;
+            text: I18n.upper(AutoBattleView.preview ? @tr("Back to Edit") : @tr("Battle Preview"));
+        }
+
+        if AutoBattleView.preview && AutoBattleView.can-sort-ds: Button {
+            x: (parent.width - 8px) / 2 + 8px;
+            y: Theme.phone ? 8px : 6px;
+            width: (parent.width - 8px) / 2;
+            compact: true;
+            nav: "abd.apply-ds";
+            kind: ButtonKind.main;
+            text: I18n.upper(@tr("Sort by ID"));
+        }
+    }
+
     // ---- The library, open; a place's chip dragged over it is taken out, let go there.
     if !Theme.phone: Rectangle {
         library := ChipsPane {
@@ -598,6 +725,14 @@ export component AutoBattleTab inherits Rectangle {
             y: root.pane-y;
             width: parent.width - self.x;
             height: root.pane-height - (Theme.sideways ? 0px : 12px);
+            opacity: AutoBattleView.preview ? 0.35 : 1;
+        }
+
+        if AutoBattleView.preview: TouchArea {
+            x: library.x;
+            y: library.y;
+            width: library.width;
+            height: library.height;
         }
 
         RemoveTarget {

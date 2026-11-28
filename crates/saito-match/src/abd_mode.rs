@@ -147,6 +147,60 @@ const STD_WEIGHTS: [usize; 16] = [4, 4, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 /// Legacy Collection placeholder chips used when fewer than 3 non-Dark Standard chips are registered.
 const LC_PADDING_KEYS: [&str; 3] = ["cannon", "minibomb", "airshot"];
 
+/// Unique Standard/Dark chip counts required to unlock each Mega slot (1st..5th) in Legacy Collection.
+pub const LC_MEGA_THRESHOLDS: [usize; 5] = [3, 6, 10, 14, 16];
+/// Unique Standard/Dark chip count required to unlock Giga and Program Advance slots in Legacy Collection.
+pub const LC_GIGA_PA_THRESHOLD: usize = 12;
+
+/// One logical Standard/Dark slot in an effective ABD battle preview.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StdPreviewSlot {
+    pub chip: Option<ChipHandle>,
+    pub weight: usize,
+    /// Original weight (`4`, `2`, or `1`) in the player's edited pool (`None` for auto-padded chips or empty slots).
+    pub orig_weight: Option<usize>,
+    /// True when injected by Legacy Collection's `< 3` non-Dark Standard padding rule.
+    pub padded: bool,
+    /// 1-based internal BattleChip order rank (populated in EXE5 `DoubleTeamDs` mode).
+    pub internal_id: Option<usize>,
+}
+
+/// One Mega / Giga / Program Advance slot in an effective ABD battle preview.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HighPreviewSlot {
+    pub chip: Option<ChipHandle>,
+    /// True when Legacy Collection's Standard/Dark unique-chip unlock threshold is not met.
+    pub locked: bool,
+    /// Unique Standard/Dark chip count required to unlock this slot (`0` outside LC).
+    pub need_std: usize,
+    /// 1-based internal BattleChip order rank (populated for Mega chips in EXE5 `DoubleTeamDs` mode).
+    pub internal_id: Option<usize>,
+}
+
+/// Non-destructive effective ABD preview computed from a player's saved setup and target [`AbdMode`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AbdPreview {
+    pub unique_std_count: usize,
+    pub allowed_mega: usize,
+    pub giga_pa_unlocked: bool,
+    pub standard: [StdPreviewSlot; 16],
+    pub mega: [HighPreviewSlot; 5],
+    pub giga: HighPreviewSlot,
+    pub pa: HighPreviewSlot,
+}
+
+/// Number of Mega slots unlocked in Legacy Collection for `std_unique_count` unique Standard/Dark chips.
+pub const fn lc_allowed_mega(std_unique_count: usize) -> usize {
+    match std_unique_count {
+        16.. => 5,
+        14..=15 => 4,
+        10..=13 => 3,
+        6..=9 => 2,
+        3..=5 => 1,
+        _ => 0,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Place {
     #[default]
@@ -227,7 +281,8 @@ fn fill_weighted_standard(places: &mut [Place; PLACES], ranked: &[ChipHandle]) {
     }
 }
 
-fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Place; PLACES]) {
+/// Compute the Legacy Collection Standard/Dark logical ranking (`(chip, is_padded)`) and original unique count.
+fn lc_standard_ranking(content: &Content, game: &str, places: &[Place; PLACES]) -> (Vec<(ChipHandle, bool)>, usize) {
     let mut ordered = ranked_unique(&places[STD_RANGE]);
     ordered.truncate(STD_WEIGHTS.len());
     let std_unique_count = ordered.len();
@@ -240,28 +295,28 @@ fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Plac
             .any(|p| matches!(*p, Place::Chip(c) if is_dark(content, c)));
     let dark_in_top = ordered.iter().take(4).any(|&c| is_dark(content, c)) || has_mega_dark;
 
-    let final_std: Vec<ChipHandle> = if dark_in_top {
+    let final_std: Vec<(ChipHandle, bool)> = if dark_in_top {
         if non_dark.len() < 3 {
-            let mut ranked = non_dark.clone();
+            let mut ranked: Vec<(ChipHandle, bool)> = non_dark.iter().copied().map(|c| (c, false)).collect();
             let blanks = 3 - ranked.len();
             for key in LC_PADDING_KEYS.iter().take(blanks) {
                 if let Some(chip) = ids::chip(content, game, key) {
-                    ranked.push(chip);
+                    ranked.push((chip, true));
                 }
             }
-            ranked.extend(dark.iter().copied());
+            ranked.extend(dark.iter().copied().map(|c| (c, false)));
             ranked.truncate(STD_WEIGHTS.len());
             ranked
         } else if non_dark.len() == 3 {
-            let mut ranked = non_dark.clone();
-            ranked.extend(dark.iter().copied());
+            let mut ranked: Vec<(ChipHandle, bool)> = non_dark.iter().copied().map(|c| (c, false)).collect();
+            ranked.extend(dark.iter().copied().map(|c| (c, false)));
             ranked.truncate(STD_WEIGHTS.len());
             ranked
         } else {
-            let mut ranked = ordered.clone();
+            let mut ranked: Vec<(ChipHandle, bool)> = ordered.iter().copied().map(|c| (c, false)).collect();
             for i in 0..4.min(ranked.len()) {
-                if is_dark(content, ranked[i])
-                    && let Some(j) = (4..ranked.len()).find(|&k| !is_dark(content, ranked[k]))
+                if is_dark(content, ranked[i].0)
+                    && let Some(j) = (4..ranked.len()).find(|&k| !is_dark(content, ranked[k].0))
                 {
                     ranked.swap(i, j);
                 }
@@ -269,8 +324,15 @@ fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Plac
             ranked
         }
     } else {
-        ordered
+        ordered.into_iter().map(|c| (c, false)).collect()
     };
+
+    (final_std, std_unique_count)
+}
+
+fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Place; PLACES]) {
+    let (final_ranked, std_unique_count) = lc_standard_ranking(content, game, places);
+    let final_std: Vec<ChipHandle> = final_ranked.iter().map(|&(c, _)| c).collect();
 
     if !final_std.is_empty() {
         fill_weighted_standard(places, &final_std);
@@ -291,14 +353,7 @@ fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Plac
     }
 
     // High-class chip unlock thresholds (Mega: 3/6/10/14/16; Giga & PA: 12).
-    let allowed_mega = match std_unique_count {
-        16.. => 5,
-        14..=15 => 4,
-        10..=13 => 3,
-        6..=9 => 2,
-        3..=5 => 1,
-        _ => 0,
-    };
+    let allowed_mega = lc_allowed_mega(std_unique_count);
     let mut kept_mega = 0usize;
     for p in &mut places[MEGA_RANGE] {
         if matches!(*p, Place::Chip(_)) {
@@ -309,7 +364,7 @@ fn transform_legacy_collection(content: &Content, game: &str, places: &mut [Plac
             }
         }
     }
-    if std_unique_count < 12 {
+    if std_unique_count < LC_GIGA_PA_THRESHOLD {
         places[GIGA_SLOT] = Place::Empty;
         places[PA_SLOT] = Place::Empty;
     }
@@ -421,6 +476,129 @@ pub fn transform_side(content: &Content, game: &str, mode: AbdMode, side: &Side)
     let mut out = side.clone();
     write_places(content, &mut out, &places);
     out
+}
+
+/// Compute a non-destructive effective battle preview of `side`'s ABD pool under `mode`,
+/// preserving locked Mega/Giga/PA chips with their unlock thresholds and tagging padded /
+/// reweighted Standard slots for the build editor UI.
+pub fn preview_side(content: &Content, game: &str, mode: AbdMode, side: &Side) -> AbdPreview {
+    let places = read_places(content, side).unwrap_or([Place::Empty; PLACES]);
+    let mut orig_counts: HashMap<ChipHandle, usize> = HashMap::new();
+    for p in &places[STD_RANGE] {
+        if let Place::Chip(c) = *p {
+            *orig_counts.entry(c).or_insert(0) += 1;
+        }
+    }
+    let ordered = ranked_unique(&places[STD_RANGE]);
+    let unique_std_count = ordered.len().min(STD_WEIGHTS.len());
+
+    let mut standard = [StdPreviewSlot::default(); 16];
+    for (i, slot) in standard.iter_mut().enumerate() {
+        slot.weight = STD_WEIGHTS[i];
+    }
+    let mut mega = [HighPreviewSlot::default(); 5];
+    let mut giga = HighPreviewSlot {
+        chip: match places[GIGA_SLOT] {
+            Place::Chip(c) => Some(c),
+            _ => None,
+        },
+        locked: false,
+        need_std: 0,
+        internal_id: None,
+    };
+    let mut pa = HighPreviewSlot {
+        chip: match places[PA_SLOT] {
+            Place::Chip(c) => Some(c),
+            _ => None,
+        },
+        locked: false,
+        need_std: 0,
+        internal_id: None,
+    };
+
+    match mode {
+        AbdMode::LegacyCollection if AbdMode::supported(game) => {
+            let (final_ranked, _) = lc_standard_ranking(content, game, &places);
+            for (i, &(chip, padded)) in final_ranked.iter().take(16).enumerate() {
+                standard[i] = StdPreviewSlot {
+                    chip: Some(chip),
+                    weight: STD_WEIGHTS[i],
+                    orig_weight: if padded { None } else { orig_counts.get(&chip).copied() },
+                    padded,
+                    internal_id: None,
+                };
+            }
+            let allowed_mega = lc_allowed_mega(unique_std_count);
+            let mut seen_mega = 0usize;
+            for (i, p) in places[MEGA_RANGE].iter().enumerate() {
+                if let Place::Chip(c) = *p {
+                    let locked = seen_mega >= allowed_mega;
+                    let need_std = LC_MEGA_THRESHOLDS.get(seen_mega).copied().unwrap_or(16);
+                    seen_mega += 1;
+                    mega[i] = HighPreviewSlot { chip: Some(c), locked, need_std, internal_id: None };
+                } else {
+                    mega[i] = HighPreviewSlot { chip: None, locked: false, need_std: LC_MEGA_THRESHOLDS[i], internal_id: None };
+                }
+            }
+            let giga_pa_unlocked = unique_std_count >= LC_GIGA_PA_THRESHOLD;
+            giga.locked = giga.chip.is_some() && !giga_pa_unlocked;
+            giga.need_std = LC_GIGA_PA_THRESHOLD;
+            pa.locked = pa.chip.is_some() && !giga_pa_unlocked;
+            pa.need_std = LC_GIGA_PA_THRESHOLD;
+
+            AbdPreview { unique_std_count, allowed_mega, giga_pa_unlocked, standard, mega, giga, pa }
+        }
+        AbdMode::DoubleTeamDs if game == "exe5" => {
+            let mut std_chips = ordered;
+            std_chips.sort_by_key(|&c| exe5_internal_rank(content, c));
+            std_chips.truncate(STD_WEIGHTS.len());
+            for (i, &chip) in std_chips.iter().enumerate() {
+                let rank = exe5_internal_rank(content, chip).0;
+                standard[i] = StdPreviewSlot {
+                    chip: Some(chip),
+                    weight: STD_WEIGHTS[i],
+                    orig_weight: orig_counts.get(&chip).copied(),
+                    padded: false,
+                    internal_id: (rank != usize::MAX).then_some(rank + 1),
+                };
+            }
+            let mut mega_chips: Vec<ChipHandle> = places[MEGA_RANGE]
+                .iter()
+                .filter_map(|p| match *p {
+                    Place::Chip(c) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            mega_chips.sort_by_key(|&c| exe5_internal_rank(content, c));
+            for (i, &chip) in mega_chips.iter().take(5).enumerate() {
+                let rank = exe5_internal_rank(content, chip).0;
+                mega[i] = HighPreviewSlot {
+                    chip: Some(chip),
+                    locked: false,
+                    need_std: 0,
+                    internal_id: (rank != usize::MAX).then_some(rank + 1),
+                };
+            }
+            AbdPreview { unique_std_count, allowed_mega: 5, giga_pa_unlocked: true, standard, mega, giga, pa }
+        }
+        _ => {
+            for (i, &chip) in ordered.iter().take(16).enumerate() {
+                standard[i] = StdPreviewSlot {
+                    chip: Some(chip),
+                    weight: STD_WEIGHTS[i],
+                    orig_weight: orig_counts.get(&chip).copied(),
+                    padded: false,
+                    internal_id: None,
+                };
+            }
+            for (i, p) in places[MEGA_RANGE].iter().enumerate() {
+                if let Place::Chip(c) = *p {
+                    mega[i] = HighPreviewSlot { chip: Some(c), locked: false, need_std: 0, internal_id: None };
+                }
+            }
+            AbdPreview { unique_std_count, allowed_mega: 5, giga_pa_unlocked: true, standard, mega, giga, pa }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -670,5 +848,67 @@ mod tests {
         let capped_uses = run_with_cap(Some(2));
         assert!(unlimited_uses > 2, "unlimited DarkInvs should use DarkThnd more than twice (got {unlimited_uses})");
         assert_eq!(capped_uses, 2, "hard cap = 2 must stop DarkThnd at exactly 2 uses");
+    }
+
+    #[test]
+    fn preview_side_matches_transform_side_and_reports_padding_locks_and_ds_ids() {
+        let content = exe5_content();
+        // 1) Dark-only LC pool -> padded Cannon/MiniBomb/AirShot + locked Mega/Giga/PA.
+        let dark_only = make_abd_side(&content, "exe5", &["darkthnd"], &["roll", "protoman"], Some("bass"), Some("bignoise"));
+        let p_dark = preview_side(&content, "exe5", AbdMode::LegacyCollection, &dark_only);
+        assert_eq!(p_dark.unique_std_count, 1);
+        assert_eq!(p_dark.allowed_mega, 0);
+        assert!(!p_dark.giga_pa_unlocked);
+        assert!(p_dark.standard[0].padded && p_dark.standard[1].padded && p_dark.standard[2].padded);
+        assert!(!p_dark.standard[3].padded);
+        assert_eq!(p_dark.standard[3].orig_weight, Some(4));
+        assert_eq!(p_dark.standard[3].weight, 2);
+        assert!(p_dark.mega[0].locked && p_dark.mega[0].chip.is_some() && p_dark.mega[0].need_std == 3);
+        assert!(p_dark.mega[1].locked && p_dark.mega[1].chip.is_some() && p_dark.mega[1].need_std == 6);
+        assert!(p_dark.giga.locked && p_dark.giga.chip.is_some() && p_dark.giga.need_std == 12);
+        assert!(p_dark.pa.locked && p_dark.pa.chip.is_some() && p_dark.pa.need_std == 12);
+
+        // 2) 10-chip LC pool -> Dark swapped down, 3 Mega unlocked / 4th locked, Giga & PA locked.
+        let ten = make_abd_side(
+            &content,
+            "exe5",
+            &["darkthnd", "drksword", "sword", "wideswrd", "longswrd", "areagrab", "panlgrab", "recov300", "recov200", "invisibl"],
+            &["roll", "protoman", "serchman", "gyroman"],
+            Some("bass"),
+            Some("bignoise"),
+        );
+        let p_ten = preview_side(&content, "exe5", AbdMode::LegacyCollection, &ten);
+        let t_ten = read_places(&content, &transform_side(&content, "exe5", AbdMode::LegacyCollection, &ten)).unwrap();
+        assert_eq!(p_ten.unique_std_count, 10);
+        assert_eq!(p_ten.allowed_mega, 3);
+        assert!(!p_ten.giga_pa_unlocked);
+        assert!(!p_ten.mega[2].locked && p_ten.mega[3].locked && p_ten.mega[3].need_std == 14);
+        assert!(p_ten.giga.locked && p_ten.pa.locked);
+        // Active standard chips in preview match transform_side exactly.
+        let mut cursor = STD_RANGE.start;
+        for slot in &p_ten.standard {
+            for _ in 0..slot.weight {
+                assert_eq!(t_ten[cursor], slot.chip.map_or(Place::Empty, Place::Chip));
+                cursor += 1;
+            }
+        }
+
+        // 3) 5DS mode -> sorted by internal ID ascending with 1-based internal_id populated.
+        let ds_side = make_abd_side(&content, "exe5", &["sword", "airshot", "cannon"], &["protoman", "roll"], Some("bass"), Some("bignoise"));
+        let p_ds = preview_side(&content, "exe5", AbdMode::DoubleTeamDs, &ds_side);
+        let cannon = ids::chip(&content, "exe5", "cannon").unwrap();
+        let airshot = ids::chip(&content, "exe5", "airshot").unwrap();
+        let sword = ids::chip(&content, "exe5", "sword").unwrap();
+        assert_eq!(p_ds.standard[0].chip, Some(cannon));
+        assert_eq!(p_ds.standard[0].internal_id, Some(1));
+        assert_eq!(p_ds.standard[0].orig_weight, Some(2));
+        assert_eq!(p_ds.standard[0].weight, 4);
+        assert_eq!(p_ds.standard[1].chip, Some(airshot));
+        assert_eq!(p_ds.standard[1].internal_id, Some(4));
+        assert_eq!(p_ds.standard[2].chip, Some(sword));
+        assert_eq!(p_ds.standard[2].orig_weight, Some(4));
+        assert_eq!(p_ds.standard[2].weight, 2);
+        assert_eq!(p_ds.mega[0].chip, ids::chip(&content, "exe5", "roll"));
+        assert!(p_ds.mega[0].internal_id.is_some());
     }
 }
