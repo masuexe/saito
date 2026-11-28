@@ -731,9 +731,6 @@ msgstr "アドコレ"
 msgid "5DS"
 msgstr "5DS"
 
-msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
-msgstr "アドコレABDの記憶プールはすべて埋める必要があります。空き枠があるとキャノンやミニボムなどの下位チップが出現し、空きが多いほど下位チップの種類が増えます。"
-
 msgid "Dark Soul AI (ABD) Guide"
 msgstr "各バージョン ダークソウルAI（ABD）仕様ガイド"
 

@@ -712,9 +712,6 @@ msgstr "컬렉션"
 msgid "5DS"
 msgstr "5DS"
 
-msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
-msgstr "컬렉션 ABD 메모리 풀은 모두 채워야 합니다. 빈 슬롯이 있으면 캐논, 미니밤 등의 하위 칩이 출현하며, 빈 슬롯이 많을수록 하위 칩 종류가 늘어납니다."
-
 msgid "Dark Soul AI (ABD) Guide"
 msgstr "버전별 다크 소울 AI(ABD) 사양 가이드"
 

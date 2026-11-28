@@ -729,9 +729,6 @@ msgstr "合集"
 msgid "5DS"
 msgstr "5DS"
 
-msgid "LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear."
-msgstr "合集 ABD 记忆芯片池需要完全填满，如果合集 ABD 记忆芯片池中存在空位，则会出现加农炮、迷你炸弹等低级芯片，空位越多低等级芯片的种类越多。"
-
 msgid "Dark Soul AI (ABD) Guide"
 msgstr "各版本黑暗之魂 AI（ABD）性能说明"
 

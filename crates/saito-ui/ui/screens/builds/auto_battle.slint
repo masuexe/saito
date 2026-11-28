@@ -456,8 +456,6 @@ export component AutoBattleTab inherits Rectangle {
     }
 
     property <length> actions-left: AutoBattleView.needs-fix ? fix.x + fix.pad : clear.x + clear.pad;
-    property <bool> show-lc-note: AutoBattleView.abd-mode == 1;
-    property <length> lc-note-height: root.show-lc-note ? (Theme.phone ? 64px : 48px) : 0px;
 
     places-title := Label {
         x: 12px;
@@ -553,44 +551,11 @@ export component AutoBattleTab inherits Rectangle {
         overflow: elide;
     }
 
-    // Legacy Collection ABD pool reminder note (shown when editing the LC profile).
-    Rectangle {
-        x: Theme.phone ? 0px : 12px;
-        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px);
-        width: root.pane-width - (Theme.phone ? 0px : 24px);
-        height: root.show-lc-note ? root.lc-note-height - 6px : 0px;
-        visible: root.show-lc-note;
-        background: Theme.inset;
-        border-radius: 3px;
-
-        Rectangle {
-            x: 0;
-            y: 0;
-            width: 3px;
-            height: parent.height;
-            background: Theme.warn;
-        }
-
-        Text {
-            x: 10px;
-            y: 4px;
-            width: parent.width - 16px;
-            height: parent.height - 8px;
-            text: @tr("LC ABD memory pool must be completely filled. Any empty slots will be padded with low-tier chips (Cannon, MiniBomb, etc.); the more empty slots, the more low-tier chip types appear.");
-            color: Theme.warn;
-            font-family: Theme.body;
-            font-size: 11px;
-            font-weight: 500;
-            vertical-alignment: center;
-            wrap: word-wrap;
-        }
-    }
-
     page := ScrollPage {
         x: Theme.phone ? 0px : 12px;
-        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px) + root.lc-note-height;
+        y: root.pane-y + (Theme.phone ? root.phone-lead : 44px);
         width: root.pane-width - (Theme.phone ? 0px : 12px);
-        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px) - root.lc-note-height;
+        height: root.pane-height - (Theme.phone ? root.phone-lead : 44px + 12px);
         nav: "places.";
         content-height: AutoBattleView.rows * root.pitch;
         // (A mouse's drag on a place moves its chip: the wheel scrolls.)
