@@ -13,7 +13,13 @@ local HIT = { hits = collision.hits_navis, is = collision.slash }
 local SLASH = asset.sprite("sword-slash")
 local BIG_SLASH_SPRITE = asset.sprite("big-slash")
 
-local SWORD_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 0, steps = 12 }
+-- EXE3 `0c-0c` (`sword-slash`) animations verified against A6BE (`bn3.gba`):
+--   anim 0 = WideSwrd (1x3, 40x76), anim 1 = LongSwrd (2x1, 72x42),
+--   anim 2 = Sword (1x1, 40x24),    anim 3 = HeroSwrd/FighterSwd (3x1, 120x50).
+local SWORD_SLASH = new.effect { sprite = SLASH, anim = 2, palette = 0, steps = 12 }
+local WIDE_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 0, steps = 15 }
+local LONG_SLASH = new.effect { sprite = SLASH, anim = 1, palette = 0, steps = 15 }
+local LINE_SLASH = new.effect { sprite = SLASH, anim = 3, palette = 0, steps = 15 }
 local FIRE_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 1, steps = 15 }
 local AQUA_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 2, steps = 15 }
 local ELEC_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 3, steps = 15 }
@@ -46,7 +52,7 @@ local sword: Chip = {
 }
 
 local wideswrd: Chip = {
-    action = slash("wideswrd/action", regions.wide, SWORD_SLASH),
+    action = slash("wideswrd/action", regions.wide, WIDE_SLASH),
     codes = { "C", "E", "L", "Q", "Y" },
     element = "null",
     family = "sword",
@@ -60,7 +66,7 @@ local wideswrd: Chip = {
 }
 
 local longswrd: Chip = {
-    action = slash("longswrd/action", regions.long, SWORD_SLASH),
+    action = slash("longswrd/action", regions.long, LONG_SLASH),
     codes = { "E", "I", "L", "R", "Y" },
     element = "null",
     family = "sword",
@@ -164,7 +170,7 @@ local stepswrd: Chip = {
         id = "stepswrd/action",
         blade = swords.blade,
         hit = { region = regions.wide, collision = HIT, hit_mod = 3 },
-        effect = SWORD_SLASH,
+        effect = WIDE_SLASH,
         sound = swords.swing,
     },
     codes = { "L", "M", "N", "O", "P" },
@@ -275,7 +281,7 @@ local SLASHER_ACTION = new.action {
                     hit_mod = 3,
                 })
                 local cx, cy = field.center(s.target_x, 2)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), SWORD_SLASH, me.alliance)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), WIDE_SLASH, me.alliance)
             end
             local t = s.timer - 1
             s.timer = int.u16(t)
@@ -331,7 +337,7 @@ local muramasa: Chip = {
 
 -- HeroSwrd (0x0CF): Mega sword cutting 3 panels ahead for 180!
 local heroswrd: Chip = {
-    action = slash("heroswrd/action", regions.line, BIG_SLASH, swords.big_swing),
+    action = slash("heroswrd/action", regions.line, LINE_SLASH, swords.big_swing),
     codes = { "P" },
     element = "null",
     family = "sword",

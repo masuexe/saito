@@ -23,6 +23,8 @@ local made = bomb.make {
     splash = new.effect { sprite = small_puff_sprite, anim = 0, palette = 0, steps = 16 },
     explosion = new.effect { sprite = explosion_sprite, anim = 0, palette = 0, steps = 27 },
     puff = new.effect { sprite = puff_sprite, anim = 1, palette = 0, steps = 4 },
+    -- EXE3 `0c-02` anim 1 has only 1 part (no ground-shadow part 0) and calls `sprite_noShadow` (`0x080D66B4`).
+    no_shadow = true,
 }
 
 bombs.thrower = made.thrower

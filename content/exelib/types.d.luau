@@ -116,8 +116,17 @@ export type ThrowLook = {
 }
 
 -- A game's thrown bomb (@exelib/bombs/bomb): its kind's key, its sprite, its landing's sound, the splash in a hole,
--- the explosion over its blast and the puff when the battle ends.
-export type BombLook = { id: string, sprite: SpriteAsset, hit_sound: Sound, splash: Effect, explosion: Effect, puff: Effect }
+-- the explosion over its blast and the puff when the battle ends. `no_shadow`: set when the bomb sprite has no
+-- separate part-0 ground shadow (EXE3 `0c-02`, `0x080D66B4` calls `sprite_noShadow`).
+export type BombLook = {
+    id: string,
+    sprite: SpriteAsset,
+    hit_sound: Sound,
+    splash: Effect,
+    explosion: Effect,
+    puff: Effect,
+    no_shadow: boolean?,
+}
 
 -- A game's thrown bombs, made of its `BombLook` (@exelib/bombs/bomb): the kind, and a thrower of a variant.
 export type Bombs = { kind: Kind, thrower: (variant: BombVariant) -> Thrower }

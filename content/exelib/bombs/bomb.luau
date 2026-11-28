@@ -116,7 +116,7 @@ local function init(me: Object, look: BombLook)
     local v = (me.state :: State).variant
     local sprite = me.sprite
     sprite:load(look.sprite)
-    sprite.shadow = "ground"
+    sprite.shadow = if look.no_shadow then "with_sprite" else "ground"
     me.visible = true
     me.anim = v.anim
     me.anim_loaded = 0xFF

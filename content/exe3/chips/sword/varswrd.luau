@@ -16,7 +16,7 @@ local BIG_SLASH_SPRITE = asset.sprite("big-slash")
 
 local SWORD_HIT = { hits = collision.hits_navis, is = collision.slash }
 local BIG_SLASH = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 0, steps = 15 }
-local WIDE_SLASH = new.effect { sprite = SLASH_SPRITE, anim = 0, palette = 0, steps = 12 }
+local LINE_SLASH = new.effect { sprite = SLASH_SPRITE, anim = 3, palette = 0, steps = 15 }
 
 local BOOM_KIND = sonic_boom.make_kind("varswrd/sonic-boom", {
     sprite = SLASH_SPRITE,
@@ -70,7 +70,7 @@ local ftrsword_pick: Chip = {
         id = "varswrd/ftrsword-action",
         blade = swords.blade,
         hit = { region = regions.line, collision = SWORD_HIT, hit_mod = 3 },
-        effect = WIDE_SLASH,
+        effect = LINE_SLASH,
         sound = swords.swing,
     },
     damage = 160,

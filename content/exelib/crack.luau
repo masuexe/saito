@@ -20,9 +20,12 @@ export type Look = {
     id: string,
     -- The navi's pointing animation.
     anim: number,
-    -- The crack's dust, its sound as it comes, and the break's sound in place of the panel crack's (EXE5's
-    -- `object_breakPanelLoud`, 0x0800B204; EXE4's 0x08009D04).
+    -- Optional held attachment callback while pointing (e.g. EXE3's `0c-07` PanlOut tool).
+    hold: ((me: Object) -> ())?,
+    -- The crack's dust, its animation index (default 0), its sound as it comes, and the break's sound in place of
+    -- the panel crack's (EXE5's `object_breakPanelLoud`, 0x0800B204; EXE4's 0x08009D04).
     sprite: SpriteAsset,
+    sprite_anim: number?,
     sound: Sound,
     break_sound: Sound,
     -- What the crack's hit is and reaches (the game's thrown and hits-navis rows).
@@ -78,7 +81,7 @@ function crack.make(look: Look): Crack
         -- sprite_noShadow: the first part is drawn with the sprite.
         sprite.shadow = "with_sprite"
         me.visible = true
-        me.anim, me.anim_loaded = 0, 0xFF
+        me.anim, me.anim_loaded = look.sprite_anim or 0, 0xFF
         me:set_coordinates_from_panel()
         sprite:set_flip(bit32.bxor(me.alliance, me.flip))
         battle.play_sound(look.sound)
@@ -129,6 +132,9 @@ function crack.action(c: Crack, panels: { { number } }, id: string?): Action
         if me.step_init == 0 then
             me:set_animation(look.anim)
             me:open_counter_window()
+            if look.hold then
+                look.hold(me)
+            end
             me:set_status("using_action", true)
             s.timer = 15
             me.step_init = 4
@@ -161,6 +167,9 @@ function crack.action(c: Crack, panels: { { number } }, id: string?): Action
         local t = s.timer - 1
         s.timer = t
         if t < 0 then
+            if look.hold then
+                me.related1 = nil
+            end
             me:exit_attack()
         end
     end

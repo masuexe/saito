@@ -10,6 +10,7 @@
 --   0x1D        : Sword swing [0x080B174A]
 --   0x20 / 0x21 : Cannon raise / lower [0x080B1218, 0x080B12B6]
 --   0x22        : Bomb throw [0x080B16A2]
+--   0x24        : PanlOut / panel crack [0x080B2308, 0x080B31EC]
 --   0x2C        : GutsPunch / punch [0x080B2736]
 --   0x36        : ShotGun / Spreader gun hold [0x080B1BC2]
 --   0x38        : AirShot shooter [0x080B258A]
@@ -38,6 +39,7 @@ anims.SWORD_SWING = 0x1D
 anims.CANNON_RAISE = 0x20
 anims.CANNON_LOWER = 0x21
 anims.BOMB_THROW = 0x22
+anims.PANLOUT = 0x24
 anims.PUNCH = 0x2C
 anims.SPREADER = 0x36
 anims.AIRSHOT = 0x38
