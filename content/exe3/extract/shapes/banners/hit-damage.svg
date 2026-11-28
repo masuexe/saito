@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1152" height="128" viewBox="0 0 144 16">
-<!-- EXE3 banner bar (144x16): left end upright 3 rows then slanting 45 degrees, right end slanting 45 degrees then upright; light top/left rim, dark bottom/right rim, body between. -->
-<path d="M7 3 L144.5 3 L137 10.5 L137 13 L-0.5 13 L7 5.5 Z" fill="#78a0f0" data-color="3"/>
-<path d="M8 4 L143.5 4 L137 10.5 L137 13 L0.914 13 L8 5.914 Z" fill="#303878" data-color="5"/>
-<path d="M8 4 L142.086 4 L136 10.086 L136 12 L1.914 12 L8 5.914 Z" fill="#4858a8" data-color="4"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="128" viewBox="0 0 120 16">
+<!-- EXE3 banner bar (120x16): left end upright 3 rows then slanting 45 degrees, right end slanting 45 degrees then upright; light top/left rim, dark bottom/right rim, body between. -->
+<path d="M7 3 L120.5 3 L113 10.5 L113 13 L-0.5 13 L7 5.5 Z" fill="#78a0f0" data-color="3"/>
+<path d="M8 4 L119.5 4 L113 10.5 L113 13 L0.914 13 L8 5.914 Z" fill="#303878" data-color="5"/>
+<path d="M8 4 L118.086 4 L112 10.086 L112 12 L1.914 12 L8 5.914 Z" fill="#4858a8" data-color="4"/>
 </svg>

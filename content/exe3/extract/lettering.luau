@@ -10,8 +10,15 @@ local lettering = {}
 
 lettering.LANGUAGE = "ja"
 
+local function same_number_at(a: { number }?, b: { number }?): boolean
+    if a == nil and b == nil then
+        return true
+    end
+    return a ~= nil and b ~= nil and a[1] == b[1] and a[2] == b[2]
+end
+
 local function same_banner(a: BannerLayout, b: BannerLayout): boolean
-    return a.x == b.x and a.y == b.y and a.kind == b.kind and a.glyphs == b.glyphs
+    return a.x == b.x and a.y == b.y and a.kind == b.kind and a.glyphs == b.glyphs and same_number_at(a.number_at, b.number_at)
 end
 
 function lettering.hud(set: Set, base: Hud, names: AssetNames): HudLettering
@@ -22,7 +29,7 @@ function lettering.hud(set: Set, base: Hud, names: AssetNames): HudLettering
     local dialogue: { string } = if glyphs and glyphs.dialogue_glyphs then glyphs.dialogue_glyphs else {}
     local font, font_chars = hud.font(rom, cell, dialogue)
     local dialogue_font = hud.dialogue_font(rom, cell, dialogue)
-    local texts = hud.texts(rom)
+    local texts = hud.texts(font_chars)
     local own_banners = base.banners or {}
     local banners: { [number]: BannerLayout, n: number } = { n = #own_banners }
     for i, own in own_banners do

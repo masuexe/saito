@@ -725,7 +725,7 @@ fn banner_letters(layout: &saito_assets::BannerLayout) -> Option<BannerLetters> 
     if layout.glyphs.is_empty() {
         return None;
     }
-    let picture = Picture::glyphs(&layout.glyphs, 0, 20);
+    let picture = Picture::glyphs(&layout.glyphs, 0, layout.glyphs.len() / 2);
     let bar_colors = bar_colors(&picture).unwrap_or_default();
     let ground = |v: u8| v == 0 || bar_colors.contains(&v);
     let found = letters(&picture, ground, Capitals::First)?;
@@ -737,14 +737,12 @@ fn banner_letters(layout: &saito_assets::BannerLayout) -> Option<BannerLetters> 
         let span = letters(&cut, ground, Capitals::First)?.span;
         Some([from as i16 + span[0], from as i16 + span[1]])
     };
-    // Either side of the number, as one digit (moved 4 left) and as two.
+    // Either side of the number: two digits occupy `[nx, nx + 16)`, a single
+    // digit occupies `[nx + 4, nx + 12)` (its blank tens cell is at `nx - 4`).
     let (x, w) = (layout.x as i32, picture.w as i32);
-    let sides = |nx: i32| {
-        let cut = (nx - 4 - x, nx + 16 - x);
-        [part(0, cut.0), part(cut.1, w)]
-    };
+    let sides = |left: i32, right: i32| [part(0, left - x), part(right - x, w)];
     let (one_digit, two_digits) = match layout.number_at {
-        Some((nx, _)) => (Some(sides(nx as i32 - 4)), Some(sides(nx as i32))),
+        Some((nx, _)) => (Some(sides(nx as i32, nx as i32 + 12)), Some(sides(nx as i32 - 4, nx as i32 + 16))),
         None => (None, None),
     };
     Some(BannerLetters { letters: found, one_digit, two_digits })

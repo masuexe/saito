@@ -773,6 +773,10 @@ mod tests {
         assert_eq!(c.assets.sprites.get("megaman").map(String::as_str), Some("00-00"));
         assert_eq!(c.assets.backgrounds.len(), 30);
         assert_eq!(c.assets.banners.len(), 13);
+        assert_eq!(c.assets.banners.get("turn-start"), Some(&0x0c));
+        assert_eq!(c.assets.banners.get("hit-damage"), Some(&0x10));
+        assert_eq!(c.assets.banners.get("final-turn"), Some(&0x14));
+        assert_eq!(c.assets.banners.get("round-start"), Some(&0x30));
 
         // Text encodings: US 0x70, JP 0xE4
         assert_eq!((c.text.first_control, c.text.glyphs.len()), (0xE4, 0x70));

@@ -1351,7 +1351,7 @@ pub fn draw<'a>(
             } else {
                 words = clean.then(|| lettered_banner(b, block, h, layout, number, id, text, problems)).flatten().unwrap_or_default();
             }
-            banner_parts(b, block, h, layout, number, !words.is_empty(), &mut group);
+            banner_parts(b, block, h, layout, id, number, !words.is_empty(), &mut group);
             if words.is_empty() {
                 // (The glyphs and the palette a telop loaded over the
                 // banner's: `TelopTiles`.)
@@ -1463,7 +1463,7 @@ fn banner_ink(layout: &saito_assets::BannerLayout) -> (i32, i32) {
         let (glyph, x) = (column / 8, column % 8);
         (0..2).any(|half| layout.glyphs.get(2 * glyph + half).is_some_and(|t| (0..8).any(|y| t[y * 8 + x] != 0)))
     };
-    let columns = 20 * 8;
+    let columns = (layout.glyphs.len() / 2) * 8;
     match ((0..columns).find(|&c| shows(c)), (0..columns).rev().find(|&c| shows(c))) {
         (Some(first), Some(last)) => (first as i32, last as i32 + 1),
         _ => (0, columns as i32),
@@ -2359,16 +2359,17 @@ const OWN_ICON_PRIORITY: u8 = 1;
 /// `layout` is banner `id`'s (its number in `hud`'s game's graphics).
 /// `blank`: blank parts in the glyphs' places, as many (the sharp text's
 /// lettering draws the words: `lettered_banner`).
-fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, layout: &'a saito_assets::BannerLayout, id: u8, blank: bool, out: &mut Vec<SpritePart<'a>>) {
+fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, layout: &'a saito_assets::BannerLayout, id: BannerId, number: u8, blank: bool, out: &mut Vec<SpritePart<'a>>) {
     let vscale = Some(banner_scale(block));
     let pal = hud.banner_palette;
     let tiles = |own: &'a Tiles| if blank { &*BLANK_GLYPH } else { own };
     let k_of = |k: usize| if blank { 0 } else { k };
-    for k in 0..20usize {
+    let cells = layout.glyphs.len() / 2;
+    for k in 0..cells {
         out.push(glyph(tiles(&layout.glyphs), k_of(k), pal, layout.x as i32 + 8 * k as i32, layout.y as i32, 0, vscale));
     }
     if let Some((nx, ny)) = layout.number_at {
-        let n = banner_number(b, id);
+        let n = banner_number(b, id, number);
         let (tens, ones) = (n / 10 % 10, n % 10);
         let (tens, nx) = if tens == 0 { (10, nx as i32 - 4) } else { (tens, nx as i32) };
         // The number is drawn in front of the text.
@@ -2464,9 +2465,11 @@ pub(crate) fn lettered_word<'b>(
 }
 
 /// The number a numbered banner shows (`sub_801CE28`): the turn's on the
-/// turn's banner (its game's number 0x0C), else the round's.
-fn banner_number(b: &Battle, id: u8) -> usize {
-    (if id == 0x0C { b.round.turn } else { b.round.round }) as usize
+/// turn's banner (`BannerRole::TurnStart`, or its game's number 0x0C), else
+/// the round's.
+fn banner_number(b: &Battle, id: BannerId, number: u8) -> usize {
+    let is_turn = b.roles().try_banner(saito_battle::content::BannerRole::TurnStart) == Some(id) || number == 0x0C;
+    (if is_turn { b.round.turn } else { b.round.round }) as usize
 }
 
 /// A banner as the sharp HUD draws it, if the content's strings have
@@ -2511,7 +2514,7 @@ fn lettered_banner(
         // is drawn in the numbers' font in the banner digits' look where the
         // picture's number is (`banner_parts`).
         (Some((nx, ny)), Some((before, after))) => {
-            let n = banner_number(b, number);
+            let n = banner_number(b, id, number);
             let (tens, nx) = if n / 10 % 10 == 0 { (None, nx as i32 - 4) } else { (Some(n / 10 % 10), nx as i32) };
             let digits = tens.map_or(format!("{}", n % 10), |t| format!("{t}{}", n % 10));
             let (before, after) = (before.trim_end(), after.trim_start());
@@ -2538,7 +2541,7 @@ fn lettered_banner(
             }
         }
         _ => {
-            let words = words.replace("{n}", &banner_number(b, number).to_string());
+            let words = words.replace("{n}", &banner_number(b, id, number).to_string());
             if !text.lettering_in(&words, LetteringFont::Display, what, problems) {
                 return None;
             }
@@ -2548,13 +2551,14 @@ fn lettered_banner(
     // The bar under the words: the game's drawing of it (none: the picture
     // has none), squashed with them.
     items.first()?;
+    let box_width = (layout.glyphs.len() / 2).max(1) as i32 * 8;
     if let Some(bar) = &layout.bar {
         let d = crate::shapes::drawn(bar, |_, c| pal[c as usize & 15], (false, false), None);
-        items.insert(0, TextItem { vscale, ..crate::shapes::item(d, (x, y), (160, 16)) });
+        items.insert(0, TextItem { vscale, ..crate::shapes::item(d, (x, y), (bar.size[0] as i32, bar.size[1] as i32)) });
     }
     // Every item cut to the banner's box.
     for item in &mut items {
-        item.clip = Rect::new(x, 0, 160, crate::compose::HEIGHT as i32);
+        item.clip = Rect::new(x, 0, box_width, crate::compose::HEIGHT as i32);
     }
     Some(items)
 }
@@ -3363,7 +3367,7 @@ mod tests {
         let mut ticks = 0;
         while b.banner.active {
             let mut parts = Vec::new();
-            banner_parts(&b, &b.banner, &hud, &layout, 0, false, &mut parts);
+            banner_parts(&b, &b.banner, &hud, &layout, BannerId(0), 0, false, &mut parts);
             assert_eq!(parts.len(), 20);
             let whole = banner_scale(&b.banner) == 0x100;
             for part in &parts {
@@ -3880,5 +3884,33 @@ mod tests {
         let below = draw_y(0);
         let above = draw_y(-50);
         assert_eq!(above, below - 50, "EXE3 navi_hp_dy = -50 must raise the opponent navi's HP number by 50px");
+    }
+
+    #[test]
+    fn turn_start_banner_uses_role_for_turn_number_and_supports_variable_glyph_counts() {
+        let mut b = battle();
+        b.round.round = 0;
+        b.round.turn = 7;
+        let turn_id = b.roles().banner(saito_battle::content::BannerRole::TurnStart);
+        let round_id = b.roles().banner(saito_battle::content::BannerRole::RoundStart);
+        // Even with a non-0x0C numeric ID, BannerRole::TurnStart selects `b.round.turn`.
+        assert_eq!(banner_number(&b, turn_id, 0x03), 7);
+        assert_eq!(banner_number(&b, round_id, 0x30), 0);
+
+        // A 21-glyph banner (e.g., JP EXE3 HIT DAMAGE JUDGE!) emits all 21 glyph parts instead of truncating at 20.
+        let layout = BannerLayout {
+            x: 36,
+            y: 16,
+            kind: 4,
+            glyphs: Tiles { pixels: vec![1; 42 * Tiles::TILE] },
+            number_at: None,
+            bar: None,
+            logo: None,
+        };
+        let h = hud();
+        let mut parts = Vec::new();
+        banner_parts(&b, &b.banner, &h, &layout, turn_id, 0x10, false, &mut parts);
+        assert_eq!(parts.len(), 21);
+        assert_eq!(parts.last().unwrap().x, 36 + 20 * 8);
     }
 }

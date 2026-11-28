@@ -3346,7 +3346,7 @@ pub fn draw<'a>(
     // the other console's screen; in its half, where the other player's
     // window is beside it, none of it shows.)
     let look = window_look(layer);
-    if look.turn_limit && place.to == COLUMNS && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
+    if look.turn_limit && !a.turn_limit.is_empty() && place.to == COLUMNS && matches!(seat.shows, crate::seat::Shows::Screen | crate::seat::Shows::Half) {
         // sub_8029D34: 7x2 at column 15, row 4, in the layout's palette. In
         // the sharp HUD its words in the lettering font, in its look,
         // and its cells with the letters taken off (its own ground).

@@ -5,7 +5,6 @@
 
 local place = require("@exelib/extract/place")
 local colors = require("@exelib/extract/colors")
-local texts = require("@exelib/extract/texts")
 local glyphs = require("@exelib/extract/glyphs")
 local versions = require("./versions")
 
@@ -21,8 +20,27 @@ local FONT_GLYPHS = 0xE4
 -- Documented for Gap #2 (`font.dialogue` 8x16 tiled support):
 hud.DIALOGUE_FONT = pointer_in_each({ 0x0802_6A14, 0x0802_69FC, 0x0802_6B74, 0x0802_6B5C })
 
-local TEXTS = pointer(0x0801_0AA0, 0x0801_0A04)
-local TEXT_END = 0xE7
+-- Canonical HUD text lines (`Hud::texts`: TEXT_TIME_UP = 3 for "TIME UP!", 4..=13 for Final Turn countdown 1..=10,
+-- TEXT_COUNTER_HIT = 14). EXE3's ROM battle text table (`[0x08010AA0]`) stores chatbox dialogue rather than timer
+-- strings (GBA EXE3 draws the countdown with `BANNER_DIGITS` at `0x0801031A`), so encode the canonical lines in the
+-- release's 8x16 HUD font.
+local HUD_TEXT_STRINGS = {
+    "DOUBLE DELETE!",
+    "TRIPLE DELETE!",
+    "VS",
+    "TIME UP!",
+    "    1   ",
+    "    2   ",
+    "    3   ",
+    "    4   ",
+    "    5   ",
+    "    6   ",
+    "    7   ",
+    "    8   ",
+    "    9   ",
+    "   10   ",
+    " COUNTER HIT! ",
+}
 
 function hud.palette(rom: Rom, a: number): Palette
     return colors.masked(gba.palette(rom, a))
@@ -38,9 +56,24 @@ function hud.dialogue_font(rom: Rom, cell: { string }, dialogue: { string }): Di
     return font.dialogue_tiled(rom, at(rom, hud.DIALOGUE_FONT), n, 8, glyphs.chars(cell, dialogue, n))
 end
 
-function hud.texts(rom: Rom): { { number } }
-    local first_control: number = data("compat/text.toml").first_control
-    return texts.lines(rom, at(rom, TEXTS), TEXT_END, first_control)
+function hud.texts(font_chars: { string }): { { number } }
+    local glyph_of: { [string]: number } = {}
+    for i, ch in font_chars do
+        if ch ~= "" and glyph_of[ch] == nil then
+            glyph_of[ch] = i - 1
+        end
+    end
+    local space = glyph_of[" "] or 0
+    local out: { { number } } = {}
+    for _, s in HUD_TEXT_STRINGS do
+        local line: { number } = {}
+        for i = 1, #s do
+            local ch = string.sub(s, i, i)
+            table.insert(line, glyph_of[ch] or space)
+        end
+        table.insert(out, line)
+    end
+    return out
 end
 
 -- ---- HUD DMA blocks, HP box, Custom Gauge, Banners, Chatbox ---------------------------------------------------
@@ -73,13 +106,20 @@ local ICON_PALETTE = pointer(0x0800_6010, 0x0800_5FA4)
 local PAUSE = pointer(0x0801_0A14, 0x0801_0978)
 local PAUSE_BYTES = 0x280
 
--- 13 battle banners: 0xFF-terminated glyph index strings indexing u16 byte offsets into banner font (0x40 B/glyph).
+-- 13 battle banners: 0xFF-terminated glyph index strings indexing u16 byte offsets into banner font (0x40 B/glyph),
+-- with `(center_x, y)` pairs at `BANNER_COORDS` (`0x080107A4` US / `0x08010714` JP; `0x08010032` draws from
+-- `center_x - len * 4`, and `0x0801008C` places BCD digits on `turn-start` (3) and `round-start` (12)).
 local BANNERS = pointer(0x0801_0810, 0x0801_0780)
 local BANNER_OFFSETS = pointer(0x0801_0814, 0x0801_0784)
 local BANNER_FONT = pointer(0x0801_0818, 0x0801_0788)
+local BANNER_COORDS = pointer(0x0801_079C, 0x0801_070C)
 local BANNER_DIGITS = pointer(0x0801_0794, 0x0801_0704)
 local BANNER_PALETTE = pointer(0x0801_0788, 0x0801_06F8)
 local BANNER_COUNT = 13
+local TURN_START_BANNER = 3
+local JUDGE_BANNER = 4
+local ROUND_START_BANNER = 12
+local JUDGE_KIND = 4
 
 -- Dimming-chip telops (`telops = "apart"`): 15 glyphs centered from x=0 (local) / x=120 (remote) at y=32,
 -- using the HUD's battle damage digits (0..9, '+'), font '×'/'2', and the telop OBJ palette
@@ -113,7 +153,7 @@ function hud.chip_ids(names: AssetNames): { number }
     return ids
 end
 
--- Decode EXE3 banner `id` (0..=12) from its 0xFF-terminated glyph-index string.
+-- Decode EXE3 banner `id` (0..=12) from its 0xFF-terminated glyph-index string and `(center_x, y)` table.
 function hud.banner(rom: Rom, id: number): BannerLayout
     local str_ptr = rom:u32(at(rom, BANNERS) + 4 * id)
     local offs = at(rom, BANNER_OFFSETS)
@@ -129,9 +169,24 @@ function hud.banner(rom: Rom, id: number): BannerLayout
         table.insert(parts, gba.tiles(rom, font_base + byte_off, 0x40))
         k += 1
     end
-    -- Center banner horizontally on 240px GBA screen (8px per glyph).
-    local x = math.max(0, (240 - k * 8) // 2)
-    return { x = x, y = 64, kind = 0, glyphs = gba.join(parts) }
+    local coords = at(rom, BANNER_COORDS) + 2 * id
+    local center_x = rom:u8(coords)
+    local y = rom:u8(coords + 1)
+    local x = math.max(0, center_x - k * 4)
+    local kind = 0
+    local number_at: { number }? = nil
+    if id == TURN_START_BANNER then
+        -- 0x080100AE: 1-digit at left + 0x3C - 4, 2-digit tens at left + 0x3C - 8 / ones at left + 0x3C.
+        kind = 1
+        number_at = { x + 0x3C - 8, y }
+    elseif id == ROUND_START_BANNER then
+        -- 0x080100B2: 1-digit at left + 0x50 - 4, 2-digit tens at left + 0x50 - 8 / ones at left + 0x50.
+        kind = 1
+        number_at = { x + 0x50 - 8, y }
+    elseif id == JUDGE_BANNER then
+        kind = JUDGE_KIND
+    end
+    return { x = x, y = y, kind = kind, glyphs = gba.join(parts), number_at = number_at }
 end
 
 function hud.pause(rom: Rom): Tiles
@@ -229,7 +284,11 @@ local function drawn(rom: Rom, h: Hud)
     h.enemy_palette = hud.palette(rom, at(rom, ENEMY_PALETTE))
     h.icon_palette = hud.palette(rom, at(rom, ICON_PALETTE))
     h.pause = hud.pause(rom)
-    h.banner_digits = gba.tiles(rom, at(rom, BANNER_DIGITS), 0x40 * 11)
+    -- EXE3's `BANNER_DIGITS` holds 10 glyphs (0..9); append a blank 8x16 glyph as index 10 for single-digit numbers.
+    h.banner_digits = gba.join({
+        gba.tiles(rom, at(rom, BANNER_DIGITS), 0x40 * 10),
+        gba.tiles(bytes.hex(string.rep("00", 0x40)), 0, 0x40),
+    })
     h.banner_palette = hud.palette(rom, at(rom, BANNER_PALETTE))
     local box_pal = hud.palette(rom, at(rom, CHATBOX_BG_PALETTE))
     local arrow_pal = hud.palette(rom, at(rom, CHATBOX_ARROW_PALETTE))
@@ -248,7 +307,7 @@ local function worded(rom: Rom, names: AssetNames, h: Hud)
     local cell, dialogue = names.glyphs or {}, names.dialogue_glyphs or {}
     h.font, h.font_chars = hud.font(rom, cell, dialogue)
     h.dialogue_font = hud.dialogue_font(rom, cell, dialogue)
-    h.texts = hud.texts(rom)
+    h.texts = hud.texts(h.font_chars :: { string })
     local banners: { BannerLayout } = {}
     for id = 0, BANNER_COUNT - 1 do
         table.insert(banners, hud.banner(rom, id))

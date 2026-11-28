@@ -1,5 +1,6 @@
 --!strict
--- EXE3's battle flow rules: no Final Turn / Damage Judge, no transformation sequencers, joypad custom request.
+-- EXE3's battle flow rules: Turn 15 Final Turn & Hit Damage Judge (0x08014CDC, 0x08006D70), no transformation
+-- sequencers, joypad custom request.
 
 return {
     result_words = 37,
@@ -12,5 +13,4 @@ return {
     sequencer_at_turn_start = false,
     custom_request = "joypads",
     fight_cycles = { 10, 2 },
-    final_turn = false,
 }
