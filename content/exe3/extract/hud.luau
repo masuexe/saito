@@ -122,10 +122,11 @@ local ROUND_START_BANNER = 12
 local JUDGE_KIND = 4
 
 -- Dimming-chip telops (`telops = "apart"`): 15 glyphs centered from x=0 (local) / x=120 (remote) at y=32,
--- using the HUD's battle damage digits (0..9, '+'), font '×'/'2', and the telop OBJ palette
--- (`0x086A5288` US White / `0x086A61A0` JP White, white/blue letters with dark outline and yellow digits).
+-- using the HUD's battle damage digits (0..9, '+'), font '×'/'2', and the telop OBJ palette loaded at `0x08010756`
+-- (`0x086AFAA8` US White / `0x086B0800` JP White = `HP_PALETTES[0]`: white letters with `#282828` dark charcoal
+-- drop shadow and yellow/amber damage digits).
 local TELOP_PLACES = { { 0, 32 }, { 120, 32 } }
-local TELOP_PALETTE = pointer(0x0801_0A20, 0x0801_0984)
+local TELOP_PALETTE = pointer(0x0801_078C, 0x0801_06FC)
 
 -- Chatbox tiles (9 tiles = 0x120 B, first tile 0x2B8), BG15 box/text palette (0x08681A5C: dark charcoal border/text,
 -- white interior, silver bevel), OBJ11 arrow palette (0x0868433C: green bounce arrow), 32x8 BG0 map (cols 0..29 visible),
