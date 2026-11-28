@@ -86,16 +86,11 @@ pub const EXE2_BGM_TRACKS: &[GbaBgmTrack] = &[
     GbaBgmTrack { key: "style-change", song_id: 0x01F, looping: true },
     GbaBgmTrack { key: "pressure", song_id: 0x022, looping: true },
     GbaBgmTrack { key: "credits", song_id: 0x025, looping: true },
-    // Reused BN1 tracks present in the BN2 ROM (omitted from Legacy Collection's EXE2 tab):
-    GbaBgmTrack { key: "school", song_id: 0x003, looping: true },
-    GbaBgmTrack { key: "indoors", song_id: 0x004, looping: true },
-    GbaBgmTrack { key: "winner", song_id: 0x01E, looping: true },
-    GbaBgmTrack { key: "loser", song_id: 0x020, looping: true },
-    GbaBgmTrack { key: "game-over", song_id: 0x021, looping: false },
 ];
 
-/// Complete EXE3 (BN3) GBA BGM catalog (`0x000..=0x013`, `0x015..=0x01C`, `0x01E..=0x025`),
-/// ordered per Legacy Collection Vol. 1.
+/// Complete EXE3 (BN3) GBA BGM catalog (30 tracks), ordered per Legacy Collection Vol. 1.
+/// Shared EXE1/EXE2 tracks (`school`, `indoors`, `winner`, `style-change`, `loser`, `game-over`)
+/// are kept once under their originating game (EXE1 / EXE2) to avoid duplicates.
 pub const EXE3_BGM_TRACKS: &[GbaBgmTrack] = &[
     GbaBgmTrack { key: "title-screen", song_id: 0x000, looping: true },
     GbaBgmTrack { key: "www-theme", song_id: 0x001, looping: true },
@@ -127,13 +122,6 @@ pub const EXE3_BGM_TRACKS: &[GbaBgmTrack] = &[
     GbaBgmTrack { key: "boss-prelude", song_id: 0x022, looping: true },
     GbaBgmTrack { key: "navi-customizer", song_id: 0x025, looping: true },
     GbaBgmTrack { key: "credits", song_id: 0x023, looping: true },
-    // Reused BN1/BN2 tracks present in the BN3 ROM (omitted from Legacy Collection's EXE3 tab):
-    GbaBgmTrack { key: "school", song_id: 0x003, looping: true },
-    GbaBgmTrack { key: "indoors", song_id: 0x004, looping: true },
-    GbaBgmTrack { key: "battle-net", song_id: 0x01E, looping: true },
-    GbaBgmTrack { key: "battle-win", song_id: 0x01F, looping: true },
-    GbaBgmTrack { key: "battle-boss", song_id: 0x020, looping: true },
-    GbaBgmTrack { key: "battle-lose", song_id: 0x021, looping: false },
 ];
 
 /// Complete EXE4 (BN4) GBA BGM catalog (`0x000..=0x021`), ordered per Legacy Collection.
@@ -273,6 +261,20 @@ pub fn gba_bgm_tracks(game: &str) -> &'static [GbaBgmTrack] {
 /// Look up one GBA BGM entry by `game` and `key`.
 pub fn gba_bgm_track(game: &str, key: &str) -> Option<GbaBgmTrack> {
     gba_bgm_tracks(game).iter().copied().find(|t| t.key == key)
+}
+
+/// Whether `(game, key)` is an official battle theme (used by the Music Library's
+/// "Favorite all battle themes" action).
+pub fn gba_bgm_is_battle_theme(game: &str, key: &str) -> bool {
+    match game {
+        "exe1" => matches!(key, "operation" | "net-battle" | "final-battle"),
+        "exe2" => matches!(key, "virus-battle" | "battle-spirit" | "final-battle"),
+        "exe3" => matches!(key, "netbattle-1" | "netbattle-2" | "final-battle" | "netbattle-3"),
+        "exe4" => matches!(key, "virus-battle" | "tournament-battle" | "boss-battle" | "final-battle"),
+        "exe5" => matches!(key, "virus-battle" | "boss-battle" | "final-battle"),
+        "exe6" => matches!(key, "virus-battle" | "boss-battle" | "crossover-battle" | "final-battle"),
+        _ => false,
+    }
 }
 
 /// Extract an optional audio-only GBA `m4a::SoundBank` for `game` (e.g. `"exe1"` or `"exe2"`)

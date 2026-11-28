@@ -506,9 +506,10 @@ impl Loaded {
         let game = self.game.name.as_str();
         let content_themes = self.game.content.battle_themes();
 
-        for entry in saito_extract::gba_bgm_tracks(game) {
+        let builtin = saito_extract::gba_bgm_tracks(game);
+        for entry in builtin {
             if let Some(song_data) = sound.bank.song(saito_audio::m4a::SongId(entry.song_id)) {
-                let is_battle_theme = content_themes.iter().any(|t| t == entry.key);
+                let is_battle_theme = saito_extract::gba_bgm_is_battle_theme(game, entry.key);
                 // Respect both catalog metadata and actual extracted sequence loop structure
                 // (custom/test banks without Goto still treat declared battle themes as looping).
                 let looping = entry.looping && (is_battle_theme || song_data.is_looping());
@@ -521,21 +522,19 @@ impl Loaded {
             }
         }
 
-        // Include any custom/extra battle themes defined in content's `music.toml`
-        // that aren't already in the built-in ROM catalog.
-        for theme_key in content_themes {
-            if out.iter().any(|t| !t.is_ds && t.song == *theme_key) {
-                continue;
-            }
-            if let Some(id) = self.game.index.number(saito_content_api::AssetKind::Sound, theme_key)
-                && sound.bank.song(saito_audio::m4a::SongId(id)).is_some()
-            {
-                out.push(CatalogTrack {
-                    song: theme_key.clone(),
-                    looping: true,
-                    is_ds: false,
-                    is_battle_theme: true,
-                });
+        // For games without a built-in ROM catalog, fall back to content's `music.toml` battle themes.
+        if builtin.is_empty() {
+            for theme_key in content_themes {
+                if let Some(id) = self.game.index.number(saito_content_api::AssetKind::Sound, theme_key)
+                    && sound.bank.song(saito_audio::m4a::SongId(id)).is_some()
+                {
+                    out.push(CatalogTrack {
+                        song: theme_key.clone(),
+                        looping: true,
+                        is_ds: false,
+                        is_battle_theme: true,
+                    });
+                }
             }
         }
 
@@ -570,7 +569,7 @@ impl Loaded {
         }
         if let Some(entry) = saito_extract::gba_bgm_track(&self.game.name, song) {
             let song_data = sound.bank.song(saito_audio::m4a::SongId(entry.song_id))?;
-            let is_battle_theme = self.game.content.battle_themes().iter().any(|t| t == entry.key);
+            let is_battle_theme = saito_extract::gba_bgm_is_battle_theme(&self.game.name, entry.key);
             let looping = entry.looping && (is_battle_theme || song_data.is_looping());
             return Some((saito_audio::Theme::m4a(sound.bank.clone(), entry.song_id), looping));
         }

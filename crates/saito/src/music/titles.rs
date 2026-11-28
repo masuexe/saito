@@ -109,12 +109,6 @@ fn exe2_title(song: &str, lang: &str) -> Option<&'static str> {
         "style-change" => pick(lang, "Style Change", "スタイルチェンジ", "型态转换", "스타일 체인지"),
         "pressure" => "Pressure",
         "credits" => "Peace Again",
-        // Reused BN1 tracks present in the BN2 ROM:
-        "school" => pick(lang, "School", "学校", "学校", "학교"),
-        "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
-        "winner" => "Winner!",
-        "loser" => "Loser",
-        "game-over" => "Game Over",
         _ => return None,
     })
 }
@@ -158,13 +152,6 @@ fn exe3_title(song: &str, lang: &str) -> Option<&'static str> {
         "boss-prelude" => pick(lang, "Showdown!", "対決!", "对决!", "대결!"),
         "navi-customizer" => pick(lang, "Navi Customizer", "ナビカスタマイザー", "领航员个人化装置", "내비 커스터마이저"),
         "credits" => "Farewell",
-        // Reused BN1/BN2 tracks present in the BN3 ROM:
-        "school" => pick(lang, "School", "学校", "学校", "학교"),
-        "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
-        "battle-net" => "Winner!",
-        "battle-win" => pick(lang, "Style Change", "スタイルチェンジ", "型态转换", "스타일 체인지"),
-        "battle-boss" => "Loser",
-        "battle-lose" => "Game Over",
         _ => return None,
     })
 }

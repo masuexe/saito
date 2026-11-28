@@ -191,22 +191,12 @@ pub struct CatalogEntry {
     pub is_battle_theme: bool,
 }
 
-/// Whether an audio-only extra game track (`exe1` / `exe2`) is a battle theme
-/// (included in "Favorite all battle themes").
-fn extra_is_battle_theme(game: &str, song: &str) -> bool {
-    match game {
-        "exe1" => matches!(song, "operation" | "net-battle" | "final-battle"),
-        "exe2" => matches!(song, "virus-battle" | "battle-spirit" | "final-battle"),
-        _ => false,
-    }
-}
-
 /// Resolve any track (including non-looping short jingles) from an optional audio-only bank (`exe1` / `exe2`).
 fn resolve_extra_preview(games: &Games, game: &str, song: &str) -> Option<(saito_audio::Theme, bool)> {
     let bank = games.extra_sound(game)?;
     let entry = saito_extract::gba_bgm_track(game, song)?;
     let song_data = bank.song(saito_audio::m4a::SongId(entry.song_id))?;
-    let is_battle = extra_is_battle_theme(game, entry.key);
+    let is_battle = saito_extract::gba_bgm_is_battle_theme(game, entry.key);
     let looping = entry.looping && (is_battle || song_data.is_looping());
     Some((saito_audio::Theme::m4a(bank.clone(), entry.song_id), looping))
 }
@@ -229,7 +219,7 @@ pub fn catalog(games: &Games) -> Vec<CatalogEntry> {
         let Some(bank) = games.extra_sound(game) else { continue };
         for entry in saito_extract::gba_bgm_tracks(game) {
             if let Some(song_data) = bank.song(saito_audio::m4a::SongId(entry.song_id)) {
-                let is_battle_theme = extra_is_battle_theme(game, entry.key);
+                let is_battle_theme = saito_extract::gba_bgm_is_battle_theme(game, entry.key);
                 let looping = entry.looping && (is_battle_theme || song_data.is_looping());
                 out.push(CatalogEntry {
                     key: track_key(game, entry.key),
@@ -963,10 +953,8 @@ mod tests {
         assert!(is_known_non_looping("exe1", "game-over"));
         assert!(!is_known_non_looping("exe1", "net-battle"));
         assert!(is_known_non_looping("exe2", "transmission"));
-        assert!(is_known_non_looping("exe2", "game-over"));
         assert!(!is_known_non_looping("exe2", "virus-battle"));
         assert!(is_known_non_looping("exe3", "transmission"));
-        assert!(is_known_non_looping("exe3", "battle-lose"));
         assert!(!is_known_non_looping("exe3", "blind-mode"));
         assert!(is_known_non_looping("exe4", "transmission"));
         assert!(is_known_non_looping("exe4", "game-over"));
@@ -977,6 +965,23 @@ mod tests {
         assert!(is_known_non_looping("exe6", "winner-1"));
         assert!(!is_known_non_looping("exe6", "acdc-town"));
         assert!(!is_known_non_looping("exe5", "ds-liberate"));
+
+        // Deduplicated Vol. 1 track counts and accurate EXE3 battle theme classification.
+        assert_eq!(saito_extract::gba_bgm_tracks("exe1").len(), 22);
+        assert_eq!(saito_extract::gba_bgm_tracks("exe2").len(), 33);
+        assert_eq!(saito_extract::gba_bgm_tracks("exe3").len(), 30);
+        let exe3_battles: Vec<&str> = saito_extract::gba_bgm_tracks("exe3")
+            .iter()
+            .filter(|t| saito_extract::gba_bgm_is_battle_theme("exe3", t.key))
+            .map(|t| t.key)
+            .collect();
+        assert_eq!(exe3_battles, ["netbattle-1", "netbattle-2", "final-battle", "netbattle-3"]);
+        assert!(!saito_extract::gba_bgm_is_battle_theme("exe3", "netbattle-4"));
+        assert!(saito_extract::gba_bgm_track("exe2", "school").is_none());
+        assert!(saito_extract::gba_bgm_track("exe2", "winner").is_none());
+        assert!(saito_extract::gba_bgm_track("exe3", "battle-net").is_none());
+        assert!(saito_extract::gba_bgm_track("exe3", "battle-win").is_none());
+        assert!(saito_extract::gba_bgm_track("exe3", "battle-boss").is_none());
 
         // Non-looping jingles are allowed in preview_track but rejected by theme() / resolve_menu_bgm().
         assert!(resolve_preview(&all, "exe6/winner-1").is_some());
@@ -1005,7 +1010,7 @@ mod tests {
         assert!(exe1_cat.iter().any(|e| e.song == "net-battle" && e.is_battle_theme && e.looping));
         assert!(exe1_cat.iter().any(|e| e.song == "transmission" && !e.looping));
         assert!(exe2_cat.iter().any(|e| e.song == "virus-battle" && e.is_battle_theme && e.looping));
-        assert!(exe2_cat.iter().any(|e| e.song == "game-over" && !e.looping));
+        assert!(exe2_cat.iter().any(|e| e.song == "transmission" && !e.looping));
         assert!(resolve_preview(&with_extra, "exe1/transmission").is_some_and(|(_, l)| !l));
         assert!(resolve_menu_bgm(&with_extra, "exe1/transmission").is_none());
         assert!(resolve_menu_bgm(&with_extra, "exe1/net-battle").is_some());
@@ -1063,7 +1068,6 @@ mod tests {
         assert_eq!(saito_extract::gba_bgm_track("exe2", "style-change").unwrap().song_id, 0x01F);
         assert_eq!(track_title("exe2", "pressure"), "Pressure");
         assert_eq!(track_title("exe2", "credits"), "Peace Again");
-        assert_eq!(track_title("exe3", "battle-win"), "型态转换");
         assert_eq!(track_title("exe3", "title-screen"), "Theme of ROCKMAN EXE 3");
         assert_eq!(track_title("exe3", "www-theme"), "WWW");
         assert_eq!(track_title("exe3", "acdc-town"), "Hometown");
