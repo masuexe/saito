@@ -1,10 +1,10 @@
-//! Complete GBA BGM track catalogs for EXE4, EXE5, and EXE6 (`S-135`).
+//! Complete GBA BGM track catalogs for EXE3, EXE4, EXE5, and EXE6 (`S-135`).
 //!
 //! Every track in each ROM's M4A music player (`PlayerId(31)`) is extracted into
 //! `m4a::SoundBank` when the game loads. Entries are ordered to match the
 //! official *Mega Man Battle Network Legacy Collection* (ROCKMAN EXE 合集)
-//! Music Player tracklist, with ROM-only extras (short fanfare variants, BN4's
-//! unused alternate battle track, and BN6's Boktai crossover track) appended at
+//! Music Player tracklist, with ROM-only extras (reused earlier-game tracks,
+//! short fanfare variants, and BN4's unused alternate battle track) appended at
 //! the end of each game's list.
 
 /// One GBA ROM BGM entry.
@@ -14,6 +14,48 @@ pub struct GbaBgmTrack {
     pub song_id: u16,
     pub looping: bool,
 }
+
+/// Complete EXE3 (BN3) GBA BGM catalog (`0x000..=0x013`, `0x015..=0x01C`, `0x01E..=0x025`),
+/// ordered per Legacy Collection Vol. 1.
+pub const EXE3_BGM_TRACKS: &[GbaBgmTrack] = &[
+    GbaBgmTrack { key: "title-screen", song_id: 0x000, looping: true },
+    GbaBgmTrack { key: "www-theme", song_id: 0x001, looping: true },
+    GbaBgmTrack { key: "acdc-town", song_id: 0x002, looping: true },
+    GbaBgmTrack { key: "netbattle-4", song_id: 0x005, looping: true },
+    GbaBgmTrack { key: "yoka", song_id: 0x006, looping: true },
+    GbaBgmTrack { key: "beach-street", song_id: 0x007, looping: true },
+    GbaBgmTrack { key: "scilab", song_id: 0x008, looping: true },
+    GbaBgmTrack { key: "tv-station", song_id: 0x009, looping: true },
+    GbaBgmTrack { key: "n1-grand-prix", song_id: 0x00A, looping: true },
+    GbaBgmTrack { key: "hades-isle", song_id: 0x00B, looping: true },
+    GbaBgmTrack { key: "wily-lab", song_id: 0x024, looping: true },
+    GbaBgmTrack { key: "suspicious-mood", song_id: 0x00C, looping: true },
+    GbaBgmTrack { key: "event-occurance", song_id: 0x00D, looping: true },
+    GbaBgmTrack { key: "wipe-your-tears", song_id: 0x00E, looping: true },
+    GbaBgmTrack { key: "proof-of-courage", song_id: 0x00F, looping: true },
+    GbaBgmTrack { key: "transmission", song_id: 0x010, looping: false },
+    GbaBgmTrack { key: "blind-mode", song_id: 0x011, looping: true },
+    GbaBgmTrack { key: "maze-of-wildness", song_id: 0x012, looping: true },
+    GbaBgmTrack { key: "save-a-life", song_id: 0x013, looping: true },
+    GbaBgmTrack { key: "final-transmission", song_id: 0x015, looping: true },
+    GbaBgmTrack { key: "network", song_id: 0x016, looping: true },
+    GbaBgmTrack { key: "undernet", song_id: 0x017, looping: true },
+    GbaBgmTrack { key: "secret-area", song_id: 0x018, looping: true },
+    GbaBgmTrack { key: "netbattle-1", song_id: 0x019, looping: true },
+    GbaBgmTrack { key: "netbattle-2", song_id: 0x01A, looping: true },
+    GbaBgmTrack { key: "final-battle", song_id: 0x01B, looping: true },
+    GbaBgmTrack { key: "netbattle-3", song_id: 0x01C, looping: true },
+    GbaBgmTrack { key: "boss-prelude", song_id: 0x022, looping: true },
+    GbaBgmTrack { key: "navi-customizer", song_id: 0x025, looping: true },
+    GbaBgmTrack { key: "credits", song_id: 0x023, looping: true },
+    // Reused BN1/BN2 tracks present in the BN3 ROM (omitted from Legacy Collection's EXE3 tab):
+    GbaBgmTrack { key: "school", song_id: 0x003, looping: true },
+    GbaBgmTrack { key: "indoors", song_id: 0x004, looping: true },
+    GbaBgmTrack { key: "battle-net", song_id: 0x01E, looping: true },
+    GbaBgmTrack { key: "battle-win", song_id: 0x01F, looping: true },
+    GbaBgmTrack { key: "battle-boss", song_id: 0x020, looping: true },
+    GbaBgmTrack { key: "battle-lose", song_id: 0x021, looping: false },
+];
 
 /// Complete EXE4 (BN4) GBA BGM catalog (`0x000..=0x021`), ordered per Legacy Collection.
 pub const EXE4_BGM_TRACKS: &[GbaBgmTrack] = &[
@@ -136,9 +178,10 @@ pub const EXE6_BGM_TRACKS: &[GbaBgmTrack] = &[
     GbaBgmTrack { key: "winner-1", song_id: 0x01F, looping: false },
 ];
 
-/// Built-in GBA BGM catalog for `game` (`"exe4"`, `"exe5"`, `"exe6"`).
+/// Built-in GBA BGM catalog for `game` (`"exe3"`, `"exe4"`, `"exe5"`, `"exe6"`).
 pub fn gba_bgm_tracks(game: &str) -> &'static [GbaBgmTrack] {
     match game {
+        "exe3" => EXE3_BGM_TRACKS,
         "exe4" => EXE4_BGM_TRACKS,
         "exe5" => EXE5_BGM_TRACKS,
         "exe6" => EXE6_BGM_TRACKS,

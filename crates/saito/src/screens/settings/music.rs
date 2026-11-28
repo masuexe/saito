@@ -21,6 +21,7 @@ enum Filter {
     #[default]
     All,
     Favorites,
+    Exe3,
     Exe4,
     Exe5,
     Exe5Ds,
@@ -28,9 +29,10 @@ enum Filter {
 }
 
 impl Filter {
-    const ALL: [Filter; 6] = [
+    const ALL: [Filter; 7] = [
         Filter::All,
         Filter::Favorites,
+        Filter::Exe3,
         Filter::Exe4,
         Filter::Exe5,
         Filter::Exe5Ds,
@@ -49,6 +51,7 @@ impl Filter {
         match self {
             Filter::All => true,
             Filter::Favorites => shell.settings.is_favorite_music(&entry.key),
+            Filter::Exe3 => entry.game == "exe3" && !entry.is_ds,
             Filter::Exe4 => entry.game == "exe4" && !entry.is_ds,
             Filter::Exe5 => entry.game == "exe5" && !entry.is_ds,
             Filter::Exe5Ds => entry.game == "exe5" && entry.is_ds,
@@ -110,6 +113,7 @@ impl MusicLibrary {
                 let label = match f {
                     Filter::All => format!("{tab_all} ({n})"),
                     Filter::Favorites => format!("★ {tab_fav} ({n})"),
+                    Filter::Exe3 => format!("{} ({n})", music::game_badge("exe3", false)),
                     Filter::Exe4 => format!("{} ({n})", music::game_badge("exe4", false)),
                     Filter::Exe5 => format!("{} ({n})", music::game_badge("exe5", false)),
                     Filter::Exe5Ds => format!("{} ({n})", music::game_badge("exe5", true)),

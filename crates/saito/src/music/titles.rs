@@ -1,9 +1,9 @@
 //! Official *Mega Man Battle Network Legacy Collection* (ROCKMAN EXE 合集)
-//! Music Player localized BGM titles for EXE4, EXE5, EXE5DS, and EXE6 (`S-135`).
+//! Music Player localized BGM titles for EXE3, EXE4, EXE5, EXE5DS, and EXE6 (`S-135`).
 //!
 //! Simplified Chinese (`zh-Hans`) titles and track ordering match the official
-//! Legacy Collection Vol. 2 Music Player screenshots verbatim (including
-//! untranslated English titles such as `Theme of ROCKMAN EXE 4`, `Hometown`,
+//! Legacy Collection Music Player screenshots verbatim (including untranslated
+//! English titles such as `Theme of ROCKMAN EXE 3`, `Hometown`, `Blind Mode`,
 //! `Invisible Wing`, `Heel's Parade`, `Castle of Ninja!`, `Battle Field`, etc.).
 
 /// Localized display title for a single track (without the game prefix), or `None` for custom/unknown keys.
@@ -12,6 +12,7 @@ pub fn track_title(game: &str, song: &str, lang: &str) -> Option<&'static str> {
         return ds_title(ds_base, lang);
     }
     match game {
+        "exe3" => exe3_title(song, lang),
         "exe4" => exe4_title(song, lang),
         "exe5" => exe5_title(song, lang),
         "exe6" => exe6_title(song, lang),
@@ -26,6 +27,56 @@ fn pick<'a>(lang: &str, en: &'a str, ja: &'a str, zh: &'a str, ko: &'a str) -> &
         "ko" => ko,
         _ => en,
     }
+}
+
+fn exe3_title(song: &str, lang: &str) -> Option<&'static str> {
+    Some(match song {
+        // Legacy Collection Vol. 1 — Rockman EXE 3 track order:
+        "title-screen" => pick(
+            lang,
+            "Theme of MEGA MAN BATTLE NETWORK 3",
+            "Theme of ROCKMAN EXE 3",
+            "Theme of ROCKMAN EXE 3",
+            "Theme of ROCKMAN EXE 3",
+        ),
+        "www-theme" => pick(lang, "WWW's Theme", "WWWのテーマ", "WWW", "WWW의 테마"),
+        "acdc-town" => pick(lang, "Hometown", "ホームタウン", "Hometown", "홈타운"),
+        "netbattle-4" => pick(lang, "Tree of Life", "命の木", "生命之树", "생명의 나무"),
+        "yoka" => pick(lang, "Yoka", "よかよか村", "余余村", "요카요카 마을"),
+        "beach-street" => pick(lang, "Sea Breeze Town", "潮風の街", "海风街区", "바닷바람 거리"),
+        "scilab" => pick(lang, "Scientific Forefront", "科学最前線", "科学最前线", "과학 최전선"),
+        "tv-station" => pick(lang, "TV Station", "テレビ局", "电视台", "방송국"),
+        "n1-grand-prix" => pick(lang, "N1 Grand Prix!", "N1グランプリ!", "N1大赛!", "N1 그랑프리!"),
+        "hades-isle" => pick(lang, "Hell Island", "地獄島", "地狱岛", "지옥섬"),
+        "wily-lab" => pick(lang, "Wily Lab", "ワイリー研究所", "威利研究所", "와일리 연구소"),
+        "suspicious-mood" => pick(lang, "Suspicious Mood?", "あやしいムード?", "诡异的气氛?", "수상한 분위기?"),
+        "event-occurance" => pick(lang, "Incident Occurrence!", "事件発生!", "事件发生!", "사건 발생!"),
+        "wipe-your-tears" => pick(lang, "Wipe Your Tears", "涙をふいて", "抹去泪水", "눈물을 닦고"),
+        "proof-of-courage" => pick(lang, "Proof of Courage", "勇気の証", "勇气之证", "용기의 증표"),
+        "transmission" => pick(lang, "Transmission!", "トランスミッション!", "程序传输!", "트랜스미션!"),
+        "blind-mode" => "Blind Mode",
+        "maze-of-wildness" => "Maze of Wildness",
+        "save-a-life" => "Save a Life",
+        "final-transmission" => "Final Transmission",
+        "network" => "Network is Spreading",
+        "undernet" => "Dangerous Black",
+        "secret-area" => "Shine in the Dark",
+        "netbattle-1" => pick(lang, "Shooting Enemy", "シューティングエネミー", "迎击敌人", "슈팅 에너미"),
+        "netbattle-2" => pick(lang, "Boss Battle!", "ボスバトル!", "头目对决!", "보스 배틀!"),
+        "final-battle" => pick(lang, "VS. Alpha", "VS.プロト", "原型之役", "VS. 프로토"),
+        "netbattle-3" => pick(lang, "Great Battlers", "グレイトバトラーズ", "大显身手", "그레이트 배틀러즈"),
+        "boss-prelude" => pick(lang, "Showdown!", "対決!", "对决!", "대결!"),
+        "navi-customizer" => pick(lang, "Navi Customizer", "ナビカスタマイザー", "领航员个人化装置", "내비 커스터마이저"),
+        "credits" => "Farewell",
+        // Reused BN1/BN2 tracks present in the BN3 ROM:
+        "school" => pick(lang, "School", "学校", "学校", "학교"),
+        "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
+        "battle-net" => "Enemy Deleted!",
+        "battle-win" => "WINNER!",
+        "battle-boss" => "Loser",
+        "battle-lose" => "Game Over",
+        _ => return None,
+    })
 }
 
 fn exe4_title(song: &str, lang: &str) -> Option<&'static str> {

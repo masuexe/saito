@@ -901,6 +901,9 @@ mod tests {
     fn full_catalog_loop_filtering_and_favorite_rotation() {
         let all = games(&["exe4", "exe5", "exe6"]);
         // Verify non-looping jingle classification across all games.
+        assert!(is_known_non_looping("exe3", "transmission"));
+        assert!(is_known_non_looping("exe3", "battle-lose"));
+        assert!(!is_known_non_looping("exe3", "blind-mode"));
         assert!(is_known_non_looping("exe4", "transmission"));
         assert!(is_known_non_looping("exe4", "game-over"));
         assert!(is_known_non_looping("exe4", "winner"));
@@ -916,10 +919,10 @@ mod tests {
         assert!(resolve_menu_bgm(&all, "exe6/winner-1").is_none());
 
         // Localized Legacy Collection track titles exist for every catalog track in all four languages,
-        // preserving untranslated English titles (e.g. Theme of ROCKMAN EXE4, Invisible Wing, Battle Field).
+        // preserving untranslated English titles (e.g. Theme of ROCKMAN EXE 3/4, Blind Mode, Invisible Wing, Battle Field).
         for lang in ["en", "ja", "zh-Hans", "ko"] {
-            crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], lang);
-            for game in ["exe4", "exe5", "exe6"] {
+            crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], lang);
+            for game in ["exe3", "exe4", "exe5", "exe6"] {
                 for track in saito_extract::gba_bgm_tracks(game) {
                     let title = track_title(game, track.key);
                     assert!(!title.is_empty(), "{lang} {game}/{} empty", track.key);
@@ -932,7 +935,14 @@ mod tests {
                 assert_ne!(title, track.key, "{lang} exe5/{} fell back to raw key", track.key);
             }
         }
-        crate::shell::Shell::read_game_names(&["exe4", "exe5", "exe6"], "zh-Hans");
+        crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], "zh-Hans");
+        assert_eq!(track_title("exe3", "title-screen"), "Theme of ROCKMAN EXE 3");
+        assert_eq!(track_title("exe3", "www-theme"), "WWW");
+        assert_eq!(track_title("exe3", "acdc-town"), "Hometown");
+        assert_eq!(track_title("exe3", "blind-mode"), "Blind Mode");
+        assert_eq!(track_title("exe3", "netbattle-1"), "迎击敌人");
+        assert_eq!(track_title("exe3", "final-battle"), "原型之役");
+        assert_eq!(track_title("exe3", "credits"), "Farewell");
         assert_eq!(track_title("exe4", "title-screen"), "Theme of ROCKMAN EXE 4");
         assert_eq!(track_title("exe4", "acdc-town"), "Hometown");
         assert_eq!(track_title("exe4", "elec-tower-comp"), "Invisible Wing");
