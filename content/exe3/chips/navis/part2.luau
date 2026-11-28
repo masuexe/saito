@@ -13,7 +13,7 @@ local statuses = require("../../rules/status")
 type StepState = { step: number, count: number }
 
 -- =============================================================================
--- 10. DesrtMan (V1-V5): Summons sand pillars/fists striking enemy rows!
+-- 10. DesrtMan (V1-V5): Appears (08-03) and summons sand pillars/fists!
 -- =============================================================================
 local DESRTMAN_KIND = new.kind {
     id = "navis/desrtman-controller",
@@ -24,12 +24,15 @@ local DESRTMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.DESRTMAN_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 10 == 4 and s.step < 3 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 2)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 10 == 0 and s.step < 3 then
                 s.step += 1
                 local col = h.enemy_front_col(me.alliance)
                 local row = s.step
@@ -54,16 +57,17 @@ local DESRTMAN_KIND = new.kind {
                 battle.play_sound(h.THROW_SOUND)
                 battle.shake_camera(2, 8)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 42 then
-                dimming_chips.done(me)
+            if me.timer >= 52 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 11. FlamMan (V1-V5): 3-row Fire flame sweep!
+-- 11. FlamMan (V1-V5): Appears (08-05) and sweeps 3-row Fire flames!
 -- =============================================================================
 local FLAMMAN_KIND = new.kind {
     id = "navis/flamman-controller",
@@ -74,12 +78,15 @@ local FLAMMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.FLAMMAN_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 8 == 4 and s.step < 3 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 5)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 8 == 0 and s.step < 3 then
                 s.step += 1
                 local start_x = if me.alliance == 0 then 1 else 6
                 local row = s.step
@@ -99,16 +106,17 @@ local FLAMMAN_KIND = new.kind {
                 battle.region_effects(start_x, row, regions.row, me.alliance, h.FIRE_FX, 0x10_0000)
                 battle.play_sound(h.BLAST_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 38 then
-                dimming_chips.done(me)
+            if me.timer >= 48 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 12. DrillMan (V1-V5): 3-row breaking drill pierce across enemy area!
+-- 12. DrillMan (V1-V5): Appears (08-06) and pierces enemy rows with drills!
 -- =============================================================================
 local DRILLMAN_KIND = new.kind {
     id = "navis/drillman-controller",
@@ -119,12 +127,15 @@ local DRILLMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.DRILLMAN_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 6 == 2 and s.step < 6 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 2)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 6 == 0 and s.step < 6 then
                 local x = if me.alliance == 0 then (1 + s.step) else (6 - s.step)
                 s.step += 1
                 if field.valid(x, 2) then
@@ -145,16 +156,17 @@ local DRILLMAN_KIND = new.kind {
                     battle.play_sound(h.CRACK_SHOT_SOUND)
                 end
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 46 then
-                dimming_chips.done(me)
+            if me.timer >= 56 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 13. MetalMan (V1-V5): Breaking MetalFist smashing panel 2 ahead & cracking!
+-- 13. MetalMan (V1-V5): Appears (08-0a), smashes MetalFist 2 panels ahead!
 -- =============================================================================
 local METALMAN_KIND = new.kind {
     id = "navis/metalman-controller",
@@ -163,11 +175,13 @@ local METALMAN_KIND = new.kind {
         name = "MetalMan",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.METALMAN_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 14 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 4)
+            elseif me.timer == 18 then
                 local tx = me.panel_x + me.facing * 2
                 local ty = me.panel_y
                 if not field.valid(tx, ty) then
@@ -195,16 +209,17 @@ local METALMAN_KIND = new.kind {
                 battle.play_sound(h.CRACK_SOUND)
                 battle.shake_camera(3, 14)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 36 then
-                dimming_chips.done(me)
+            if me.timer >= 44 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 14. KingMan (V1-V5): Checkmate leap striking center/target + surrounding panels!
+-- 14. KingMan (V1-V5): Appears (08-0c), leaps for Checkmate slam!
 -- =============================================================================
 local KINGMAN_KIND = new.kind {
     id = "navis/kingman-controller",
@@ -213,11 +228,13 @@ local KINGMAN_KIND = new.kind {
         name = "KingMan",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.KINGMAN_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 14 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 4)
+            elseif me.timer == 18 then
                 local tx, ty = h.enemy_target(me.alliance)
                 h.dim_hitbox(me, {
                     panel_x = tx,
@@ -237,16 +254,17 @@ local KINGMAN_KIND = new.kind {
                 battle.play_sound(h.BLAST_SOUND)
                 battle.shake_camera(3, 14)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 38 then
-                dimming_chips.done(me)
+            if me.timer >= 46 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 15. DarkMan (V1-V5): Dark bat swarm inflicting random status (blind/confuse/paralyze)!
+-- 15. DarkMan (V1-V5): Appears (08-0f) and releases dark bat swarm!
 -- =============================================================================
 local DARK_STATUSES = { statuses.blind, statuses.confuse, statuses.paralyze }
 local DARK_FXS = { h.BLIND_FX, h.CONFUSE_FX, h.ELEC_FX }
@@ -260,12 +278,15 @@ local DARKMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.DARKMAN_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 7 == 3 and s.step < s.count then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 1)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 7 == 0 and s.step < s.count then
                 s.step += 1
                 local tx, ty = h.enemy_target(me.alliance)
                 local pick = (battle.rng_positive() % 3) + 1
@@ -288,9 +309,10 @@ local DARKMAN_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), DARK_FXS[pick])
                 battle.play_sound(if last then h.CONFUSE_SOUND else h.BURST_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= s.count * 7 + 14 then
-                dimming_chips.done(me)
+            if me.timer >= s.count * 7 + 26 then
+                h.end_navi(me)
             end
         end,
     },
@@ -307,7 +329,7 @@ local function darkman_hook(bats: number): (user: Object, spec: DimmingChipSpec)
 end
 
 -- =============================================================================
--- 16. JapanMan (V1-V5): Multi-hit spear thrust across target!
+-- 16. JapanMan (V1-V5): Appears (08-10), steps ahead of target for spear flurry!
 -- =============================================================================
 local JAPANMAN_KIND = new.kind {
     id = "navis/japanman-controller",
@@ -318,12 +340,20 @@ local JAPANMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.JAPANMAN_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 5 == 2 and s.step < s.count then
+            if me.timer == 10 then
+                local tx, ty = h.enemy_target(me.alliance)
+                local stand_x = tx - me.facing
+                if field.valid(stand_x, ty) then
+                    h.move_navi(me, stand_x, ty)
+                end
+                h.set_navi_anim(me, 5)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 5 == 0 and s.step < s.count then
                 s.step += 1
                 local tx, ty = h.enemy_target(me.alliance)
                 local last = s.step == s.count
@@ -341,12 +371,13 @@ local JAPANMAN_KIND = new.kind {
                     hit_mod = if last then 3 else 1,
                 })
                 local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), if last then h.BIG_SLASH_FX else h.SLASH_FX, me.alliance)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), h.SLASH_FX, me.alliance)
                 battle.play_sound(if last then h.SWING_SOUND else h.SWORD_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= s.count * 5 + 14 then
-                dimming_chips.done(me)
+            if me.timer >= s.count * 5 + 26 then
+                h.end_navi(me)
             end
         end,
     },
@@ -363,7 +394,7 @@ local function japanman_hook(thrusts: number): (user: Object, spec: DimmingChipS
 end
 
 -- =============================================================================
--- 17. Punk (0x110): High-speed rolling wheel smash!
+-- 17. Punk (0x110): Appears (08-0b), curls into spike wheel (anim 7) & rolls!
 -- =============================================================================
 local PUNK_KIND = new.kind {
     id = "navis/punk-controller",
@@ -374,16 +405,22 @@ local PUNK_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: StepState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.PUNK_SPRITE, 0)
                 me.timer = 0
                 s.step = 0
                 me.phase_init = 4
             end
-            if me.timer % 4 == 2 and s.step < 6 then
+            if me.timer == 8 then
+                h.set_navi_anim(me, 4)
+            elseif me.timer == 14 then
+                h.set_navi_anim(me, 7)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 4 == 0 and s.step < 6 then
                 local x = if me.alliance == 0 then (1 + s.step) else (6 - s.step)
                 s.step += 1
                 local _, ty = h.enemy_target(me.alliance)
                 if field.valid(x, ty) then
+                    h.move_navi(me, x, ty)
                     h.dim_hitbox(me, {
                         panel_x = x,
                         panel_y = ty,
@@ -402,9 +439,10 @@ local PUNK_KIND = new.kind {
                     battle.play_sound(h.CANNON_SOUND)
                 end
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 36 then
-                dimming_chips.done(me)
+            if me.timer >= 46 then
+                h.end_navi(me)
             end
         end,
     },

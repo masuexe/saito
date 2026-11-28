@@ -7,6 +7,24 @@ local helpers = {}
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
 
+helpers.FLASHMAN_SPRITE = asset.sprite("flashman")
+helpers.BEASTMAN_SPRITE = asset.sprite("beastman")
+helpers.BUBBLMAN_SPRITE = asset.sprite("bubble-wrap")
+helpers.DESRTMAN_SPRITE = asset.sprite("desrtman")
+helpers.PLANTMAN_SPRITE = asset.sprite("plantman")
+helpers.FLAMMAN_SPRITE = asset.sprite("flamman")
+helpers.DRILLMAN_SPRITE = asset.sprite("drillman")
+helpers.GUTSMAN_SPRITE = asset.sprite("gutsman")
+helpers.PROTOMAN_SPRITE = asset.sprite("protoman")
+helpers.METALMAN_SPRITE = asset.sprite("metalman")
+helpers.PUNK_SPRITE = asset.sprite("punk")
+helpers.KINGMAN_SPRITE = asset.sprite("kingman")
+helpers.MISTMAN_SPRITE = asset.sprite("mistman")
+helpers.BOWLMAN_SPRITE = asset.sprite("bowlman")
+helpers.DARKMAN_SPRITE = asset.sprite("darkman")
+helpers.JAPANMAN_SPRITE = asset.sprite("japanman")
+helpers.ROLL_SPRITE = asset.sprite("roll")
+
 helpers.FIRE_FX = new.effect { sprite = HIT_SPARKS, anim = 2, palette = 0, steps = 16 }
 helpers.AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 14 }
 helpers.ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 14 }
@@ -15,6 +33,7 @@ helpers.HEAVY_FX = new.effect { sprite = HIT_SPARKS, anim = 8, palette = 0, step
 helpers.BREAK_FX = new.effect { sprite = HIT_SPARKS, anim = 1, palette = 0, steps = 12 }
 helpers.SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 helpers.BIG_SLASH_FX = new.effect { sprite = asset.sprite("big-slash"), anim = 0, palette = 0, steps = 15 }
+helpers.BEAST_CLAW_FX = new.effect { sprite = helpers.BEASTMAN_SPRITE, anim = 10, palette = 0, steps = 13 }
 helpers.BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
 helpers.IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 18 }
 helpers.BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 14 }
@@ -28,6 +47,7 @@ helpers.CONFUSE_FX = new.effect { sprite = asset.sprite("confusion"), anim = 0, 
 helpers.BLIND_FX = new.effect { sprite = asset.sprite("blindness"), anim = 0, palette = 0, steps = 16 }
 
 helpers.APPEAR_SOUND = asset.sound("appear")
+helpers.FLASHMAN_FLASH_SOUND = asset.sound("flashman-flash")
 helpers.SWING_SOUND = asset.sound("big-sword-swing")
 helpers.SWORD_SOUND = asset.sound("sword-swing")
 helpers.BLAST_SOUND = asset.sound("hit-bomb")
@@ -48,6 +68,51 @@ function helpers.dim_hitbox(owner: Object, spec: HitboxSpec)
     if box then
         box.run_while_dimmed = true
     end
+end
+
+-- Hide the user's MegaMan and materialize the summoned Navi sprite on their panel.
+function helpers.begin_navi(me: Object, sprite: SpriteAsset, anim: number?, face_right_in_rom: boolean?)
+    local user = me.related1 or battle.player(me.alliance)
+    if user then
+        dimming.hide_user(user)
+        me.panel_x, me.panel_y = user.panel_x, user.panel_y
+    end
+    local s = me.sprite
+    s:load(sprite)
+    s.shadow = "hidden"
+    s.palette = 0
+    s:set_flip(if face_right_in_rom then me.alliance else bit32.bxor(me.alliance, 1))
+    me:set_coordinates_from_panel()
+    me.pos = Vec3.new(me.pos.x, me.pos.y, 0)
+    me.visible = true
+    me.anim = anim or 0
+    me.anim_loaded = 0xFF
+    battle.play_sound(helpers.APPEAR_SOUND)
+end
+
+-- Reposition the summoned Navi to panel (px, py) on the ground.
+function helpers.move_navi(me: Object, px: number, py: number)
+    if field.valid(px, py) then
+        me.panel_x, me.panel_y = px, py
+        me:set_coordinates_from_panel()
+        me.pos = Vec3.new(me.pos.x, me.pos.y, 0)
+    end
+end
+
+-- Switch the summoned Navi's animation cleanly.
+function helpers.set_navi_anim(me: Object, anim: number)
+    me.anim = anim
+    me.anim_loaded = 0xFF
+end
+
+-- Dismiss the summoned Navi, restore the user's MegaMan, and finish dimming.
+function helpers.end_navi(me: Object)
+    me.visible = false
+    local user = me.related1 or battle.player(me.alliance)
+    if user then
+        dimming.show_user(user)
+    end
+    dimming_chips.done(me)
 end
 
 function helpers.enemy_target(side: number): (number, number)

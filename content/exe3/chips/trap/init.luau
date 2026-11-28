@@ -16,6 +16,7 @@ local sparks = require("../lib/sparks")
 local BOMB_SPRITE = asset.sprite("bomb")
 local BLKBOMB_SPRITE = asset.sprite("black-bomb")
 local CUBE_SPRITE = asset.sprite("rockcube")
+local CHESS_SPRITE = asset.sprite("chess")
 local SHIELD_SPRITE = asset.sprite("reflector-shield")
 local HIT_SPARKS = asset.sprite("hit-sparks")
 local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
@@ -149,8 +150,9 @@ local TIMEBOMB_CTRL = new.kind {
                 me.timer = 18
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -248,8 +250,9 @@ local MINE_CTRL = new.kind {
                 me.timer = 18
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -475,29 +478,123 @@ local PRISM_ACTION = new.action {
 }
 
 -- =============================================================================
--- 5. Chess pieces: Rook (durable obstacle), Pawn (slashes ahead), Knight (leaps!)
+-- 5. Chess pieces: Rook (500-HP castle obstacle, 10-3d anim 4), Pawn (10-3d anim 0/2), Knight
+--    Verified against A6BE 0x080E51BC / 0x080E51F4: sprite 10-3d, flip = alliance ^ 1.
 -- =============================================================================
 local ROOK_DEBRIS = common_debris.make_kind("trap/rook-debris", asset.sprite("dust"), DUST_FX)
-local ROOK_ROCK = common_rock.make {
+local SOLID_PANEL, OCCUPIED_PANEL = 0x10, 0x0F880080
+
+local ROOK_KIND: Kind
+local function rook_destroy(me: Object)
+    if me.has_collision then
+        me.collision:set_region(nil)
+    end
+    me:unreserve_panel(me.future_panel_x, me.future_panel_y)
+    obstacle.unregister(me)
+    local p = me.pos
+    if me.hp == 0 then
+        for _ = 1, 2 do
+            common_debris.spawn(ROOK_DEBRIS, battle.jitter(0xF, p), 0)
+        end
+        battle.effect(Vec3.new(p.x, p.y, p.z + 0x10_0000), DUST_FX)
+        battle.play_sound(CRACK_SOUND)
+    else
+        battle.effect(Vec3.new(p.x, p.y, p.z + 0xC_0000), PUFF_FX)
+    end
+    me.visible = false
+    me:set_lifecycle("destroy")
+end
+
+local ROOK_ACTIONS: { [number]: (Object) -> () } = {
+    [0] = function(me: Object)
+        if not field.check(me.panel_x, me.panel_y, SOLID_PANEL, OCCUPIED_PANEL) then
+            me:set_action(2)
+            return
+        end
+        me.anim = 4
+        me.collision:set_region(regions.single)
+        me:set_action(obstacle.action_byte(me, 8))
+    end,
+    [1] = obstacle.return_to_idle,
+    [2] = rook_destroy,
+    [3] = obstacle.flinch,
+    [4] = obstacle.paralyzed,
+    [5] = obstacle.slide,
+    [6] = obstacle.frozen,
+    [7] = obstacle.bubbled,
+    [8] = function(_me: Object) end,
+}
+
+ROOK_KIND = new.kind {
     id = "trap/rook-obstacle",
-    sprite = CUBE_SPRITE,
-    reloads_anim = false,
-    debris = ROOK_DEBRIS,
-    effects = { puff = PUFF_FX, dust = DUST_FX },
-    spark = sparks.guard,
-    is = collision.navi,
-    hits = collision.navi_target,
-    leaves_by_hp = true,
-    crush = "destroys",
+    pool = "attack",
+    update = function(me: Object)
+        local l = me.lifecycle
+        if l == "init" then
+            if battle.over() or not field.valid(me.panel_x, me.panel_y) then
+                obstacle.unregister(me)
+                me:free()
+                return
+            end
+            me.visible = true
+            local sprite = me.sprite
+            sprite:load(CHESS_SPRITE)
+            sprite.shadow = "hidden"
+            me.anim = 4
+            me.anim_loaded = 4
+            sprite:set_animation(4)
+            sprite:set_flip(bit32.bxor(me.alliance, 1))
+            sprite:step()
+            me:set_coordinates_from_panel()
+            me.pos = Vec3.new(me.pos.x, me.pos.y, 0)
+            me.future_panel_x, me.future_panel_y = me.panel_x, me.panel_y
+            me.element = 0
+            me.hp, me.max_hp = 500, 500
+            me.timer = 1800
+            if not me:create_collision() then
+                obstacle.unregister(me)
+                me:free()
+                return
+            end
+            me:setup_collision(collision.navi, collision.navi_target, 3)
+            me.collision:set_hit_effect(sparks.guard)
+            me.collision:set_region(nil)
+            me.collision:present()
+            me.lifecycle = "update"
+            me:update_sprite()
+        elseif l == "update" then
+            me.visible = true
+            obstacle.take_hits(me)
+            me:hit_spark()
+            obstacle.tick_lifetime(me)
+            local a = obstacle.react(me, "destroys")
+            if a then
+                local fn = ROOK_ACTIONS[a]
+                if fn then
+                    fn(me)
+                end
+            end
+            me:update_sprite()
+            if me.has_collision then
+                me.collision:present()
+            end
+        else
+            me:destroy()
+        end
+    end,
 }
-local ROOK_VARIANT = common_rock.variant {
-    anim = 9,
-    hp = 600,
-    element = "null",
-    debris_palette = 0,
-    break_sound = CRACK_SOUND,
-    identity = nil,
-}
+
+local function spawn_rook(x: number, y: number, side: number): Object?
+    local o = battle.spawn(ROOK_KIND, Vec3.new(y, side, 0))
+    if not o then
+        return nil
+    end
+    o.panel_x, o.panel_y = x, y
+    o.alliance = side
+    o.run_while_dimmed = true
+    obstacle.register(o, side, 0)
+    return o
+end
 
 local ROOK_CTRL = new.kind {
     id = "trap/rook-controller",
@@ -510,15 +607,16 @@ local ROOK_CTRL = new.kind {
                 if user then
                     local tx = user.panel_x + user.facing
                     if field.valid(tx, user.panel_y) then
-                        ROOK_ROCK.spawn(tx, user.panel_y, user.alliance, { variant = ROOK_VARIANT, class = 0, entrance = "instant" }, 0)
+                        spawn_rook(tx, user.panel_y, user.alliance)
                         battle.play_sound(APPEAR_SOUND)
                     end
                 end
                 me.timer = 18
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -540,9 +638,10 @@ local PAWN_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(CUBE_SPRITE)
-            sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 4, 0xFF
+            sprite:load(CHESS_SPRITE)
+            sprite.shadow = "hidden"
+            sprite:set_flip(bit32.bxor(me.alliance, 1))
+            me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: PawnState
             s.life = 420
@@ -562,6 +661,7 @@ local PAWN_KIND = new.kind {
                 return
             end
             if s.tick % 45 == 15 then
+                me.anim, me.anim_loaded = 2, 0xFF
                 local sx = me.panel_x + me.facing
                 if field.valid(sx, me.panel_y) then
                     battle.hitbox(me, {
@@ -580,6 +680,8 @@ local PAWN_KIND = new.kind {
                     battle.region_effects(sx, me.panel_y, regions.long, me.alliance, SLASH_FX, 0x10_0000)
                     battle.play_sound(SWING_SOUND)
                 end
+            elseif s.tick % 45 == 22 then
+                me.anim, me.anim_loaded = 0, 0xFF
             end
             s.tick += 1
             me:update_sprite()
@@ -611,8 +713,9 @@ local PAWN_CTRL = new.kind {
                 me.timer = 18
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -854,8 +957,9 @@ local HOLE_CTRL = new.kind {
                 me.timer = 20
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -886,8 +990,9 @@ local REPAIR_CTRL = new.kind {
                 me.timer = 20
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,

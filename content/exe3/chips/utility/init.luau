@@ -119,8 +119,9 @@ local GRAB_REVENGE_CTRL = new.kind {
                 me.timer = 20
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -151,8 +152,9 @@ local NRTHWIND_CTRL = new.kind {
                 me.timer = 22
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -199,8 +201,9 @@ local INSTRUMENT_CTRL = new.kind {
                 me.timer = 22
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -679,8 +682,9 @@ local SPICE_CTRL = new.kind {
                 me.timer = 22
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,
@@ -1077,8 +1081,9 @@ local TEAM_CTRL = new.kind {
                 me.timer = 20
                 me.phase_init = 4
             end
-            me.timer -= 1
-            if me.timer < 0 then
+            local t = me.timer - 1
+            me.timer = int.u16(t)
+            if t < 0 then
                 dimming_chips.done(me)
             end
         end,

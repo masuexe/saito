@@ -1225,4 +1225,140 @@ mod tests {
         };
         assert!(decode_frame(compat, &bad).unwrap_err().contains("17 panels"));
     }
+
+    #[test]
+    fn exe3_rook_mine_plasma3_and_navis_run_without_softlock() {
+        use saito_battle::input::keys;
+        use saito_battle::object::flags as obj_flags;
+        let content = exe3_content();
+        let compat = Compat::exe3();
+        let chip_id = |name: &str| {
+            content
+                .defs
+                .chip_by_key(&format!("exe3/{name}"))
+                .or_else(|| content.defs.chip_by_key(name))
+                .unwrap_or_else(|| panic!("missing chip {name}"))
+        };
+
+        let run_chip = |chip_name: &str, ticks: usize| -> (Battle, bool, bool, bool) {
+            let setup_line = build_setup_line(compat);
+            let Line::Setup(setup) = parse_line(&setup_line).unwrap() else { panic!("expected setup") };
+            let round_setup = setup_of(&setup, &content, compat).unwrap();
+            let mut b = Battle::new(round_setup, content.clone());
+            let mut layers = saito_battle::custom::Lockstep::new(&b);
+            // Advance past intro/custom into active fighting.
+            for t in 0..400 {
+                let mut raw = [PlayerTick::default(); 2];
+                if b.round.mode == saito_battle::battle::mode::CUSTOM {
+                    if t % 8 == 0 {
+                        raw[0].held = keys::START;
+                        raw[1].held = keys::START;
+                    } else if t % 8 == 4 {
+                        raw[0].held = keys::A;
+                        raw[1].held = keys::A;
+                    }
+                }
+                let input = layers.input(&b, &raw);
+                b.tick(&input, TickEvents::default());
+                layers.follow(&b);
+                if b.round.mode == saito_battle::battle::mode::FIGHTING
+                    && b.fight.state == saito_battle::battle::fight::FIGHTING
+                {
+                    break;
+                }
+            }
+            assert_eq!(b.fight.state, saito_battle::battle::fight::FIGHTING, "{chip_name}: never became active");
+            // Directly load the chip into P0's hand and press A.
+            let cid = chip_id(chip_name);
+            let dmg = content.defs.chip(cid).record.damage;
+            b.hands[0].ids = [Some(cid), None, None, None, None, None];
+            b.hands[0].damage = [dmg, 0, 0, 0, 0, 0];
+            b.hands[0].cursor = 0;
+
+            let mut saw_dim = false;
+            let mut saw_visible_ctrl = false;
+            let mut saw_user_hidden = false;
+            for t in 0..ticks {
+                let mut raw = [PlayerTick::default(); 2];
+                if t == 2 {
+                    raw[0].held = keys::A;
+                }
+                let input = layers.input(&b, &raw);
+                b.tick(&input, TickEvents::default());
+                layers.follow(&b);
+                if b.is_dimmed() {
+                    saw_dim = true;
+                }
+                if let Some(p0) = b.player(0) {
+                    if b.objects.get(p0).flags & obj_flags::VISIBLE == 0 {
+                        saw_user_hidden = true;
+                    }
+                }
+                for oref in b.objects.in_order() {
+                    let o = b.objects.get(oref);
+                    let k = &content.defs.kind(o.kind).key;
+                    if k.contains("-controller") && (o.flags & obj_flags::VISIBLE != 0) {
+                        saw_visible_ctrl = true;
+                    }
+                }
+            }
+            (b, saw_dim, saw_visible_ctrl, saw_user_hidden)
+        };
+
+        // 1. Rook: dims, exits dimming (no softlock!), spawns 500-HP chess rook (anim 4).
+        let (b, saw_dim, _, _) = run_chip("rook", 220);
+        assert!(saw_dim, "rook must dim");
+        assert!(!b.is_dimmed(), "rook must NOT softlock time-freeze");
+        let rook = b
+            .objects
+            .in_order()
+            .into_iter()
+            .map(|r| b.objects.get(r))
+            .find(|o| saito_match::ids::local(&content.defs.kind(o.kind).key) == "trap/rook-obstacle")
+            .expect("rook obstacle must be on field");
+        assert_eq!(rook.hp, 500, "rook HP matches EXE3 ROM (500)");
+        assert_eq!(rook.anim, 4, "rook uses chess sprite anim 4");
+
+        // 2. All dimming trap & utility chips exit dimming cleanly (no u16 timer softlock!).
+        for dim_chip in ["mine", "timebomb", "pawn", "hole", "repair", "nrthwind", "fanfare", "spice1", "team1", "sensor1"] {
+            let (b, saw_dim, _, _) = run_chip(dim_chip, 220);
+            assert!(saw_dim, "{dim_chip} must dim");
+            assert!(!b.is_dimmed(), "{dim_chip} must NOT softlock time-freeze");
+        }
+
+        // 3. All 17 Navi chips & 4 Navi Giga chips: show Navi sprite, hide & restore user, exit dimming!
+        for navi in [
+            "flashman", "plantman", "protoman", "bowlman", "mistman", "roll", "gutsman", "beastman", "bubblman",
+            "desrtman", "flamman", "drillman", "metalman", "kingman", "darkman", "japanman", "punk",
+            "bass", "serenade", "deltaray", "bass-137",
+        ] {
+            let (b, saw_dim, saw_navi, saw_hidden) = run_chip(navi, 260);
+            assert!(saw_dim, "{navi} must dim");
+            assert!(saw_navi, "{navi} must render visible Navi sprite during dimming");
+            assert!(saw_hidden, "{navi} must hide user while summoned");
+            assert!(!b.is_dimmed(), "{navi} must finish dimming cleanly");
+            let p0 = b.objects.get(b.player(0).unwrap());
+            assert!(p0.flags & obj_flags::VISIBLE != 0, "{navi} must restore user visibility after leaving");
+            let p1 = b.objects.get(b.player(1).unwrap());
+            if matches!(navi, "flashman" | "protoman" | "beastman") {
+                assert!(p1.hp < 1000, "{navi} must damage opponent (hp={})", p1.hp);
+            }
+        }
+
+        // 4. Plasma1-3: spawns EleBall 1 panel ahead with ROM HP (10/30/50) and fires sparks around it!
+        for (name, expected_hp) in [("plasma1", 10u16), ("plasma2", 30), ("plasma3", 50)] {
+            let (b, _, _, _) = run_chip(name, 70);
+            let ball = b
+                .objects
+                .in_order()
+                .into_iter()
+                .map(|r| b.objects.get(r))
+                .find(|o| saito_match::ids::local(&content.defs.kind(o.kind).key) == "elec/plasma-ball")
+                .unwrap_or_else(|| panic!("{name} EleBall must spawn"));
+            assert_eq!(ball.max_hp, expected_hp, "{name} HP matches EXE3 ROM");
+            let p0 = b.objects.get(b.player(0).unwrap());
+            assert_eq!(ball.panel.x, p0.panel.x + 1, "{name} spawns 1 panel ahead");
+            assert_eq!(ball.panel.y, p0.panel.y);
+        }
+    }
 }

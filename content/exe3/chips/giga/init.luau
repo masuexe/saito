@@ -12,7 +12,11 @@ local dimming_chips = require("@exelib/dimming")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
+local BASS_SPRITE = asset.sprite("bass")
+local SERENADE_SPRITE = asset.sprite("serenade")
+local PROTOMAN_SPRITE = asset.sprite("protoman")
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 20 }
+local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 local BIG_SLASH_FX = new.effect { sprite = asset.sprite("big-slash"), anim = 0, palette = 0, steps = 15 }
 local ENERGY_RING_FX = new.effect { sprite = asset.sprite("puff"), anim = 0, palette = 0, steps = 14 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
@@ -39,6 +43,34 @@ local function enemy_target(side: number): (number, number)
         return opp.panel_x, opp.panel_y
     end
     return if side == 0 then 5 else 2, 2
+end
+
+local function begin_giga_navi(me: Object, sprite: SpriteAsset, anim: number?)
+    local user = me.related1 or battle.player(me.alliance)
+    if user then
+        dimming.hide_user(user)
+        me.panel_x, me.panel_y = user.panel_x, user.panel_y
+    end
+    local s = me.sprite
+    s:load(sprite)
+    s.shadow = "hidden"
+    s.palette = 0
+    s:set_flip(bit32.bxor(me.alliance, 1))
+    me:set_coordinates_from_panel()
+    me.pos = Vec3.new(me.pos.x, me.pos.y, 0)
+    me.visible = true
+    me.anim = anim or 0
+    me.anim_loaded = 0xFF
+    battle.play_sound(APPEAR_SOUND)
+end
+
+local function end_giga_navi(me: Object)
+    me.visible = false
+    local user = me.related1 or battle.player(me.alliance)
+    if user then
+        dimming.show_user(user)
+    end
+    dimming_chips.done(me)
 end
 
 -- =============================================================================
@@ -79,12 +111,15 @@ local BASS_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: VolleyState
             if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
+                begin_giga_navi(me, BASS_SPRITE, 0)
                 me.timer = 0
                 s.shots = 0
                 me.phase_init = 4
             end
-            if me.timer % 4 == 0 and s.shots < 10 then
+            if me.timer == 10 then
+                me.anim, me.anim_loaded = 8, 0xFF
+            end
+            if me.timer >= 12 and (me.timer - 12) % 4 == 0 and s.shots < 10 then
                 s.shots += 1
                 local region = regions.other_area[me.alliance]
                 local rx, ry = regions.random_panel(me.panel_x, me.panel_y, region, me.facing, 0, 0x8000)
@@ -109,9 +144,10 @@ local BASS_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), FLASH_FX)
                 battle.play_sound(CANNON_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 52 then
-                dimming_chips.done(me)
+            if me.timer >= 62 then
+                end_giga_navi(me)
             end
         end,
     },
@@ -129,13 +165,16 @@ local SERENADE_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: VolleyState
             if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
-                battle.palette_flash(1, 14, true, true)
+                begin_giga_navi(me, SERENADE_SPRITE, 0)
                 me.timer = 0
                 s.shots = 0
                 me.phase_init = 4
             end
-            if me.timer % 8 == 4 and s.shots < 4 then
+            if me.timer == 10 then
+                me.anim, me.anim_loaded = 4, 0xFF
+                battle.palette_flash(1, 14, true, true)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 8 == 0 and s.shots < 4 then
                 s.shots += 1
                 local region = regions.other_area[me.alliance]
                 dim_hitbox(me, {
@@ -155,9 +194,10 @@ local SERENADE_KIND = new.kind {
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 10)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 44 then
-                dimming_chips.done(me)
+            if me.timer >= 54 then
+                end_giga_navi(me)
             end
         end,
     },
@@ -282,14 +322,21 @@ local DELTARAY_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: VolleyState
             if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
+                begin_giga_navi(me, PROTOMAN_SPRITE, 0)
                 me.timer = 0
                 s.shots = 0
                 me.phase_init = 4
             end
-            if me.timer % 12 == 6 and s.shots < 3 then
+            if me.timer >= 10 and (me.timer - 10) % 14 == 0 and s.shots < 3 then
                 s.shots += 1
                 local tx, ty = enemy_target(me.alliance)
+                local stand_x = tx - me.facing
+                if field.valid(stand_x, ty) then
+                    me.panel_x, me.panel_y = stand_x, ty
+                    me:set_coordinates_from_panel()
+                    me.pos = Vec3.new(me.pos.x, me.pos.y, 0)
+                end
+                me.anim, me.anim_loaded = 5, 0xFF
                 dim_hitbox(me, {
                     panel_x = tx,
                     panel_y = ty,
@@ -303,14 +350,14 @@ local DELTARAY_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = if s.shots == 3 then 3 else 1,
                 })
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), BIG_SLASH_FX, me.alliance)
+                battle.region_effects(tx, ty, regions.wide, me.alliance, SLASH_FX, 0x10_0000)
                 battle.play_sound(SWING_SOUND)
                 battle.palette_flash(1, 6, true, true)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 48 then
-                dimming_chips.done(me)
+            if me.timer >= 58 then
+                end_giga_navi(me)
             end
         end,
     },
@@ -407,11 +454,13 @@ local BASS_PLUS_KIND = new.kind {
         name = "Bass+",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(APPEAR_SOUND)
+                begin_giga_navi(me, BASS_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 16 then
+            if me.timer == 10 then
+                me.anim, me.anim_loaded = 13, 0xFF
+            elseif me.timer == 20 then
                 local tx, ty = enemy_target(me.alliance)
                 dim_hitbox(me, {
                     panel_x = tx,
@@ -438,9 +487,10 @@ local BASS_PLUS_KIND = new.kind {
                 battle.play_sound(CRACK_SOUND)
                 battle.shake_camera(3, 22)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 44 then
-                dimming_chips.done(me)
+            if me.timer >= 52 then
+                end_giga_navi(me)
             end
         end,
     },

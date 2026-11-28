@@ -11,7 +11,8 @@ local sparks = require("../../lib/sparks")
 local statuses = require("../../rules/status")
 
 -- =============================================================================
--- 1. FlashMan (V1-V5): Screen-wide Elec flash + Paralyze!
+-- 1. FlashMan (V1-V5): Appears (08-00), charges (anim 6), blinds & paralyzes!
+--    Verified against A6BE 0x080B6790..0x080B69F0.
 -- =============================================================================
 local FLASHMAN_KIND = new.kind {
     id = "navis/flashman-controller",
@@ -20,12 +21,15 @@ local FLASHMAN_KIND = new.kind {
         name = "FlashMan",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
-                battle.palette_flash(1, 18, true, true)
+                h.begin_navi(me, h.FLASHMAN_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 10 then
+            if me.timer == 14 then
+                h.set_navi_anim(me, 6)
+            elseif me.timer == 37 then
+                battle.palette_flash(1, 24, true, true)
+                battle.play_sound(h.FLASHMAN_FLASH_SOUND)
                 local region = regions.other_area[me.alliance]
                 h.dim_hitbox(me, {
                     panel_x = me.panel_x,
@@ -42,19 +46,21 @@ local FLASHMAN_KIND = new.kind {
                     status = statuses.paralyze,
                 })
                 battle.region_effects(me.panel_x, me.panel_y, region, me.alliance, h.ELEC_FX, 0x10_0000)
-                battle.play_sound(h.BLAST_SOUND)
                 battle.shake_camera(2, 16)
+            elseif me.timer == 55 then
+                h.set_navi_anim(me, 7)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 36 then
-                dimming_chips.done(me)
+            if me.timer >= 72 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 2. PlantMan (V1-V5): Wood vine 4-hit barrage binding/paralyzing target!
+-- 2. PlantMan (V1-V5): Appears (08-04) and summons 4-hit binding Wood vines!
 -- =============================================================================
 type CountState = { hits: number }
 
@@ -67,12 +73,15 @@ local PLANTMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: CountState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.PLANTMAN_SPRITE, 0)
                 me.timer = 0
                 s.hits = 0
                 me.phase_init = 4
             end
-            if me.timer % 10 == 4 and s.hits < 4 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 4)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 10 == 0 and s.hits < 4 then
                 s.hits += 1
                 local tx, ty = h.enemy_target(me.alliance)
                 local last = s.hits == 4
@@ -94,16 +103,18 @@ local PLANTMAN_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), h.WOOD_FX)
                 battle.play_sound(h.SPREADER_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 52 then
-                dimming_chips.done(me)
+            if me.timer >= 60 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 3. ProtoMan (V1-V5): Step-in WideSword slash right in front of opponent!
+-- 3. ProtoMan (V1-V5): Appears (08-09), warps before opponent, WideSword slash!
+--    08-09 anim 5 = full purple WideSword swing (24t), anim 6 = follow-through.
 -- =============================================================================
 local PROTOMAN_KIND = new.kind {
     id = "navis/protoman-controller",
@@ -112,11 +123,20 @@ local PROTOMAN_KIND = new.kind {
         name = "ProtoMan",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.PROTOMAN_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 12 then
+            if me.timer == 10 then
+                local tx, ty = h.enemy_target(me.alliance)
+                local stand_x = tx - me.facing
+                if field.valid(stand_x, ty) then
+                    h.move_navi(me, stand_x, ty)
+                else
+                    h.move_navi(me, tx, ty)
+                end
+                h.set_navi_anim(me, 5)
+            elseif me.timer == 18 then
                 local tx, ty = h.enemy_target(me.alliance)
                 h.dim_hitbox(me, {
                     panel_x = tx,
@@ -131,20 +151,22 @@ local PROTOMAN_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = 3,
                 })
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), h.BIG_SLASH_FX, me.alliance)
+                battle.region_effects(tx, ty, regions.wide, me.alliance, h.SLASH_FX, 0x10_0000)
                 battle.play_sound(h.SWING_SOUND)
+            elseif me.timer == 34 then
+                h.set_navi_anim(me, 6)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 36 then
-                dimming_chips.done(me)
+            if me.timer >= 46 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 4. BowlMan (V1-V5): Bowling pin sweep across all 3 rows!
+-- 4. BowlMan (V1-V5): Appears (08-0e) and sweeps bowling pins across all 3 rows!
 -- =============================================================================
 type BowlState = { col_step: number }
 
@@ -157,12 +179,15 @@ local BOWLMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: BowlState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.BOWLMAN_SPRITE, 0)
                 me.timer = 0
                 s.col_step = 0
                 me.phase_init = 4
             end
-            if me.timer % 6 == 2 and s.col_step < 6 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 4)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 6 == 0 and s.col_step < 6 then
                 local x = if me.alliance == 0 then (1 + s.col_step) else (6 - s.col_step)
                 s.col_step += 1
                 if field.valid(x, 2) then
@@ -183,16 +208,17 @@ local BOWLMAN_KIND = new.kind {
                     battle.play_sound(h.CRACK_SOUND)
                 end
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 46 then
-                dimming_chips.done(me)
+            if me.timer >= 56 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 5. MistMan (V1-V5): 3 mist apparitions striking opponent panels!
+-- 5. MistMan (V1-V5): Appears (10-44) and strikes opponent panels 3 times!
 -- =============================================================================
 local MISTMAN_KIND = new.kind {
     id = "navis/mistman-controller",
@@ -203,12 +229,15 @@ local MISTMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: CountState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.MISTMAN_SPRITE, 0)
                 me.timer = 0
                 s.hits = 0
                 me.phase_init = 4
             end
-            if me.timer % 12 == 4 and s.hits < 3 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 2)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 12 == 0 and s.hits < 3 then
                 s.hits += 1
                 local tx, ty = h.enemy_target(me.alliance)
                 local cx, cy = field.center(tx, ty)
@@ -229,16 +258,17 @@ local MISTMAN_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), h.BURST_FX)
                 battle.play_sound(h.SPREADER_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 48 then
-                dimming_chips.done(me)
+            if me.timer >= 56 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 6. Roll (V1-V3): 3 rapid hits on enemy + heals user 60 / 100 / 140 HP!
+-- 6. Roll (V1-V3): Appears (10-14), strikes enemy 3x + heals user 60/100/140 HP!
 -- =============================================================================
 type RollState = { hits: number, heal_hp: number, healed: boolean }
 
@@ -251,15 +281,22 @@ local ROLL_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: RollState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.ROLL_SPRITE, 0, true)
                 me.timer = 0
                 s.hits = 0
                 s.healed = false
                 me.phase_init = 4
             end
-            if me.timer % 8 == 4 and s.hits < 3 then
+            if me.timer >= 12 and (me.timer - 12) % 8 == 0 and s.hits < 3 then
                 s.hits += 1
                 local tx, ty = h.enemy_target(me.alliance)
+                local stand_x = tx - me.facing
+                if field.valid(stand_x, ty) then
+                    h.move_navi(me, stand_x, ty)
+                else
+                    h.move_navi(me, tx, ty)
+                end
+                h.set_navi_anim(me, 4)
                 local cx, cy = field.center(tx, ty)
                 h.dim_hitbox(me, {
                     panel_x = tx,
@@ -277,18 +314,21 @@ local ROLL_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), h.FLASH_FX)
                 battle.play_sound(h.SPREADER_SOUND)
             end
-            if me.timer == 28 and not s.healed then
+            if me.timer == 36 and not s.healed then
                 s.healed = true
                 local user = me.related1 or battle.player(me.alliance)
                 if user and not user:status("dead") then
+                    h.move_navi(me, user.panel_x, user.panel_y)
+                    h.set_navi_anim(me, 5)
                     user.hp = math.min(user.max_hp, user.hp + s.heal_hp)
                     battle.effect(user.pos, h.HEAL_FX)
                     battle.play_sound(h.RECOVER_SOUND)
                 end
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 44 then
-                dimming_chips.done(me)
+            if me.timer >= 54 then
+                h.end_navi(me)
             end
         end,
     },
@@ -305,7 +345,7 @@ local function roll_hook(heal_hp: number): (user: Object, spec: DimmingChipSpec)
 end
 
 -- =============================================================================
--- 7. GutsMan (V1-V5): Ground slam cracking all enemy panels + breaking shockwave!
+-- 7. GutsMan (V1-V5): Appears (08-08), raises fist (anim 2), slams ground (anim 6)!
 -- =============================================================================
 local GUTSMAN_KIND = new.kind {
     id = "navis/gutsman-controller",
@@ -314,11 +354,14 @@ local GUTSMAN_KIND = new.kind {
         name = "GutsMan",
         effect = function(me: Object)
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.GUTSMAN_SPRITE, 0)
                 me.timer = 0
                 me.phase_init = 4
             end
-            if me.timer == 14 then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 2)
+            elseif me.timer == 18 then
+                h.set_navi_anim(me, 6)
                 local opp_side = bit32.bxor(me.alliance, 1)
                 local region = regions.other_area[me.alliance]
                 h.dim_hitbox(me, {
@@ -347,16 +390,18 @@ local GUTSMAN_KIND = new.kind {
                 battle.play_sound(h.THROW_SOUND)
                 battle.shake_camera(3, 18)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 40 then
-                dimming_chips.done(me)
+            if me.timer >= 48 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 8. BeastMan (V1-V5): 3-hit claw slash across front column / target!
+-- 8. BeastMan (V1-V5): Appears (08-01), lunges in front of enemy, 3 claw swipes
+--    (anim 6) with BeastMan's own blue claw slash wave (anim 10)!
 -- =============================================================================
 local BEASTMAN_KIND = new.kind {
     id = "navis/beastman-controller",
@@ -367,17 +412,32 @@ local BEASTMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: CountState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.BEASTMAN_SPRITE, 0)
                 me.timer = 0
                 s.hits = 0
                 me.phase_init = 4
             end
-            if me.timer % 8 == 6 and s.hits < 3 then
+            if me.timer == 10 then
+                local col = h.enemy_front_col(me.alliance)
+                local stand_x = col - me.facing
+                if field.valid(stand_x, 2) then
+                    h.move_navi(me, stand_x, 2)
+                else
+                    h.move_navi(me, col, 2)
+                end
+                h.set_navi_anim(me, 5)
+            end
+            if me.timer >= 16 and (me.timer - 16) % 10 == 0 and s.hits < 3 then
                 s.hits += 1
                 local col = h.enemy_front_col(me.alliance)
                 local tx, ty = h.enemy_target(me.alliance)
                 local strike_x = if s.hits == 3 then tx else col
                 local strike_y = if s.hits == 3 then ty else 2
+                local stand_x = strike_x - me.facing
+                if field.valid(stand_x, strike_y) then
+                    h.move_navi(me, stand_x, strike_y)
+                end
+                h.set_navi_anim(me, 6)
                 h.dim_hitbox(me, {
                     panel_x = strike_x,
                     panel_y = strike_y,
@@ -392,19 +452,20 @@ local BEASTMAN_KIND = new.kind {
                     hit_mod = if s.hits == 3 then 3 else 1,
                 })
                 local cx, cy = field.center(strike_x, strike_y)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), h.BIG_SLASH_FX, me.alliance)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), h.BEAST_CLAW_FX, bit32.bxor(me.alliance, 1))
                 battle.play_sound(if s.hits == 3 then h.SWING_SOUND else h.SWORD_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= 38 then
-                dimming_chips.done(me)
+            if me.timer >= 50 then
+                h.end_navi(me)
             end
         end,
     },
 }
 
 -- =============================================================================
--- 9. BubblMan (V1-V5): Rapid Aqua bubble barrage scaled by tier & low user HP!
+-- 9. BubblMan (V1-V5): Appears (08-02), sprays Aqua bubbles scaled by low HP!
 -- =============================================================================
 type BubbleState = { shots: number, total: number }
 
@@ -417,7 +478,7 @@ local BUBBLMAN_KIND = new.kind {
         effect = function(me: Object)
             local s = me.state :: BubbleState
             if me.phase_init == 0 then
-                battle.play_sound(h.APPEAR_SOUND)
+                h.begin_navi(me, h.BUBBLMAN_SPRITE, 0)
                 me.timer = 0
                 s.shots = 0
                 -- Scale extra bubbles as user's HP gets lower (classic EXE3 BubblMan!)
@@ -436,7 +497,10 @@ local BUBBLMAN_KIND = new.kind {
                 s.total = math.min(14, s.total + bonus)
                 me.phase_init = 4
             end
-            if me.timer % 4 == 2 and s.shots < s.total then
+            if me.timer == 10 then
+                h.set_navi_anim(me, 3)
+            end
+            if me.timer >= 14 and (me.timer - 14) % 4 == 0 and s.shots < s.total then
                 s.shots += 1
                 local tx, ty = h.enemy_target(me.alliance)
                 -- Alternate homing on target and spraying enemy area panels!
@@ -464,9 +528,10 @@ local BUBBLMAN_KIND = new.kind {
                 battle.effect(Vec3.new(cx, cy, 0x10_0000), h.BUBBLE_FX)
                 battle.play_sound(if last then h.BUBBLE_POP_SOUND else h.BUBBLE_SOUND)
             end
+            me:update_sprite_while_dimmed()
             me.timer += 1
-            if me.timer >= s.total * 4 + 14 then
-                dimming_chips.done(me)
+            if me.timer >= s.total * 4 + 26 then
+                h.end_navi(me)
             end
         end,
     },
