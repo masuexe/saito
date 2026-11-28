@@ -79,7 +79,8 @@ end
 -- ---- HUD DMA blocks, HP box, Custom Gauge, Banners, Chatbox ---------------------------------------------------
 
 -- Battle init DMA list (0x08005FEC US / 0x08005F80 JP):
-local HUD_OBJ_TILES = pointer(0x0800_5FF8, 0x0800_5F8C) -- 0x4C0 bytes -> 0x06017000 (enemy HP digits etc.)
+local HUD_OBJ_TILES = pointer(0x0800_5FF8, 0x0800_5F8C) -- 0x4C0 bytes -> 0x06017000 (enemy HP digits + PAUSE + warning arrow at +0x3C0)
+local HUD_SPRITE_PALETTE = pointer(0x0800_6004, 0x0800_5F98) -- 0x40 bytes -> 0x02009100 (+0x20 pink warning/cursor palette)
 local ENEMY_PALETTE = pointer(0x0800_6010, 0x0800_5FA4) -- 0x20 bytes  -> 0x020090E0
 local GAUGE_TILES = pointer(0x0800_601C, 0x0800_5FB0)   -- 0x380 B gauge + 0x340 B damage digits -> 0x06008600 (first_tile 0x30)
 local GAUGE_BYTES = 0x380
@@ -291,6 +292,8 @@ local function drawn(rom: Rom, h: Hud)
         gba.tiles(bytes.hex(string.rep("00", 0x40)), 0, 0x40),
     })
     h.banner_palette = hud.palette(rom, at(rom, BANNER_PALETTE))
+    h.warning = gba.tiles(rom, at(rom, HUD_OBJ_TILES) + 0x3C0, 0x100)
+    h.warning_palette = hud.palette(rom, at(rom, HUD_SPRITE_PALETTE) + 0x20)
     local box_pal = hud.palette(rom, at(rom, CHATBOX_BG_PALETTE))
     local arrow_pal = hud.palette(rom, at(rom, CHATBOX_ARROW_PALETTE))
     local full_box = chatbox_map(rom, at(rom, CHATBOX_MAP))
