@@ -52,16 +52,31 @@ pub enum Music {
     Theme { game: String, song: String },
 }
 
-/// What a list of the battle's music offers: the backgrounds' first, then the themes of each game whose parts
-/// are read (`Games::read`), the games in the app's order and each game's in its own. A game whose pack isn't
-/// there offers none.
+/// What a list of the battle's music offers: the backgrounds' first, then any loaded audio-only Vol. 1
+/// games' battle themes (EXE1/EXE2), then the themes of each game whose parts are read (`Games::read`),
+/// the games in the app's order and each game's in its own. A game whose pack isn't there offers none.
 pub fn offered(games: &Games) -> Vec<Music> {
-    let themes = games.list.iter().filter_map(|g| games.read(&g.id).map(|ready| (g.id.clone(), ready)));
-    std::iter::once(Music::Background)
-        .chain(themes.flat_map(|(game, ready)| {
-            ready.loaded.battle_themes().into_iter().map(move |song| Music::Theme { game: game.clone(), song: song.to_string() }).collect::<Vec<_>>()
-        }))
-        .collect()
+    let mut out = vec![Music::Background];
+    for &(game, _) in saito_extract::EXTRA_BGM_GAMES {
+        if games.read(game).is_some() {
+            continue;
+        }
+        let Some(bank) = games.extra_sound(game) else { continue };
+        for entry in saito_extract::gba_bgm_tracks(game) {
+            if saito_extract::gba_bgm_is_battle_theme(game, entry.key)
+                && bank.song(saito_audio::m4a::SongId(entry.song_id)).is_some()
+            {
+                out.push(Music::Theme { game: game.to_string(), song: entry.key.to_string() });
+            }
+        }
+    }
+    for g in &games.list {
+        let Some(ready) = games.read(&g.id) else { continue };
+        for song in ready.loaded.battle_themes() {
+            out.push(Music::Theme { game: g.id.clone(), song: song.to_string() });
+        }
+    }
+    out
 }
 
 /// Where `music` is in `offered`: a pick not offered (its game not read yet) shows as the backgrounds', the
@@ -309,10 +324,17 @@ pub fn name(music: &Music, own: &str) -> String {
             if let Some(ds_label) = NAMES_LANG.with(|l| ds_theme_name(song, &l.borrow())) {
                 return ds_label.to_string();
             }
+            let lang = NAMES_LANG.with(|l| l.borrow().clone());
+            // Vol. 1 games (EXE1/EXE2/EXE3) use official Legacy Collection titles directly
+            // (EXE3's content locales still contain placeholder names like "网络对战1").
+            if matches!(game.as_str(), "exe1" | "exe2" | "exe3")
+                && let Some(title) = titles::track_title(game, song, &lang)
+            {
+                return format!("{} {title}", game_badge(game, false));
+            }
             if let Some(theme) = NAMES.with(|n| n.borrow().get(&(game.clone(), song.clone())).cloned()) {
                 return format!("{} {theme}", Shell::game_name(game));
             }
-            let lang = NAMES_LANG.with(|l| l.borrow().clone());
             if let Some(title) = titles::track_title(game, song, &lang) {
                 return format!("{} {title}", game_badge(game, song.starts_with("ds-")));
             }
@@ -501,7 +523,10 @@ pub fn sound(games: &Games, ready: &Ready, music: &Music) -> Option<SoundParts> 
             .then(|| ready.loaded.ds_counterpart("virus-battle"))
             .flatten()
             .and_then(|ds| ready.loaded.theme(ds)),
-        Music::Theme { game, song } => games.read(game).and_then(|of| of.loaded.theme(song)),
+        Music::Theme { game, song } => games
+            .read(game)
+            .and_then(|of| of.loaded.theme(song))
+            .or_else(|| resolve_extra_theme(games, game, song)),
     };
     Some(sound.parts(ready.content(), theme.as_ref()))
 }
@@ -1025,6 +1050,20 @@ mod tests {
         assert_eq!(favs[0].1, "net-battle");
         assert_eq!(favs[1].0, "exe2");
         assert_eq!(favs[1].1, "final-battle");
+
+        // Practice Music selector (`offered` / `name` / `sound`) also offers EXE1/EXE2 battle themes
+        // and displays official Legacy Collection names for EXE1/EXE2/EXE3.
+        let offered_with_extra = offered(&with_extra);
+        assert!(offered_with_extra.contains(&Music::Theme { game: "exe1".into(), song: "net-battle".into() }));
+        assert!(offered_with_extra.contains(&Music::Theme { game: "exe2".into(), song: "virus-battle".into() }));
+        assert!(sound(&with_extra, &exe6_ready, &Music::Theme { game: "exe1".into(), song: "net-battle".into() }).is_some());
+        crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], "zh-Hans");
+        assert_eq!(name(&Music::Theme { game: "exe1".into(), song: "net-battle".into() }, ""), "EXE1 网络对战");
+        assert_eq!(name(&Music::Theme { game: "exe2".into(), song: "final-battle".into() }, ""), "EXE2 对决戈斯巴鲁");
+        assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "netbattle-1".into() }, ""), "EXE3 迎击敌人");
+        assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "netbattle-2".into() }, ""), "EXE3 头目对决!");
+        assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "final-battle".into() }, ""), "EXE3 原型之役");
+        assert_eq!(name(&Music::Theme { game: "exe3".into(), song: "netbattle-3".into() }, ""), "EXE3 大显身手");
 
         // Localized Legacy Collection track titles exist for every catalog track in all four languages,
         // preserving untranslated English titles.

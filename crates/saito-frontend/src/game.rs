@@ -484,7 +484,21 @@ impl Loaded {
     /// songs' asset names, in order: what a player may pick as a battle's
     /// music, in this game's battles or another's ([`Loaded::theme`]).
     pub fn battle_themes(&self) -> Vec<&str> {
-        let mut out: Vec<&str> = self.game.content.battle_themes().iter().map(String::as_str).collect();
+        let mut out: Vec<&str> = if self.game.name == "exe3" {
+            // `content/exe3/music.toml` lists mislabeled placeholder song keys (`battle-net`/`battle-boss`/`netbattle-4`)
+            // and omits `final-battle`; use the verified EXE3 ROM battle themes instead.
+            let bank = self.sound.as_ref().map(|s| &s.bank);
+            saito_extract::gba_bgm_tracks("exe3")
+                .iter()
+                .filter(|t| {
+                    saito_extract::gba_bgm_is_battle_theme("exe3", t.key)
+                        && bank.is_none_or(|b| b.song(saito_audio::m4a::SongId(t.song_id)).is_some())
+                })
+                .map(|t| t.key)
+                .collect()
+        } else {
+            self.game.content.battle_themes().iter().map(String::as_str).collect()
+        };
         if let Some(ds_bank) = self.sound.as_ref().and_then(|s| s.ds_bank.as_ref()) {
             for &(key, seq_id, _) in saito_extract::EXE5DS_BATTLE_THEMES {
                 if ds_bank.song(sdat::SongId(seq_id)).is_some() {
