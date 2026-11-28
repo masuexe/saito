@@ -179,12 +179,13 @@ fn clear_outer_corners(rgba: &mut [u8], w: usize, h: usize) {
     }
 }
 
-/// A chip's 56x48 picture in the chip window, in its definition's
-/// `art_palette` where it has one (a chip whose palette no ROM holds), else
-/// its own.
+/// A chip's picture in the chip window (`56x48` for 7x6 EXE4–6 pictures, or
+/// `64x56` for 8x7 EXE3 pictures), in its definition's `art_palette` where it
+/// has one (a chip whose palette no ROM holds), else its own.
 pub fn chip_art(graphics: &Graphics, c: &Content, chip: ChipHandle) -> Option<Image> {
     let art = crate::lookups::chip_art(graphics, c, chip, &mut Problems::default())?;
-    image(&art.picture.tiles, 7, 6, &c.chip(chip).art_palette.unwrap_or(art.picture.palette))
+    let (w, h) = art.picture.tile_dims();
+    image(&art.picture.tiles, w, h, &c.chip(chip).art_palette.unwrap_or(art.picture.palette))
 }
 
 /// Like [`chip_art`], preferring the Legacy Collection HD artwork when `hd` is true and available,
@@ -353,5 +354,21 @@ mod tests {
         // Dark interior pixel behind the border must stay opaque (not flood-filled).
         let center_idx = (((rh / 2) * rw + (rw / 2)) * 4) as usize;
         assert_eq!(icon.rgba[center_idx + 3], 255);
+    }
+
+    #[test]
+    fn wide_8x7_picture_renders_at_64x56() {
+        let mut pixels = vec![0u8; saito_assets::CustomScreen::WIDE_PICTURE_TILES * Tiles::TILE];
+        // Mark the top-right tile (col 7, row 0 = tile index 7) pixel (0, 0) with color 1.
+        pixels[7 * Tiles::TILE] = 1;
+        let pic = saito_assets::Picture { tiles: Tiles { pixels }, palette: [0, 0x001F, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+        let (w, h) = pic.tile_dims();
+        assert_eq!((w, h), (8, 7));
+        let img = image(&pic.tiles, w, h, &pic.palette).expect("8x7 image");
+        assert_eq!((img.width, img.height), (64, 56));
+        // Tile (7, 0) pixel (0, 0) lands at x = 56, y = 0 (NOT wrapped onto row 1 as 7x6 would).
+        let at_top_right = (56 * 4) as usize;
+        assert_eq!(img.rgba[at_top_right + 3], 0xFF);
+        assert_eq!(img.rgba[(8 * 64 * 4) + 3], 0x00);
     }
 }

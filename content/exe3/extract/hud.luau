@@ -81,6 +81,12 @@ local BANNER_DIGITS = pointer(0x0801_0794, 0x0801_0704)
 local BANNER_PALETTE = pointer(0x0801_0788, 0x0801_06F8)
 local BANNER_COUNT = 13
 
+-- Dimming-chip telops (`telops = "apart"`): 15 glyphs centered from x=0 (local) / x=120 (remote) at y=32,
+-- using the HUD's battle damage digits (0..9, '+'), font '×'/'2', and the telop OBJ palette
+-- (`0x086A5288` US White / `0x086A61A0` JP White, white/blue letters with dark outline and yellow digits).
+local TELOP_PLACES = { { 0, 32 }, { 120, 32 } }
+local TELOP_PALETTE = pointer(0x0801_0A20, 0x0801_0984)
+
 -- Chatbox tiles (9 tiles = 0x120 B, first tile 0x2B8), BG15 box/text palette (0x08681A5C: dark charcoal border/text,
 -- white interior, silver bevel), OBJ11 arrow palette (0x0868433C: green bounce arrow), 32x8 BG0 map (cols 0..29 visible),
 -- and 3-frame 16x16 bounce arrow.
@@ -250,6 +256,21 @@ local function worded(rom: Rom, names: AssetNames, h: Hud)
     h.banners = banners
 end
 
+local function telop(rom: Rom): TelopLook
+    local dmg_at = at(rom, GAUGE_TILES) + 0x380
+    local font_at = at(rom, FONT)
+    return {
+        places = TELOP_PLACES,
+        glyphs = gba.join({
+            gba.tiles(rom, dmg_at, 0x40 * 10), -- 0..9
+            gba.tiles(rom, dmg_at + 0x40 * 10, 0x40), -- '+'
+            gba.tiles(rom, font_at + 0x40 * 0x40, 0x40), -- '×'
+            gba.tiles(rom, font_at + 0x40 * 0x03, 0x40), -- '2'
+        }),
+        palette = hud.palette(rom, at(rom, TELOP_PALETTE)),
+    }
+end
+
 function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string }): Hud
     local h: Hud = {}
     h.chip_icons = chip_icons(set, names, chip_versions)
@@ -257,6 +278,7 @@ function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string 
     h.layout = {
         chatbox_text = CHATBOX_TEXT,
         chatbox_arrows = { CHATBOX_ARROW_AT, CHATBOX_ARROW_AT },
+        telop = telop(rom),
     }
     drawn(rom, h)
     worded(rom, names, h)
