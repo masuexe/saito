@@ -704,7 +704,7 @@ fn gauge_word(h: &Hud) -> Option<GaugeWord> {
     let line = h.layer_tile(blank.tile)?.to_vec();
     let line_row = Picture { w: picture.w, h: 8, pixels: tiles_row(&vec![line.as_slice(); tiles.len()]) };
     let word = Picture { pixels: picture.pixels.iter().zip(&line_row.pixels).map(|(&v, &l)| if v == l { 0 } else { v }).collect(), ..picture.clone() };
-    let mut letters = letters(&word, |v| v == 0, Capitals::First)?;
+    let mut letters = letters(&word, |v| v == 0, Capitals::All)?;
     // (Where the letters stand on the line, their outline doesn't keep
     // them off the ground all round, EXE4's: it is their outline still, the
     // word's most common color.)
@@ -712,7 +712,7 @@ fn gauge_word(h: &Hud) -> Option<GaugeWord> {
         let mut count = [0usize; 16];
         word.pixels.iter().filter(|&&v| v != 0).for_each(|&v| count[v as usize & 15] += 1);
         let outline = (1..16u8).max_by_key(|&c| count[c as usize])?;
-        letters = letters_with(&word, |v| v == 0, Capitals::First, Some(outline), None)?;
+        letters = letters_with(&word, |v| v == 0, Capitals::All, Some(outline), None)?;
     }
     let blank = line_row.to_grid();
     let align = TextAlign::of(letters.span, picture.w);
@@ -2282,5 +2282,47 @@ mod tests {
         assert_eq!(look.face, [1, 1, 5, 4]);
         assert_eq!(look.fill, vec![11; 4]);
         assert!(blank.pixels.iter().all(|&v| v == 8));
+    }
+
+    /// EXE3's gauge word (`•CUSTOM•`) has 1x1 decorative dots flanking the
+    /// letters: `gauge_word` measures all columns (`Capitals::All`) so the
+    /// leading dot doesn't shrink the cap height to 1px.
+    #[test]
+    fn gauge_word_ignores_leading_dot_height() {
+        let mut h = Hud::default();
+        h.gauge_first_tile = 0x30;
+        // Tile 0: plain top border line (rows 6-7); Tile 1: "•C" with 5px-tall letter over rows 1-5.
+        let line = picture(&[
+            "........",
+            "........",
+            "........",
+            "........",
+            "........",
+            "........",
+            "cccccccc",
+            "22222222",
+        ]);
+        let word_tile = picture(&[
+            "..222222",
+            "..211112",
+            "22212222",
+            "21212222",
+            "22212222",
+            "..211112",
+            "cccccccc",
+            "22222222",
+        ]);
+        h.gauge_tiles = Tiles { pixels: [line.to_grid().pixels, word_tile.to_grid().pixels].concat() };
+        h.gauge_frame = (0..Hud::GAUGE_COLUMNS)
+            .map(|col| saito_assets::MapEntry {
+                tile: h.gauge_first_tile + if col == 8 { 1 } else { 0 },
+                hflip: false,
+                vflip: false,
+                palette: 13,
+            })
+            .collect();
+        let found = gauge_word(&h).expect("gauge word");
+        assert_eq!((found.letters.top, found.letters.cap), (1, 5));
+        assert_eq!(found.letters.rim, Some(2));
     }
 }
