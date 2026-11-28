@@ -1201,7 +1201,7 @@ impl Screen {
     ) -> Option<Request> {
         match choice {
             ScreenChoice::Pick(slot) => self.pick(slot, view, folder, extras),
-            ScreenChoice::Press(slot) => self.press(slot, folder, console, extras),
+            ScreenChoice::Press(slot) => return self.press(slot, folder, console, extras),
             ScreenChoice::Ok => return self.press_ok(view),
             ScreenChoice::TakeBack => self.deselect(view, folder, extras),
             // (A list whose rules take no choice of it: nothing.)
@@ -1226,7 +1226,7 @@ impl Screen {
     ) -> Option<Request> {
         match choice {
             ScreenChoice::Pick(slot) => self.pick(slot, view, folder, extras),
-            ScreenChoice::Press(slot) => self.press(slot, folder, console, extras),
+            ScreenChoice::Press(slot) => return self.press(slot, folder, console, extras),
             ScreenChoice::Ok => return self.press_ok_add(view),
             ScreenChoice::TakeBack => {
                 if self.selected == 0 {
@@ -1275,11 +1275,17 @@ impl Screen {
     /// `custom.redeal`), on the side's console (EXE4's SHUFFLE makes its deal
     /// with the press, 0x0802037E: its RNG1's draws). A slot that isn't a
     /// button's does nothing.
-    fn press(&mut self, slot: u8, folder: &mut BattleFolder, console: &mut Console, extras: &mut dyn super::Extras) {
-        let Some(SlotKind::Button { button, .. }) = self.slots.get(slot as usize).map(|s| s.kind) else { return };
+    fn press(&mut self, slot: u8, folder: &mut BattleFolder, console: &mut Console, extras: &mut dyn super::Extras) -> Option<Request> {
+        let Some(SlotKind::Button { button, .. }) = self.slots.get(slot as usize).map(|s| s.kind) else { return None };
+        let was_closing = matches!(self.phase, Phase::Closing { .. });
         self.pressed = Some(slot);
         extras.button_pressed(self, folder, console, button);
         self.pressed = None;
+        if !was_closing && matches!(self.phase, Phase::Closing { tick: 0 }) {
+            Some(Request::ConfirmAdd)
+        } else {
+            None
+        }
     }
 
     /// Time is up: a window of the rules goes, silently, for OK to be
@@ -1313,6 +1319,10 @@ impl Screen {
 
     /// Confirm ADD mode: discard picked chips, close with an empty turn hand,
     /// and expand the side's ADD hand capacity for the rest of the round.
+    pub fn confirm_add(&mut self, view: &PlayerView) {
+        self.press_ok_add(view);
+    }
+
     fn press_ok_add(&mut self, view: &PlayerView) -> Option<Request> {
         self.phase = Phase::Closing { tick: 0 };
         self.look.play(ScreenSound::Ok);

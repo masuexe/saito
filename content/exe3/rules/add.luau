@@ -30,18 +30,22 @@ add.buttons = {
             if total >= MAX_HAND_SIZE then
                 return "unavailable"
             end
-            if not custom.is_adding(side) and #custom.picks(side) > 0 then
-                return "unavailable"
-            end
             return "selectable"
         end,
         pressed = function(side: number)
-            if custom.is_adding(side) then
+            local stats = battle.navi(side)
+            local base = math.min(stats.custom_level, 8)
+            if base + custom.add_bonus(side) >= MAX_HAND_SIZE then
+                custom.refuse(side)
+                return
+            end
+            if #custom.picks(side) > 0 then
+                custom.confirm_add(side)
+            elseif custom.is_adding(side) then
                 custom.cancel_add(side)
                 custom.play(side, "cancel")
             else
                 custom.start_add(side)
-                custom.play(side, "pick")
             end
         end,
     } :: ButtonSpec,

@@ -79,10 +79,17 @@ local BANNER_DIGITS = pointer(0x0801_0794, 0x0801_0704)
 local BANNER_PALETTE = pointer(0x0801_0788, 0x0801_06F8)
 local BANNER_COUNT = 13
 
--- Chatbox tiles (9 tiles = 0x120 B), palette, and 3-frame 16x16 arrow.
+-- Chatbox tiles (9 tiles = 0x120 B, first tile 0x2B8), BG15 box/text palette (0x08681A5C: dark charcoal border/text,
+-- white interior, silver bevel), OBJ11 arrow palette (0x0868433C: green bounce arrow), 32x8 BG0 map (cols 0..29 visible),
+-- and 3-frame 16x16 bounce arrow.
 local CHATBOX_TILES = pointer_in_each({ 0x0802_67B8, 0x0802_67A0, 0x0802_6918, 0x0802_6900 })
-local CHATBOX_PALETTE = pointer_in_each({ 0x0802_67C4, 0x0802_67AC, 0x0802_6924, 0x0802_690C })
+local CHATBOX_BG_PALETTE = pointer(0x0800_1D38, 0x0800_1D00)
+local CHATBOX_ARROW_PALETTE = pointer_in_each({ 0x0802_67C4, 0x0802_67AC, 0x0802_6924, 0x0802_690C })
+local CHATBOX_MAP = pointer_in_each({ 0x0802_6B54, 0x0802_6B3C, 0x0802_6CB4, 0x0802_6C9C })
+local CHATBOX_FIRST_TILE = 0x2B8
 local CHATBOX_ARROW = pointer_in_each({ 0x0802_6C58, 0x0802_6C40, 0x0802_6DB8, 0x0802_6DA0 })
+local CHATBOX_TEXT = { 0x33, 0x6C }
+local CHATBOX_ARROW_AT = { 0xE0, 0x8D }
 
 -- Chip table (385 x 0x20 bytes; +0x14 icon, +0x18 picture, +0x1C picture palette).
 hud.CHIPS = stated({ 0x0801_1510, 0x0801_1510, 0x0801_1474, 0x0801_1474 })
@@ -153,6 +160,33 @@ local function remap_gauge_frame(rom: Rom, addr: number): Map
     return gba.map(bytes.hex(table.concat(hex_parts)), 0, 36)
 end
 
+-- Read EXE3's 32x8 BG0 chatbox tilemap into the canonical 30x8 screen map (cols 0..29, tile indices relative to 0x2B8).
+local function chatbox_map(rom: Rom, addr: number): Map
+    local hex_parts: { string } = {}
+    for row = 0, 7 do
+        for col = 0, 29 do
+            local entry = rom:u16(addr + 2 * (row * 32 + col))
+            local tile = bit32.band(entry, 0x3FF)
+            local flags = bit32.band(entry, 0xFC00)
+            local rel = if tile >= CHATBOX_FIRST_TILE then tile - CHATBOX_FIRST_TILE else 0
+            local out = bit32.bor(flags, rel)
+            table.insert(hex_parts, string.format("%02x%02x", bit32.band(out, 0xFF), bit32.rshift(out, 8)))
+        end
+    end
+    return gba.map(bytes.hex(table.concat(hex_parts)), 0, 30 * 8)
+end
+
+-- Combine EXE3's BG15 dark-charcoal text ink/shadow (indices 1..2) with OBJ11's green bounce arrow colors (indices 6..11).
+local function chatbox_text_palette(bg_pal: Palette, arrow_pal: Palette): Palette
+    local out: { number } = {}
+    for i = 1, 16 do
+        out[i] = arrow_pal[i]
+    end
+    out[2] = bg_pal[2] -- index 1: #292929 dark charcoal ink
+    out[3] = bg_pal[4] -- index 2: #cdcdcd light silver drop shadow
+    return out
+end
+
 local function drawn(rom: Rom, h: Hud)
     -- EXE3's HUD DMA[5] (`HUD_TILES`, 0x300 B) holds the 12 HP-box glyphs (0..9, blank, edge); its battle damage
     -- digits (0..9, '+', '?', ':') sit right after the Custom Gauge tiles at `GAUGE_TILES + 0x380` (0x08010F12 uses
@@ -189,11 +223,16 @@ local function drawn(rom: Rom, h: Hud)
     h.pause = hud.pause(rom)
     h.banner_digits = gba.tiles(rom, at(rom, BANNER_DIGITS), 0x40 * 11)
     h.banner_palette = hud.palette(rom, at(rom, BANNER_PALETTE))
+    local box_pal = hud.palette(rom, at(rom, CHATBOX_BG_PALETTE))
+    local arrow_pal = hud.palette(rom, at(rom, CHATBOX_ARROW_PALETTE))
+    local full_box = chatbox_map(rom, at(rom, CHATBOX_MAP))
+    local box_steps = { full_box, full_box, full_box, full_box }
     h.chatbox = {
         tiles = gba.tiles(rom, at(rom, CHATBOX_TILES), 0x120),
-        palette = hud.palette(rom, at(rom, CHATBOX_PALETTE)),
+        palette = box_pal,
+        boxes = { box_steps, box_steps },
         arrow = gba.tiles(rom, at(rom, CHATBOX_ARROW), 3 * 0x80),
-        text_palette = hud.palette(rom, at(rom, CHATBOX_PALETTE)),
+        text_palette = chatbox_text_palette(box_pal, arrow_pal),
     }
 end
 
@@ -213,6 +252,10 @@ function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string 
     local h: Hud = {}
     h.chip_icons = chip_icons(set, names, chip_versions)
     local rom = set.A6BE
+    h.layout = {
+        chatbox_text = CHATBOX_TEXT,
+        chatbox_arrows = { CHATBOX_ARROW_AT, CHATBOX_ARROW_AT },
+    }
     drawn(rom, h)
     worded(rom, names, h)
     return h

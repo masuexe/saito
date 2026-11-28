@@ -2716,9 +2716,13 @@ fn shape_box(x: i32, y: i32, shape: &CursorShape) -> [i32; 4] {
     let xs = corners.iter().map(|c| x - 3 + c.1);
     let ys = corners.iter().map(|c| y - 3 + c.0);
     let edge = |v: i32| 8 * (v + 4).div_euclid(8).max(0);
-    let (x0, x1) = (xs.clone().min().unwrap_or(0) + 3, xs.max().unwrap_or(0) + 8 - 3);
-    let (y0, y1) = (ys.clone().min().unwrap_or(0) + 3, ys.max().unwrap_or(0) + 8 - 3);
-    [edge(x0), edge(y0), edge(x1), edge(y1)]
+    let (min_x, max_x) = (xs.clone().min().unwrap_or(0), xs.max().unwrap_or(0) + 8);
+    let (min_y, max_y) = (ys.clone().min().unwrap_or(0), ys.max().unwrap_or(0) + 8);
+    // EXE4-6 cursor corners sit 3px outside the button cells (22px+ span); EXE3's 6x6 corner tiles wrap tighter
+    // around OK (19px) and ADD (13px), so skip the 3px inset when the vertical span is <= 20px.
+    let pad_x = if max_x - min_x > 20 { 3 } else { 0 };
+    let pad_y = if max_y - min_y > 20 { 3 } else { 0 };
+    [edge(min_x + pad_x), edge(min_y + pad_y), edge(max_x - pad_x), edge(max_y - pad_y)]
 }
 
 /// Where a pointer finds what it can do on a side's screen (its layer's
@@ -2769,15 +2773,23 @@ fn targets(v: &View, w: &Window, place: Placement) -> Vec<(Target, Rect)> {
             continue;
         }
         let (x, y, shape, chip) = cursor_place(v, a, s as u8);
-        let own_place = match slot.kind {
-            SlotKind::Button { button, .. } => v.button_look(button).is_some_and(|l| l.pack.place.is_some()),
-            _ => false,
+        let placed_box = match slot.kind {
+            SlotKind::Button { button, .. } => v.button_look(button).and_then(|l| {
+                let p = l.pack.place?;
+                Some([
+                    8 * p.x as i32,
+                    8 * p.y as i32,
+                    8 * (p.x + l.pack.width) as i32,
+                    8 * (p.y + l.pack.height) as i32,
+                ])
+            }),
+            _ => None,
         };
-        let r = if chip || (s < HAND_SLOTS && !own_place) {
+        let r = if chip || (s < HAND_SLOTS && placed_box.is_none()) {
             let (x, y) = (16 * (s % 5) as i32 + 8, 0x68 + 0x18 * (s / 5) as i32);
             [x, y, x + 16, y + 24]
         } else {
-            let [x0, y0, x1, y1] = shape_box(x, y, &shape);
+            let [x0, y0, x1, y1] = placed_box.unwrap_or_else(|| shape_box(x, y, &shape));
             let mid = (x0 + x1) / 2;
             match slot.kind {
                 SlotKind::Button { cell: ButtonCell::Left, .. } => [x0, y0, mid, y1],
@@ -3509,6 +3521,11 @@ mod tests {
     fn a_cursors_corners_go_about_its_cells() {
         let p = saito_assets::CursorPlace { x: 88, y: 112, corners: [[(2, 1, false, false), (2, 22, true, false), (20, 22, true, true), (20, 1, false, true)]; 2] };
         assert_eq!(cursor_cells(&p), [11, 14, 14, 17]);
+        // EXE3's compact 6x6 cursor corners around OK (cols 11..14, rows 14..17) and ADD (cols 11..14, rows 17..19).
+        let exe3_ok = saito_assets::CursorPlace { x: 0x5B, y: 0x75, corners: [[(0, 0, false, false), (0, 16, true, false), (11, 16, true, true), (11, 0, false, true)]; 2] };
+        let exe3_add = saito_assets::CursorPlace { x: 0x5B, y: 0x8D, corners: [[(0, 0, false, false), (0, 16, true, false), (5, 16, true, true), (5, 0, false, true)]; 2] };
+        assert_eq!(cursor_cells(&exe3_ok), [11, 14, 14, 17]);
+        assert_eq!(cursor_cells(&exe3_add), [11, 17, 14, 19]);
         assert_eq!((slot_cell(0), slot_cell(HAND_SLOTS - 1)), ((1, 13), (9, 16)));
     }
 

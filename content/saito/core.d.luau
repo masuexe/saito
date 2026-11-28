@@ -3352,6 +3352,7 @@ declare custom: {
     -- Enter/exit ADD mode (free-picking up to 5 chips to discard for persistent
     -- round hand-size expansion, closing with an empty turn hand).
     start_add: (side: number) -> (),
+    confirm_add: (side: number) -> (),
     cancel_add: (side: number) -> (),
     is_adding: (side: number) -> boolean,
     add_bonus: (side: number) -> number,

@@ -26,7 +26,7 @@ return {
         ice = {
             flags = 0x00010810,
             doubles = "elec",
-            move_end = panel_types.ice_pushes({ { 0x00, 0x40, 0x80, 0x20, 0x10 }, { 0x00, 0x40, 0x80, 0x10, 0x20 } }),
+            move_end = panel_types.ice_slides,
             slide = panel_types.ice,
         },
         lava = { flags = 0x00011010, expires = 960, burn = BURN, cleared_by = "aqua" },

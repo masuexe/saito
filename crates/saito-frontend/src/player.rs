@@ -413,7 +413,7 @@ impl Player {
     }
 
     fn drag_context(&self, side: u8) -> crate::pointer::DragContext {
-        use saito_battle::custom::{Phase, SlotKind, SlotState, layer::{Sub, is_locked_first_pick}};
+        use saito_battle::custom::{SlotKind, SlotState, layer::{Sub, is_locked_first_pick}};
 
         let Some(p) = self.session.battle.presented(side) else {
             return crate::pointer::DragContext::default();
@@ -421,7 +421,7 @@ impl Player {
         let Some(layer) = self.session.driver.layers()[side as usize & 1] else {
             return crate::pointer::DragContext::default();
         };
-        let can_peek = p.screen.phase == Phase::Choosing
+        let can_peek = p.screen.phase.is_picking()
             && layer.hidden().is_none()
             && matches!(layer.sub, Sub::None | Sub::Description { from_list: false, .. });
         if !self.drag_enabled || !can_peek {
@@ -478,14 +478,14 @@ impl Player {
 
     fn current_drag_overlay(&self) -> Option<saito_render::custom::DragOverlay> {
         use saito_battle::content::ChipFlags;
-        use saito_battle::custom::{Phase, SlotKind, SlotState, layer::{DragSource, DropTarget, Target, is_locked_first_pick}, screen::checked};
+        use saito_battle::custom::{SlotKind, SlotState, layer::{DragSource, DropTarget, Target, is_locked_first_pick}, screen::checked};
         use saito_render::custom::{DragOverlay, DropVisual};
         use saito_render::textlayer::Rect;
 
         let side = self.session.battle.setup.local_side;
         let drag = self.pointer.active_drag()?;
         let p = self.session.battle.presented(side)?;
-        if p.screen.phase != Phase::Choosing {
+        if !p.screen.phase.is_picking() {
             return None;
         }
         let sel = p.screen.selection();
@@ -739,7 +739,7 @@ impl Player {
                 .session
                 .battle
                 .presented(side)
-                .is_some_and(|p| p.screen.phase == saito_battle::custom::Phase::Choosing);
+                .is_some_and(|p| p.screen.phase.is_picking());
             let hidden = self.session.driver.layers()[side as usize & 1].is_some_and(|l| l.hidden().is_some());
             if !in_choosing {
                 self.pointer.cancel_drag();

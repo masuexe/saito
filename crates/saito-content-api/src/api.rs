@@ -1619,6 +1619,9 @@ pub trait CoreApi {
     /// up to 5 chips to discard on OK, closing with an empty hand and expanding
     /// custom capacity for the rest of the round.
     fn custom_start_add(&mut self, side: u8) -> ApiResult<()>;
+    /// Confirm ADD from the currently pressed button: discard picked chips,
+    /// expand round custom capacity, and close with an empty turn hand.
+    fn custom_confirm_add(&mut self, side: u8) -> ApiResult<()>;
     /// Leave custom-screen ADD mode back to normal chip selection.
     fn custom_cancel_add(&mut self, side: u8) -> ApiResult<()>;
     /// Whether `side`'s custom screen is currently in ADD mode.

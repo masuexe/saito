@@ -44,7 +44,7 @@ return {
         guard_before_untouchable = true,
         guard_marks_direction = false,
     },
-    move_direction = "absolute",
+    move_direction = "by_side",
     obstacle_slide_bounds = false,
     request_clears = {
         attack = {},
@@ -68,6 +68,16 @@ return {
         { dx = 0, dy = 0, panels = 0 },
         { dx = 0, dy = 0, panels = 0 },
         { dx = 0, dy = 0, panels = 0 },
+        { dx = 0, dy = 0, panels = 0 },
+    },
+    -- Slide direction vectors when stepping onto an Ice panel (`move_end = panel_types.ice_slides`),
+    -- indexed by `by_side` move direction: none, up, down, back, forward, other.
+    slide_rows = {
+        { dx = 0, dy = 0, panels = 0 },
+        { dx = 0, dy = -1, panels = 1 },
+        { dx = 0, dy = 1, panels = 1 },
+        { dx = -1, dy = 0, panels = 1 },
+        { dx = 1, dy = 0, panels = 1 },
         { dx = 0, dy = 0, panels = 0 },
     },
     bubble_bob = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },

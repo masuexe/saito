@@ -964,6 +964,13 @@ impl CoreApi for Battle {
         .ok_or_else(|| ApiError::Other("no custom screen is open".into()))
     }
 
+    fn custom_confirm_add(&mut self, side: u8) -> ApiResult<()> {
+        self.with_custom_screen(side, |screen, view, _, _, _| {
+            screen.confirm_add(view);
+        })
+        .ok_or_else(|| ApiError::Other("no custom screen is open".into()))
+    }
+
     fn custom_cancel_add(&mut self, side: u8) -> ApiResult<()> {
         self.with_custom_screen(side, |screen, view, folder, _, extras| {
             if screen.cancel_add() {

@@ -58,11 +58,13 @@ local CURSOR_TABLE = pointer(0x0800_F3C0, 0x0800_F33C)
 local REGULAR_0: Block = { place = pointer(0x0800_F488, 0x0800_F404), len = 0x180 }
 local REGULAR_1: Block = { place = pointer(0x0800_F48C, 0x0800_F408), len = 0x180 }
 
--- Chip window pictures (8x7 tiles = 56 tiles = 0x700 bytes each!):
+-- Chip window pictures (8x7 tiles = 56 tiles = 0x700 bytes each):
+-- Stored in the chip table at dummy IDs 0x172 (OK / NO DATA SELECTED), 0x173 (OK_PICKED / CHIP DATA TRANSMISSION),
+-- and 0x174 (ADD / ADDITIONAL CHIP DATA) (+0x18 gfx, +0x1C palette).
 local PICTURE_BYTES = 0x700
-custom.OK = { gfx = pointer(0x0801_50D8, 0x0801_503C), palette = pointer(0x0801_50DC, 0x0801_5040) } :: Details
-custom.OK_PICKED = { gfx = pointer(0x0801_50D0, 0x0801_5034), palette = pointer(0x0801_50D4, 0x0801_5038) } :: Details
-custom.ADD_PICTURE = { gfx = pointer(0x0801_50EC, 0x0801_5050), palette = pointer(0x0801_50E8, 0x0801_504C) } :: Details
+custom.OK = { gfx = pointer(0x0801_4368, 0x0801_42CC), palette = pointer(0x0801_436C, 0x0801_42D0) } :: Details
+custom.OK_PICKED = { gfx = pointer(0x0801_4388, 0x0801_42EC), palette = pointer(0x0801_438C, 0x0801_42F0) } :: Details
+custom.ADD_PICTURE = { gfx = pointer(0x0801_43A8, 0x0801_430C), palette = pointer(0x0801_43AC, 0x0801_4310) } :: Details
 custom.ADD_BUTTON = "add"
 
 local function signed_byte(n: number): number
@@ -184,7 +186,9 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         tiles = add_tiles,
         sets = "other",
         hidden = 2,
-        cursor = { x = 11 * 8, y = 17 * 8, corners = add_corners },
+        -- GBA EXE3 `0x0800E39C` calls `sub_800F350(0x58, 0x8A, 2)` without subtracting 3; add +3 to compensate for
+        -- `saito-render`'s `x - 3 + dx, y - 3 + dy`.
+        cursor = { x = 0x58 + 3, y = 0x8A + 3, corners = add_corners },
         palettes = { add_picture.palette :: Palette },
         picture = add_picture,
         place = { x = 11, y = 17, first_tile = 0xB6, palette = 9 },
@@ -199,17 +203,18 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
             { x = 3, y = 10, width = 2, height = 2, palette = 11, by_column = false },
             -- Power digits: 3x2 right-aligned in cols 6..8, rows 10..11 (tiles 0x160..0x165)
             { x = 6, y = 10, width = 3, height = 2, palette = 11, by_column = true },
-            -- 10 dealt chip slots (0x0800F230): 2x3 each (2x2 icon + 2x1 code), tiles 0x166..0x1A1
-            { x = 1, y = 13, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 3, y = 13, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 5, y = 13, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 7, y = 13, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 9, y = 13, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 1, y = 16, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 3, y = 16, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 5, y = 16, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 7, y = 16, width = 2, height = 3, palette = 11, by_column = false },
-            { x = 9, y = 16, width = 2, height = 3, palette = 11, by_column = false },
+            -- 10 dealt chip slots (0x0800F230 / 0x0800F268): 2x3 each (2x2 icon overridden to pal 11/12/9 + 2x1 code
+            -- in palette 9 = FRAME_PALETTE: bright yellow letters on dark charcoal), tiles 0x166..0x1A1
+            { x = 1, y = 13, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 3, y = 13, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 5, y = 13, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 7, y = 13, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 9, y = 13, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 1, y = 16, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 3, y = 16, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 5, y = 16, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 7, y = 16, width = 2, height = 3, palette = 9, by_column = false },
+            { x = 9, y = 16, width = 2, height = 3, palette = 9, by_column = false },
             -- 5 picked column chip icons (0x0800F054): 2x2 each at col 12, rows 3..12, tiles 0x1A2..0x1B5
             { x = 12, y = 3, width = 2, height = 2, palette = 11, by_column = false },
             { x = 12, y = 5, width = 2, height = 2, palette = 11, by_column = false },
@@ -267,7 +272,9 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
             slot_blank = 1,
             detail_blank = 7,
             empty_palette = 9,
-            ok_cursor = { x = 0x58, y = 0x70, corners = ok_corners },
+            -- GBA EXE3 `0x0800E0B4` calls `sub_800F350(0x58, 0x72, 1)` without subtracting 3; add +3 to compensate for
+            -- `saito-render`'s `x - 3 + dx, y - 3 + dy`.
+            ok_cursor = { x = 0x58 + 3, y = 0x72 + 3, corners = ok_corners },
             regular = { 1, 100 },
             column_columns = { 11, 14 },
             column_row = 3,
@@ -300,7 +307,9 @@ function custom.custom(set: Set, names: AssetNames, chip_versions: { [number]: s
         empty_icon = gba.tiles(rom, at(rom, EMPTY_ICON), 0x80),
         versioned = { base_version = versions.WHITE, base = {} },
         cursor = custom.tiles(rom, CURSOR),
-        cursor_palette = palette(rom, at(rom, CURSOR_PALETTE)),
+        -- `[CURSOR_PALETTE]` loads 2 palettes (0x40 B) to OBJ pal 8..9 (`0x02009100`): pal 0 is icon/gray, pal 1 (+0x20)
+        -- is the bright magenta/pink cursor palette (`0x086B0188` in A6BE).
+        cursor_palette = palette(rom, at(rom, CURSOR_PALETTE) + 0x20),
         regular = gba.join({ custom.tiles(rom, REGULAR_0), blank4, custom.tiles(rom, REGULAR_1), blank4 }),
         window_emblem = window_emblem(rom),
     }

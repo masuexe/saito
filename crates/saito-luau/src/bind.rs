@@ -2007,6 +2007,10 @@ fn custom_lib(lua: &Lua) -> mlua::Result<mlua::Table> {
         let side = u8_arg(side, "side")? & 1;
         with(|api, _| api.custom_start_add(side).map_err(api_error))
     });
+    lib_fn!(lua, t, "confirm_add", |_, side: LuaValue| {
+        let side = u8_arg(side, "side")? & 1;
+        with(|api, _| api.custom_confirm_add(side).map_err(api_error))
+    });
     lib_fn!(lua, t, "cancel_add", |_, side: LuaValue| {
         let side = u8_arg(side, "side")? & 1;
         with(|api, _| api.custom_cancel_add(side).map_err(api_error))
