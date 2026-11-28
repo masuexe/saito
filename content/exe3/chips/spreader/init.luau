@@ -30,7 +30,7 @@ local HEATV_BURST = bullet.variant { region = regions.fork, hit_mod = 3, effect 
 local HEATSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 3, effect = FIRE_FLASH, sound = SOUND }
 
 local shotgun: Chip = {
-    action = spreader.action { id = "shotgun/action", gun = GUN, delay = 1, z = 0x10, shot = SHOTGUN_BURST },
+    action = spreader.action { id = "shotgun/action", gun = GUN, delay = 1, z = 0x00, shot = SHOTGUN_BURST },
     codes = { "B", "F", "J", "N", "T", "*" },
     element = "null",
     family = "null",
@@ -44,7 +44,7 @@ local shotgun: Chip = {
 }
 
 local v_gun: Chip = {
-    action = spreader.action { id = "v-gun/action", gun = GUN, delay = 1, z = 0x10, shot = VGUN_BURST },
+    action = spreader.action { id = "v-gun/action", gun = GUN, delay = 1, z = 0x00, shot = VGUN_BURST },
     codes = { "D", "G", "L", "P", "V", "*" },
     element = "null",
     family = "null",
@@ -58,7 +58,7 @@ local v_gun: Chip = {
 }
 
 local sidegun: Chip = {
-    action = spreader.action { id = "sidegun/action", gun = GUN, delay = 1, z = 0x10, shot = SIDEGUN_BURST },
+    action = spreader.action { id = "sidegun/action", gun = GUN, delay = 1, z = 0x00, shot = SIDEGUN_BURST },
     codes = { "C", "H", "M", "S", "Y", "*" },
     element = "null",
     family = "null",
@@ -72,7 +72,7 @@ local sidegun: Chip = {
 }
 
 local spreader_chip: Chip = {
-    action = spreader.action { id = "spreader/action", gun = GUN, delay = 1, z = 0x10, shot = SPREADER_BURST },
+    action = spreader.action { id = "spreader/action", gun = GUN, delay = 1, z = 0x00, shot = SPREADER_BURST },
     codes = { "M", "N", "O", "P", "Q", "*" },
     element = "null",
     family = "null",

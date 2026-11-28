@@ -21,6 +21,11 @@ local charged_shot = {}
 
 local SHOOT, RECOVER = 0x0, 0x4
 local SHOT_Z = 0x18_0000
+-- EXE3's `pink-flash` (14-04) already bakes a -16px vertical OAM offset (`y_mid = -16.5`,
+-- unlike `hit-sparks` 14-05 or EXE4+ `pink-flash` centered at 0). Subtracting 0x10_0000
+-- keeps the charged shot burst centered on the target's torso (-24.5px), matching the
+-- normal buster spark (`hit-sparks` anim 0 at `SHOT_Z`).
+local CHARGED_SHOT_Z = 0x08_0000
 local SHOT_SOUND = asset.sound("buster-shot")
 local SPREADER_SOUND = asset.sound("spreader")
 local CRACK_SOUND = asset.sound("panel-crack")
@@ -515,7 +520,8 @@ end
 
 local NULL_ACTION = make_action("megaman/charged-shot/action", function(me, breaking)
     local v = if breaking then NULL_BREAK_SHOT else NULL_SHOT
-    return projectile.fire(me, { variant = v, damage = me.attack_damage, z = SHOT_Z })
+    local z = if breaking then SHOT_Z else CHARGED_SHOT_Z
+    return projectile.fire(me, { variant = v, damage = me.attack_damage, z = z })
 end)
 
 local HEAT_ACTION = make_action("megaman/charged-shot/heat-action", function(me, breaking)

@@ -67,7 +67,9 @@ local HP_PALETTES = pointer(0x0801_0DE0, 0x0801_0D44) -- 3 x 0x20 bytes (normal,
 local HP_BOX = pointer(0x0801_0DE8, 0x0801_0D4C)      -- 6x2 map entries
 local GAUGE_FRAME = stated({ 0x0801_0BE0, 0x0801_0BE0, 0x0801_0B44, 0x0801_0B44 }) -- 18x2 map entries
 
-local ICON_PALETTE = pointer(0x0800_EBE8, 0x0800_EB64)
+-- Battle HUD OBJ chip icon palette (DMA[4] -> 0x020090E0, index 9 = #000000 black border; distinct from the
+-- Custom Screen BG icon palette at 0x0800_EBE8/0x0800_EB64 whose index 9 is #7b9cde blue).
+local ICON_PALETTE = pointer(0x0800_6010, 0x0800_5FA4)
 local PAUSE = pointer(0x0801_0A14, 0x0801_0978)
 local PAUSE_BYTES = 0x280
 

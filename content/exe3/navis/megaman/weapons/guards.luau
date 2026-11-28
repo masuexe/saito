@@ -42,7 +42,8 @@ local REFLECTED = projectile.variant {
     spark = sparks.charged,
 }
 
-local REFLECTED_Z = 0x14_0000
+-- Subtract 16px (`0x10_0000`) to compensate for EXE3 `pink-flash` (14-04)'s baked -16px OAM offset.
+local REFLECTED_Z = 0x04_0000
 local REFLECT = guard.action {
     id = "megaman/reflect/action",
     ticks = TICKS,
