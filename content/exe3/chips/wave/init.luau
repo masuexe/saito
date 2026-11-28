@@ -148,7 +148,8 @@ local function make_wave_action(id: string, elem: number, step_ticks: number, mo
                 s.timer = 0
                 me.step_init = 4
             end
-            if s.timer == 6 then
+            local fire_tick = if mode == 0 then 16 else 6
+            if s.timer == fire_tick then
                 local damage = int.u32(me.attack_damage + me.hit_param * 0x10000 + me.extra)
                 local sx = me.panel_x + me.facing
                 if all_rows then
@@ -160,8 +161,16 @@ local function make_wave_action(id: string, elem: number, step_ticks: number, mo
                     spawn_wave(me, sx, me.panel_y, elem, damage, step_ticks, mode)
                 end
             end
+            if mode == 0 and s.timer == 32 then
+                me:set_animation(anims.PANLOUT_END)
+                local tool = me.related1
+                if tool then
+                    tool.anim = 1
+                end
+            end
             s.timer += 1
-            if s.timer >= 20 then
+            local end_tick = if mode == 0 then 37 else 20
+            if s.timer >= end_tick then
                 me.related1 = nil
                 me:exit_attack()
             end
