@@ -1700,6 +1700,30 @@ impl Battle {
     /// draw.
     fn fight_judge(&mut self) {
         if self.fight.sub == 0 {
+            if let Some(time_up) = self.roles().try_banner(BannerRole::TimeUp) {
+                // EXE3 (`0x08009628`): show the "TIME UP" banner, wait for it
+                // to finish, then pause 0x32 (50) ticks before the damage judge.
+                match self.fight.init {
+                    0 => {
+                        self.start_banner(time_up);
+                        self.fight.init = 4;
+                    }
+                    4 => {
+                        if self.banner_status() == BannerStatus::Done {
+                            self.fight.timer = 0x32;
+                            self.fight.init = 8;
+                        }
+                    }
+                    _ => {
+                        self.fight.timer = self.fight.timer.wrapping_sub(1);
+                        if self.fight.timer == 0 {
+                            self.fight.sub = 4;
+                            self.fight.init = 0;
+                        }
+                    }
+                }
+                return;
+            }
             // sub_8008364
             if self.fight.init == 0 {
                 self.fight.timer = 0;
@@ -3165,5 +3189,33 @@ mod tests {
         assert!(!b.late_turns());
         b.round.turn = 99;
         assert!(!b.late_turns());
+    }
+
+    #[test]
+    fn fight_judge_plays_time_up_banner_when_role_is_filled() {
+        let mut b = Battle::new(testing::round_setup(testing::LINK_BATTLE, testing::stats(500)), testing::content());
+        tick(&mut b);
+        let time_up = b.roles().banner(BannerRole::Draw);
+        let mut c = (*b.content).clone();
+        c.defs.roles.banners.insert(BannerRole::TimeUp, time_up);
+        b.content = Arc::new(c);
+
+        b.fight.state = fight::JUDGE;
+        b.fight.sub = 0;
+        b.fight.init = 0;
+        b.fight_judge();
+        assert_eq!(b.banner.id, Some(time_up));
+        assert_eq!(b.fight.init, 4);
+
+        // Advances to the 0x32-tick wait once the banner finishes, then to sub = 4.
+        b.banner.active = false;
+        b.fight_judge();
+        assert_eq!((b.fight.init, b.fight.timer, b.fight.sub), (8, 0x32, 0));
+        for _ in 0..0x31 {
+            b.fight_judge();
+            assert_eq!(b.fight.sub, 0);
+        }
+        b.fight_judge();
+        assert_eq!((b.fight.sub, b.fight.init), (4, 0));
     }
 }

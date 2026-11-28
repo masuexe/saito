@@ -527,12 +527,23 @@ definition_roles! {
         LoseJudged = "lose_judged",
         /// The damage judge's.
         Judge = "judge",
+        /// The time-up banner shown before the damage judge where the game
+        /// plays one instead of top-row HUD text (EXE3's banner 6, 0x0800962A).
+        TimeUp = "time_up",
         /// A telop on the local player's side, and on the other's.
         Telop = "telop",
         TelopRemote = "telop_remote",
         /// A Program Advance, and a selection that makes none.
         ProgramAdvance = "program_advance",
         ProgramAdvanceEmpty = "program_advance_empty",
+    }
+}
+
+impl BannerRole {
+    /// Whether a game may leave the role unfilled: one some game hasn't
+    /// (only EXE3 shows a dedicated "TIME UP" banner before the damage judge).
+    pub fn optional(self) -> bool {
+        matches!(self, BannerRole::TimeUp)
     }
 }
 

@@ -140,6 +140,7 @@ local roles: RolesSpec = {
         win_judged = asset.banner("win"),
         lose_judged = asset.banner("lose"),
         judge = asset.banner("hit-damage"),
+        time_up = asset.banner("time-up"),
         program_advance = asset.banner("program-advance"),
         program_advance_empty = asset.banner("program-advance"),
     },

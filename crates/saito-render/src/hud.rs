@@ -1097,7 +1097,7 @@ pub fn draw<'a>(
     let text_palette = &hud.hp_palettes[color.min(2)];
     let timed = match b.fight.state {
         fight::FIGHTING | fight::PAUSE => b.fight.turn_timer != TURN_TICKS,
-        fight::JUDGE => b.fight.sub == 0,
+        fight::JUDGE => b.fight.sub == 0 && !hud.layout.timer_uses_banner_digits,
         _ => false,
     };
     // The timer's text and a message's are rendered into one line of tiles,
@@ -1110,9 +1110,10 @@ pub fn draw<'a>(
     // eight glyphs, and from the next the message's row starts with the
     // timer's ("    1    HIT!", "TIME UP! HIT!"). (The original's tiles:
     // laid-out strings' lines stay whole.)
-    let timer_line = TEXT_TIME_UP + (b.fight.turn_timer / 60) as usize;
+    let timer_seconds = (b.fight.turn_timer / 60) as usize;
+    let timer_line = TEXT_TIME_UP + timer_seconds;
     let late = b.late_turns() && b.round.mode == mode::FIGHTING;
-    let one_line = late && !text.lays_out_strings();
+    let one_line = late && !hud.layout.timer_uses_banner_digits && !text.lays_out_strings();
     let message = b.message.map(|m| {
         let line = match m.message {
             saito_battle::hud::Message::CounterHit => TEXT_COUNTER_HIT,
@@ -1120,11 +1121,15 @@ pub fn draw<'a>(
         (line, m.ticks == saito_battle::hud::MessageLine::SHOWN_TICKS - 1)
     });
     if late && timed && seat.draws_shared() {
-        let line = match message {
-            Some((line, true)) if one_line => line,
-            _ => timer_line,
-        };
-        draw_text(layer, text, hud, text_palette, line, (11, 0, 8), problems);
+        if hud.layout.timer_uses_banner_digits {
+            draw_timer_digits(hud, timer_seconds, list, text, problems);
+        } else {
+            let line = match message {
+                Some((line, true)) if one_line => line,
+                _ => timer_line,
+            };
+            draw_text(layer, text, hud, text_palette, line, (11, 0, 8), problems);
+        }
     }
     // The custom screen's time limit (saito's own, not the original's:
     // `RoundSetup::custom_screen_limit`): the seconds left on the local
@@ -2376,6 +2381,41 @@ fn banner_parts<'a>(b: &Battle, block: &Banner, hud: &'a Hud, layout: &'a saito_
         out.insert(0, glyph(tiles(&hud.banner_digits), k_of(ones), pal, nx + 8, ny as i32, 0, vscale));
         out.insert(0, glyph(tiles(&hud.banner_digits), k_of(tens), pal, nx, ny as i32, 0, vscale));
     }
+}
+
+/// The Final Turn countdown in a game whose timer is drawn with the
+/// banners' digits (EXE3's `0x080102E0`: `BANNER_DIGITS` in `banner_palette`
+/// at y = 8, single digit at x = 0x74, two digits at x = 0x70 / 0x78).
+fn draw_timer_digits<'a>(hud: &'a Hud, seconds: usize, list: &mut SpriteList<'a>, text: &mut TextSink, problems: &mut Problems) {
+    if seconds == 0 || hud.banner_digits.is_empty() {
+        return;
+    }
+    let pal = hud.banner_palette;
+    let digits = seconds.min(99).to_string();
+    let count = digits.len();
+    let first_x = if count == 1 { 0x74 } else { 0x70 };
+    let y = 8;
+    let items = text
+        .draws_numbers()
+        .then(|| crate::lookups::letters(hud.letters.banner_digits.as_ref(), || "the banners' digits".into(), problems))
+        .flatten()
+        .and_then(|d| {
+            let set = crate::numbers::NumberSet::of(d, &pal).in_font(crate::numbers::Face::BannerDigits);
+            let faces = crate::numbers::picture_span(&set, first_x, count);
+            crate::numbers::laid(text, &[(digits.clone(), &set)], y, crate::numbers::Anchor::Left(faces.0)).map(|l| l.0)
+        })
+        .unwrap_or_default();
+    let blank = !items.is_empty();
+    let group: Vec<SpritePart<'a>> = digits
+        .bytes()
+        .enumerate()
+        .map(|(i, d)| {
+            let tiles = if blank { &*BLANK_GLYPH } else { &hud.banner_digits };
+            let k = if blank { 0 } else { (d - b'0') as usize };
+            glyph(tiles, k, pal, first_x + 8 * i as i32, y, 0, None)
+        })
+        .collect();
+    insert_named(list, text, 0, group, items);
 }
 
 /// The HP box's blank cell: glyph 10 of its digits' (`digits4`'s blank).
@@ -3912,5 +3952,25 @@ mod tests {
         banner_parts(&b, &b.banner, &h, &layout, turn_id, 0x10, false, &mut parts);
         assert_eq!(parts.len(), 21);
         assert_eq!(parts.last().unwrap().x, 36 + 20 * 8);
+    }
+
+    #[test]
+    fn timer_uses_banner_digits_draws_centered_countdown_at_top() {
+        let mut h = hud();
+        h.banner_digits = Tiles { pixels: vec![1; 22 * Tiles::TILE] };
+        let mut problems = Problems::default();
+
+        // Single digit ("9"): centered at x = 0x74 (116), y = 8.
+        let mut list = SpriteList::default();
+        let mut text = TextSink::original();
+        draw_timer_digits(&h, 9, &mut list, &mut text, &mut problems);
+        let parts: Vec<_> = list.into_parts().into_iter().map(|p| (p.x, p.y)).collect();
+        assert_eq!(parts, vec![(0x74, 8)]);
+
+        // Two digits ("10"): x = 0x70 (112) and x = 0x78 (120), y = 8.
+        let mut list = SpriteList::default();
+        draw_timer_digits(&h, 10, &mut list, &mut text, &mut problems);
+        let parts: Vec<_> = list.into_parts().into_iter().map(|p| (p.x, p.y)).collect();
+        assert_eq!(parts, vec![(0x70, 8), (0x78, 8)]);
     }
 }

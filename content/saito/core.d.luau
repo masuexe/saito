@@ -3264,6 +3264,7 @@ export type RolesSpec = {
         win_judged: Banner?,
         lose_judged: Banner?,
         judge: Banner?,
+        time_up: Banner?,
         telop: Banner?,
         telop_remote: Banner?,
         program_advance: Banner?,

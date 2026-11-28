@@ -587,6 +587,11 @@ pub struct HudLayout {
     /// clears them, its state 8, 0x0801544C); otherwise while the banner
     /// slides in and holds (EXE6's `sub_801D048`).
     pub judge_from_hold: bool,
+    /// The Final Turn countdown is drawn with `banner_digits` in
+    /// `banner_palette` at y = 8 rather than the 8x16 HUD font text line
+    /// (EXE3's `0x080102E0`); also suppresses the top-row "TIME UP!" text
+    /// during `fight::JUDGE` (EXE3 plays `BannerRole::TimeUp` instead).
+    pub timer_uses_banner_digits: bool,
     /// Where the chatbox's text starts (its sprites' top left:
     /// `chatbox_runScript`'s text place, EXE6's (0x33, 0x6C); EXE4's
     /// 0x0804E3B4: (0x3F, 0x6D) in the US games, which a language's
@@ -612,6 +617,7 @@ impl Default for HudLayout {
             hud_priority: 1,
             message: (7, 2, 17),
             judge_from_hold: false,
+            timer_uses_banner_digits: false,
             chatbox_text: (0x33, 0x6C),
             chatbox_arrows: [(0xE2, 0x8D), (0xCA, 0x8D)],
             telop: None,

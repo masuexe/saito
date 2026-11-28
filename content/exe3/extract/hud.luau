@@ -291,7 +291,9 @@ local function drawn(rom: Rom, h: Hud)
         gba.tiles(rom, at(rom, BANNER_DIGITS), 0x40 * 10),
         gba.tiles(bytes.hex(string.rep("00", 0x40)), 0, 0x40),
     })
-    h.banner_palette = hud.palette(rom, at(rom, BANNER_PALETTE))
+    -- `BANNER_PALETTE` (`0x08010788` US / `0x080106F8` JP) points to the defeat/deleted gray palette; `0x08010726`
+    -- subtracts `0x20` for all normal banners (gold-white letters, blue bar, yellow digits on White).
+    h.banner_palette = hud.palette(rom, at(rom, BANNER_PALETTE) - 0x20)
     h.warning = gba.tiles(rom, at(rom, HUD_OBJ_TILES) + 0x3C0, 0x100)
     h.warning_palette = hud.palette(rom, at(rom, HUD_SPRITE_PALETTE) + 0x20)
     local box_pal = hud.palette(rom, at(rom, CHATBOX_BG_PALETTE))
@@ -342,6 +344,7 @@ function hud.hud(set: Set, names: AssetNames, chip_versions: { [number]: string 
         -- EXE3 draws enemy/navi HP above the head: y = projected_y - entity_table[id].height
         -- (A6BE `0x0800FCE2`, MegaMan entry `0x08019618+2` / A6BJ `0x0801957C+2` = 0x32 = 50).
         navi_hp_dy = -50,
+        timer_uses_banner_digits = true,
         chatbox_text = CHATBOX_TEXT,
         chatbox_arrows = { CHATBOX_ARROW_AT, CHATBOX_ARROW_AT },
         telop = telop(rom),

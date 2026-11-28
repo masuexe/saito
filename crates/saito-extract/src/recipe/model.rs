@@ -586,6 +586,7 @@ fn hud_layout(v: &Value, path: &str) -> R<HudLayout> {
             Ok((a, b, c))
         })?;
         f.set("judge_from_hold", &mut l.judge_from_hold, boolean)?;
+        f.set("timer_uses_banner_digits", &mut l.timer_uses_banner_digits, boolean)?;
         f.set("chatbox_text", &mut l.chatbox_text, place)?;
         f.set("chatbox_arrows", &mut l.chatbox_arrows, |v, p| array(v, p, place))?;
         f.opt("telop", &mut l.telop, |v, p| {

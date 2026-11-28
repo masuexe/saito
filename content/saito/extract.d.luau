@@ -173,6 +173,7 @@ export type HudLayout = {
     hud_priority: number?,
     message: { number }?,
     judge_from_hold: boolean?,
+    timer_uses_banner_digits: boolean?,
     chatbox_text: { number }?,
     chatbox_arrows: { { number } }?,
     telop: TelopLook?,
