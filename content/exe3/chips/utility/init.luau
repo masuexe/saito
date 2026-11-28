@@ -15,12 +15,21 @@ local sparks = require("../lib/sparks")
 local statuses = require("../rules/status")
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
-local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
 local FIRE_FX = new.effect { sprite = HIT_SPARKS, anim = 2, palette = 0, steps = 16 }
-local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 14 }
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 14 }
 local WOOD_FX = new.effect { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 16 }
-local WIND_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 10 }
+local WIND_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local TORNADO_FX = new.effect { sprite = asset.sprite("tornado"), anim = 0, palette = 0, steps = 12 }
+local METEOR_FX = new.effect { sprite = asset.sprite("fireball"), anim = 0, palette = 0, steps = 15 }
+local LAVACAN_FX = new.effect { sprite = asset.sprite("lavacan"), anim = 0, palette = 0, steps = 17 }
+local VOLCANO_FX = new.effect { sprite = asset.sprite("lavacan"), anim = 1, palette = 0, steps = 14 }
+local ICE_FX = new.effect { sprite = asset.sprite("ice"), anim = 1, palette = 0, steps = 13 }
+local FLAME_FX = new.effect { sprite = asset.sprite("flame"), anim = 0, palette = 0, steps = 12 }
+local HEAT_BLAST_FX = new.effect { sprite = asset.sprite("heat-blast"), anim = 0, palette = 0, steps = 24 }
+local RATTON_FX = new.effect { sprite = asset.sprite("ratton"), anim = 1, palette = 1, steps = 12 }
+local SPICE_FX = new.effect { sprite = asset.sprite("spice"), anim = 0, palette = 0, steps = 14 }
+local BUBBLE_SPLASH_FX = new.effect { sprite = asset.sprite("bubble-splash"), anim = 0, palette = 0, steps = 26 }
+local GROUND_CRACK_FX = new.effect { sprite = asset.sprite("ground-crack"), anim = 0, palette = 0, steps = 22 }
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 14 }
 local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
@@ -297,11 +306,12 @@ local METEOR_CTRL = new.kind {
                     stamina = me.stamina,
                     hit_mod = if s.drops == 6 then 3 else 1,
                 })
+                local cx, cy = field.center(tx, ty)
                 if s.mode == 2 then
                     field.break_panel(tx, ty)
+                    battle.effect(Vec3.new(cx, cy, 0x08_0000), GROUND_CRACK_FX)
                 end
-                local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), BLAST_FX)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), METEOR_FX)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(1, 6)
             end
@@ -333,7 +343,7 @@ local function make_lavacan_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.FLAMETHROWER)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -364,7 +374,7 @@ local function make_lavacan_action(id: string): Action
                     })
                     field.set_type(tx, ty, "lava")
                     local cx, cy = field.center(tx, ty)
-                    battle.effect(Vec3.new(cx, cy, 0x10_0000), FIRE_FX)
+                    battle.effect(Vec3.new(cx, cy, 0x10_0000), LAVACAN_FX)
                     battle.play_sound(CANNON_SOUND)
                 end
             end
@@ -381,7 +391,7 @@ local VOLCANO_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(anims.buster_shoot(me))
+            me:set_animation(anims.FLAMETHROWER)
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -407,7 +417,7 @@ local VOLCANO_ACTION = new.action {
                             damage = damage,
                             hit_mod = 3,
                         })
-                        battle.region_effects(px, py, regions.plus, me.alliance, FIRE_FX, 0x10_0000)
+                        battle.region_effects(px, py, regions.plus, me.alliance, VOLCANO_FX, 0x10_0000)
                     end
                 end
             end
@@ -426,7 +436,7 @@ local VOLCANO_ACTION = new.action {
                     hit_mod = 3,
                 })
                 local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), FIRE_FX)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), VOLCANO_FX)
             end
             battle.play_sound(BLAST_SOUND)
             battle.shake_camera(2, 12)
@@ -444,7 +454,7 @@ local function make_elem_ball_action(id: string, elem: number, panel_type: Panel
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.BOMB_THROW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -471,7 +481,7 @@ local function make_elem_ball_action(id: string, elem: number, panel_type: Panel
                     })
                     field.set_type(tx, ty, panel_type)
                     local cx, cy = field.center(tx, ty)
-                    battle.effect(Vec3.new(cx, cy, 0x10_0000), if elem == 2 then AQUA_FX else FIRE_FX)
+                    battle.effect(Vec3.new(cx, cy, 0x10_0000), if elem == 2 then ICE_FX else METEOR_FX)
                     battle.play_sound(if elem == 2 then FREEZE_SOUND else BLAST_SOUND)
                 end
             end
@@ -492,7 +502,7 @@ local function make_airstrm_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.FLAMETHROWER)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -514,7 +524,7 @@ local function make_airstrm_action(id: string): Action
                         damage = damage,
                         hit_mod = if s.timer == 16 then 3 else 1,
                     })
-                    battle.region_effects(sx, me.panel_y, regions.row, me.alliance, WIND_FX, 0x10_0000)
+                    battle.region_effects(sx, me.panel_y, regions.row, me.alliance, TORNADO_FX, 0x10_0000)
                     battle.play_sound(WIND_SOUND)
                 end
             end
@@ -544,9 +554,9 @@ local TOTEM_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(HIT_SPARKS)
+            sprite:load(asset.sprite("totem"))
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 2, 0xFF
+            me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: TotemState
             s.life = 360
@@ -585,7 +595,7 @@ local TOTEM_KIND = new.kind {
                     hit_mod = 3,
                 })
                 local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), FIRE_FX)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), FLAME_FX)
                 battle.play_sound(BLAST_SOUND)
             end
             s.tick += 1
@@ -661,7 +671,7 @@ local SPICE_CTRL = new.kind {
                                 hit_mod = 3,
                             })
                             local cx, cy = field.center(px, py)
-                            battle.effect(Vec3.new(cx, cy, 0x10_0000), WOOD_FX)
+                            battle.effect(Vec3.new(cx, cy, 0x10_0000), SPICE_FX)
                         end
                     end
                 end
@@ -762,7 +772,7 @@ local GEYSER_ACTION = new.action {
                     damage = damage,
                     hit_mod = 3,
                 })
-                battle.region_effects(tx, ty, regions.square, me.alliance, AQUA_FX, 0x10_0000)
+                battle.region_effects(tx, ty, regions.square, me.alliance, BUBBLE_SPLASH_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 12)
             end
@@ -780,7 +790,7 @@ local function make_shake_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.BOMB_THROW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -804,7 +814,7 @@ local function make_shake_action(id: string): Action
                         damage = damage,
                         hit_mod = 3,
                     })
-                    battle.region_effects(tx, ty, regions.region_1d, me.alliance, IMPACT_FX, 0x10_0000)
+                    battle.region_effects(tx, ty, regions.region_1d, me.alliance, GROUND_CRACK_FX, 0x10_0000)
                     battle.play_sound(BLAST_SOUND)
                     battle.shake_camera(2, 10)
                 end
@@ -880,7 +890,7 @@ local BURNING_ACTION = new.action {
                 damage = damage,
                 hit_mod = 3,
             })
-            battle.region_effects(me.panel_x, me.panel_y, regions.region_2a, me.alliance, FIRE_FX, 0x10_0000)
+            battle.region_effects(me.panel_x, me.panel_y, regions.region_2a, me.alliance, FLAME_FX, 0x10_0000)
             battle.play_sound(BLAST_SOUND)
             battle.shake_camera(2, 12)
         end
@@ -896,7 +906,7 @@ local FIRERATN_ACTION = new.action {
     state = { timer = "u16" },
     update = function(me: Object, s: ActTimer)
         if me.step_init == 0 then
-            me:set_animation(anims.buster_shoot(me))
+            me:set_animation(anims.THROW_LOW)
             me:open_counter_window()
             me:set_status("using_action", true)
             s.timer = 0
@@ -917,7 +927,9 @@ local FIRERATN_ACTION = new.action {
                 damage = damage,
                 hit_mod = 3,
             })
-            battle.region_effects(tx, ty, regions.plus, me.alliance, BLAST_FX, 0x10_0000)
+            local cx, cy = field.center(tx, ty)
+            battle.effect(Vec3.new(cx, cy, 0x10_0000), RATTON_FX)
+            battle.region_effects(tx, ty, regions.plus, me.alliance, HEAT_BLAST_FX, 0x10_0000)
             battle.play_sound(BLAST_SOUND)
             battle.shake_camera(2, 12)
         end
@@ -934,7 +946,7 @@ local function make_rockarm_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -956,7 +968,7 @@ local function make_rockarm_action(id: string): Action
                         damage = damage,
                         hit_mod = 3,
                     })
-                    battle.region_effects(sx, me.panel_y, regions.long, me.alliance, IMPACT_FX, 0x10_0000)
+                    battle.region_effects(sx, me.panel_y, regions.long, me.alliance, GROUND_CRACK_FX, 0x10_0000)
                     field.break_panel(sx, me.panel_y)
                     battle.play_sound(CRACK_SOUND)
                     battle.shake_camera(2, 10)

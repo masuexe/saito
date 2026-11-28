@@ -32,9 +32,15 @@ function spreader.action(spec: SpreaderSpec, look: SpreaderLook): Action
     -- `sub_80ECBCC`: raise the gun; on the second tick, the bullet.
     local function fire(me: Object, s: State)
         if me.step_init == 0 then
-            me:set_animation(look.anim)
+            local a = look.anim
+            me:set_animation(if type(a) == "function" then a(me) else a)
             me:open_counter_window()
-            look.hold(me, spec.gun, look.slot)
+            if look.hold and spec.gun then
+                look.hold(me, spec.gun, look.slot)
+            end
+            if look.muzzle then
+                battle.effect(me.pos, look.muzzle, me.alliance)
+            end
             me:set_status("using_action", true)
             me.step_init = 4
             s.timer = 0

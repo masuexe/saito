@@ -20,19 +20,23 @@ local rising_bubble = require("../objects/rising_bubble")
 local sparks = require("../lib/sparks")
 local swords = require("../lib/swords")
 
-local HIT_SPARKS = asset.sprite("hit-sparks")
-local STATUE_SPRITE = asset.sprite("grab-shot")
+local GUARDIAN_SPRITE = asset.sprite("guardian")
+local ROCKCUBE_SPRITE = asset.sprite("rockcube")
 local BIG_SLASH_SPRITE = asset.sprite("big-slash")
+local ZEUSHAMR_ARM = attachment.look { sprite = asset.sprite("hammer"), palette = 1 }
 
-local FIRE_FX = new.effect { sprite = HIT_SPARKS, anim = 2, palette = 0, steps = 16 }
-local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 14 }
-local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 16 }
-local WOOD_FX = new.effect { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 16 }
+local FLAME_FX = new.effect { sprite = asset.sprite("flame"), anim = 0, palette = 0, steps = 12 }
+local HEAT_BLAST_FX = new.effect { sprite = asset.sprite("heat-blast"), anim = 0, palette = 0, steps = 26 }
+local BUBBLE_SPLASH_FX = new.effect { sprite = asset.sprite("bubble-splash"), anim = 0, palette = 0, steps = 26 }
+local LIGHTNING_FX = new.effect { sprite = asset.sprite("lightning"), anim = 0, palette = 0, steps = 12 }
+local WOOD_VINES_FX = new.effect { sprite = asset.sprite("wood-vines"), anim = 0, palette = 0, steps = 27 }
+local METEOR_FX = new.effect { sprite = asset.sprite("fireball"), anim = 0, palette = 0, steps = 15 }
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 18 }
+local GROUND_CRACK_FX = new.effect { sprite = asset.sprite("ground-crack"), anim = 0, palette = 0, steps = 22 }
 local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
-local ARRIVAL_FX = new.effect { sprite = asset.sprite("puff"), anim = 0, palette = 0, steps = 8 }
-local WOOD_SLASH_FX = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 4, steps = 15 }
+local ARRIVAL_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local WOOD_SLASH_FX = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 0, steps = 15 }
 
 local APPEAR_SOUND = asset.sound("appear")
 local PLACE_SOUND = asset.sound("grab-shot-land")
@@ -137,11 +141,11 @@ end
 
 local GUARDIAN_STATUE = guardian_statue.make {
     id = "mega/guardian-statue",
-    sprite = STATUE_SPRITE,
+    sprite = GUARDIAN_SPRITE,
     hp = 10,
     sounds = { place = PLACE_SOUND, strike = BLAST_SOUND },
     arrival = ARRIVAL_FX,
-    burst = ELEC_FX,
+    burst = LIGHTNING_FX,
     is = collision.navi,
     hits = collision.navi_target,
     strike_is = collision.piercing_break,
@@ -189,11 +193,19 @@ local ZEUSHAMR_KIND = new.kind {
     update = dimming_chips.phases {
         name = "ZeusHamr",
         effect = function(me: Object)
+            local user = me.related1 or battle.player(me.alliance)
             if me.phase_init == 0 then
+                if user then
+                    user:set_animation(anims.HAMMER)
+                    attachment.attach(user, ZEUSHAMR_ARM, "related", 0, true)
+                end
                 battle.play_sound(APPEAR_SOUND)
                 battle.palette_flash(1, 14, true, true)
                 me.timer = 0
                 me.phase_init = 4
+            end
+            if user then
+                user:update_sprite_while_dimmed()
             end
             if me.timer == 14 then
                 -- Strike all grounded enemies across the entire field via breaking hitbox.
@@ -211,7 +223,6 @@ local ZEUSHAMR_KIND = new.kind {
                     hit_mod = 5,
                 })
                 -- ZeusHamr also strikes the user if grounded (not floating/invisible).
-                local user = me.related1 or battle.player(me.alliance)
                 if user and not user:status("dead") and not user:status("invisible") then
                     local stats = battle.navi(me.alliance)
                     if not stats.float_shoes and not stats.air_shoes then
@@ -224,13 +235,17 @@ local ZEUSHAMR_KIND = new.kind {
                         battle.effect(user.pos, IMPACT_FX)
                     end
                 end
-                battle.region_effects(me.panel_x, me.panel_y, regions.field, me.alliance, IMPACT_FX, 0x08_0000)
+                battle.region_effects(me.panel_x, me.panel_y, regions.field, me.alliance, GROUND_CRACK_FX, 0x08_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.play_sound(CRACK_SOUND)
                 battle.shake_camera(3, 22)
             end
             me.timer += 1
             if me.timer >= 42 then
+                if user then
+                    user.related1 = nil
+                    user:set_animation(anims.idle(user))
+                end
                 dimming_chips.done(me)
             end
         end,
@@ -271,9 +286,9 @@ local HOLE_TURRET_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(STATUE_SPRITE)
+            sprite:load(ROCKCUBE_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 0, 0xFF
+            me.anim, me.anim_loaded = 9, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: TurretState
             s.shots = 0
@@ -312,7 +327,7 @@ local HOLE_TURRET_KIND = new.kind {
                     hit_mod = if last then 3 else 1,
                 })
                 local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), if s.is_wood then WOOD_FX else BLAST_FX)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), if s.is_wood then WOOD_VINES_FX else METEOR_FX)
                 battle.play_sound(if s.is_wood then SPREADER_SOUND else BLAST_SOUND)
                 if not s.is_wood and field.valid(tx, ty) then
                     field.crack(tx, ty)
@@ -452,7 +467,7 @@ local METEORS_KIND = new.kind {
                     hit_mod = if last then 3 else 1,
                 })
                 local cx, cy = field.center(tx, ty)
-                battle.effect(Vec3.new(cx, cy, 0x10_0000), if s.hits % 2 == 0 then FIRE_FX else BLAST_FX)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), if s.hits % 2 == 0 then METEOR_FX else BLAST_FX)
                 if s.hits % 3 == 0 and field.valid(tx, ty) then
                     field.crack(tx, ty)
                 end
@@ -629,7 +644,7 @@ local FIRE_PILLAR_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = 3,
                 })
-                battle.region_effects(tx, ty, region, me.alliance, FIRE_FX, 0x10_0000)
+                battle.region_effects(tx, ty, region, me.alliance, if s.upgraded then HEAT_BLAST_FX else FLAME_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 14)
             end
@@ -717,7 +732,7 @@ local AQUA_JET_KIND = new.kind {
                         stamina = me.stamina,
                         hit_mod = 3,
                     })
-                    battle.region_effects(tx, ty, region, me.alliance, AQUA_FX, 0x10_0000)
+                    battle.region_effects(tx, ty, region, me.alliance, BUBBLE_SPLASH_FX, 0x10_0000)
                     battle.play_sound(BUBBLE_SOUND)
                 end
             end
@@ -790,7 +805,7 @@ local ELEC_BOLT_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = 3,
                 })
-                battle.region_effects(tx, ty, region, me.alliance, ELEC_FX, 0x10_0000)
+                battle.region_effects(tx, ty, region, me.alliance, LIGHTNING_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 12)
             end
@@ -844,7 +859,7 @@ local function make_gaia_action(id: string, region: Region): Action
             if me.step_init == 0 then
                 me.anim = anims.SWORD_SWING
                 me:set_status("using_action", true)
-                attachment.attach(me, swords.blade, "related", 0)
+                attachment.attach(me, swords.wood_blade, "related", 0)
                 local base = me.attack_damage + me.extra
                 local absorbed = 0
                 local side = me.alliance

@@ -8,8 +8,9 @@ local dimming_chips = require("@exelib/dimming")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
-local POISON_FX = new.effect { sprite = asset.sprite("puff"), anim = 0, palette = 0, steps = 14 }
-local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
+local POISON_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 14 }
+local PUFF_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
 local POISON_SOUND = asset.sound("panel-poison")
 local APPEAR_SOUND = asset.sound("appear")
 
@@ -72,8 +73,9 @@ local ANUBIS_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(asset.sprite("grab-shot"))
+            sprite:load(asset.sprite("anubis"))
             sprite.shadow = "with_sprite"
+            sprite:set_flip(bit32.bxor(me.alliance, me.flip))
             me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: AnubisState

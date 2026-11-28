@@ -4,11 +4,13 @@
 -- Wave (0x03D), RedWave (0x03E), MudWave (0x03F).
 
 local anims = require("../lib/anims")
+local attachment = require("../objects/attachment")
 local collision = require("../rules/collision")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
-local BURST_SPRITE = asset.sprite("burst")
+local WAVE_SPRITE = asset.sprite("wave")
+local PANLOUT_TOOL = attachment.look { sprite = asset.sprite("panlout-tool"), palette = 0 }
 local HIT_SPARKS = asset.sprite("hit-sparks")
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 12 }
 local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 12 }
@@ -40,10 +42,10 @@ local WAVE_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(BURST_SPRITE)
-            sprite.shadow = "hidden"
+            sprite:load(WAVE_SPRITE)
+            sprite.shadow = "with_sprite"
             sprite:set_flip(bit32.bxor(me.alliance, me.flip))
-            me.anim, me.anim_loaded = 0, 0xFF
+            me.anim, me.anim_loaded = 1, 0xFF
             me:set_coordinates_from_panel()
             s.tick = 0
             me:set_lifecycle("update")
@@ -135,7 +137,12 @@ local function make_wave_action(id: string, elem: number, step_ticks: number, mo
         state = { timer = "u16" },
         update = function(me: Object, s: WaveActState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                if mode == 0 then
+                    me:set_animation(anims.PANLOUT)
+                    attachment.attach(me, PANLOUT_TOOL, "related", 0)
+                else
+                    me:set_animation(anims.THROW_LOW)
+                end
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -155,6 +162,7 @@ local function make_wave_action(id: string, elem: number, step_ticks: number, mo
             end
             s.timer += 1
             if s.timer >= 20 then
+                me.related1 = nil
                 me:exit_attack()
             end
         end,

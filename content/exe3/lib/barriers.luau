@@ -14,13 +14,14 @@ local common_visual = require("@exelib/barriers/visual")
 local element = require("@exelib/element")
 local aura_sprite = asset.sprite("aura")
 local barrier_sprite = aura_sprite
+local bubble_wrap_sprite = asset.sprite("bubble-wrap")
 
 local barriers = {}
 
 local SPRITE, AURA = barrier_sprite, aura_sprite
 local SOUND = asset.sound("barrier")
+local BUBBLE_POP_SOUND = asset.sound("bubble-pop")
 local NO_TIMER = 0xFFFF
-local PART_7 = 0x1000000
 
 local BARRIER_IDS: { [string]: number } = {
     ["barrier/10"] = 1,
@@ -69,25 +70,25 @@ barriers.barrier_200 = barrier {
     sound = SOUND,
 }
 
--- ID 6: Aura (blocks < 100 damage for 1800 ticks).
+-- ID 6: Aura (blocks < 100 damage for 1800 ticks; EXE3 0c-04 anim 0 has no numeric part).
 barriers.aura = barrier {
     id = "barrier/aura",
     behavior = "plain",
     hp = 1,
     threshold = 100,
     timer = 1800,
-    look = { sprite = AURA, anim = 0, palette = 0, attach_point = 0, hidden_parts = PART_7, up_steps = 9, down_steps = 19 },
+    look = { sprite = AURA, anim = 0, palette = 0, attach_point = 0, hidden_parts = 0, up_steps = 9, down_steps = 19 },
     sound = SOUND,
 }
 
--- ID 7: LifeAura (blocks < 200 damage for 1800 ticks).
+-- ID 7: LifeAura (blocks < 200 damage for 1800 ticks; EXE3 0c-04 anim 0 pal 1).
 barriers.life_aura = barrier {
     id = "barrier/life-aura",
     behavior = "plain",
     hp = 1,
     threshold = 200,
     timer = 1800,
-    look = { sprite = AURA, anim = 0, palette = 1, attach_point = 0, hidden_parts = PART_7, up_steps = 9, down_steps = 19 },
+    look = { sprite = AURA, anim = 0, palette = 1, attach_point = 0, hidden_parts = 0, up_steps = 9, down_steps = 19 },
     sound = SOUND,
 }
 
@@ -102,7 +103,7 @@ barriers.first_barrier = barrier {
     sound = SOUND,
 }
 
--- ID 9: BubbleWrap (1 HP, regrows after 240 ticks, popped by elec).
+-- ID 9: BubbleWrap (1 HP, regrows after 240 ticks, popped by elec; A6BE `0x080EE044`: `08-02` bubble anim 8/9).
 barriers.bubble_wrap = barrier {
     id = "barrier/bubble-wrap",
     behavior = "bubble",
@@ -110,8 +111,9 @@ barriers.bubble_wrap = barrier {
     threshold = 0,
     timer = NO_TIMER,
     weak = "elec",
-    look = { sprite = SPRITE, anim = 4, palette = 0, attach_point = 0, hidden_parts = 0, up_steps = 16, down_steps = 21 },
+    look = { sprite = bubble_wrap_sprite, anim = 8, palette = 0, attach_point = 0, hidden_parts = 0, up_steps = 40, down_steps = 6 },
     sound = SOUND,
+    down_sound = BUBBLE_POP_SOUND,
 }
 
 function barriers.raise(navi: Object, b: Barrier, keep_old: boolean?)

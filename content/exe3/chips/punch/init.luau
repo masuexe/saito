@@ -3,13 +3,17 @@
 -- GutPunch (0x02F), GutStrgt (0x030), GutImpct (0x031), Hammer (0x040), DashAtk (0x035), AirSwrd (0x02A).
 
 local anims = require("../lib/anims")
+local attachment = require("../objects/attachment")
 local collision = require("../rules/collision")
 local element = require("@exelib/element")
 local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
+local GUTS_PUNCH_LOOK = attachment.look { sprite = asset.sprite("guts-punch"), palette = 0 }
+local HAMMER_LOOK = attachment.look { sprite = asset.sprite("hammer"), palette = 0 }
+local SWORD_LOOK = attachment.look { sprite = asset.sprite("sword"), palette = 0 }
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 16 }
-local BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 12 }
+local DASH_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 local HEAVY_SOUND = asset.sound("obstacle-throw")
 local CRACK_SOUND = asset.sound("crack-shot")
@@ -64,16 +68,19 @@ local function make_punch_action(
     push_dist: number,
     launch_obstacles: boolean,
     destroys_obstacles: boolean,
-    cracks_panel: boolean
+    cracks_panel: boolean,
+    megaman_anim: number,
+    hold_look: AttachmentLook
 ): Action
     return new.action {
         id = id,
         state = { timer = "u16" },
         update = function(me: Object, s: PunchState)
             if me.step_init == 0 then
-                me:set_animation(anims.PUNCH)
+                me:set_animation(megaman_anim)
                 me:open_counter_window()
                 me:set_status("using_action", true)
+                attachment.attach(me, hold_look, "related", 0)
                 s.timer = 0
                 me.step_init = 4
             end
@@ -118,6 +125,7 @@ local function make_punch_action(
             end
             s.timer += 1
             if s.timer >= 20 then
+                me.related1 = nil
                 me:exit_attack()
             end
         end,
@@ -166,7 +174,7 @@ local DASHATK_ACTION = new.action {
                         damage = damage,
                         hit_mod = 3,
                     })
-                    battle.effect(me.pos, BURST_FX)
+                    battle.effect(me.pos, DASH_FX)
                 else
                     s.returning = true
                     s.timer = 0
@@ -196,6 +204,7 @@ local AIRSWRD_ACTION = new.action {
             me:set_animation(anims.SWORD_SWING)
             me:open_counter_window()
             me:set_status("using_action", true)
+            attachment.attach(me, SWORD_LOOK, "related", 0)
             s.timer = 0
             me.step_init = 4
         end
@@ -227,13 +236,14 @@ local AIRSWRD_ACTION = new.action {
         end
         s.timer += 1
         if s.timer >= 18 then
+            me.related1 = nil
             me:exit_attack()
         end
     end,
 }
 
 local gutpunch: Chip = {
-    action = make_punch_action("gutpunch/action", 1, 1, true, false, false),
+    action = make_punch_action("gutpunch/action", 1, 1, true, false, false, anims.PUNCH, GUTS_PUNCH_LOOK),
     codes = { "B", "C", "D", "E", "F" },
     element = "null",
     family = "break",
@@ -247,7 +257,7 @@ local gutpunch: Chip = {
 }
 
 local gutstrgt: Chip = {
-    action = make_punch_action("gutstrgt/action", 2, 1, true, false, false),
+    action = make_punch_action("gutstrgt/action", 2, 1, true, false, false, anims.PUNCH, GUTS_PUNCH_LOOK),
     codes = { "O", "P", "Q", "R", "S" },
     element = "null",
     family = "break",
@@ -261,7 +271,7 @@ local gutstrgt: Chip = {
 }
 
 local gutimpct: Chip = {
-    action = make_punch_action("gutimpct/action", 1, 2, true, false, true),
+    action = make_punch_action("gutimpct/action", 1, 2, true, false, true, anims.PUNCH, GUTS_PUNCH_LOOK),
     codes = { "G", "H", "I", "J", "K" },
     element = "null",
     family = "break",
@@ -275,7 +285,7 @@ local gutimpct: Chip = {
 }
 
 local hammer: Chip = {
-    action = make_punch_action("hammer/action", 1, 0, false, true, true),
+    action = make_punch_action("hammer/action", 1, 0, false, true, true, anims.HAMMER, HAMMER_LOOK),
     codes = { "B", "G", "L", "P", "T", "*" },
     element = "null",
     family = "break",

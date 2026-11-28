@@ -336,7 +336,7 @@ export type MegaManBusterThrow = { run: (me: Object) -> () }
 -- HeatS's and BubSht's 10).
 export type SpreaderSpec = {
     id: string?,
-    gun: AttachmentLook,
+    gun: AttachmentLook?,
     z: number,
     bullet: BulletVariant,
     bullet_kind: Kind?,
@@ -346,14 +346,16 @@ export type SpreaderSpec = {
 
 -- A game's spreaders (@exelib/spreadr/action): the shot's sound, how the navi holds the gun and where (EXE6's and
 -- EXE5's @exelib/attachment kind in the overlay, its animation by the holder's AI index from the game's table,
--- `attachment.holder`; EXE4's own in the related slot, its animation twice the navi's number), its bullets' kind,
--- and the navi's animation as it fires (EXE6's and EXE5's 0xB; EXE4's 14).
+-- `attachment.holder`; EXE4's own in the related slot, its animation twice the navi's number; EXE3's uses MegaMan's
+-- own buster shoot animation with no gun attachment and spawns a muzzle flash effect), its bullets' kind, and the
+-- navi's animation as it fires (EXE6's and EXE5's 0xB; EXE4's 14; EXE3's `anims.buster_shoot`).
 export type SpreaderLook = {
     sound: Sound,
-    hold: (me: Object, look: AttachmentLook, slot: Slot) -> (),
+    hold: ((me: Object, look: AttachmentLook, slot: Slot) -> ())?,
+    muzzle: Effect?,
     slot: Slot,
     bullet_kind: Kind,
-    anim: number,
+    anim: number | ((me: Object) -> number),
 }
 
 -- A trap chip's object (a "trap" record, @exelib/traps/controller): `set` spawns it for the controller and its user,

@@ -2,18 +2,20 @@
 -- EXE3 ShotGun, V-Gun, SideGun, Spreader, Bubbler/Bub-V/BublSide, HeatShot/Heat-V/HeatSide
 -- (compat/chips.toml IDs 0x00A..0x013).
 
-local attachment = require("../objects/attachment")
 local bullet = require("../objects/bullet")
 local regions = require("@exelib/regions")
 local spreader = require("@self/spreader")
-local hit_sparks_sprite = asset.sprite("hit-sparks")
+local bubble_splash_sprite = asset.sprite("bubble-splash")
+local heat_blast_sprite = asset.sprite("heat-blast")
 local pink_flash_sprite = asset.sprite("pink-flash")
-local spreader_sprite = asset.sprite("spreader")
 
-local GUN = attachment.look { sprite = spreader_sprite, palette = 0 }
-local FLASH = new.effect { sprite = pink_flash_sprite, anim = 1, palette = 0, steps = 10 }
-local AQUA_FLASH = new.effect { sprite = hit_sparks_sprite, anim = 3, palette = 0, steps = 14 }
-local FIRE_FLASH = new.effect { sprite = hit_sparks_sprite, anim = 2, palette = 0, steps = 14 }
+-- Verified against A6BE `0x080D5FAC` (`[0x0E, 0x0F, 0x10]` -> Effect #0 table `0x080EDBC0..0x080EDBC8`):
+--   ShotGun/V-Gun/SideGun/Spreader: `14-04` anim 0 (green burst, 7f/12t)
+--   Bubbler/Bub-V/BublSide:         `0c-16` anim 0 (bubble splash, 14f/26t)
+--   HeatShot/Heat-V/HeatSide:       `0c-15` anim 0 (heat blast, 19f/36t)
+local FLASH = new.effect { sprite = pink_flash_sprite, anim = 0, palette = 0, steps = 12 }
+local AQUA_FLASH = new.effect { sprite = bubble_splash_sprite, anim = 0, palette = 0, steps = 26 }
+local FIRE_FLASH = new.effect { sprite = heat_blast_sprite, anim = 0, palette = 0, steps = 36 }
 local SOUND = asset.sound("spreader")
 
 local SHOTGUN_BURST = bullet.variant { region = regions.long, hit_mod = 0, effect = FLASH, sound = SOUND }
@@ -30,7 +32,7 @@ local HEATV_BURST = bullet.variant { region = regions.fork, hit_mod = 3, effect 
 local HEATSIDE_BURST = bullet.variant { region = regions.wide, hit_mod = 3, effect = FIRE_FLASH, sound = SOUND }
 
 local shotgun: Chip = {
-    action = spreader.action { id = "shotgun/action", gun = GUN, delay = 1, z = 0x00, shot = SHOTGUN_BURST },
+    action = spreader.action { id = "shotgun/action", delay = 1, z = 0x00, shot = SHOTGUN_BURST },
     codes = { "B", "F", "J", "N", "T", "*" },
     element = "null",
     family = "null",
@@ -44,7 +46,7 @@ local shotgun: Chip = {
 }
 
 local v_gun: Chip = {
-    action = spreader.action { id = "v-gun/action", gun = GUN, delay = 1, z = 0x00, shot = VGUN_BURST },
+    action = spreader.action { id = "v-gun/action", delay = 1, z = 0x00, shot = VGUN_BURST },
     codes = { "D", "G", "L", "P", "V", "*" },
     element = "null",
     family = "null",
@@ -58,7 +60,7 @@ local v_gun: Chip = {
 }
 
 local sidegun: Chip = {
-    action = spreader.action { id = "sidegun/action", gun = GUN, delay = 1, z = 0x00, shot = SIDEGUN_BURST },
+    action = spreader.action { id = "sidegun/action", delay = 1, z = 0x00, shot = SIDEGUN_BURST },
     codes = { "C", "H", "M", "S", "Y", "*" },
     element = "null",
     family = "null",
@@ -72,7 +74,7 @@ local sidegun: Chip = {
 }
 
 local spreader_chip: Chip = {
-    action = spreader.action { id = "spreader/action", gun = GUN, delay = 1, z = 0x00, shot = SPREADER_BURST },
+    action = spreader.action { id = "spreader/action", delay = 1, z = 0x00, shot = SPREADER_BURST },
     codes = { "M", "N", "O", "P", "Q", "*" },
     element = "null",
     family = "null",
@@ -86,7 +88,7 @@ local spreader_chip: Chip = {
 }
 
 local bubbler: Chip = {
-    action = spreader.action { id = "bubbler/action", gun = GUN, delay = 1, z = 0x10, shot = BUBBLER_BURST },
+    action = spreader.action { id = "bubbler/action", delay = 1, z = 0x00, shot = BUBBLER_BURST },
     codes = { "A", "C", "D", "E", "P", "*" },
     element = "aqua",
     family = "aqua",
@@ -100,7 +102,7 @@ local bubbler: Chip = {
 }
 
 local bub_v: Chip = {
-    action = spreader.action { id = "bub-v/action", gun = GUN, delay = 1, z = 0x10, shot = BUBV_BURST },
+    action = spreader.action { id = "bub-v/action", delay = 1, z = 0x00, shot = BUBV_BURST },
     codes = { "D", "E", "F", "S", "V", "*" },
     element = "aqua",
     family = "aqua",
@@ -114,7 +116,7 @@ local bub_v: Chip = {
 }
 
 local bublside: Chip = {
-    action = spreader.action { id = "bublside/action", gun = GUN, delay = 1, z = 0x10, shot = BUBLSIDE_BURST },
+    action = spreader.action { id = "bublside/action", delay = 1, z = 0x00, shot = BUBLSIDE_BURST },
     codes = { "B", "E", "F", "G", "R", "*" },
     element = "aqua",
     family = "aqua",
@@ -128,7 +130,7 @@ local bublside: Chip = {
 }
 
 local heatshot: Chip = {
-    action = spreader.action { id = "heatshot/action", gun = GUN, delay = 1, z = 0x10, shot = HEATSHOT_BURST },
+    action = spreader.action { id = "heatshot/action", delay = 1, z = 0x00, shot = HEATSHOT_BURST },
     codes = { "B", "H", "I", "J", "P", "*" },
     element = "fire",
     family = "fire",
@@ -142,7 +144,7 @@ local heatshot: Chip = {
 }
 
 local heat_v: Chip = {
-    action = spreader.action { id = "heat-v/action", gun = GUN, delay = 1, z = 0x10, shot = HEATV_BURST },
+    action = spreader.action { id = "heat-v/action", delay = 1, z = 0x00, shot = HEATV_BURST },
     codes = { "F", "I", "J", "K", "V", "*" },
     element = "fire",
     family = "fire",
@@ -156,7 +158,7 @@ local heat_v: Chip = {
 }
 
 local heatside: Chip = {
-    action = spreader.action { id = "heatside/action", gun = GUN, delay = 1, z = 0x10, shot = HEATSIDE_BURST },
+    action = spreader.action { id = "heatside/action", delay = 1, z = 0x00, shot = HEATSIDE_BURST },
     codes = { "C", "J", "K", "L", "T", "*" },
     element = "fire",
     family = "fire",

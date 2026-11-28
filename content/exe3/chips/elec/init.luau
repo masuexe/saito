@@ -9,6 +9,7 @@ local sparks = require("../lib/sparks")
 local statuses = require("../rules/status")
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
+local PLASMA_SPRITE = asset.sprite("plasma")
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 14 }
 local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local APPEAR_SOUND = asset.sound("appear")
@@ -35,9 +36,9 @@ local SENSOR_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(HIT_SPARKS)
+            sprite:load(PLASMA_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 4, 0xFF
+            me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             local p = me.pos
             me.pos = Vec3.new(p.x, p.y, 0x08_0000)
@@ -171,9 +172,9 @@ local PLASMA_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(HIT_SPARKS)
+            sprite:load(PLASMA_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 4, 0xFF
+            me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             local p = me.pos
             me.pos = Vec3.new(p.x, p.y, 0x10_0000)
@@ -225,7 +226,7 @@ local function make_plasma_action(id: string, max_pulses: number, wide: boolean)
         state = { timer = "u16" },
         update = function(me: Object, s: PlasmaActState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.FLAMETHROWER)
                 me:set_status("using_action", true)
                 s.timer = 0
                 me.step_init = 4

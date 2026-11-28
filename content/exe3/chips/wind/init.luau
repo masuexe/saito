@@ -8,9 +8,11 @@ local dimming_chips = require("@exelib/dimming")
 local element = require("@exelib/element")
 local regions = require("@exelib/regions")
 
-local FAN_SPRITE = asset.sprite("air-shooter")
-local WIND_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 10 }
-local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local WIND_SPRITE = asset.sprite("fan")
+local FAN_SPRITE = asset.sprite("fan-alt")
+local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
+local WIND_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
+local PUFF_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
 local WIND_SOUND = asset.sound("spreader")
 local APPEAR_SOUND = asset.sound("appear")
 
@@ -30,13 +32,13 @@ local FAN_KIND = new.kind {
                 return
             end
             me.visible = true
+            local s = me.state :: FanState
             local sprite = me.sprite
-            sprite:load(FAN_SPRITE)
+            sprite:load(if s.pulls then FAN_SPRITE else WIND_SPRITE)
             sprite.shadow = "with_sprite"
             me.anim, me.anim_loaded = 0, 0xFF
             sprite:set_flip(bit32.bxor(me.alliance, me.flip))
             me:set_coordinates_from_panel()
-            local s = me.state :: FanState
             s.life = 480
             s.tick = 0
             battle.play_sound(APPEAR_SOUND)

@@ -14,7 +14,7 @@ local sparks = require("../lib/sparks")
 
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 20 }
 local BIG_SLASH_FX = new.effect { sprite = asset.sprite("big-slash"), anim = 0, palette = 0, steps = 15 }
-local BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 14 }
+local ENERGY_RING_FX = new.effect { sprite = asset.sprite("puff"), anim = 0, palette = 0, steps = 14 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
 local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 
@@ -151,7 +151,7 @@ local SERENADE_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = if s.shots == 4 then 3 else 1,
                 })
-                battle.region_effects(me.panel_x, me.panel_y, region, me.alliance, BURST_FX, 0x10_0000)
+                battle.region_effects(me.panel_x, me.panel_y, region, me.alliance, ENERGY_RING_FX, 0x10_0000)
                 battle.play_sound(BLAST_SOUND)
                 battle.shake_camera(2, 10)
             end
@@ -179,7 +179,7 @@ local BALANCE_KIND = new.kind {
                     local navi = battle.player(side)
                     if navi and not navi:status("dead") and navi.hp > 1 then
                         navi.hp = math.max(1, math.floor(navi.hp / 2))
-                        battle.effect(navi.pos, BURST_FX)
+                        battle.effect(navi.pos, ENERGY_RING_FX)
                     end
                 end
                 me.timer = 28

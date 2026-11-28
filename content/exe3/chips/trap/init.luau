@@ -14,13 +14,15 @@ local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
 local BOMB_SPRITE = asset.sprite("bomb")
-local CUBE_SPRITE = asset.sprite("grab-shot")
+local BLKBOMB_SPRITE = asset.sprite("black-bomb")
+local CUBE_SPRITE = asset.sprite("rockcube")
 local SHIELD_SPRITE = asset.sprite("reflector-shield")
 local HIT_SPARKS = asset.sprite("hit-sparks")
+local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 20 }
 local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palette = 0, steps = 16 }
-local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
-local DUST_FX = new.effect { sprite = asset.sprite("dust"), anim = 0, palette = 0, steps = 14 }
+local PUFF_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
+local DUST_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 14 }
 local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 0, steps = 12 }
 local WOOD_FX = new.effect { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 12 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 14 }
@@ -274,9 +276,9 @@ local BLKBOMB_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(BOMB_SPRITE)
+            sprite:load(BLKBOMB_SPRITE)
             sprite.shadow = "with_sprite"
-            sprite.palette = 1
+            sprite.palette = 0
             me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
             me.hp = 100
@@ -345,7 +347,7 @@ local function make_blkbomb_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.BOMB_THROW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -475,7 +477,7 @@ local PRISM_ACTION = new.action {
 -- =============================================================================
 -- 5. Chess pieces: Rook (durable obstacle), Pawn (slashes ahead), Knight (leaps!)
 -- =============================================================================
-local ROOK_DEBRIS = common_debris.make_kind("trap/rook-debris", CUBE_SPRITE)
+local ROOK_DEBRIS = common_debris.make_kind("trap/rook-debris", asset.sprite("dust"), DUST_FX)
 local ROOK_ROCK = common_rock.make {
     id = "trap/rook-obstacle",
     sprite = CUBE_SPRITE,
@@ -489,7 +491,7 @@ local ROOK_ROCK = common_rock.make {
     crush = "destroys",
 }
 local ROOK_VARIANT = common_rock.variant {
-    anim = 0,
+    anim = 9,
     hp = 600,
     element = "null",
     debris_palette = 0,
@@ -508,7 +510,7 @@ local ROOK_CTRL = new.kind {
                 if user then
                     local tx = user.panel_x + user.facing
                     if field.valid(tx, user.panel_y) then
-                        ROOK_ROCK.spawn(user, tx, user.panel_y, { variant = ROOK_VARIANT, class = 0, entrance = "rise" })
+                        ROOK_ROCK.spawn(tx, user.panel_y, user.alliance, { variant = ROOK_VARIANT, class = 0, entrance = "instant" }, 0)
                         battle.play_sound(APPEAR_SOUND)
                     end
                 end
@@ -540,7 +542,7 @@ local PAWN_KIND = new.kind {
             local sprite = me.sprite
             sprite:load(CUBE_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 0, 0xFF
+            me.anim, me.anim_loaded = 4, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: PawnState
             s.life = 420

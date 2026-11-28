@@ -13,24 +13,28 @@ local HIT = { hits = collision.hits_navis, is = collision.slash }
 local SLASH = asset.sprite("sword-slash")
 local BIG_SLASH_SPRITE = asset.sprite("big-slash")
 
--- EXE3 `0c-0c` (`sword-slash`) animations verified against A6BE (`bn3.gba`):
+-- EXE3 `0c-0c` (`sword-slash`) animations & palettes verified against A6BE (`bn3.gba` `0x080D65CC`):
 --   anim 0 = WideSwrd (1x3, 40x76), anim 1 = LongSwrd (2x1, 72x42),
---   anim 2 = Sword (1x1, 40x24),    anim 3 = HeroSwrd/FighterSwd (3x1, 120x50).
+--   anim 2 = Sword (1x1, 40x24),    anim 3 = FighterSwd/Muramasa (3x1, 120x50),
+--   anim 4 = HeroSwrd (3x1, 121x56).
+--   pal 0 = white-blue, pal 2 = gold (HeroSwrd), pal 3 = pink-purple (Muramasa),
+--   pal 5 = fire orange, pal 6 = aqua ice-blue, pal 7 = elec yellow, pal 8 = wood green.
 local SWORD_SLASH = new.effect { sprite = SLASH, anim = 2, palette = 0, steps = 12 }
 local WIDE_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 0, steps = 15 }
 local LONG_SLASH = new.effect { sprite = SLASH, anim = 1, palette = 0, steps = 15 }
-local LINE_SLASH = new.effect { sprite = SLASH, anim = 3, palette = 0, steps = 15 }
-local FIRE_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 1, steps = 15 }
-local AQUA_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 2, steps = 15 }
-local ELEC_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 3, steps = 15 }
-local WOOD_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 4, steps = 15 }
+local HERO_SLASH = new.effect { sprite = SLASH, anim = 4, palette = 2, steps = 15 }
+local MURAMASA_SLASH = new.effect { sprite = SLASH, anim = 3, palette = 3, steps = 15 }
+local FIRE_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 5, steps = 15 }
+local AQUA_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 6, steps = 15 }
+local ELEC_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 7, steps = 15 }
+local WOOD_SLASH = new.effect { sprite = SLASH, anim = 0, palette = 8, steps = 15 }
 local BIG_SLASH = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 0, steps = 15 }
 local CUST_SLASH = new.effect { sprite = BIG_SLASH_SPRITE, anim = 0, palette = 1, steps = 15 }
 
-local function slash(id: string, region: Region, effect: Effect, sound: Sound?): Action
+local function slash(id: string, region: Region, effect: Effect, sound: Sound?, blade: AttachmentLook?): Action
     return swords.slash {
         id = id,
-        blade = swords.blade,
+        blade = blade or swords.blade,
         hit = { region = region, collision = HIT, hit_mod = 3 },
         effect = effect,
         sound = sound or swords.swing,
@@ -80,7 +84,7 @@ local longswrd: Chip = {
 }
 
 local fireswrd: Chip = {
-    action = slash("fireswrd/action", regions.wide, FIRE_SLASH),
+    action = slash("fireswrd/action", regions.wide, FIRE_SLASH, nil, swords.fire_blade),
     codes = { "F", "N", "P", "R", "U" },
     element = "fire",
     family = "sword",
@@ -94,7 +98,7 @@ local fireswrd: Chip = {
 }
 
 local aquaswrd: Chip = {
-    action = slash("aquaswrd/action", regions.wide, AQUA_SLASH),
+    action = slash("aquaswrd/action", regions.wide, AQUA_SLASH, nil, swords.aqua_blade),
     codes = { "A", "H", "N", "P", "T" },
     element = "aqua",
     family = "sword",
@@ -108,7 +112,7 @@ local aquaswrd: Chip = {
 }
 
 local elecswrd: Chip = {
-    action = slash("elecswrd/action", regions.wide, ELEC_SLASH),
+    action = slash("elecswrd/action", regions.wide, ELEC_SLASH, nil, swords.elec_blade),
     codes = { "E", "K", "N", "P", "V" },
     element = "elec",
     family = "sword",
@@ -122,7 +126,7 @@ local elecswrd: Chip = {
 }
 
 local bambswrd: Chip = {
-    action = slash("bambswrd/action", regions.wide, WOOD_SLASH),
+    action = slash("bambswrd/action", regions.wide, WOOD_SLASH, nil, swords.wood_blade),
     codes = { "B", "L", "N", "P", "W" },
     element = "wood",
     family = "sword",
@@ -323,7 +327,7 @@ local slasher: Chip = {
 -- Muramasa (0x0CA): Mega sword dealing damage equal to user's missing HP (cap 999)!
 local muramasa: Chip = {
     damage = { formula = "hp_lost", cap = 999 },
-    action = slash("muramasa/action", regions.single, BIG_SLASH, swords.big_swing),
+    action = slash("muramasa/action", regions.single, MURAMASA_SLASH, swords.big_swing),
     codes = { "M" },
     element = "null",
     family = "sword",
@@ -337,7 +341,7 @@ local muramasa: Chip = {
 
 -- HeroSwrd (0x0CF): Mega sword cutting 3 panels ahead for 180!
 local heroswrd: Chip = {
-    action = slash("heroswrd/action", regions.line, LINE_SLASH, swords.big_swing),
+    action = slash("heroswrd/action", regions.line, HERO_SLASH, swords.big_swing),
     codes = { "P" },
     element = "null",
     family = "sword",

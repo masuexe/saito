@@ -13,7 +13,7 @@ local sparks = require("../lib/sparks")
 local HIT_SPARKS = asset.sprite("hit-sparks")
 local TARGET_SPRITE = HIT_SPARKS
 local BLAST_FX = new.effect { sprite = asset.sprite("explosion"), anim = 0, palette = 0, steps = 18 }
-local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
+local NOBEAM_FX = new.effect { sprite = asset.sprite("nobeam"), anim = 0, palette = 0, steps = 10 }
 local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 12 }
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 12 }
 local CANNON_SOUND = asset.sound("cannon")
@@ -162,9 +162,9 @@ local RATTON_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(asset.sprite("bomb"))
+            sprite:load(asset.sprite("ratton"))
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 0, 0xFF
+            me.anim, me.anim_loaded = 1, 0xFF
             me:set_coordinates_from_panel()
             local s = me.state :: RattonState
             s.tick = 0
@@ -244,7 +244,7 @@ local function make_ratton_action(id: string, step_ticks: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -321,7 +321,7 @@ local function make_nobeam_action(id: string): Action
                         damage = damage,
                         hit_mod = 3,
                     })
-                    battle.region_effects(sx, me.panel_y, regions.row, me.alliance, FLASH_FX, 0x10_0000)
+                    battle.region_effects(sx, me.panel_y, regions.row, me.alliance, NOBEAM_FX, 0x10_0000)
                     battle.play_sound(CANNON_SOUND)
                     battle.shake_camera(2, 10)
                 end
@@ -409,7 +409,7 @@ local function make_icewave_action(id: string, step_ticks: number, rows: number)
         state = { timer = "u16" },
         update = function(me: Object, s: ActTimer)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0

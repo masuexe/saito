@@ -10,10 +10,11 @@ local sparks = require("../lib/sparks")
 local statuses = require("../rules/status")
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
+local TORNADO_SPRITE = asset.sprite("tornado")
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 12 }
 local WOOD_FX = new.effect { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 12 }
-local FIRE_FX = new.effect { sprite = HIT_SPARKS, anim = 2, palette = 0, steps = 16 }
-local WIND_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 10 }
+local FIRE_FX = new.effect { sprite = asset.sprite("flame"), anim = 0, palette = 0, steps = 18 }
+local WIND_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local SHOT_SOUND = asset.sound("buster-shot")
 local WIND_SOUND = asset.sound("spreader")
 local BLAST_SOUND = asset.sound("hit-bomb")
@@ -207,7 +208,7 @@ local TORNADO_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(asset.sprite("burst"))
+            sprite:load(TORNADO_SPRITE)
             sprite.shadow = "with_sprite"
             me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()

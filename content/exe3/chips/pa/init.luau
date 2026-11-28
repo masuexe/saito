@@ -36,9 +36,10 @@ local yoyos = require("./yoyo")
 local cannon_sprite = asset.sprite("cannon")
 local big_slash_sprite = asset.sprite("big-slash")
 local hit_sparks_sprite = asset.sprite("hit-sparks")
-local puff_sprite = asset.sprite("puff")
 
-local Z_CANON_ARM = attachment.look { sprite = cannon_sprite, palette = 0 }
+local Z_CANON1_ARM = attachment.look { sprite = cannon_sprite, palette = 0 }
+local Z_CANON2_ARM = attachment.look { sprite = cannon_sprite, palette = 1 }
+local Z_CANON3_ARM = attachment.look { sprite = cannon_sprite, palette = 2 }
 local Z_CANON_SHOT = projectile.variant {
     id = "pa/z-canon-shot",
     collision = { is = collision.attack, hits = collision.hits_navis },
@@ -72,8 +73,15 @@ local IMPACT_FX = new.effect { sprite = asset.sprite("impact"), anim = 0, palett
 local BURST_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 14 }
 local FLASH_FX = new.effect { sprite = asset.sprite("pink-flash"), anim = 1, palette = 0, steps = 10 }
 local HEAL_FX = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
-local POISON_FX = new.effect { sprite = puff_sprite, anim = 0, palette = 0, steps = 14 }
+local POISON_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 14 }
 local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local YOYO_FX = new.effect { sprite = asset.sprite("yoyo"), anim = 0, palette = 0, steps = 10 }
+local HEAT_BLAST_FX = new.effect { sprite = asset.sprite("heat-blast"), anim = 0, palette = 0, steps = 36 }
+local BUBBLE_SPLASH_FX = new.effect { sprite = asset.sprite("bubble-splash"), anim = 0, palette = 0, steps = 26 }
+local LIGHTNING_FX = new.effect { sprite = asset.sprite("lightning"), anim = 0, palette = 0, steps = 12 }
+local WOOD_VINES_FX = new.effect { sprite = asset.sprite("wood-vines"), anim = 0, palette = 0, steps = 27 }
+local RATTON_FX = new.effect { sprite = asset.sprite("ratton"), anim = 1, palette = 0, steps = 14 }
+local GROUND_CRACK_FX = new.effect { sprite = asset.sprite("ground-crack"), anim = 0, palette = 0, steps = 22 }
 
 local SWORD_HIT = { hits = collision.hits_navis, is = collision.slash }
 local PA_CODES = { "A", "B", "C", "D", "E", "*" }
@@ -127,17 +135,17 @@ end
 -- =============================================================================
 type ZTimerState = { timer: number, cooldown: number, shots: number }
 
-local function make_zcanon_action(id: string): Action
+local function make_zcanon_action(id: string, arm: AttachmentLook): Action
     return new.action {
         id = id,
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.CANNON_RAISE)
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
-                attachment.attach(me, Z_CANON_ARM, "related", 0)
+                attachment.attach(me, arm, "related", 0)
                 s.timer = 180
                 s.cooldown = 0
                 s.shots = 0
@@ -179,7 +187,7 @@ local z_canon1: Chip = {
     program_advances = {
         { order = 0, code_run = { chip = cannons.cannon, count = 3 } },
     },
-    action = make_zcanon_action("z-canon1/action"),
+    action = make_zcanon_action("z-canon1/action", Z_CANON1_ARM),
 }
 
 local z_canon2: Chip = {
@@ -196,7 +204,7 @@ local z_canon2: Chip = {
     program_advances = {
         { order = 1, code_run = { chip = cannons.hicannon, count = 3 } },
     },
-    action = make_zcanon_action("z-canon2/action"),
+    action = make_zcanon_action("z-canon2/action", Z_CANON2_ARM),
 }
 
 local z_canon3: Chip = {
@@ -213,7 +221,7 @@ local z_canon3: Chip = {
     program_advances = {
         { order = 2, code_run = { chip = cannons["m-cannon"], count = 3 } },
     },
-    action = make_zcanon_action("z-canon3/action"),
+    action = make_zcanon_action("z-canon3/action", Z_CANON3_ARM),
 }
 
 -- =============================================================================
@@ -225,7 +233,7 @@ local function make_zpunch_action(id: string, reach: Region, shakes: boolean): A
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.PUNCH)
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -239,6 +247,7 @@ local function make_zpunch_action(id: string, reach: Region, shakes: boolean): A
             elseif s.shots < 6 and (me:held("a") or s.timer % 26 == 0) then
                 s.shots += 1
                 s.cooldown = 16
+                me:set_animation(anims.PUNCH)
                 local tx = me.panel_x + me.facing
                 if field.valid(tx, me.panel_y) then
                     local dmg = bit32.band(int.u32(me.attack_damage + me.extra), 0xFFFF)
@@ -400,7 +409,7 @@ local function make_zyoyo_action(id: string): Action
         state = { timer = "u16", cooldown = "u8", shots = "u8" },
         update = function(me: Object, s: ZTimerState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:set_status("using_action", true)
                 me:set_status_timer("flash", 180)
                 me:set_status("invisible", true)
@@ -429,7 +438,7 @@ local function make_zyoyo_action(id: string): Action
                         damage = dmg,
                         hit_mod = if s.shots == 9 then 3 else 1,
                     })
-                    battle.region_effects(tx, me.panel_y, regions.line, me.alliance, BURST_FX, 0x10_0000)
+                    battle.region_effects(tx, me.panel_y, regions.line, me.alliance, YOYO_FX, 0x10_0000)
                     battle.play_sound(SPREADER_SOUND)
                 end
             end
@@ -760,8 +769,8 @@ local h_burst: Chip = {
 -- =============================================================================
 -- 8 & 9. BubSprd (0x14E) and HeatSprd (0x14F): 300-dmg elemental 3x3 spreaders!
 -- =============================================================================
-local HEAT_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = FIRE_FX, sound = SPREADER_SOUND }
-local BUB_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = AQUA_FX, sound = SPREADER_SOUND }
+local HEAT_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = HEAT_BLAST_FX, sound = SPREADER_SOUND }
+local BUB_BURST = bullet.variant { region = regions.square, hit_mod = 3, effect = BUBBLE_SPLASH_FX, sound = SPREADER_SOUND }
 
 type SpreadState = { timer: number }
 
@@ -855,6 +864,7 @@ local lifeswrd: Chip = {
 local ELEM_IDS = { 1, 2, 3, 4 }
 local ELEM_SPARKS = { sparks.fire, sparks.aqua, sparks.elec, sparks.wood }
 local ELEM_FXS = { FIRE_FX, AQUA_FX, ELEC_FX, WOOD_FX }
+local ELEM_BLADES = { swords.fire_blade, swords.aqua_blade, swords.elec_blade, swords.wood_blade }
 
 local ELEMSWRD_ACTION = new.action {
     id = "elemswrd/action",
@@ -863,7 +873,7 @@ local ELEMSWRD_ACTION = new.action {
         if me.step_init == 0 then
             me.anim = anims.SWORD_SWING
             me:set_status("using_action", true)
-            attachment.attach(me, swords.blade, "related", 0)
+            attachment.attach(me, swords.fire_blade, "related", 0)
             s.timer = 0
             s.shots = 0
             me.step_init = 4
@@ -871,6 +881,7 @@ local ELEMSWRD_ACTION = new.action {
         if s.timer % 8 == 2 and s.shots < 4 then
             s.shots += 1
             local idx = s.shots
+            attachment.attach(me, ELEM_BLADES[idx], "related", 0)
             local tx = me.panel_x + me.facing
             if field.valid(tx, me.panel_y) then
                 local dmg = bit32.band(int.u32(me.attack_damage + me.extra), 0xFFFF)
@@ -1099,6 +1110,11 @@ local HYPERRAT_KIND = new.kind {
                 s.step = 0
                 me.phase_init = 4
             end
+            if me.timer == 2 then
+                local tx, ty = enemy_target(me.alliance)
+                local cx, cy = field.center(tx, ty)
+                battle.effect(Vec3.new(cx, cy, 0x10_0000), RATTON_FX)
+            end
             if me.timer == 14 then
                 local tx, ty = enemy_target(me.alliance)
                 dim_hitbox(me, {
@@ -1244,7 +1260,7 @@ local GELRAIN_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = if last then 3 else 1,
                 })
-                battle.region_effects(col, 2, regions.wide, me.alliance, AQUA_FX, 0x10_0000)
+                battle.region_effects(col, 2, regions.wide, me.alliance, BUBBLE_SPLASH_FX, 0x10_0000)
                 battle.play_sound(GRAB_LAND_SOUND)
                 if last then
                     local back_col = bit32.bxor(me.alliance, 1) * 5 + 1
@@ -1306,7 +1322,7 @@ local PHAR_STATUE = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(asset.sprite("grab-shot"))
+            sprite:load(asset.sprite("anubis"))
             sprite.shadow = "with_sprite"
             me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
@@ -1732,7 +1748,7 @@ local MOMQUAKE_KIND = new.kind {
                         end
                     end
                 end
-                battle.region_effects(me.panel_x, me.panel_y, region, me.alliance, IMPACT_FX, 0x08_0000)
+                battle.region_effects(me.panel_x, me.panel_y, region, me.alliance, GROUND_CRACK_FX, 0x08_0000)
                 battle.play_sound(CRACK_SOUND)
                 battle.play_sound(THROW_SOUND)
                 battle.shake_camera(3, 10)
@@ -1840,7 +1856,7 @@ local prixpowr: Chip = {
 -- =============================================================================
 local MSTR_ELEMS = { 1, 2, 3, 4, 0, 0 }
 local MSTR_SPARKS = { sparks.fire, sparks.aqua, sparks.elec, sparks.wood, sparks.breaking, sparks.heavy }
-local MSTR_FX = { FIRE_FX, AQUA_FX, ELEC_FX, WOOD_FX, BREAK_FX, BIG_SLASH }
+local MSTR_FX = { HEAT_BLAST_FX, BUBBLE_SPLASH_FX, LIGHTNING_FX, WOOD_VINES_FX, BREAK_FX, BIG_SLASH }
 
 local MSTRSTYL_KIND = new.kind {
     id = "pa/mstrstyl-controller",

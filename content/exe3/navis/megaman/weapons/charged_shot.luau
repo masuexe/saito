@@ -32,15 +32,14 @@ local CRACK_SOUND = asset.sound("panel-crack")
 local CHARGE_TICKS = { 120, 100, 85, 70, 60, 60 }
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
-local BURST_SPRITE = asset.sprite("burst")
-local EXPLOSION_SPRITE = asset.sprite("explosion")
-local AIR_SHOOTER_SPRITE = asset.sprite("air-shooter")
+local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
+local TORNADO_SPRITE = asset.sprite("tornado")
 
-local FLAME_FX = new.effect { sprite = EXPLOSION_SPRITE, anim = 0, palette = 0, steps = 16 }
-local AQUA_FX = new.effect { sprite = HIT_SPARKS, anim = 3, palette = 0, steps = 14 }
+local FLAME_FX = new.effect { sprite = asset.sprite("flame"), anim = 0, palette = 0, steps = 12 }
+local AQUA_FX = new.effect { sprite = asset.sprite("bubble-splash"), anim = 0, palette = 0, steps = 26 }
 local ELEC_FX = new.effect { sprite = HIT_SPARKS, anim = 4, palette = 0, steps = 12 }
-local WIND_FX = new.effect { sprite = BURST_SPRITE, anim = 0, palette = 0, steps = 12 }
-local CRACK_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
+local WIND_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
+local CRACK_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 12 }
 
 local NULL_SHOT = shot.variant {
     id = "megaman/charged-shot/null",
@@ -271,13 +270,13 @@ local TWISTER_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(AIR_SHOOTER_SPRITE)
+            sprite:load(TORNADO_SPRITE)
             sprite.shadow = "with_sprite"
             me.anim, me.anim_loaded = 0, 0xFF
             sprite:set_flip(bit32.bxor(me.alliance, me.flip))
             me:set_coordinates_from_panel()
             local p = me.pos
-            me.pos = Vec3.new(p.x, p.y, 0x08_0000)
+            me.pos = Vec3.new(p.x, p.y, 0)
             if not me:create_collision() then
                 me:free()
                 return

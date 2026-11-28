@@ -9,9 +9,12 @@ local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
 local HIT_SPARKS = asset.sprite("hit-sparks")
-local SPIN_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 8 }
+local YOYO_SPRITE = asset.sprite("yoyo")
+local BOOMER_SPRITE = asset.sprite("boomer")
+local LANCE_SPRITE = asset.sprite("lance")
+local SPIN_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local WOOD_FX = new.effect { sprite = HIT_SPARKS, anim = 5, palette = 0, steps = 12 }
-local SLASH_FX = new.effect { sprite = asset.sprite("sword-slash"), anim = 0, palette = 4, steps = 12 }
+local LANCE_FX = new.effect { sprite = LANCE_SPRITE, anim = 0, palette = 0, steps = 16 }
 local SHOT_SOUND = asset.sound("buster-shot")
 local SWING_SOUND = asset.sound("sword-swing")
 local THROW_SOUND = asset.sound("minibomb-throw")
@@ -35,12 +38,11 @@ local YOYO_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(HIT_SPARKS)
+            sprite:load(YOYO_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 1, 0xFF
+            sprite:set_flip(bit32.bxor(me.alliance, me.flip))
+            me.anim, me.anim_loaded = 0, 0xFF
             me:set_coordinates_from_panel()
-            local p = me.pos
-            me.pos = Vec3.new(p.x, p.y, 0x10_0000)
             local s = me.state :: YoYoState
             s.step = 0
             s.tick = 0
@@ -69,7 +71,8 @@ local YOYO_KIND = new.kind {
                         stamina = me.stamina,
                         hit_mod = 1,
                     })
-                    battle.effect(me.pos, SPIN_FX)
+                    local p = me.pos
+                    battle.effect(Vec3.new(p.x, p.y, 0x10_0000), SPIN_FX)
                 end
                 s.tick += 1
                 if s.tick >= 4 then
@@ -80,8 +83,6 @@ local YOYO_KIND = new.kind {
                         if field.valid(nx, me.panel_y) then
                             me.panel_x = nx
                             me:set_coordinates_from_panel()
-                            local p = me.pos
-                            me.pos = Vec3.new(p.x, p.y, 0x10_0000)
                         else
                             s.step = 3
                         end
@@ -104,7 +105,8 @@ local YOYO_KIND = new.kind {
                         stamina = me.stamina,
                         hit_mod = if s.hits_left == 0 then 3 else 1,
                     })
-                    battle.effect(me.pos, SPIN_FX)
+                    local p = me.pos
+                    battle.effect(Vec3.new(p.x, p.y, 0x10_0000), SPIN_FX)
                     battle.play_sound(SHOT_SOUND)
                 end
                 s.tick += 1
@@ -128,8 +130,6 @@ local YOYO_KIND = new.kind {
                     end
                     me.panel_x = nx
                     me:set_coordinates_from_panel()
-                    local p = me.pos
-                    me.pos = Vec3.new(p.x, p.y, 0x10_0000)
                     battle.hitbox(me, {
                         panel_x = me.panel_x,
                         panel_y = me.panel_y,
@@ -164,7 +164,7 @@ local function make_yoyo_action(id: string): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ThrowActState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -218,9 +218,10 @@ local BOOMER_KIND = new.kind {
             end
             me.visible = true
             local sprite = me.sprite
-            sprite:load(HIT_SPARKS)
+            sprite:load(BOOMER_SPRITE)
             sprite.shadow = "with_sprite"
-            me.anim, me.anim_loaded = 5, 0xFF
+            sprite:set_flip(bit32.bxor(me.alliance, me.flip))
+            me.anim, me.anim_loaded = 1, 0xFF
             local s = me.state :: BoomerState
             s.idx = 1
             s.tick = 0
@@ -228,8 +229,6 @@ local BOOMER_KIND = new.kind {
             me.panel_x = if me.alliance == 0 then pt[1] else (7 - pt[1])
             me.panel_y = pt[2]
             me:set_coordinates_from_panel()
-            local p = me.pos
-            me.pos = Vec3.new(p.x, p.y, 0x10_0000)
             battle.play_sound(THROW_SOUND)
             me:set_lifecycle("update")
         elseif l == "update" then
@@ -252,7 +251,8 @@ local BOOMER_KIND = new.kind {
                     stamina = me.stamina,
                     hit_mod = 3,
                 })
-                battle.effect(me.pos, WOOD_FX)
+                local p = me.pos
+                battle.effect(Vec3.new(p.x, p.y, 0x10_0000), WOOD_FX)
                 if s.idx % 3 == 1 then
                     battle.play_sound(SWING_SOUND)
                 end
@@ -269,8 +269,6 @@ local BOOMER_KIND = new.kind {
                 me.panel_x = if me.alliance == 0 then pt[1] else (7 - pt[1])
                 me.panel_y = pt[2]
                 me:set_coordinates_from_panel()
-                local p = me.pos
-                me.pos = Vec3.new(p.x, p.y, 0x10_0000)
             end
             me:update_sprite()
         else
@@ -285,7 +283,7 @@ local function make_boomer_action(id: string, step_ticks: number): Action
         state = { timer = "u16" },
         update = function(me: Object, s: ThrowActState)
             if me.step_init == 0 then
-                me:set_animation(anims.buster_shoot(me))
+                me:set_animation(anims.THROW_LOW)
                 me:open_counter_window()
                 me:set_status("using_action", true)
                 s.timer = 0
@@ -338,7 +336,7 @@ local LANCE_ACTION = new.action {
                 damage = damage,
                 hit_mod = 3,
             })
-            battle.region_effects(back_col, 2, regions.wide, me.alliance, SLASH_FX, 0x10_0000)
+            battle.region_effects(back_col, 2, regions.wide, me.alliance, LANCE_FX, 0)
             battle.play_sound(SWING_SOUND)
             -- Pull hit opponent 1 panel forward from back column!
             local opp_side = bit32.bxor(me.alliance, 1)

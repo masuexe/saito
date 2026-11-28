@@ -11,7 +11,8 @@ local statuses = require("../status")
 
 local supports = {}
 
-local BURST_EFFECT = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 16 }
+local RUSH_EFFECT = new.effect { sprite = asset.sprite("rush"), anim = 0, palette = 0, steps = 34 }
+local BEAT_EFFECT = new.effect { sprite = asset.sprite("beat"), anim = 2, palette = 0, steps = 16 }
 local HEAL_EFFECT = new.effect { sprite = asset.sprite("heal"), anim = 0, palette = 0, steps = 16 }
 local CHIP_DESTROY_SPARK = new.effect { sprite = asset.sprite("hit-marker"), anim = 0, palette = 0, steps = 15 }
 
@@ -57,7 +58,7 @@ local function trigger_rush(side: number, opp_navi: Object)
         opp_navi:set_status_timer("paralyze", 120)
         opp_navi:set_status("paralyzed", true)
     end
-    battle.effect(opp_navi.pos, BURST_EFFECT)
+    battle.effect(opp_navi.pos, RUSH_EFFECT)
     battle.play_sound(RUSH_SOUND)
 end
 
@@ -84,6 +85,7 @@ function supports.opponent_chip(side: number, opp_navi: Object): boolean
     -- Beat: steals opponent's first Mega or Giga chip!
     if s.beat_armed and not s.beat_used and (chip.class == "mega" or chip.class == "giga") then
         s.beat_used = true
+        battle.effect(opp_navi.pos, BEAT_EFFECT)
         battle.effect(opp_navi.pos, CHIP_DESTROY_SPARK)
         battle.play_sound(BEAT_SOUND)
         return true

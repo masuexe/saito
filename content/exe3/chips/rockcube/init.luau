@@ -7,11 +7,13 @@ local common_debris = require("@exelib/rock/debris")
 local common_rock = require("@exelib/rock")
 local sparks = require("../lib/sparks")
 
-local CUBE_SPRITE = asset.sprite("grab-shot")
-local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 16 }
-local DUST_FX = new.effect { sprite = asset.sprite("dust"), anim = 0, palette = 0, steps = 16 }
+local CUBE_SPRITE = asset.sprite("rockcube")
+local DEBRIS_SPRITE = asset.sprite("dust")
+local SMALL_PUFF_SPRITE = asset.sprite("small-puff")
+local PUFF_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 16 }
+local DUST_FX = new.effect { sprite = SMALL_PUFF_SPRITE, anim = 1, palette = 0, steps = 16 }
 
-local DEBRIS = common_debris.make_kind("rockcube/debris", CUBE_SPRITE)
+local DEBRIS = common_debris.make_kind("rockcube/debris", DEBRIS_SPRITE, DUST_FX)
 
 local ROCK = common_rock.make {
     id = "rockcube/rock",
@@ -27,7 +29,7 @@ local ROCK = common_rock.make {
 }
 
 local CUBE_VARIANT = common_rock.variant {
-    anim = 0,
+    anim = 9,
     hp = 200,
     element = "null",
     debris_palette = 0,
@@ -53,7 +55,7 @@ local rockcube: Chip = {
     hit_param = 0,
     lockout = 0,
     flags = { "dimming", "standard_library", "library" },
-    dimming = CONTROLLER.places { variant = CUBE_VARIANT, class = 0, entrance = "rise" },
+    dimming = CONTROLLER.places { variant = CUBE_VARIANT, class = 0, entrance = "instant" },
 }
 
 return { rockcube = rockcube }

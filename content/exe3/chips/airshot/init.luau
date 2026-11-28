@@ -10,7 +10,7 @@ local regions = require("@exelib/regions")
 local sparks = require("../lib/sparks")
 
 local SHOOTER_LOOK = attachment.look { sprite = asset.sprite("air-shooter"), palette = 0 }
-local WIND_FX = new.effect { sprite = asset.sprite("burst"), anim = 0, palette = 0, steps = 10 }
+local WIND_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local WIND_SOUND = asset.sound("spreader")
 local WIND_ELEM = element.byte("null", { "wind" })
 

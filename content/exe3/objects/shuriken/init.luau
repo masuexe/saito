@@ -7,7 +7,7 @@ local sparks = require("../lib/sparks")
 
 local shuriken = {}
 
-local SPRITE = asset.sprite("hit-sparks")
+local SPRITE = asset.sprite("shuriken")
 local PUFF = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 local LAND_SOUND = asset.sound("panel-crack")
 local THROW_SOUND = asset.sound("sword-swing")
@@ -27,8 +27,8 @@ local function init(me: Object)
     end
     local sprite = me.sprite
     sprite:load(SPRITE)
-    sprite.shadow = "with_sprite"
-    me.anim, me.anim_loaded = 8, 0xFF
+    sprite.shadow = "ground"
+    me.anim, me.anim_loaded = 1, 0xFF
     local cx, cy = field.center(me.panel_x, me.panel_y)
     me.pos = Vec3.new(int.i32(cx - START_OFFSET * me.facing), cy, START_OFFSET)
     sprite:set_flip(bit32.bxor(me.alliance, me.flip))

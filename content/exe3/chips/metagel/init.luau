@@ -7,8 +7,8 @@ local common_controller = require("@exelib/metagel/controller")
 local common_gel = require("@exelib/metagel/gel")
 local sparks = require("../lib/sparks")
 
-local GEL_SPRITE = asset.sprite("grab-shot")
-local PUFF_FX = new.effect { sprite = asset.sprite("puff"), anim = 0, palette = 0, steps = 8 }
+local GEL_SPRITE = asset.sprite("bubble")
+local PUFF_FX = new.effect { sprite = asset.sprite("small-puff"), anim = 1, palette = 0, steps = 12 }
 
 -- Cannot steal the opponent's back column (col 6 for side 0, col 1 for side 1).
 local function takes(x: number, _y: number, side: number): boolean

@@ -10,7 +10,12 @@ local swords = {}
 
 local NAVI_NUMBER = 0
 
+-- Held sword blade attachments verified against A6BE `0x080B176C` (`0c-00` standard, `0c-08..0b` elemental).
 swords.blade = attachment.look { sprite = sword_sprite, palette = 0 }
+swords.fire_blade = attachment.look { sprite = asset.sprite("fire-sword"), palette = 0 }
+swords.aqua_blade = attachment.look { sprite = asset.sprite("aqua-sword"), palette = 0 }
+swords.elec_blade = attachment.look { sprite = asset.sprite("elec-sword"), palette = 0 }
+swords.wood_blade = attachment.look { sprite = asset.sprite("wood-sword"), palette = 0 }
 swords.swing = asset.sound("sword-swing")
 swords.big_swing = asset.sound("big-sword-swing")
 

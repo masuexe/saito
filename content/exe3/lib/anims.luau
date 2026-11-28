@@ -10,9 +10,10 @@
 --   0x1D        : Sword swing [0x080B174A]
 --   0x20 / 0x21 : Cannon raise / lower [0x080B1218, 0x080B12B6]
 --   0x22        : Bomb throw [0x080B16A2]
---   0x24        : PanlOut / panel crack [0x080B2308, 0x080B31EC]
+--   0x23        : Wave / Yo-Yo / Ratton / RockArm throw [0x080B2B60, 0x080B329A, 0x080B3F14]
+--   0x24        : PanlOut / CopyDmg / ShockWav / Hammer / ZeusHamr [0x080B18A0, 0x080B1968, 0x080B2308, 0x080B31EC]
 --   0x2C        : GutsPunch / punch [0x080B2736]
---   0x36        : ShotGun / Spreader gun hold [0x080B1BC2]
+--   0x36        : FlameThrower / Plasma / AirStrm / LavaCan hold [0x080B1BC2, 0x080B2AD4, 0x080B3FAC]
 --   0x38        : AirShot shooter [0x080B258A]
 --   0x39        : Dash / lunge [0x080B2938]
 
@@ -39,9 +40,11 @@ anims.SWORD_SWING = 0x1D
 anims.CANNON_RAISE = 0x20
 anims.CANNON_LOWER = 0x21
 anims.BOMB_THROW = 0x22
+anims.THROW_LOW = 0x23
 anims.PANLOUT = 0x24
+anims.HAMMER = 0x24
 anims.PUNCH = 0x2C
-anims.SPREADER = 0x36
+anims.FLAMETHROWER = 0x36
 anims.AIRSHOT = 0x38
 anims.DASH = 0x39
 
