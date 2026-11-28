@@ -31,7 +31,7 @@ mod sound;
 pub mod source;
 mod sprite;
 
-pub use bgm::{GbaBgmTrack, gba_bgm_track, gba_bgm_tracks};
+pub use bgm::{EXTRA_BGM_GAMES, GbaBgmTrack, extract_extra_bgm_bank, gba_bgm_track, gba_bgm_tracks};
 pub use nds::{DsBgmTrack, EXE5DS_BATTLE_THEMES, EXE5DS_BGM_TRACKS, exe5ds_rom_path, is_exe5ds_rom, set_exe5ds_rom_path};
 pub use recipe::Recipe;
 pub use sound::SongVersions;

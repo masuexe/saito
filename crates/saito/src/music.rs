@@ -191,10 +191,57 @@ pub struct CatalogEntry {
     pub is_battle_theme: bool,
 }
 
-/// Complete BGM catalog across every loaded game (in app order; EXE5 GBA tracks followed by
+/// Whether an audio-only extra game track (`exe1` / `exe2`) is a battle theme
+/// (included in "Favorite all battle themes").
+fn extra_is_battle_theme(game: &str, song: &str) -> bool {
+    match game {
+        "exe1" => matches!(song, "operation" | "net-battle" | "final-battle"),
+        "exe2" => matches!(song, "virus-battle" | "battle-spirit" | "final-battle"),
+        _ => false,
+    }
+}
+
+/// Resolve any track (including non-looping short jingles) from an optional audio-only bank (`exe1` / `exe2`).
+fn resolve_extra_preview(games: &Games, game: &str, song: &str) -> Option<(saito_audio::Theme, bool)> {
+    let bank = games.extra_sound(game)?;
+    let entry = saito_extract::gba_bgm_track(game, song)?;
+    let song_data = bank.song(saito_audio::m4a::SongId(entry.song_id))?;
+    let is_battle = extra_is_battle_theme(game, entry.key);
+    let looping = entry.looping && (is_battle || song_data.is_looping());
+    Some((saito_audio::Theme::m4a(bank.clone(), entry.song_id), looping))
+}
+
+/// Resolve a looping track from an optional audio-only bank (`exe1` / `exe2`) for battle or menu BGM.
+fn resolve_extra_theme(games: &Games, game: &str, song: &str) -> Option<saito_audio::Theme> {
+    let (theme, looping) = resolve_extra_preview(games, game, song)?;
+    looping.then_some(theme)
+}
+
+/// Complete BGM catalog across every loaded game (optional audio-only EXE1/EXE2 first when
+/// present, followed by loaded playable games in app order; EXE5 GBA tracks followed by
 /// EXE5DS tracks when an EXE5DS ROM is attached).
 pub fn catalog(games: &Games) -> Vec<CatalogEntry> {
     let mut out = Vec::new();
+    for &(game, _) in saito_extract::EXTRA_BGM_GAMES {
+        if games.read(game).is_some() {
+            continue;
+        }
+        let Some(bank) = games.extra_sound(game) else { continue };
+        for entry in saito_extract::gba_bgm_tracks(game) {
+            if let Some(song_data) = bank.song(saito_audio::m4a::SongId(entry.song_id)) {
+                let is_battle_theme = extra_is_battle_theme(game, entry.key);
+                let looping = entry.looping && (is_battle_theme || song_data.is_looping());
+                out.push(CatalogEntry {
+                    key: track_key(game, entry.key),
+                    game: game.to_string(),
+                    song: entry.key.to_string(),
+                    is_ds: false,
+                    looping,
+                    is_battle_theme,
+                });
+            }
+        }
+    }
     for g in &games.list {
         let Some(ready) = games.read(&g.id) else { continue };
         for track in ready.loaded.catalog_tracks() {
@@ -211,14 +258,18 @@ pub fn catalog(games: &Games) -> Vec<CatalogEntry> {
     out
 }
 
-/// Display badge for a track's game (`"EXE5DS"` / `"BN5DS"` for DS tracks, else `Shell::game_name`).
+/// Display badge for a track's game (`"EXE5DS"` / `"BN5DS"` for DS tracks, `"EXE1"`/`"BN1"` and
+/// `"EXE2"`/`"BN2"` for audio-only Vol. 1 games, else `Shell::game_name`).
 pub fn game_badge(game: &str, is_ds: bool) -> String {
+    let lang = NAMES_LANG.with(|l| l.borrow().clone());
+    let cjk = matches!(lang.as_str(), "zh-Hans" | "ja" | "ko");
     if is_ds {
-        let lang = NAMES_LANG.with(|l| l.borrow().clone());
-        return match lang.as_str() {
-            "zh-Hans" | "ja" | "ko" => "EXE5DS".to_string(),
-            _ => "BN5DS".to_string(),
-        };
+        return if cjk { "EXE5DS" } else { "BN5DS" }.to_string();
+    }
+    match game {
+        "exe1" => return if cjk { "EXE1" } else { "BN1" }.to_string(),
+        "exe2" => return if cjk { "EXE2" } else { "BN2" }.to_string(),
+        _ => {}
     }
     Shell::game_name(game)
 }
@@ -243,13 +294,19 @@ pub fn track_full_name(game: &str, song: &str) -> String {
 /// Resolve any catalog track (including non-looping short jingles) for preview playback.
 pub fn resolve_preview(games: &Games, key: &str) -> Option<(saito_audio::Theme, bool)> {
     let (game, song) = parse_track_key(key)?;
-    games.read(game)?.loaded.preview_track(song)
+    games
+        .read(game)
+        .and_then(|r| r.loaded.preview_track(song))
+        .or_else(|| resolve_extra_preview(games, game, song))
 }
 
 /// Resolve a looping catalog track for custom main-menu BGM playback.
 pub fn resolve_menu_bgm(games: &Games, key: &str) -> Option<saito_audio::Theme> {
     let (game, song) = parse_track_key(key)?;
-    games.read(game)?.loaded.theme(song)
+    games
+        .read(game)
+        .and_then(|r| r.loaded.theme(song))
+        .or_else(|| resolve_extra_theme(games, game, song))
 }
 
 /// A theme's name as a list shows it, in the language shown: its game's name, then the theme's ("BN4 Tournament
@@ -380,7 +437,8 @@ pub fn resolve_favorites(games: &Games, ready: &Ready, favorites: &[String]) -> 
         let theme = games
             .read(game)
             .and_then(|of| of.loaded.theme(song))
-            .or_else(|| (game == content.game()).then(|| ready.loaded.theme(song)).flatten());
+            .or_else(|| (game == content.game()).then(|| ready.loaded.theme(song)).flatten())
+            .or_else(|| resolve_extra_theme(games, game, song));
         if let Some(theme) = theme {
             out.push((game.to_string(), song.to_string(), sound.parts(content, Some(&theme))));
         }
@@ -901,6 +959,12 @@ mod tests {
     fn full_catalog_loop_filtering_and_favorite_rotation() {
         let all = games(&["exe4", "exe5", "exe6"]);
         // Verify non-looping jingle classification across all games.
+        assert!(is_known_non_looping("exe1", "transmission"));
+        assert!(is_known_non_looping("exe1", "game-over"));
+        assert!(!is_known_non_looping("exe1", "net-battle"));
+        assert!(is_known_non_looping("exe2", "transmission"));
+        assert!(is_known_non_looping("exe2", "game-over"));
+        assert!(!is_known_non_looping("exe2", "virus-battle"));
         assert!(is_known_non_looping("exe3", "transmission"));
         assert!(is_known_non_looping("exe3", "battle-lose"));
         assert!(!is_known_non_looping("exe3", "blind-mode"));
@@ -918,11 +982,52 @@ mod tests {
         assert!(resolve_preview(&all, "exe6/winner-1").is_some());
         assert!(resolve_menu_bgm(&all, "exe6/winner-1").is_none());
 
+        // Optional audio-only banks (EXE1 / EXE2) appear in catalog, preview, menu BGM, and battle favorites.
+        let mut with_extra = games(&["exe6"]);
+        let exe6_ready = with_extra.read("exe6").unwrap();
+        let template_bank = exe6_ready.loaded.sound.as_ref().unwrap().bank.clone();
+        let held = template_bank.songs[0].clone();
+        let mut looping_song = held.clone().unwrap();
+        looping_song.tracks = vec![saito_audio::m4a::bank::Track {
+            commands: vec![saito_audio::m4a::bank::Command::Goto(0)],
+        }];
+        let mut extra_bank = (*template_bank).clone();
+        extra_bank.songs = vec![Some(looping_song); 0x26];
+        let extra_bank = Arc::new(extra_bank);
+        with_extra.insert_extra_sound("exe1", extra_bank.clone());
+        with_extra.insert_extra_sound("exe2", extra_bank);
+
+        let cat = catalog(&with_extra);
+        let exe1_cat: Vec<&CatalogEntry> = cat.iter().filter(|e| e.game == "exe1").collect();
+        let exe2_cat: Vec<&CatalogEntry> = cat.iter().filter(|e| e.game == "exe2").collect();
+        assert_eq!(exe1_cat.len(), saito_extract::gba_bgm_tracks("exe1").len());
+        assert_eq!(exe2_cat.len(), saito_extract::gba_bgm_tracks("exe2").len());
+        assert!(exe1_cat.iter().any(|e| e.song == "net-battle" && e.is_battle_theme && e.looping));
+        assert!(exe1_cat.iter().any(|e| e.song == "transmission" && !e.looping));
+        assert!(exe2_cat.iter().any(|e| e.song == "virus-battle" && e.is_battle_theme && e.looping));
+        assert!(exe2_cat.iter().any(|e| e.song == "game-over" && !e.looping));
+        assert!(resolve_preview(&with_extra, "exe1/transmission").is_some_and(|(_, l)| !l));
+        assert!(resolve_menu_bgm(&with_extra, "exe1/transmission").is_none());
+        assert!(resolve_menu_bgm(&with_extra, "exe1/net-battle").is_some());
+        assert!(resolve_menu_bgm(&with_extra, "exe2/virus-battle").is_some());
+        let favs = resolve_favorites(
+            &with_extra,
+            &exe6_ready,
+            &["exe1/net-battle".into(), "exe1/transmission".into(), "exe2/final-battle".into()],
+        );
+        assert_eq!(favs.len(), 2);
+        assert_eq!(favs[0].0, "exe1");
+        assert_eq!(favs[0].1, "net-battle");
+        assert_eq!(favs[1].0, "exe2");
+        assert_eq!(favs[1].1, "final-battle");
+
         // Localized Legacy Collection track titles exist for every catalog track in all four languages,
-        // preserving untranslated English titles (e.g. Theme of ROCKMAN EXE 3/4, Blind Mode, Invisible Wing, Battle Field).
+        // preserving untranslated English titles.
         for lang in ["en", "ja", "zh-Hans", "ko"] {
             crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], lang);
-            for game in ["exe3", "exe4", "exe5", "exe6"] {
+            assert_eq!(game_badge("exe1", false), if lang == "en" { "BN1" } else { "EXE1" });
+            assert_eq!(game_badge("exe2", false), if lang == "en" { "BN2" } else { "EXE2" });
+            for game in ["exe1", "exe2", "exe3", "exe4", "exe5", "exe6"] {
                 for track in saito_extract::gba_bgm_tracks(game) {
                     let title = track_title(game, track.key);
                     assert!(!title.is_empty(), "{lang} {game}/{} empty", track.key);
@@ -936,6 +1041,29 @@ mod tests {
             }
         }
         crate::shell::Shell::read_game_names(&["exe3", "exe4", "exe5", "exe6"], "zh-Hans");
+        assert_eq!(track_title("exe1", "title-screen"), "Theme of ROCKMAN EXE");
+        assert_eq!(track_title("exe1", "acdc-town"), "Hometown");
+        assert_eq!(track_title("exe1", "school"), "学校");
+        assert_eq!(track_title("exe1", "fire-field"), "Fire Field");
+        assert_eq!(track_title("exe1", "operation"), "Operation!");
+        assert_eq!(track_title("exe1", "net-battle"), "网络对战");
+        assert_eq!(track_title("exe1", "final-battle"), "决战梦幻病毒");
+        assert_eq!(track_title("exe1", "credits"), "End Roll");
+        assert_eq!(track_title("exe2", "title-screen"), "Theme of ROCKMAN EXE 2");
+        assert_eq!(track_title("exe2", "secret-maneuver"), "秘密行动");
+        assert_eq!(track_title("exe2", "okuden-valley"), "奥电谷");
+        assert_eq!(track_title("exe2", "alley"), "后巷");
+        assert_eq!(saito_extract::gba_bgm_track("exe2", "alley").unwrap().song_id, 0x023);
+        assert_eq!(track_title("exe2", "dungeon"), "地牢");
+        assert_eq!(saito_extract::gba_bgm_track("exe2", "dungeon").unwrap().song_id, 0x024);
+        assert_eq!(track_title("exe2", "virus-battle"), "病毒激战");
+        assert_eq!(track_title("exe2", "battle-spirit"), "战役之魂");
+        assert_eq!(track_title("exe2", "final-battle"), "对决戈斯巴鲁");
+        assert_eq!(track_title("exe2", "style-change"), "型态转换");
+        assert_eq!(saito_extract::gba_bgm_track("exe2", "style-change").unwrap().song_id, 0x01F);
+        assert_eq!(track_title("exe2", "pressure"), "Pressure");
+        assert_eq!(track_title("exe2", "credits"), "Peace Again");
+        assert_eq!(track_title("exe3", "battle-win"), "型态转换");
         assert_eq!(track_title("exe3", "title-screen"), "Theme of ROCKMAN EXE 3");
         assert_eq!(track_title("exe3", "www-theme"), "WWW");
         assert_eq!(track_title("exe3", "acdc-town"), "Hometown");

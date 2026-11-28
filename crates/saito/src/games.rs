@@ -168,6 +168,11 @@ pub struct Games {
     /// Content of a game other than the one it plays (a replay's, made on another revision), loaded to play: each
     /// by its content directory, the last few asked for ([`Games::want_other`]).
     others: Vec<Entry>,
+    /// Optional audio-only GBA sound banks extracted directly from `source` for non-playable
+    /// Legacy Collection titles (e.g. `"exe1"`, `"exe2"`), used by the Music Library (`S-135`).
+    extra_sound: HashMap<String, Arc<saito_audio::m4a::SoundBank>>,
+    /// The `RomSource` for which optional extra sound loading was already kicked off.
+    extra_sound_source: Option<RomSource>,
 }
 
 /// Where a browser or a phone keeps its copies of the Legacy Collection's ROMs ([`Games::keep_copies`]), and any device
@@ -337,12 +342,70 @@ impl Games {
         }
     }
 
-    /// The game codes of every ROM the games' recipes declare, sorted: what is kept of a collection, and sent of one.
+    /// The game codes of every ROM the games' recipes declare (plus optional audio-only titles such as EXE1/EXE2),
+    /// sorted: what is kept of a collection, and sent of one.
     pub fn rom_codes(&self) -> Vec<String> {
-        let mut codes: Vec<String> = self.list.iter().chain(&self.others).filter_map(|e| e.recipe.as_ref()).flat_map(|r| r.roms().iter().cloned()).collect();
+        let mut codes: Vec<String> = self
+            .list
+            .iter()
+            .chain(&self.others)
+            .filter_map(|e| e.recipe.as_ref())
+            .flat_map(|r| r.roms().iter().cloned())
+            .chain(saito_extract::EXTRA_BGM_GAMES.iter().flat_map(|&(_, roms)| roms.iter().map(|c| (*c).to_string())))
+            .collect();
         codes.sort();
         codes.dedup();
         codes
+    }
+
+    /// Optional audio-only GBA sound bank (e.g. `"exe1"`, `"exe2"`) extracted from `RomSource`, if present.
+    pub fn extra_sound(&self, id: &str) -> Option<&Arc<saito_audio::m4a::SoundBank>> {
+        self.extra_sound.get(id)
+    }
+
+    /// Number of optional audio-only sound banks currently loaded (used to refresh the Music Library when ready).
+    pub fn extra_sound_count(&self) -> usize {
+        self.extra_sound.len()
+    }
+
+    /// Record audio-only sound banks extracted on a background thread.
+    pub fn set_extra_sound(&mut self, banks: Vec<(String, Arc<saito_audio::m4a::SoundBank>)>) {
+        self.extra_sound.extend(banks);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_extra_sound(&mut self, id: &str, bank: Arc<saito_audio::m4a::SoundBank>) {
+        self.extra_sound.insert(id.to_string(), bank);
+    }
+
+    /// Spawn a background pass to extract optional audio-only sound banks (EXE1/EXE2) from `self.source`
+    /// whenever a new source is discovered. Missing ROMs are silently ignored.
+    fn load_extra_sound(&mut self) {
+        let Some(source) = self.source.clone() else { return };
+        if self.extra_sound_source.as_ref() == Some(&source) {
+            return;
+        }
+        self.extra_sound_source = Some(source.clone());
+        let started = saito_threads::spawn("loading extra bgm", move || {
+            let mut banks = Vec::new();
+            for &(game, _) in saito_extract::EXTRA_BGM_GAMES {
+                if let Some(bank) = saito_extract::extract_extra_bgm_bank(&source, game) {
+                    banks.push((game.to_string(), Arc::new(bank)));
+                }
+            }
+            if banks.is_empty() {
+                return;
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                crate::with_app(|app| {
+                    app.shell.games.set_extra_sound(banks);
+                    app.shell.sync_menu_bgm();
+                });
+            });
+        });
+        if let Err(why) = started {
+            crate::errors::log("starting extra bgm loading", &why);
+        }
     }
 
     /// In a browser or on a phone, the collection just found in `folder` (the player's, its archives read into the
@@ -356,6 +419,7 @@ impl Games {
             Ok(kept) => {
                 crate::errors::log("keeping the Legacy Collection's ROMs", &format_args!("{kept} kept"));
                 self.source = Some(RomSource::Copies(copies()));
+                self.load_extra_sound();
                 if let Err(why) = saito_files::remove_dir_all(folder) {
                     crate::errors::log("letting the Legacy Collection's archives go", &why);
                 }
@@ -405,6 +469,8 @@ impl Games {
         let count = self.check_roms();
         if count == 0 {
             self.source = before;
+        } else {
+            self.load_extra_sound();
         }
         count
     }
@@ -492,6 +558,8 @@ impl Games {
             catalog_asked: false,
             catalog_failed: false,
             others: Vec::new(),
+            extra_sound: HashMap::new(),
+            extra_sound_source: None,
         }
     }
 

@@ -1,6 +1,6 @@
 //! Music library & favorites, Settings' Audio subscreen (`S-135`).
 //!
-//! Lists every BGM track across loaded games (EXE4, EXE5, EXE5DS, EXE6), lets the player preview
+//! Lists every BGM track across loaded games (EXE1, EXE2, EXE3, EXE4, EXE5, EXE5DS, EXE6), lets the player preview
 //! any track (including non-looping short jingles), star looping tracks for per-round battle
 //! rotation, and pin a custom main-menu BGM.
 
@@ -21,6 +21,8 @@ enum Filter {
     #[default]
     All,
     Favorites,
+    Exe1,
+    Exe2,
     Exe3,
     Exe4,
     Exe5,
@@ -29,9 +31,11 @@ enum Filter {
 }
 
 impl Filter {
-    const ALL: [Filter; 7] = [
+    const ALL: [Filter; 9] = [
         Filter::All,
         Filter::Favorites,
+        Filter::Exe1,
+        Filter::Exe2,
         Filter::Exe3,
         Filter::Exe4,
         Filter::Exe5,
@@ -51,6 +55,8 @@ impl Filter {
         match self {
             Filter::All => true,
             Filter::Favorites => shell.settings.is_favorite_music(&entry.key),
+            Filter::Exe1 => entry.game == "exe1" && !entry.is_ds,
+            Filter::Exe2 => entry.game == "exe2" && !entry.is_ds,
             Filter::Exe3 => entry.game == "exe3" && !entry.is_ds,
             Filter::Exe4 => entry.game == "exe4" && !entry.is_ds,
             Filter::Exe5 => entry.game == "exe5" && !entry.is_ds,
@@ -69,6 +75,8 @@ pub struct MusicLibrary {
     entries: Vec<CatalogEntry>,
     /// Last preview key seen on screen, so UI refreshes automatically when a short jingle finishes.
     last_preview: Option<String>,
+    /// Last count of optional audio-only sound banks (EXE1/EXE2) so the list refreshes once background extraction finishes.
+    last_extra_sound: usize,
 }
 
 impl MusicLibrary {
@@ -113,6 +121,8 @@ impl MusicLibrary {
                 let label = match f {
                     Filter::All => format!("{tab_all} ({n})"),
                     Filter::Favorites => format!("★ {tab_fav} ({n})"),
+                    Filter::Exe1 => format!("{} ({n})", music::game_badge("exe1", false)),
+                    Filter::Exe2 => format!("{} ({n})", music::game_badge("exe2", false)),
                     Filter::Exe3 => format!("{} ({n})", music::game_badge("exe3", false)),
                     Filter::Exe4 => format!("{} ({n})", music::game_badge("exe4", false)),
                     Filter::Exe5 => format!("{} ({n})", music::game_badge("exe5", false)),
@@ -138,6 +148,7 @@ impl MusicLibrary {
 
         let preview_key = shell.sound.preview_key().map(str::to_string);
         self.last_preview = preview_key.clone();
+        self.last_extra_sound = shell.games.extra_sound_count();
         let menu_key = shell.settings.menu_bgm.as_deref();
 
         let rows: Vec<MusicTrackRow> = self
@@ -438,7 +449,9 @@ impl MusicLibrary {
         if !self.open {
             return;
         }
-        if self.last_preview.as_deref() != shell.sound.preview_key() {
+        if self.last_preview.as_deref() != shell.sound.preview_key()
+            || self.last_extra_sound != shell.games.extra_sound_count()
+        {
             self.show(shell);
         }
     }

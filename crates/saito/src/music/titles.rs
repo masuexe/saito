@@ -1,10 +1,11 @@
 //! Official *Mega Man Battle Network Legacy Collection* (ROCKMAN EXE 合集)
-//! Music Player localized BGM titles for EXE3, EXE4, EXE5, EXE5DS, and EXE6 (`S-135`).
+//! Music Player localized BGM titles for EXE1, EXE2, EXE3, EXE4, EXE5, EXE5DS, and EXE6 (`S-135`).
 //!
 //! Simplified Chinese (`zh-Hans`) titles and track ordering match the official
 //! Legacy Collection Music Player screenshots verbatim (including untranslated
-//! English titles such as `Theme of ROCKMAN EXE 3`, `Hometown`, `Blind Mode`,
-//! `Invisible Wing`, `Heel's Parade`, `Castle of Ninja!`, `Battle Field`, etc.).
+//! English titles such as `Theme of ROCKMAN EXE`, `Hometown`, `Fire Field`,
+//! `Smoky Field`, `Blind Mode`, `Invisible Wing`, `Heel's Parade`,
+//! `Castle of Ninja!`, `Battle Field`, etc.).
 
 /// Localized display title for a single track (without the game prefix), or `None` for custom/unknown keys.
 pub fn track_title(game: &str, song: &str, lang: &str) -> Option<&'static str> {
@@ -12,6 +13,8 @@ pub fn track_title(game: &str, song: &str, lang: &str) -> Option<&'static str> {
         return ds_title(ds_base, lang);
     }
     match game {
+        "exe1" => exe1_title(song, lang),
+        "exe2" => exe2_title(song, lang),
         "exe3" => exe3_title(song, lang),
         "exe4" => exe4_title(song, lang),
         "exe5" => exe5_title(song, lang),
@@ -27,6 +30,93 @@ fn pick<'a>(lang: &str, en: &'a str, ja: &'a str, zh: &'a str, ko: &'a str) -> &
         "ko" => ko,
         _ => en,
     }
+}
+
+fn exe1_title(song: &str, lang: &str) -> Option<&'static str> {
+    Some(match song {
+        // Legacy Collection Vol. 1 — Rockman EXE 1 track order:
+        "title-screen" => pick(
+            lang,
+            "Theme of MEGA MAN BATTLE NETWORK",
+            "Theme of ROCKMAN EXE",
+            "Theme of ROCKMAN EXE",
+            "Theme of ROCKMAN EXE",
+        ),
+        "acdc-town" => pick(lang, "Hometown", "ホームタウン", "Hometown", "홈타운"),
+        "school" => pick(lang, "School", "学校", "学校", "학교"),
+        "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
+        "suspicious-mood" => pick(lang, "Suspicious Mood?", "あやしいムード?", "诡异的气氛?", "수상한 분위기?"),
+        "event-occurance" => pick(lang, "Incident Occurrence!", "事件発生!", "事件发生!", "사건 발생!"),
+        "transmission" => pick(lang, "Transmission!", "トランスミッション!", "程序传输!", "트랜스미션!"),
+        "fire-field" => "Fire Field",
+        "running-through-cyber-world" => "Running Through the Cyber World",
+        "boundless-network" => "Boundless Network",
+        "hour-of-fate" => pick(lang, "Hour of Fate", "運命の時", "命运的时刻", "운명의 시간"),
+        "cold-and-silent" => "Cold & Silent",
+        "red-or-blue" => "Red or Blue",
+        "electrical-crisis" => "Electrical Crisis",
+        "void" => "Void",
+        "operation" => "Operation!",
+        "net-battle" => pick(lang, "Net Battle", "ネットバトル", "网络对战", "넷 배틀"),
+        "final-battle" => pick(lang, "VS. Life Virus", "VS.ドリームウイルス", "决战梦幻病毒", "VS. 드림 바이러스"),
+        "winner" => "Winner!",
+        "game-over" => "Game Over",
+        "loser" => "Loser",
+        "credits" => "End Roll",
+        _ => return None,
+    })
+}
+
+fn exe2_title(song: &str, lang: &str) -> Option<&'static str> {
+    Some(match song {
+        // Legacy Collection Vol. 1 — Rockman EXE 2 track order:
+        "title-screen" => pick(
+            lang,
+            "Theme of MEGA MAN BATTLE NETWORK 2",
+            "Theme of ROCKMAN EXE 2",
+            "Theme of ROCKMAN EXE 2",
+            "Theme of ROCKMAN EXE 2",
+        ),
+        "secret-maneuver" => pick(lang, "Secret Maneuver", "密かな動き", "秘密行动", "은밀한 움직임"),
+        "acdc-town" => pick(lang, "Hometown", "ホームタウン", "Hometown", "홈타운"),
+        "okuden-valley" => pick(lang, "Okuden Valley", "オクデン谷", "奥电谷", "오쿠덴 계곡"),
+        "marine-harbor" => pick(lang, "Marine Harbor", "マリンハーバー", "海军港", "마린 하버"),
+        "official-center" => pick(lang, "Official Center", "オフィシャルセンター", "公职中心", "오피셜 센터"),
+        "going-on-a-journey" => pick(lang, "Going on a Journey", "旅立ち", "启程", "여행의 시작"),
+        "foreign-town" => pick(lang, "Foreign Town", "異国の街並み", "异国街景", "이국의 거리"),
+        "netopia-castle" => pick(lang, "Netopia Castle", "アメロッパ城", "亚美罗帕城", "아메로파 성"),
+        "alley" => pick(lang, "Back Alley", "裏通り", "后巷", "뒷골목"),
+        "dungeon" => pick(lang, "Dungeon", "地下牢", "地牢", "지하 감옥"),
+        "sky-travel" => pick(lang, "Sky Travel", "空の旅", "天空之旅", "하늘 여행"),
+        "determination" => pick(lang, "Determination", "決意", "心意已决", "결의"),
+        "suspicious-mood" => pick(lang, "Suspicious Mood?", "あやしいムード?", "诡异的气氛?", "수상한 분위기?"),
+        "event-occurance" => pick(lang, "Incident Occurrence!", "事件発生!", "事件发生!", "사건 발생!"),
+        "facing-sadness" => pick(lang, "Facing Sadness", "悲しみに向かって", "迎向悲伤", "슬픔을 향해"),
+        "proof-of-courage" => pick(lang, "Proof of Courage", "勇気の証", "勇气之证", "용기의 증표"),
+        "transmission" => pick(lang, "Transmission!", "トランスミッション!", "程序传输!", "트랜스미션!"),
+        "smoky-field" => "Smoky Field",
+        "time-limit" => "Time Limit",
+        "serious-mission" => "A Serious Mission",
+        "fear-in-the-castle" => "Fear in the Castle",
+        "magnetic-airplane" => "Magnetic Airplane",
+        "you-cant-go-back" => "You Can't Go Back",
+        "internet-world" => "Internet World",
+        "fearful" => "Fearful",
+        "know-the-truth" => "And You Will Know the Truth",
+        "virus-battle" => pick(lang, "Virus Busting", "ウイルスバスティング", "病毒激战", "바이러스 버스팅"),
+        "battle-spirit" => pick(lang, "Battle Spirit", "バトルスピリット", "战役之魂", "배틀 스피릿"),
+        "final-battle" => pick(lang, "VS. Gospel", "VS.ゴスペル", "对决戈斯巴鲁", "VS. 고스펠"),
+        "style-change" => pick(lang, "Style Change", "スタイルチェンジ", "型态转换", "스타일 체인지"),
+        "pressure" => "Pressure",
+        "credits" => "Peace Again",
+        // Reused BN1 tracks present in the BN2 ROM:
+        "school" => pick(lang, "School", "学校", "学校", "학교"),
+        "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
+        "winner" => "Winner!",
+        "loser" => "Loser",
+        "game-over" => "Game Over",
+        _ => return None,
+    })
 }
 
 fn exe3_title(song: &str, lang: &str) -> Option<&'static str> {
@@ -71,8 +161,8 @@ fn exe3_title(song: &str, lang: &str) -> Option<&'static str> {
         // Reused BN1/BN2 tracks present in the BN3 ROM:
         "school" => pick(lang, "School", "学校", "学校", "학교"),
         "indoors" => pick(lang, "In the Room", "室内", "室内", "실내"),
-        "battle-net" => "Enemy Deleted!",
-        "battle-win" => "WINNER!",
+        "battle-net" => "Winner!",
+        "battle-win" => pick(lang, "Style Change", "スタイルチェンジ", "型态转换", "스타일 체인지"),
         "battle-boss" => "Loser",
         "battle-lose" => "Game Over",
         _ => return None,
